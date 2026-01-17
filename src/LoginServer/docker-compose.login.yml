@@ -1,0 +1,35 @@
+name: rathena-login
+
+services:
+  sql-edge:
+    image: mcr.microsoft.com/azure-sql-edge:latest
+    container_name: rathena-sql-edge
+    environment:
+      ACCEPT_EULA: "Y"
+      SA_PASSWORD: "${SA_PASSWORD}"
+    ports:
+      - "1433:1433"
+    volumes:
+      - sql-edge-data:/var/opt/mssql
+
+  login-server:
+    build:
+      context: ../../..
+      dockerfile: athenadotnet/src/LoginServer/Dockerfile
+      args:
+        DOTNET_SDK_IMAGE: ${DOTNET_IMAGE:-mcr.microsoft.com/dotnet/sdk:10.0-preview}
+    image: rathena-login-server:local
+    container_name: rathena-login-server
+    environment:
+      RATHENA_LOGIN_DB_PROVIDER: "sqlserver"
+      RATHENA_LOGIN_DB_CONNECTION: "Server=sql-edge,1433;Database=rathena;User ID=sa;Password=${SA_PASSWORD};Encrypt=True;TrustServerCertificate=True;"
+      RATHENA_LOGIN_DB_AUTOMIGRATE: "true"
+    ports:
+      - "6900:6900"
+    volumes:
+      - ../../../conf:/app/conf:ro
+    depends_on:
+      - sql-edge
+
+volumes:
+  sql-edge-data:
