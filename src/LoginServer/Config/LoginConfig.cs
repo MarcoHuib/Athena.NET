@@ -31,6 +31,9 @@ public sealed class LoginConfig
     public string DnsblServers { get; init; } = string.Empty;
     public int IpBanCleanupIntervalSeconds { get; init; } = 60;
     public bool ConsoleEnabled { get; init; }
+    public int ConsoleMsgLog { get; init; }
+    public int ConsoleSilent { get; init; }
+    public string ConsoleLogFilePath { get; init; } = string.Empty;
     public int AllowedRegistrations { get; init; } = 1;
     public int RegistrationWindowSeconds { get; init; } = 10;
     public int StartLimitedTimeSeconds { get; init; } = -1;

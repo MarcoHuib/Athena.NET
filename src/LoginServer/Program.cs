@@ -8,6 +8,7 @@ using Microsoft.EntityFrameworkCore.Diagnostics;
 using Athena.Net.LoginServer.Config;
 using Athena.Net.LoginServer.Db;
 using Athena.Net.LoginServer.Net;
+using Athena.Net.LoginServer.Logging;
 
 namespace Athena.Net.LoginServer;
 
@@ -23,10 +24,13 @@ public static class Program
         var autoMigrate = ArgsHelper.HasFlag(args, "--auto-migrate") ||
             string.Equals(Environment.GetEnvironmentVariable("ATHENA_NET_LOGIN_DB_AUTOMIGRATE"), "true", StringComparison.OrdinalIgnoreCase);
         var config = LoginConfigLoader.Load(configPath);
+        LoginLogger.Configure(config);
         var configStore = new LoginConfigStore(config, configPath);
         var interConfig = InterConfigLoader.Load(interConfigPath);
         var secrets = SecretConfig.Load(secretsPath);
         var subnetConfig = SubnetConfigLoader.Load(subnetConfigPath);
+        var loginMsgPath = ArgsHelper.GetValue(args, "--login-msg-config") ?? "conf/msg_conf/login_msg.conf";
+        var loginMessages = new LoginMessageStore(LoginMessageLoader.Load(loginMsgPath), loginMsgPath);
         var tableNames = new LoginDbTableNames
         {
             AccountTable = interConfig.LoginAccountTable,
@@ -39,7 +43,7 @@ public static class Program
         var state = new LoginState();
         Func<LoginDbContext?> dbFactory = () => null;
 
-        Console.WriteLine($"Login server starting on {config.BindIp}:{config.LoginPort} (PACKETVER 20220406)");
+        LoginLogger.Status($"Login server starting on {config.BindIp}:{config.LoginPort} (PACKETVER 20220406)");
 
         var connectionString = ResolveConnectionString(interConfig, secrets);
         var dbProvider = ResolveDbProvider(interConfig, secrets, connectionString);
@@ -59,7 +63,7 @@ public static class Program
                 }
                 else
                 {
-                    Console.WriteLine($"DB: unsupported provider '{dbProvider}'.");
+                    LoginLogger.Error($"DB: unsupported provider '{dbProvider}'.");
                     return 1;
                 }
 
@@ -80,30 +84,30 @@ public static class Program
                         if (hasMigrations)
                         {
                             await db.Database.MigrateAsync();
-                            Console.WriteLine("DB: migrations applied.");
+                            LoginLogger.Status("DB: migrations applied.");
                         }
                         else
                         {
                             await db.Database.EnsureCreatedAsync();
-                            Console.WriteLine("DB: schema created (EnsureCreated).");
+                            LoginLogger.Status("DB: schema created (EnsureCreated).");
                         }
                     }
                     var canConnect = await db.Database.CanConnectAsync();
-                    Console.WriteLine(canConnect ? "DB: connected." : "DB: unable to connect.");
+                    LoginLogger.Status(canConnect ? "DB: connected." : "DB: unable to connect.");
                 }
                 else
                 {
-                    Console.WriteLine("DB: unable to create connection.");
+                    LoginLogger.Error("DB: unable to create connection.");
                 }
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"DB: connection check failed ({ex.Message}).");
+                LoginLogger.Error($"DB: connection check failed ({ex.Message}).");
             }
         }
         else
         {
-            Console.WriteLine("DB: no connection string configured (check conf/inter_athena.conf).");
+            LoginLogger.Error("DB: no connection string configured (check conf/inter_athena.conf).");
         }
 
         if (selfTest)
@@ -121,8 +125,8 @@ public static class Program
 
         state.OnAutoDisconnect = accountId => DisableWebAuthTokenAsync(accountId, configStore, state, dbFactory, cts.Token);
 
-        var consoleTask = StartConsoleAsync(configStore, charServers, state, dbFactory, cts);
-        var server = new LoginTcpServer(configStore, dbFactory, charServers, state, subnetConfig);
+        var consoleTask = StartConsoleAsync(configStore, loginMessages, charServers, state, dbFactory, cts);
+        var server = new LoginTcpServer(configStore, loginMessages, dbFactory, charServers, state, subnetConfig);
         var cleanupTask = StartIpBanCleanupAsync(configStore, dbFactory, cts.Token);
         var ipSyncTask = StartIpSyncAsync(configStore, charServers, cts.Token);
         var onlineCleanupTask = StartOnlineCleanupAsync(state, cts.Token);
@@ -170,7 +174,7 @@ public static class Program
                             .ExecuteDeleteAsync(cancellationToken);
                         if (affected > 0)
                         {
-                            Console.WriteLine($"IPBan cleanup removed {affected} rows.");
+                        LoginLogger.Info($"IPBan cleanup removed {affected} rows.");
                         }
                     }
                 }
@@ -180,7 +184,7 @@ public static class Program
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"IPBan cleanup error: {ex.Message}");
+                    LoginLogger.Warning($"IPBan cleanup error: {ex.Message}");
                 }
             }
         }, cancellationToken);
@@ -240,7 +244,7 @@ public static class Program
         return string.Empty;
     }
 
-    private static Task StartConsoleAsync(LoginConfigStore configStore, CharServerRegistry charServers, LoginState state, Func<LoginDbContext?> dbFactory, CancellationTokenSource cts)
+    private static Task StartConsoleAsync(LoginConfigStore configStore, LoginMessageStore loginMessages, CharServerRegistry charServers, LoginState state, Func<LoginDbContext?> dbFactory, CancellationTokenSource cts)
     {
         if (!configStore.Current.ConsoleEnabled)
         {
@@ -282,22 +286,28 @@ public static class Program
                     var sub = command.ToLowerInvariant();
                     if (sub == "shutdown" || sub == "exit" || sub == "quit")
                     {
-                        Console.WriteLine("Shutdown requested.");
+                        LoginLogger.Status("Shutdown requested.");
                         cts.Cancel();
                     }
                     else if (sub == "alive" || sub == "status")
                     {
                         var servers = charServers.All().Count();
-                        Console.WriteLine($"Status: online={state.OnlineCount}, auth={state.AuthCount}, char_servers={servers}");
+                        LoginLogger.Status($"Status: online={state.OnlineCount}, auth={state.AuthCount}, char_servers={servers}");
                     }
                     else if (sub == "reloadconf")
                     {
                         var ok = configStore.Reload();
-                        Console.WriteLine(ok ? "Config reloaded." : "Config reload failed.");
+                        if (ok)
+                        {
+                            LoginLogger.Configure(configStore.Current);
+                        }
+
+                        var msgOk = loginMessages.Reload();
+                        LoginLogger.Status(ok && msgOk ? "Config reloaded." : "Config reload failed.");
                     }
                     else
                     {
-                        Console.WriteLine("Server commands: shutdown, status, reloadconf");
+                        LoginLogger.Status("Server commands: shutdown, status, reloadconf");
                     }
                 }
                 else if (cmd == "create" || cmd.StartsWith("create", StringComparison.OrdinalIgnoreCase))
@@ -307,22 +317,28 @@ public static class Program
                 }
                 else if (cmd == "quit" || cmd == "exit" || cmd == "shutdown")
                 {
-                    Console.WriteLine("Shutdown requested.");
+                    LoginLogger.Status("Shutdown requested.");
                     cts.Cancel();
                 }
                 else if (cmd == "reload")
                 {
                     var ok = configStore.Reload();
-                    Console.WriteLine(ok ? "Config reloaded." : "Config reload failed.");
+                    if (ok)
+                    {
+                        LoginLogger.Configure(configStore.Current);
+                    }
+
+                    var msgOk = loginMessages.Reload();
+                    LoginLogger.Status(ok && msgOk ? "Config reloaded." : "Config reload failed.");
                 }
                 else if (cmd == "status")
                 {
                     var servers = charServers.All().Count();
-                    Console.WriteLine($"Status: online={state.OnlineCount}, auth={state.AuthCount}, char_servers={servers}");
+                    LoginLogger.Status($"Status: online={state.OnlineCount}, auth={state.AuthCount}, char_servers={servers}");
                 }
                 else
                 {
-                    Console.WriteLine("Commands: status, reload, quit, create:<username> <password> <sex> | server:shutdown|status|reloadconf");
+                    LoginLogger.Status("Commands: status, reload, quit, create:<username> <password> <sex> | server:shutdown|status|reloadconf");
                 }
             }
         }, cts.Token);
@@ -337,7 +353,7 @@ public static class Program
         var parts = payload.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         if (parts.Length < 3)
         {
-            Console.WriteLine("Usage: create:<username> <password> <sex:M|F>");
+            LoginLogger.Status("Usage: create:<username> <password> <sex:M|F>");
             return;
         }
 
@@ -348,14 +364,14 @@ public static class Program
 
         if (user.Length < 4 || pass.Length < 1 || (sex != 'M' && sex != 'F'))
         {
-            Console.WriteLine("Invalid parameters. Usage: create:<username> <password> <sex:M|F>");
+            LoginLogger.Warning("Invalid parameters. Usage: create:<username> <password> <sex:M|F>");
             return;
         }
 
         var db = dbFactory();
         if (db == null)
         {
-            Console.WriteLine("DB: unable to create connection.");
+            LoginLogger.Error("DB: unable to create connection.");
             return;
         }
 
@@ -364,7 +380,7 @@ public static class Program
             var exists = await db.Accounts.AsNoTracking().AnyAsync(a => a.UserId == user, cancellationToken);
             if (exists)
             {
-                Console.WriteLine($"Account '{user}' already exists.");
+                LoginLogger.Warning($"Account '{user}' already exists.");
                 return;
             }
 
@@ -404,7 +420,7 @@ public static class Program
 
             db.Accounts.Add(account);
             await db.SaveChangesAsync(cancellationToken);
-            Console.WriteLine($"Account '{user}' created.");
+            LoginLogger.Status($"Account '{user}' created.");
         }
     }
 

@@ -1,12 +1,14 @@
 using System.Net;
 using System.Net.Sockets;
 using Athena.Net.LoginServer.Config;
+using Athena.Net.LoginServer.Logging;
 
 namespace Athena.Net.LoginServer.Net;
 
 public sealed class LoginTcpServer
 {
     private readonly LoginConfigStore _configStore;
+    private readonly LoginMessageStore _messageStore;
     private readonly Func<Db.LoginDbContext?> _dbFactory;
     private readonly CharServerRegistry _charServers;
     private readonly LoginState _state;
@@ -15,9 +17,10 @@ public sealed class LoginTcpServer
 
     public int BoundPort { get; private set; }
 
-    public LoginTcpServer(LoginConfigStore configStore, Func<Db.LoginDbContext?> dbFactory, CharServerRegistry charServers, LoginState state, Config.SubnetConfig subnetConfig)
+    public LoginTcpServer(LoginConfigStore configStore, LoginMessageStore messageStore, Func<Db.LoginDbContext?> dbFactory, CharServerRegistry charServers, LoginState state, Config.SubnetConfig subnetConfig)
     {
         _configStore = configStore;
+        _messageStore = messageStore;
         _dbFactory = dbFactory;
         _charServers = charServers;
         _state = state;
@@ -30,7 +33,7 @@ public sealed class LoginTcpServer
     {
         _listener.Start();
         BoundPort = ((IPEndPoint)_listener.LocalEndpoint).Port;
-        Console.WriteLine("Login server listening...");
+        LoginLogger.Status("Login server listening...");
 
         try
         {
@@ -53,10 +56,10 @@ public sealed class LoginTcpServer
     private async Task HandleClientAsync(TcpClient client, CancellationToken cancellationToken)
     {
         var endpoint = client.Client.RemoteEndPoint as IPEndPoint;
-        Console.WriteLine($"Client connected: {endpoint}");
+        LoginLogger.Info($"Client connected: {endpoint}");
 
         using (client)
-        using (var session = new ClientSession(client, _configStore, _dbFactory, _charServers, _state, _subnetConfig))
+        using (var session = new ClientSession(client, _configStore, _messageStore, _dbFactory, _charServers, _state, _subnetConfig))
         {
             try
             {
@@ -72,10 +75,10 @@ public sealed class LoginTcpServer
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Client session error: {ex.Message}");
+                LoginLogger.Warning($"Client session error: {ex.Message}");
             }
         }
 
-        Console.WriteLine($"Client disconnected: {endpoint}");
+        LoginLogger.Info($"Client disconnected: {endpoint}");
     }
 }

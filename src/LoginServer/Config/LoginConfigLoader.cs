@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Net;
+using Athena.Net.LoginServer.Logging;
 
 namespace Athena.Net.LoginServer.Config;
 
@@ -34,6 +35,9 @@ public static class LoginConfigLoader
         var dnsblServers = string.Empty;
         var ipBanCleanupInterval = 60;
         var consoleEnabled = false;
+        var consoleMsgLog = 0;
+        var consoleSilent = 0;
+        var consoleLogFilePath = "./log/login-msg_log.log";
         var allowedRegistrations = 1;
         var registrationWindowSeconds = 10;
         var startLimitedTimeSeconds = -1;
@@ -47,7 +51,7 @@ public static class LoginConfigLoader
 
         if (!File.Exists(path))
         {
-            Console.WriteLine($"Config not found: {path}. Using defaults.");
+            LoginLogger.Info($"Config not found: {path}. Using defaults.");
             return new LoginConfig
             {
                 BindIp = bindIp,
@@ -77,6 +81,9 @@ public static class LoginConfigLoader
                 DnsblServers = dnsblServers,
                 IpBanCleanupIntervalSeconds = ipBanCleanupInterval,
                 ConsoleEnabled = consoleEnabled,
+                ConsoleMsgLog = consoleMsgLog,
+                ConsoleSilent = consoleSilent,
+                ConsoleLogFilePath = consoleLogFilePath,
                 AllowedRegistrations = allowedRegistrations,
                 RegistrationWindowSeconds = registrationWindowSeconds,
                 StartLimitedTimeSeconds = startLimitedTimeSeconds,
@@ -90,9 +97,9 @@ public static class LoginConfigLoader
             };
         }
 
-        foreach (var rawLine in File.ReadLines(path))
+        var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var line in ReadConfigLines(path, visited))
         {
-            var line = StripComment(rawLine).Trim();
             if (line.Length == 0)
             {
                 continue;
@@ -201,11 +208,26 @@ public static class LoginConfigLoader
             {
                 ipBanEnabled = ParseBool(value, ipBanEnabled);
             }
+            else if (key.Equals("ipban_enable", StringComparison.OrdinalIgnoreCase))
+            {
+                ipBanEnabled = ParseBool(value, ipBanEnabled);
+            }
             else if (key.Equals("dynamic_pass_failure_ban", StringComparison.OrdinalIgnoreCase))
             {
                 dynamicPassFailureBan = ParseBool(value, dynamicPassFailureBan);
             }
+            else if (key.Equals("ipban_dynamic_pass_failure_ban", StringComparison.OrdinalIgnoreCase))
+            {
+                dynamicPassFailureBan = ParseBool(value, dynamicPassFailureBan);
+            }
             else if (key.Equals("dynamic_pass_failure_ban_interval", StringComparison.OrdinalIgnoreCase))
+            {
+                if (int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed))
+                {
+                    dynamicPassFailureBanInterval = parsed;
+                }
+            }
+            else if (key.Equals("ipban_dynamic_pass_failure_ban_interval", StringComparison.OrdinalIgnoreCase))
             {
                 if (int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed))
                 {
@@ -219,7 +241,21 @@ public static class LoginConfigLoader
                     dynamicPassFailureBanLimit = parsed;
                 }
             }
+            else if (key.Equals("ipban_dynamic_pass_failure_ban_limit", StringComparison.OrdinalIgnoreCase))
+            {
+                if (int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed))
+                {
+                    dynamicPassFailureBanLimit = parsed;
+                }
+            }
             else if (key.Equals("dynamic_pass_failure_ban_duration", StringComparison.OrdinalIgnoreCase))
+            {
+                if (int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed))
+                {
+                    dynamicPassFailureBanDuration = parsed;
+                }
+            }
+            else if (key.Equals("ipban_dynamic_pass_failure_ban_duration", StringComparison.OrdinalIgnoreCase))
             {
                 if (int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed))
                 {
@@ -234,6 +270,10 @@ public static class LoginConfigLoader
             {
                 dnsblServers = value;
             }
+            else if (key.Equals("dnsbl_servers", StringComparison.OrdinalIgnoreCase))
+            {
+                dnsblServers = value;
+            }
             else if (key.Equals("ipban_cleanup_interval", StringComparison.OrdinalIgnoreCase))
             {
                 if (int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed))
@@ -244,6 +284,24 @@ public static class LoginConfigLoader
             else if (key.Equals("console", StringComparison.OrdinalIgnoreCase))
             {
                 consoleEnabled = ParseBool(value, consoleEnabled);
+            }
+            else if (key.Equals("console_msg_log", StringComparison.OrdinalIgnoreCase))
+            {
+                if (int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed))
+                {
+                    consoleMsgLog = parsed;
+                }
+            }
+            else if (key.Equals("console_silent", StringComparison.OrdinalIgnoreCase))
+            {
+                if (int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed))
+                {
+                    consoleSilent = parsed;
+                }
+            }
+            else if (key.Equals("console_log_filepath", StringComparison.OrdinalIgnoreCase))
+            {
+                consoleLogFilePath = value;
             }
             else if (key.Equals("allowed_regs", StringComparison.OrdinalIgnoreCase))
             {
@@ -360,6 +418,9 @@ public static class LoginConfigLoader
             DnsblServers = dnsblServers,
             IpBanCleanupIntervalSeconds = ipBanCleanupInterval,
             ConsoleEnabled = consoleEnabled,
+            ConsoleMsgLog = consoleMsgLog,
+            ConsoleSilent = consoleSilent,
+            ConsoleLogFilePath = consoleLogFilePath,
             AllowedRegistrations = allowedRegistrations,
             RegistrationWindowSeconds = registrationWindowSeconds,
             StartLimitedTimeSeconds = startLimitedTimeSeconds,
@@ -371,6 +432,79 @@ public static class LoginConfigLoader
             UsercountMedium = usercountMedium,
             UsercountHigh = usercountHigh,
         };
+    }
+
+    private static IEnumerable<string> ReadConfigLines(string path, HashSet<string> visited)
+    {
+        var fullPath = Path.GetFullPath(path);
+        if (!visited.Add(fullPath))
+        {
+            yield break;
+        }
+
+        foreach (var rawLine in File.ReadLines(fullPath))
+        {
+            var line = StripComment(rawLine).Trim();
+            if (line.Length == 0)
+            {
+                continue;
+            }
+
+            if (TryGetImportPath(line, out var importPath))
+            {
+                var resolved = ResolveImportPath(fullPath, importPath);
+                if (!File.Exists(resolved))
+                {
+                    LoginLogger.Warning($"Config import not found: {resolved}. Skipping.");
+                    continue;
+                }
+
+                foreach (var imported in ReadConfigLines(resolved, visited))
+                {
+                    yield return imported;
+                }
+
+                continue;
+            }
+
+            yield return line;
+        }
+    }
+
+    private static bool TryGetImportPath(string line, out string importPath)
+    {
+        importPath = string.Empty;
+        var separator = line.IndexOf(':');
+        if (separator <= 0)
+        {
+            return false;
+        }
+
+        var key = line[..separator].Trim();
+        if (!key.Equals("import", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        importPath = line[(separator + 1)..].Trim().Trim('"');
+        return importPath.Length > 0;
+    }
+
+    private static string ResolveImportPath(string basePath, string importPath)
+    {
+        if (Path.IsPathRooted(importPath))
+        {
+            return importPath;
+        }
+
+        var cwdCandidate = Path.GetFullPath(importPath);
+        if (File.Exists(cwdCandidate))
+        {
+            return cwdCandidate;
+        }
+
+        var dir = Path.GetDirectoryName(basePath);
+        return Path.GetFullPath(Path.Combine(dir ?? ".", importPath));
     }
 
     private static ClientHashRule? ParseClientHashRule(string value)

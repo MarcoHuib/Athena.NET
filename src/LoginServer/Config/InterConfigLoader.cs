@@ -1,4 +1,5 @@
 using System.Globalization;
+using Athena.Net.LoginServer.Logging;
 
 namespace Athena.Net.LoginServer.Config;
 
@@ -20,13 +21,13 @@ public static class InterConfigLoader
 
         if (!File.Exists(path))
         {
-            Console.WriteLine($"Inter config not found: {path}. Using defaults.");
+            LoginLogger.Info($"Inter config not found: {path}. Using defaults.");
             return new InterConfig();
         }
 
-        foreach (var rawLine in File.ReadLines(path))
+        var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var line in ReadConfigLines(path, visited))
         {
-            var line = StripComment(rawLine).Trim();
             if (line.Length == 0)
             {
                 continue;
@@ -95,11 +96,21 @@ public static class InterConfigLoader
             return new InterConfig();
         }
 
-        var connectionString = $"Server={host};Port={port};Database={db};User={user};Password={pass};SslMode=None;";
+        var normalizedProvider = provider.Trim().ToLowerInvariant();
+        string connectionString;
+        if (normalizedProvider == "sqlserver" || normalizedProvider == "mssql")
+        {
+            var server = port > 0 ? $"{host},{port}" : host;
+            connectionString = $"Server={server};Database={db};User ID={user};Password={pass};Encrypt=True;TrustServerCertificate=True;";
+        }
+        else
+        {
+            connectionString = $"Server={host};Port={port};Database={db};User={user};Password={pass};SslMode=None;";
+        }
 
         return new InterConfig
         {
-            LoginDbProvider = provider,
+            LoginDbProvider = normalizedProvider,
             LoginDbConnectionString = connectionString,
             LoginAccountTable = loginAccountTable,
             IpBanTable = ipbanTable,
@@ -107,6 +118,79 @@ public static class InterConfigLoader
             GlobalAccRegNumTable = globalAccRegNumTable,
             GlobalAccRegStrTable = globalAccRegStrTable,
         };
+    }
+
+    private static IEnumerable<string> ReadConfigLines(string path, HashSet<string> visited)
+    {
+        var fullPath = Path.GetFullPath(path);
+        if (!visited.Add(fullPath))
+        {
+            yield break;
+        }
+
+        foreach (var rawLine in File.ReadLines(fullPath))
+        {
+            var line = StripComment(rawLine).Trim();
+            if (line.Length == 0)
+            {
+                continue;
+            }
+
+            if (TryGetImportPath(line, out var importPath))
+            {
+                var resolved = ResolveImportPath(fullPath, importPath);
+                if (!File.Exists(resolved))
+                {
+                    LoginLogger.Warning($"Inter config import not found: {resolved}. Skipping.");
+                    continue;
+                }
+
+                foreach (var imported in ReadConfigLines(resolved, visited))
+                {
+                    yield return imported;
+                }
+
+                continue;
+            }
+
+            yield return line;
+        }
+    }
+
+    private static bool TryGetImportPath(string line, out string importPath)
+    {
+        importPath = string.Empty;
+        var separator = line.IndexOf(':');
+        if (separator <= 0)
+        {
+            return false;
+        }
+
+        var key = line[..separator].Trim();
+        if (!key.Equals("import", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        importPath = line[(separator + 1)..].Trim().Trim('"');
+        return importPath.Length > 0;
+    }
+
+    private static string ResolveImportPath(string basePath, string importPath)
+    {
+        if (Path.IsPathRooted(importPath))
+        {
+            return importPath;
+        }
+
+        var cwdCandidate = Path.GetFullPath(importPath);
+        if (File.Exists(cwdCandidate))
+        {
+            return cwdCandidate;
+        }
+
+        var dir = Path.GetDirectoryName(basePath);
+        return Path.GetFullPath(Path.Combine(dir ?? ".", importPath));
     }
 
     private static string StripComment(string line)

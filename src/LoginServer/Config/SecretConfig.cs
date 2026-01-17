@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Athena.Net.LoginServer.Logging;
 
 namespace Athena.Net.LoginServer.Config;
 
@@ -55,7 +56,7 @@ public sealed class SecretConfig
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"secrets config invalid: {ex.Message}");
+            LoginLogger.Warning($"Secrets config invalid: {ex.Message}");
             return new SecretConfig();
         }
     }

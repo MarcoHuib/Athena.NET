@@ -9,6 +9,7 @@ using Microsoft.EntityFrameworkCore;
 using Athena.Net.LoginServer.Config;
 using Athena.Net.LoginServer.Db;
 using Athena.Net.LoginServer.Db.Entities;
+using Athena.Net.LoginServer.Logging;
 
 namespace Athena.Net.LoginServer.Net;
 
@@ -19,6 +20,7 @@ public sealed class ClientSession : IDisposable
     private readonly TcpClient _client;
     private readonly NetworkStream _stream;
     private readonly LoginConfigStore _configStore;
+    private readonly LoginMessageStore _messageStore;
     private readonly Func<LoginDbContext?> _dbFactory;
     private readonly CharServerRegistry _charServers;
     private readonly LoginState _state;
@@ -60,10 +62,11 @@ public sealed class ClientSession : IDisposable
         [PacketConstants.LcPincodeAuthFail] = 6,
     };
 
-    public ClientSession(TcpClient client, LoginConfigStore configStore, Func<LoginDbContext?> dbFactory, CharServerRegistry charServers, LoginState state, Config.SubnetConfig subnetConfig)
+    public ClientSession(TcpClient client, LoginConfigStore configStore, LoginMessageStore messageStore, Func<LoginDbContext?> dbFactory, CharServerRegistry charServers, LoginState state, Config.SubnetConfig subnetConfig)
     {
         _client = client;
         _configStore = configStore;
+        _messageStore = messageStore;
         _dbFactory = dbFactory;
         _charServers = charServers;
         _state = state;
@@ -194,7 +197,7 @@ public sealed class ClientSession : IDisposable
 
         if (!PacketLengths.TryGetValue(packetType, out var length))
         {
-            Console.WriteLine($"Unknown packet 0x{packetType:X4}, closing session.");
+            LoginLogger.Warning($"Unknown packet 0x{packetType:X4}, closing session.");
             return Array.Empty<byte>();
         }
 
@@ -1105,7 +1108,7 @@ public sealed class ClientSession : IDisposable
 
             if (account == null)
             {
-                await LogLoginAsync(db, userId, remoteIp, 0, "Unregistered ID", cancellationToken);
+                await LogLoginAsync(db, userId, remoteIp, 0, string.Empty, cancellationToken);
                 return AuthResult.Fail(0);
             }
 
@@ -1117,28 +1120,28 @@ public sealed class ClientSession : IDisposable
 
             if (!CheckPassword(request, account))
             {
-                await LogLoginAsync(db, userId, remoteIp, 1, "Incorrect password", cancellationToken);
+                await LogLoginAsync(db, userId, remoteIp, 1, string.Empty, cancellationToken);
                 return AuthResult.Fail(1);
             }
 
             var now = DateTime.UtcNow;
             if (account.ExpirationTime != 0 && account.ExpirationTime < ToUnixTime(now))
             {
-                await LogLoginAsync(db, userId, remoteIp, 2, "Expired ID", cancellationToken);
+                await LogLoginAsync(db, userId, remoteIp, 2, string.Empty, cancellationToken);
                 return AuthResult.Fail(2);
             }
 
             if (account.UnbanTime != 0 && account.UnbanTime > ToUnixTime(now))
             {
                 var unblock = FormatDate(FromUnixTime(account.UnbanTime));
-                await LogLoginAsync(db, userId, remoteIp, 6, "Banned", cancellationToken);
+                await LogLoginAsync(db, userId, remoteIp, 6, string.Empty, cancellationToken);
                 return AuthResult.Fail(6, unblock);
             }
 
             if (account.State != 0)
             {
                 var error = (uint)Math.Max(0, (int)account.State - 1);
-                await LogLoginAsync(db, userId, remoteIp, error, "Account state", cancellationToken);
+                await LogLoginAsync(db, userId, remoteIp, error, string.Empty, cancellationToken);
                 return AuthResult.Fail(error);
             }
 
@@ -1146,7 +1149,7 @@ public sealed class ClientSession : IDisposable
             {
                 if (!IsClientHashAllowed(account.GroupId))
                 {
-                    await LogLoginAsync(db, userId, remoteIp, 5, "Client hash", cancellationToken);
+                    await LogLoginAsync(db, userId, remoteIp, 5, string.Empty, cancellationToken);
                     return AuthResult.Fail(5);
                 }
             }
@@ -1275,11 +1278,26 @@ public sealed class ClientSession : IDisposable
             Ip = ip,
             User = userId,
             ResultCode = (byte)Math.Min(byte.MaxValue, resultCode),
-            Log = message,
+            Log = ResolveLoginMessage(resultCode, message),
         };
 
         await db.LoginLogs.AddAsync(entry, cancellationToken);
         await db.SaveChangesAsync(cancellationToken);
+    }
+
+    private string ResolveLoginMessage(uint resultCode, string message)
+    {
+        if (!string.IsNullOrWhiteSpace(message))
+        {
+            return message;
+        }
+
+        if (_messageStore.Current.TryGet(resultCode, out var resolved))
+        {
+            return resolved;
+        }
+
+        return "Unknown Error";
     }
 
     private async Task<bool> IsIpBannedAsync(LoginDbContext db, string ip, CancellationToken cancellationToken)
@@ -1343,7 +1361,7 @@ public sealed class ClientSession : IDisposable
 
             await db.IpBanList.AddAsync(ban, cancellationToken);
             await db.SaveChangesAsync(cancellationToken);
-            Console.WriteLine($"IPBan added for {list} ({Config.DynamicPassFailureBanDurationMinutes}m).");
+            LoginLogger.Info($"IPBan added for {list} ({Config.DynamicPassFailureBanDurationMinutes}m).");
         }
     }
 
@@ -1819,7 +1837,7 @@ public sealed class ClientSession : IDisposable
                 var entry = await Dns.GetHostEntryAsync(query);
                 if (entry.AddressList.Length > 0)
                 {
-                    Console.WriteLine($"DNSBL match: {query}");
+                    LoginLogger.Warning($"DNSBL match: {query}");
                     return true;
                 }
             }

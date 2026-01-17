@@ -1,127 +1,82 @@
-# athena.net C# (athenadotnet)
+<a id="readme-top"></a>
 
-This folder contains the C# rewrite of athena.net components. The current focus is the LoginServer.
+[![License][license-shield]][license-url]
+[![Issues][issues-shield]][issues-url]
+[![Stars][stars-shield]][stars-url]
 
-## Secrets
-- Create `solutionfiles/secrets/secret.json` (already generated in this repo).
-- The file is ignored by git (see `.gitignore`).
-- Example structure:
-```json
-{
-  "LoginDb": {
-    "Provider": "sqlserver",
-    "ConnectionString": "Server=localhost,1433;Database=athena.net;User ID=sa;Password=...;Encrypt=True;TrustServerCertificate=True;"
-  },
-  "SqlServer": {
-    "SaPassword": "..."
-  }
-}
-```
+<br />
+<div align="center">
+  <h3 align="center">Athena.NET</h3>
+  <p align="center">
+    A modern C# reimplementation of the rAthena server stack.
+    <br />
+    <a href="docs/"><strong>Explore the docs »</strong></a>
+    <br />
+    <br />
+    <a href="docs/installation.md">Installation</a>
+    &middot;
+    <a href="docs/configuration.md">Configuration</a>
+    &middot;
+    <a href="docs/docker-compose.md">Docker compose</a>
+  </p>
+</div>
 
-## Run locally (macOS/Linux)
-From repo root:
-```
-dotnet run --project src/LoginServer
-```
+<details>
+  <summary>Table of Contents</summary>
+  <ol>
+    <li><a href="#about">About</a></li>
+    <li><a href="#status">Status</a></li>
+    <li><a href="#quick-start">Quick Start</a></li>
+    <li><a href="#docs">Documentation</a></li>
+    <li><a href="#roadmap">Roadmap</a></li>
+  </ol>
+</details>
 
-From `src/LoginServer`:
-```
-dotnet run -- --secrets ../../solutionfiles/secrets/secret.json
-```
+## About
+Athena.NET is a clean, cross-platform C# rewrite of rAthena, focused on correctness, parity, and fast iteration.
+The current milestone is a fully compatible LoginServer; CharServer and MapServer will follow as the migration progresses.
 
-Subnet (LAN) config:
-- Default path: `conf/subnet_athena.conf`
-- Override with `--subnet-config <path>`
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
 
-Auto-migrate schema at startup (dev only):
-```
-dotnet run --project src/LoginServer -- --auto-migrate
-```
+## Status
+- LoginServer: functional and actively aligned with legacy behavior.
+- CharServer/MapServer: planned.
 
-Or via env var:
-```
-export ATHENA_NET_LOGIN_DB_AUTOMIGRATE=true
-dotnet run --project src/LoginServer
-```
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
 
-Note: If no EF migrations exist, auto-migrate uses `EnsureCreated` to create tables.
+## Quick Start
+- [Install prerequisites and secrets](docs/installation.md)
+- [Configure runtime settings](docs/configuration.md)
+- [Run locally](docs/run-locally.md)
+- [Run with Docker compose](docs/docker-compose.md)
+- [Migrations](docs/migrations.md)
 
-## Migrations (when dotnet-ef is available)
-Initialize migrations:
-```
-chmod +x src/LoginServer/scripts/migrations-init.sh
-./src/LoginServer/scripts/migrations-init.sh
-```
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
 
-Then apply:
-```
-chmod +x src/LoginServer/scripts/migrations-update.sh
-./src/LoginServer/scripts/migrations-update.sh
-```
+## Docs
+- [Installation](docs/installation.md)
+- [Configuration](docs/configuration.md)
+- [Run locally](docs/run-locally.md)
+- [Docker compose](docs/docker-compose.md)
+- [Migrations](docs/migrations.md)
+- [Checklists](docs/checklists.md)
+- [Helper scripts](docs/scripts.md)
 
-## SQL Edge (ARM) via Docker Compose
-We use Azure SQL Edge for arm64 support.
-Compose files live in repo root (`docker-compose.sql-edge.yml` and `docker-compose.yml`).
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
 
-1) Start SQL Edge:
-```
-chmod +x scripts/compose-sql-edge.sh
-./scripts/compose-sql-edge.sh
-```
+## Roadmap
+- [x] LoginServer login flow parity and SQL Server support
+- [x] Legacy config aliases and `import:` support
+- [x] `login_msg.conf` message catalog support
+- [ ] CharServer migration
+- [ ] MapServer migration
 
-2) Create the database (one time):
-```
-./scripts/create-sql-edge-db.sh
-```
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
 
-## Login Server + SQL Edge via Docker Compose
-Run both services together:
-```
-chmod +x scripts/compose-login.sh
-./scripts/compose-login.sh
-```
-
-Helper commands (up/down/build/logs):
-```
-chmod +x scripts/compose-login-tools.sh
-./scripts/compose-login-tools.sh up
-./scripts/compose-login-tools.sh logs
-./scripts/compose-login-tools.sh self-test
-```
-
-Notes:
-- Default compose build image for .NET is `mcr.microsoft.com/dotnet/sdk:10.0-preview`.
-  Override with `DOTNET_IMAGE` if needed (used in the Dockerfile build stage).
-- After code changes, rebuild the image:
-```
-docker compose -f docker-compose.yml build
-```
-- Compose passes DB settings via env vars:
-  - `ATHENA_NET_LOGIN_DB_PROVIDER`
-  - `ATHENA_NET_LOGIN_DB_CONNECTION`
-- Compose mounts `conf/` into the container as `/app/conf` (read-only), so
-  `conf/login_athena.conf` and `conf/inter_athena.conf` are used automatically.
-
-## Parity checklist (LoginServer)
-- `conf/login_athena.conf` and `conf/inter_athena.conf` loaded (no default warnings).
-- DB schema exists (auto-migrate or pre-created).
-- Client login -> char list -> select works with PACKETVER=20220406.
-- Duplicate login returns “already online” and triggers kick.
-- IP ban + DNSBL behave as expected (optional).
-- Usercount colors match thresholds (green/yellow/red/purple).
-- Self-test passes.
-- Online cleanup runs (unknown char-server sessions are cleared every 10 minutes).
-
-## Ready-to-ship checklist
-- `docker compose -f docker-compose.yml build` is clean.
-- `./scripts/compose-login-tools.sh up` shows no errors in logs.
-- `./scripts/compose-login-tools.sh self-test` passes.
-- DB migrations are applied (or `ATHENA_NET_LOGIN_DB_AUTOMIGRATE=true` in compose).
-
-## Helper scripts
-  - `scripts/run-sql-edge.sh` (manual run, no compose)
-  - `scripts/create-sql-edge-db.sh`
-  - `scripts/compose-sql-edge.sh`
-  - `scripts/compose-login.sh`
-  - `src/LoginServer/scripts/migrations-init.sh`
-  - `src/LoginServer/scripts/migrations-update.sh`
+<!-- MARKDOWN LINKS & IMAGES -->
+[license-shield]: https://img.shields.io/github/license/marco/athena.net?style=for-the-badge
+[license-url]: LICENSE
+[issues-shield]: https://img.shields.io/github/issues/marco/athena.net?style=for-the-badge
+[issues-url]: https://github.com/marco/athena.net/issues
+[stars-shield]: https://img.shields.io/github/stars/marco/athena.net?style=for-the-badge
+[stars-url]: https://github.com/marco/athena.net/stargazers

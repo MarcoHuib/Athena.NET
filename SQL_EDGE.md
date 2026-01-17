@@ -17,6 +17,8 @@ Quick start
 Login server via compose
 - Run both SQL Edge and the login server in one compose:
   `./scripts/compose-login.sh`
+- Seed the login server account (required for char-server handshake):
+  `./scripts/seed-login-server-account.sh`
 
 Notes
 - The login server reads `solutionfiles/secrets/secret.json` by default.

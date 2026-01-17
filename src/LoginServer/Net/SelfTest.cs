@@ -7,6 +7,7 @@ using System.Text;
 using Athena.Net.LoginServer.Config;
 using Athena.Net.LoginServer.Db;
 using Athena.Net.LoginServer.Db.Entities;
+using Athena.Net.LoginServer.Logging;
 using Microsoft.EntityFrameworkCore;
 
 namespace Athena.Net.LoginServer.Net;
@@ -22,7 +23,8 @@ public static class SelfTest
         var subnetConfig = new SubnetConfig();
 
         using var cts = new CancellationTokenSource();
-        var server = new LoginTcpServer(configStore, dbFactory, charServers, state, subnetConfig);
+        var messageStore = new LoginMessageStore(new LoginMessageCatalog(new Dictionary<uint, string>()));
+        var server = new LoginTcpServer(configStore, messageStore, dbFactory, charServers, state, subnetConfig);
         var serverTask = server.RunAsync(cts.Token);
 
         var ready = await WaitForPortAsync(server, TimeSpan.FromSeconds(2));
@@ -34,40 +36,40 @@ public static class SelfTest
 
         var ok = true;
         var hashOk = await ProbeHashAsync(server.BoundPort);
-        Console.WriteLine($"Self-test: hash {(hashOk ? "ok" : "failed")}");
+        LoginLogger.Status($"Self-test: hash {(hashOk ? "ok" : "failed")}");
         ok &= hashOk;
 
         var canUseDb = await CanUseLoginDbAsync(dbFactory);
         if (canUseDb)
         {
             var refuseOk = await ProbeLoginRefuseAsync(server.BoundPort);
-            Console.WriteLine($"Self-test: login-refuse {(refuseOk ? "ok" : "failed")}");
+            LoginLogger.Status($"Self-test: login-refuse {(refuseOk ? "ok" : "failed")}");
             ok &= refuseOk;
         }
         else
         {
-            Console.WriteLine("Self-test: login-refuse skipped (db unavailable or missing tables).");
+            LoginLogger.Info("Self-test: login-refuse skipped (db unavailable or missing tables).");
         }
 
         var keepAliveOk = await ProbeKeepAliveAsync(server.BoundPort);
-        Console.WriteLine($"Self-test: keepalive {(keepAliveOk ? "ok" : "failed")}");
+        LoginLogger.Status($"Self-test: keepalive {(keepAliveOk ? "ok" : "failed")}");
         ok &= keepAliveOk;
 
         var dbTests = await ProbeDbLoginFlowAsync(server.BoundPort, configStore, dbFactory, charServers, state, canUseDb);
         if (dbTests.ran)
         {
-            Console.WriteLine($"Self-test: login-flow {(dbTests.ok ? "ok" : "failed")}");
+            LoginLogger.Status($"Self-test: login-flow {(dbTests.ok ? "ok" : "failed")}");
             ok &= dbTests.ok;
         }
         else
         {
-            Console.WriteLine("Self-test: login-flow skipped (db unavailable or missing tables).");
+            LoginLogger.Info("Self-test: login-flow skipped (db unavailable or missing tables).");
         }
 
         cts.Cancel();
         await Task.WhenAny(serverTask, Task.Delay(500));
 
-        Console.WriteLine(ok ? "Self-test: OK" : "Self-test: FAILED");
+        LoginLogger.Status(ok ? "Self-test: OK" : "Self-test: FAILED");
         return ok ? 0 : 2;
     }
 
@@ -128,7 +130,7 @@ public static class SelfTest
         var header = await ReadExactAsync(stream, 4);
         if (header.Length < 4)
         {
-            Console.WriteLine("Self-test: hash missing header.");
+            LoginLogger.Warning("Self-test: hash missing header.");
             return false;
         }
 
@@ -136,14 +138,14 @@ public static class SelfTest
         var length = BinaryPrimitives.ReadInt16LittleEndian(header.AsSpan(2, 2));
         if (packetType != PacketConstants.AcAckHash || length < 4)
         {
-            Console.WriteLine($"Self-test: hash unexpected response 0x{packetType:X4} len={length}.");
+            LoginLogger.Warning($"Self-test: hash unexpected response 0x{packetType:X4} len={length}.");
             return false;
         }
 
         var body = await ReadExactAsync(stream, length - 4);
         if (body.Length != length - 4)
         {
-            Console.WriteLine($"Self-test: hash body size mismatch {body.Length} != {length - 4}.");
+            LoginLogger.Warning($"Self-test: hash body size mismatch {body.Length} != {length - 4}.");
             return false;
         }
 
@@ -188,14 +190,14 @@ public static class SelfTest
         var resp = await ReadExactAsync(stream, 2);
         if (resp.Length < 2)
         {
-            Console.WriteLine("Self-test: keepalive missing response.");
+            LoginLogger.Warning("Self-test: keepalive missing response.");
             return false;
         }
 
         var packetType = BinaryPrimitives.ReadInt16LittleEndian(resp);
         if (packetType != PacketConstants.LcKeepAliveResponse)
         {
-            Console.WriteLine($"Self-test: keepalive unexpected response 0x{packetType:X4}.");
+            LoginLogger.Warning($"Self-test: keepalive unexpected response 0x{packetType:X4}.");
         }
         return packetType == PacketConstants.LcKeepAliveResponse;
     }
@@ -276,7 +278,7 @@ public static class SelfTest
                 var expected = MapUserCount(configStore.Current, 0);
                 if (userCount != expected)
                 {
-                    Console.WriteLine($"Self-test: usercount mismatch {userCount} != {expected}.");
+                    LoginLogger.Warning($"Self-test: usercount mismatch {userCount} != {expected}.");
                     return (true, false);
                 }
 
