@@ -134,6 +134,6 @@ _NCrunch*
 
 /SolutionFiles/Secrets/*
 /legacy/*
-/conf/*.conf
-!/conf/templates/
-!/conf/templates/*.conf
+/conf/inter_athena.conf
+/conf/login_athena.conf
+/conf/subnet_athena.conf
