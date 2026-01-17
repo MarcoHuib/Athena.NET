@@ -1,5 +1,6 @@
 <a id="readme-top"></a>
 
+[![CI][ci-shield]][ci-url]
 [![License][license-shield]][license-url]
 [![Issues][issues-shield]][issues-url]
 [![Stars][stars-shield]][stars-url]
@@ -80,3 +81,5 @@ The current milestone is a fully compatible LoginServer; CharServer and MapServe
 [issues-url]: https://github.com/marco/athena.net/issues
 [stars-shield]: https://img.shields.io/github/stars/marco/athena.net?style=for-the-badge
 [stars-url]: https://github.com/marco/athena.net/stargazers
+[ci-shield]: https://github.com/MarcoHuib/Athena.NET/actions/workflows/ci.yml/badge.svg?style=for-the-badge
+[ci-url]: https://github.com/MarcoHuib/Athena.NET/actions/workflows/ci.yml

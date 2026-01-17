@@ -13,7 +13,5 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
-      - name: Restore
-        run: dotnet restore
       - name: Test
-        run: dotnet test --configuration Release --no-build
+        run: dotnet test tests/LoginServer.Tests/LoginServer.Tests.csproj --configuration Release
