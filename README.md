@@ -4,9 +4,9 @@
 [![Issues][issues-shield]][issues-url]
 [![Stars][stars-shield]][stars-url]
 
-<br />
 <div align="center">
-  <h3 align="center">Athena.NET</h3>
+  <img src="docs/assets/logo.png" alt="Athena.NET Logo" style="display: block; margin: 0 auto 6px;">
+  <h1 align="center" style="margin-top: 0;">Athena.NET</h1>
   <p align="center">
     A modern C# reimplementation of the rAthena server stack.
     <br />
