@@ -1,6 +1,5 @@
 <a id="readme-top"></a>
 
-[![CI][ci-shield]][ci-url]
 [![License][license-shield]][license-url]
 [![Issues][issues-shield]][issues-url]
 [![Stars][stars-shield]][stars-url]
@@ -21,6 +20,9 @@
     <a href="docs/docker-compose.md">Docker compose</a>
   </p>
 </div>
+
+CI
+- [![CI][ci-shield]][ci-url]
 
 <details>
   <summary>Table of Contents</summary>
@@ -75,11 +77,11 @@ The current milestone is a fully compatible LoginServer; CharServer and MapServe
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 <!-- MARKDOWN LINKS & IMAGES -->
-[license-shield]: https://img.shields.io/github/license/marco/athena.net?style=for-the-badge
+[license-shield]: https://img.shields.io/github/license/MarcoHuib/Athena.NET?style=for-the-badge
 [license-url]: LICENSE
-[issues-shield]: https://img.shields.io/github/issues/marco/athena.net?style=for-the-badge
-[issues-url]: https://github.com/marco/athena.net/issues
-[stars-shield]: https://img.shields.io/github/stars/marco/athena.net?style=for-the-badge
-[stars-url]: https://github.com/marco/athena.net/stargazers
+[issues-shield]: https://img.shields.io/github/issues/MarcoHuib/Athena.NET?style=for-the-badge
+[issues-url]: https://github.com/MarcoHuib/Athena.NET/issues
+[stars-shield]: https://img.shields.io/github/stars/MarcoHuib/Athena.NET?style=for-the-badge
+[stars-url]: https://github.com/MarcoHuib/Athena.NET/stargazers
 [ci-shield]: https://github.com/MarcoHuib/Athena.NET/actions/workflows/ci.yml/badge.svg?style=for-the-badge
 [ci-url]: https://github.com/MarcoHuib/Athena.NET/actions/workflows/ci.yml
