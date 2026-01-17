@@ -38,6 +38,7 @@ public static class LoginConfigLoader
         var consoleMsgLog = 0;
         var consoleSilent = 0;
         var consoleLogFilePath = "./log/login-msg_log.log";
+        var timestampFormat = string.Empty;
         var allowedRegistrations = 1;
         var registrationWindowSeconds = 10;
         var startLimitedTimeSeconds = -1;
@@ -84,6 +85,7 @@ public static class LoginConfigLoader
                 ConsoleMsgLog = consoleMsgLog,
                 ConsoleSilent = consoleSilent,
                 ConsoleLogFilePath = consoleLogFilePath,
+                TimestampFormat = timestampFormat,
                 AllowedRegistrations = allowedRegistrations,
                 RegistrationWindowSeconds = registrationWindowSeconds,
                 StartLimitedTimeSeconds = startLimitedTimeSeconds,
@@ -303,6 +305,10 @@ public static class LoginConfigLoader
             {
                 consoleLogFilePath = value;
             }
+            else if (key.Equals("timestamp_format", StringComparison.OrdinalIgnoreCase))
+            {
+                timestampFormat = value;
+            }
             else if (key.Equals("allowed_regs", StringComparison.OrdinalIgnoreCase))
             {
                 if (int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed))
@@ -421,6 +427,7 @@ public static class LoginConfigLoader
             ConsoleMsgLog = consoleMsgLog,
             ConsoleSilent = consoleSilent,
             ConsoleLogFilePath = consoleLogFilePath,
+            TimestampFormat = timestampFormat,
             AllowedRegistrations = allowedRegistrations,
             RegistrationWindowSeconds = registrationWindowSeconds,
             StartLimitedTimeSeconds = startLimitedTimeSeconds,

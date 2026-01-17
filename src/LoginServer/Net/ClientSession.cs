@@ -29,6 +29,7 @@ public sealed class ClientSession : IDisposable
     private byte[]? _clientHash;
     private int? _charServerId;
     private LoginConfig Config => _configStore.Current;
+    private bool IsCaseSensitive => _configStore.LoginCaseSensitive;
 
     private static readonly Dictionary<short, int> PacketLengths = new()
     {
@@ -1102,9 +1103,20 @@ public sealed class ClientSession : IDisposable
 
             var userId = request.AutoRegisterBaseId ?? request.UserId;
 
-            var account = await db.Accounts
-                .AsNoTracking()
-                .FirstOrDefaultAsync(a => a.UserId == userId, cancellationToken);
+            LoginAccount? account;
+            if (IsCaseSensitive)
+            {
+                account = await db.Accounts
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(a => a.UserId == userId, cancellationToken);
+            }
+            else
+            {
+                var normalizedUserId = userId.ToLowerInvariant();
+                account = await db.Accounts
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(a => a.UserId.ToLower() == normalizedUserId, cancellationToken);
+            }
 
             if (account == null)
             {
@@ -1970,7 +1982,7 @@ public sealed class ClientSession : IDisposable
             return 0;
         }
 
-        var exists = await db.Accounts.AsNoTracking().AnyAsync(a => a.UserId == baseId, cancellationToken);
+        var exists = await ExistsUserIdAsync(db, baseId, cancellationToken);
         if (exists)
         {
             return 1;
@@ -2008,6 +2020,17 @@ public sealed class ClientSession : IDisposable
         await db.SaveChangesAsync(cancellationToken);
         _state.RegisterSuccess(Config.RegistrationWindowSeconds);
         return -1;
+    }
+
+    private async Task<bool> ExistsUserIdAsync(LoginDbContext db, string userId, CancellationToken cancellationToken)
+    {
+        if (IsCaseSensitive)
+        {
+            return await db.Accounts.AsNoTracking().AnyAsync(a => a.UserId == userId, cancellationToken);
+        }
+
+        var normalizedUserId = userId.ToLowerInvariant();
+        return await db.Accounts.AsNoTracking().AnyAsync(a => a.UserId.ToLower() == normalizedUserId, cancellationToken);
     }
 
     private bool IsClientHashAllowed(int accountGroupId)

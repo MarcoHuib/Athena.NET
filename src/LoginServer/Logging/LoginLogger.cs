@@ -1,3 +1,4 @@
+using System.Globalization;
 using Athena.Net.LoginServer.Config;
 
 namespace Athena.Net.LoginServer.Logging;
@@ -18,6 +19,7 @@ public static class LoginLogger
     private static int _consoleSilentMask;
     private static int _fileMask;
     private static string _filePath = string.Empty;
+    private static string _timestampFormat = string.Empty;
     private static bool _configured;
 
     public static void Configure(LoginConfig config)
@@ -25,6 +27,7 @@ public static class LoginLogger
         _consoleSilentMask = config.ConsoleSilent;
         _fileMask = config.ConsoleMsgLog;
         _filePath = config.ConsoleLogFilePath ?? string.Empty;
+        _timestampFormat = config.TimestampFormat ?? string.Empty;
         _configured = true;
     }
 
@@ -38,14 +41,21 @@ public static class LoginLogger
     private static void Write(LogLevel level, string message)
     {
         var mask = MaskFor(level);
+        var line = message;
+        var prefix = FormatTimestampPrefix();
+        if (!string.IsNullOrEmpty(prefix))
+        {
+            line = $"{prefix} {message}";
+        }
+
         if (!_configured || (_consoleSilentMask & mask) == 0)
         {
-            Console.WriteLine(message);
+            Console.WriteLine(line);
         }
 
         if (_configured && (_fileMask & mask) != 0 && !string.IsNullOrWhiteSpace(_filePath))
         {
-            AppendToFile(message);
+            AppendToFile(line);
         }
     }
 
@@ -86,5 +96,37 @@ public static class LoginLogger
         {
             // Ignore file logging failures.
         }
+    }
+
+    private static string FormatTimestampPrefix()
+    {
+        if (string.IsNullOrWhiteSpace(_timestampFormat))
+        {
+            return string.Empty;
+        }
+
+        var format = ConvertTimestampFormat(_timestampFormat);
+        try
+        {
+            return DateTime.Now.ToString(format, CultureInfo.InvariantCulture);
+        }
+        catch (FormatException)
+        {
+            return string.Empty;
+        }
+    }
+
+    private static string ConvertTimestampFormat(string format)
+    {
+        return format
+            .Replace("%Y", "yyyy", StringComparison.Ordinal)
+            .Replace("%m", "MM", StringComparison.Ordinal)
+            .Replace("%d", "dd", StringComparison.Ordinal)
+            .Replace("%H", "HH", StringComparison.Ordinal)
+            .Replace("%I", "hh", StringComparison.Ordinal)
+            .Replace("%M", "mm", StringComparison.Ordinal)
+            .Replace("%S", "ss", StringComparison.Ordinal)
+            .Replace("%b", "MMM", StringComparison.Ordinal)
+            .Replace("%p", "tt", StringComparison.Ordinal);
     }
 }

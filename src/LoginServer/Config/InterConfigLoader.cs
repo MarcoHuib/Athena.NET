@@ -13,6 +13,8 @@ public static class InterConfigLoader
         var pass = "";
         var db = "";
         var provider = "mysql";
+        var codepage = string.Empty;
+        var caseSensitive = false;
         var loginAccountTable = "login";
         var ipbanTable = "ipbanlist";
         var loginLogTable = "loginlog";
@@ -65,6 +67,14 @@ public static class InterConfigLoader
             {
                 db = value;
             }
+            else if (key.Equals("login_codepage", StringComparison.OrdinalIgnoreCase))
+            {
+                codepage = value;
+            }
+            else if (key.Equals("login_case_sensitive", StringComparison.OrdinalIgnoreCase))
+            {
+                caseSensitive = ParseBool(value, caseSensitive);
+            }
             else if (key.Equals("login_db_provider", StringComparison.OrdinalIgnoreCase))
             {
                 provider = value;
@@ -106,12 +116,20 @@ public static class InterConfigLoader
         else
         {
             connectionString = $"Server={host};Port={port};Database={db};User={user};Password={pass};SslMode=None;";
+            if (!string.IsNullOrWhiteSpace(codepage) &&
+                !connectionString.Contains("CharSet=", StringComparison.OrdinalIgnoreCase) &&
+                !connectionString.Contains("Charset=", StringComparison.OrdinalIgnoreCase))
+            {
+                connectionString += $"CharSet={codepage};";
+            }
         }
 
         return new InterConfig
         {
             LoginDbProvider = normalizedProvider,
             LoginDbConnectionString = connectionString,
+            LoginDbCodepage = codepage,
+            LoginCaseSensitive = caseSensitive,
             LoginAccountTable = loginAccountTable,
             IpBanTable = ipbanTable,
             LoginLogTable = loginLogTable,
@@ -197,5 +215,24 @@ public static class InterConfigLoader
     {
         var index = line.IndexOf("//", StringComparison.Ordinal);
         return index < 0 ? line : line[..index];
+    }
+
+    private static bool ParseBool(string value, bool fallback)
+    {
+        if (value.Equals("yes", StringComparison.OrdinalIgnoreCase) ||
+            value.Equals("on", StringComparison.OrdinalIgnoreCase) ||
+            value.Equals("true", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        if (value.Equals("no", StringComparison.OrdinalIgnoreCase) ||
+            value.Equals("off", StringComparison.OrdinalIgnoreCase) ||
+            value.Equals("false", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        return fallback;
     }
 }

@@ -5,11 +5,13 @@ public sealed class LoginConfigStore
     private readonly object _lock = new();
     private readonly string? _path;
     private LoginConfig _current;
+    private bool _loginCaseSensitive;
 
-    public LoginConfigStore(LoginConfig config, string? path = null)
+    public LoginConfigStore(LoginConfig config, string? path = null, bool loginCaseSensitive = false)
     {
         _current = config;
         _path = path;
+        _loginCaseSensitive = loginCaseSensitive;
     }
 
     public LoginConfig Current
@@ -19,6 +21,17 @@ public sealed class LoginConfigStore
             lock (_lock)
             {
                 return _current;
+            }
+        }
+    }
+
+    public bool LoginCaseSensitive
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _loginCaseSensitive;
             }
         }
     }
@@ -37,5 +50,13 @@ public sealed class LoginConfigStore
         }
 
         return true;
+    }
+
+    public void UpdateLoginCaseSensitive(bool value)
+    {
+        lock (_lock)
+        {
+            _loginCaseSensitive = value;
+        }
     }
 }
