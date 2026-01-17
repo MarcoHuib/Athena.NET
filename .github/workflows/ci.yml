@@ -3,7 +3,20 @@ name: ci
 on:
   push:
     branches: [ main ]
+    paths:
+      - "src/LoginServer/**"
+      - "tests/LoginServer.Tests/**"
+      - ".github/workflows/ci.yml"
+      - "Directory.Build.*"
+      - "*.sln"
   pull_request:
+    paths:
+      - "src/LoginServer/**"
+      - "tests/LoginServer.Tests/**"
+      - ".github/workflows/ci.yml"
+      - "Directory.Build.*"
+      - "*.sln"
+  workflow_dispatch:
 
 jobs:
   test:
