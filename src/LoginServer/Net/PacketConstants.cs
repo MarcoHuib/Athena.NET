@@ -1,4 +1,4 @@
-namespace Rathena.LoginServer.Net;
+namespace Athena.Net.LoginServer.Net;
 
 public static class PacketConstants
 {

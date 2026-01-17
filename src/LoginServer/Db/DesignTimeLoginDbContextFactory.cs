@@ -1,15 +1,15 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Design;
-using Rathena.LoginServer.Config;
+using Athena.Net.LoginServer.Config;
 
-namespace Rathena.LoginServer.Db;
+namespace Athena.Net.LoginServer.Db;
 
 public sealed class DesignTimeLoginDbContextFactory : IDesignTimeDbContextFactory<LoginDbContext>
 {
     public LoginDbContext CreateDbContext(string[] args)
     {
         var baseDir = FindRepoRoot(Environment.CurrentDirectory);
-        var secretsPath = Path.Combine(baseDir, "athenadotnet", "SolutionFiles", "Secrets", "secret.json");
+        var secretsPath = Path.Combine(baseDir, "solutionfiles", "secrets", "secret.json");
         var interConfigPath = Path.Combine(baseDir, "conf", "inter_athena.conf");
 
         var secrets = SecretConfig.Load(secretsPath);
@@ -25,8 +25,8 @@ public sealed class DesignTimeLoginDbContextFactory : IDesignTimeDbContextFactor
         if (string.IsNullOrWhiteSpace(connectionString))
         {
             connectionString = provider == "mysql"
-                ? "Server=127.0.0.1;Port=3306;Database=rathena;User=ragnarok;Password=ragnarok;SslMode=None;"
-                : "Server=localhost;Database=rathena;User ID=sa;Password=Password123!;Encrypt=True;TrustServerCertificate=True;";
+                ? "Server=127.0.0.1;Port=3306;Database=athena.net;User=ragnarok;Password=ragnarok;SslMode=None;"
+                : "Server=localhost;Database=athena.net;User ID=sa;Password=Password123!;Encrypt=True;TrustServerCertificate=True;";
         }
 
         var optionsBuilder = new DbContextOptionsBuilder<LoginDbContext>();
@@ -53,7 +53,7 @@ public sealed class DesignTimeLoginDbContextFactory : IDesignTimeDbContextFactor
 
     private static string ResolveConnectionString(InterConfig interConfig, SecretConfig secrets)
     {
-        var envConnection = Environment.GetEnvironmentVariable("RATHENA_LOGIN_DB_CONNECTION");
+        var envConnection = Environment.GetEnvironmentVariable("ATHENA_NET_LOGIN_DB_CONNECTION");
         if (!string.IsNullOrWhiteSpace(envConnection))
         {
             return envConnection;
@@ -69,7 +69,7 @@ public sealed class DesignTimeLoginDbContextFactory : IDesignTimeDbContextFactor
 
     private static string ResolveProvider(InterConfig interConfig, SecretConfig secrets, string connectionString)
     {
-        var envProvider = Environment.GetEnvironmentVariable("RATHENA_LOGIN_DB_PROVIDER");
+        var envProvider = Environment.GetEnvironmentVariable("ATHENA_NET_LOGIN_DB_PROVIDER");
         if (!string.IsNullOrWhiteSpace(envProvider))
         {
             return envProvider.Trim().ToLowerInvariant();
@@ -105,7 +105,8 @@ public sealed class DesignTimeLoginDbContextFactory : IDesignTimeDbContextFactor
         var current = new DirectoryInfo(start);
         while (current != null)
         {
-            if (File.Exists(Path.Combine(current.FullName, "rAthena.sln")))
+            if (File.Exists(Path.Combine(current.FullName, "athena.net.sln")) ||
+                Directory.Exists(Path.Combine(current.FullName, "solutionfiles")))
             {
                 return current.FullName;
             }

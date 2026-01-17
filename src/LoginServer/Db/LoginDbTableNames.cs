@@ -1,4 +1,4 @@
-namespace Rathena.LoginServer.Db;
+namespace Athena.Net.LoginServer.Db;
 
 public sealed class LoginDbTableNames
 {

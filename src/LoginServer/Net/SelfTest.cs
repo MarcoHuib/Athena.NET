@@ -4,12 +4,12 @@ using System.Net;
 using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
-using Rathena.LoginServer.Config;
-using Rathena.LoginServer.Db;
-using Rathena.LoginServer.Db.Entities;
+using Athena.Net.LoginServer.Config;
+using Athena.Net.LoginServer.Db;
+using Athena.Net.LoginServer.Db.Entities;
 using Microsoft.EntityFrameworkCore;
 
-namespace Rathena.LoginServer.Net;
+namespace Athena.Net.LoginServer.Net;
 
 public static class SelfTest
 {

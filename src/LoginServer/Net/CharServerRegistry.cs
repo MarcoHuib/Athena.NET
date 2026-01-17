@@ -1,7 +1,7 @@
 using System.Collections.Concurrent;
 using System.Linq;
 
-namespace Rathena.LoginServer.Net;
+namespace Athena.Net.LoginServer.Net;
 
 public sealed class CharServerRegistry
 {

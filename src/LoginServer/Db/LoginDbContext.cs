@@ -1,7 +1,7 @@
 using Microsoft.EntityFrameworkCore;
-using Rathena.LoginServer.Db.Entities;
+using Athena.Net.LoginServer.Db.Entities;
 
-namespace Rathena.LoginServer.Db;
+namespace Athena.Net.LoginServer.Db;
 
 public sealed class LoginDbContext : DbContext
 {

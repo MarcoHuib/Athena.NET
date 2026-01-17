@@ -1,6 +1,6 @@
 using System.Net;
 
-namespace Rathena.LoginServer.Config;
+namespace Athena.Net.LoginServer.Config;
 
 public sealed class SubnetConfig
 {

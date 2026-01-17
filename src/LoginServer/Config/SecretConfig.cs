@@ -1,6 +1,6 @@
 using System.Text.Json;
 
-namespace Rathena.LoginServer.Config;
+namespace Athena.Net.LoginServer.Config;
 
 public sealed class SecretConfig
 {
@@ -55,7 +55,7 @@ public sealed class SecretConfig
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Secrets config invalid: {ex.Message}");
+            Console.WriteLine($"secrets config invalid: {ex.Message}");
             return new SecretConfig();
         }
     }

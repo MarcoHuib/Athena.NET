@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SECRETS_PATH="${1:-athenadotnet/SolutionFiles/Secrets/secret.json}"
-COMPOSE_FILE="${2:-athenadotnet/src/LoginServer/docker-compose.sql-edge.yml}"
+SECRETS_PATH="${1:-solutionfiles/secrets/secret.json}"
+IMAGE="mcr.microsoft.com/azure-sql-edge:latest"
+CONTAINER="athena.net-sql-edge"
+PORT="1433"
 
 if ! command -v docker >/dev/null 2>&1; then
   echo "docker not found. Please install Docker Desktop." >&2
@@ -28,6 +30,16 @@ if [ -z "$SA_PASSWORD" ]; then
   exit 1
 fi
 
-export SA_PASSWORD
-docker compose -f "$COMPOSE_FILE" up -d
-echo "SQL Edge is up. Use: docker compose -f $COMPOSE_FILE down"
+if docker ps -a --format "{{.Names}}" | grep -qx "$CONTAINER"; then
+  echo "Container $CONTAINER already exists. Start it with: docker start $CONTAINER"
+  exit 0
+fi
+
+docker pull "$IMAGE"
+docker run -d --name "$CONTAINER" \
+  -e "ACCEPT_EULA=Y" \
+  -e "SA_PASSWORD=$SA_PASSWORD" \
+  -p "$PORT:1433" \
+  "$IMAGE"
+
+echo "Started $CONTAINER on port $PORT."

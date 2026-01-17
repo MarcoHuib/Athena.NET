@@ -2,7 +2,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Threading;
 
-namespace Rathena.LoginServer.Net;
+namespace Athena.Net.LoginServer.Net;
 
 public sealed class CharServerInfo
 {

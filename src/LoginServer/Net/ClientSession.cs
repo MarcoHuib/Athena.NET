@@ -6,11 +6,11 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Linq;
 using Microsoft.EntityFrameworkCore;
-using Rathena.LoginServer.Config;
-using Rathena.LoginServer.Db;
-using Rathena.LoginServer.Db.Entities;
+using Athena.Net.LoginServer.Config;
+using Athena.Net.LoginServer.Db;
+using Athena.Net.LoginServer.Db.Entities;
 
-namespace Rathena.LoginServer.Net;
+namespace Athena.Net.LoginServer.Net;
 
 public sealed class ClientSession : IDisposable
 {

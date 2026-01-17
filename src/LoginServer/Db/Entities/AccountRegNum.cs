@@ -1,4 +1,4 @@
-namespace Rathena.LoginServer.Db.Entities;
+namespace Athena.Net.LoginServer.Db.Entities;
 
 public sealed class AccountRegNum
 {

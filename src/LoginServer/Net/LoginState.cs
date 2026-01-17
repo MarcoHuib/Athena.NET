@@ -1,6 +1,6 @@
 using System.Collections.Concurrent;
 
-namespace Rathena.LoginServer.Net;
+namespace Athena.Net.LoginServer.Net;
 
 public sealed class LoginState
 {

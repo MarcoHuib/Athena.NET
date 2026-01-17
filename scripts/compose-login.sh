@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SECRETS_PATH="${1:-athenadotnet/SolutionFiles/Secrets/secret.json}"
-COMPOSE_FILE="${2:-athenadotnet/src/LoginServer/docker-compose.login.yml}"
+SECRETS_PATH="${1:-solutionfiles/secrets/secret.json}"
+COMPOSE_FILE="${2:-docker-compose.yml}"
 
 if ! command -v docker >/dev/null 2>&1; then
   echo "docker not found. Please install Docker Desktop." >&2

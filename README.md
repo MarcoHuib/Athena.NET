@@ -1,16 +1,16 @@
-# rAthena C# (athenadotnet)
+# athena.net C# (athenadotnet)
 
-This folder contains the C# rewrite of rAthena components. The current focus is the LoginServer.
+This folder contains the C# rewrite of athena.net components. The current focus is the LoginServer.
 
 ## Secrets
-- Create `athenadotnet/SolutionFiles/Secrets/secret.json` (already generated in this repo).
+- Create `solutionfiles/secrets/secret.json` (already generated in this repo).
 - The file is ignored by git (see `.gitignore`).
 - Example structure:
 ```json
 {
   "LoginDb": {
     "Provider": "sqlserver",
-    "ConnectionString": "Server=localhost,1433;Database=rathena;User ID=sa;Password=...;Encrypt=True;TrustServerCertificate=True;"
+    "ConnectionString": "Server=localhost,1433;Database=athena.net;User ID=sa;Password=...;Encrypt=True;TrustServerCertificate=True;"
   },
   "SqlServer": {
     "SaPassword": "..."
@@ -21,12 +21,12 @@ This folder contains the C# rewrite of rAthena components. The current focus is 
 ## Run locally (macOS/Linux)
 From repo root:
 ```
-dotnet run --project athenadotnet/src/LoginServer
+dotnet run --project src/LoginServer
 ```
 
-From `athenadotnet/src/LoginServer`:
+From `src/LoginServer`:
 ```
-dotnet run -- --secrets ../../SolutionFiles/Secrets/secret.json
+dotnet run -- --secrets ../../solutionfiles/secrets/secret.json
 ```
 
 Subnet (LAN) config:
@@ -35,13 +35,13 @@ Subnet (LAN) config:
 
 Auto-migrate schema at startup (dev only):
 ```
-dotnet run --project athenadotnet/src/LoginServer -- --auto-migrate
+dotnet run --project src/LoginServer -- --auto-migrate
 ```
 
 Or via env var:
 ```
-export RATHENA_LOGIN_DB_AUTOMIGRATE=true
-dotnet run --project athenadotnet/src/LoginServer
+export ATHENA_NET_LOGIN_DB_AUTOMIGRATE=true
+dotnet run --project src/LoginServer
 ```
 
 Note: If no EF migrations exist, auto-migrate uses `EnsureCreated` to create tables.
@@ -49,43 +49,44 @@ Note: If no EF migrations exist, auto-migrate uses `EnsureCreated` to create tab
 ## Migrations (when dotnet-ef is available)
 Initialize migrations:
 ```
-chmod +x athenadotnet/src/LoginServer/scripts/migrations-init.sh
-./athenadotnet/src/LoginServer/scripts/migrations-init.sh
+chmod +x src/LoginServer/scripts/migrations-init.sh
+./src/LoginServer/scripts/migrations-init.sh
 ```
 
 Then apply:
 ```
-chmod +x athenadotnet/src/LoginServer/scripts/migrations-update.sh
-./athenadotnet/src/LoginServer/scripts/migrations-update.sh
+chmod +x src/LoginServer/scripts/migrations-update.sh
+./src/LoginServer/scripts/migrations-update.sh
 ```
 
 ## SQL Edge (ARM) via Docker Compose
 We use Azure SQL Edge for arm64 support.
+Compose files live in repo root (`docker-compose.sql-edge.yml` and `docker-compose.yml`).
 
 1) Start SQL Edge:
 ```
-chmod +x athenadotnet/src/LoginServer/scripts/compose-sql-edge.sh
-./athenadotnet/src/LoginServer/scripts/compose-sql-edge.sh
+chmod +x scripts/compose-sql-edge.sh
+./scripts/compose-sql-edge.sh
 ```
 
 2) Create the database (one time):
 ```
-./athenadotnet/src/LoginServer/scripts/create-sql-edge-db.sh
+./scripts/create-sql-edge-db.sh
 ```
 
 ## Login Server + SQL Edge via Docker Compose
 Run both services together:
 ```
-chmod +x athenadotnet/src/LoginServer/scripts/compose-login.sh
-./athenadotnet/src/LoginServer/scripts/compose-login.sh
+chmod +x scripts/compose-login.sh
+./scripts/compose-login.sh
 ```
 
 Helper commands (up/down/build/logs):
 ```
-chmod +x athenadotnet/src/LoginServer/scripts/compose-login-tools.sh
-./athenadotnet/src/LoginServer/scripts/compose-login-tools.sh up
-./athenadotnet/src/LoginServer/scripts/compose-login-tools.sh logs
-./athenadotnet/src/LoginServer/scripts/compose-login-tools.sh self-test
+chmod +x scripts/compose-login-tools.sh
+./scripts/compose-login-tools.sh up
+./scripts/compose-login-tools.sh logs
+./scripts/compose-login-tools.sh self-test
 ```
 
 Notes:
@@ -93,11 +94,11 @@ Notes:
   Override with `DOTNET_IMAGE` if needed (used in the Dockerfile build stage).
 - After code changes, rebuild the image:
 ```
-docker compose -f athenadotnet/src/LoginServer/docker-compose.login.yml build
+docker compose -f docker-compose.yml build
 ```
 - Compose passes DB settings via env vars:
-  - `RATHENA_LOGIN_DB_PROVIDER`
-  - `RATHENA_LOGIN_DB_CONNECTION`
+  - `ATHENA_NET_LOGIN_DB_PROVIDER`
+  - `ATHENA_NET_LOGIN_DB_CONNECTION`
 - Compose mounts `conf/` into the container as `/app/conf` (read-only), so
   `conf/login_athena.conf` and `conf/inter_athena.conf` are used automatically.
 
@@ -112,15 +113,15 @@ docker compose -f athenadotnet/src/LoginServer/docker-compose.login.yml build
 - Online cleanup runs (unknown char-server sessions are cleared every 10 minutes).
 
 ## Ready-to-ship checklist
-- `docker compose -f athenadotnet/src/LoginServer/docker-compose.login.yml build` is clean.
-- `./athenadotnet/src/LoginServer/scripts/compose-login-tools.sh up` shows no errors in logs.
-- `./athenadotnet/src/LoginServer/scripts/compose-login-tools.sh self-test` passes.
-- DB migrations are applied (or `RATHENA_LOGIN_DB_AUTOMIGRATE=true` in compose).
+- `docker compose -f docker-compose.yml build` is clean.
+- `./scripts/compose-login-tools.sh up` shows no errors in logs.
+- `./scripts/compose-login-tools.sh self-test` passes.
+- DB migrations are applied (or `ATHENA_NET_LOGIN_DB_AUTOMIGRATE=true` in compose).
 
 ## Helper scripts
-- `athenadotnet/src/LoginServer/scripts/run-sql-edge.sh` (manual run, no compose)
-- `athenadotnet/src/LoginServer/scripts/create-sql-edge-db.sh`
-- `athenadotnet/src/LoginServer/scripts/compose-sql-edge.sh`
-- `athenadotnet/src/LoginServer/scripts/compose-login.sh`
-- `athenadotnet/src/LoginServer/scripts/migrations-init.sh`
-- `athenadotnet/src/LoginServer/scripts/migrations-update.sh`
+  - `scripts/run-sql-edge.sh` (manual run, no compose)
+  - `scripts/create-sql-edge-db.sh`
+  - `scripts/compose-sql-edge.sh`
+  - `scripts/compose-login.sh`
+  - `src/LoginServer/scripts/migrations-init.sh`
+  - `src/LoginServer/scripts/migrations-update.sh`

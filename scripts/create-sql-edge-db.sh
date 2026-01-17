@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SECRETS_PATH="${1:-athenadotnet/SolutionFiles/Secrets/secret.json}"
-CONTAINER="rathena-sql-edge"
-DB_NAME="${2:-rathena}"
+SECRETS_PATH="${1:-solutionfiles/secrets/secret.json}"
+CONTAINER="athena.net-sql-edge"
+DB_NAME="${2:-athena.net}"
 
 if ! command -v docker >/dev/null 2>&1; then
   echo "docker not found. Please install Docker Desktop." >&2

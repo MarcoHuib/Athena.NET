@@ -1,8 +1,8 @@
 using System.Net;
 using System.Net.Sockets;
-using Rathena.LoginServer.Config;
+using Athena.Net.LoginServer.Config;
 
-namespace Rathena.LoginServer.Net;
+namespace Athena.Net.LoginServer.Net;
 
 public sealed class LoginTcpServer
 {

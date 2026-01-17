@@ -4,7 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
-using Rathena.LoginServer.Db;
+using Athena.Net.LoginServer.Db;
 
 #nullable disable
 
@@ -22,7 +22,7 @@ namespace LoginServer.Migrations
 
             SqlServerModelBuilderExtensions.UseIdentityColumns(modelBuilder);
 
-            modelBuilder.Entity("Rathena.LoginServer.Db.Entities.AccountRegNum", b =>
+            modelBuilder.Entity("Athena.Net.LoginServer.Db.Entities.AccountRegNum", b =>
                 {
                     b.Property<long>("AccountId")
                         .HasColumnType("bigint")
@@ -46,7 +46,7 @@ namespace LoginServer.Migrations
                     b.ToTable("global_acc_reg_num", (string)null);
                 });
 
-            modelBuilder.Entity("Rathena.LoginServer.Db.Entities.AccountRegStr", b =>
+            modelBuilder.Entity("Athena.Net.LoginServer.Db.Entities.AccountRegStr", b =>
                 {
                     b.Property<long>("AccountId")
                         .HasColumnType("bigint")
@@ -72,7 +72,7 @@ namespace LoginServer.Migrations
                     b.ToTable("global_acc_reg_str", (string)null);
                 });
 
-            modelBuilder.Entity("Rathena.LoginServer.Db.Entities.IpBanEntry", b =>
+            modelBuilder.Entity("Athena.Net.LoginServer.Db.Entities.IpBanEntry", b =>
                 {
                     b.Property<string>("List")
                         .HasMaxLength(15)
@@ -98,7 +98,7 @@ namespace LoginServer.Migrations
                     b.ToTable("ipbanlist", (string)null);
                 });
 
-            modelBuilder.Entity("Rathena.LoginServer.Db.Entities.LoginAccount", b =>
+            modelBuilder.Entity("Athena.Net.LoginServer.Db.Entities.LoginAccount", b =>
                 {
                     b.Property<long>("AccountId")
                         .ValueGeneratedOnAdd()
@@ -209,7 +209,7 @@ namespace LoginServer.Migrations
                     b.ToTable("login", (string)null);
                 });
 
-            modelBuilder.Entity("Rathena.LoginServer.Db.Entities.LoginLogEntry", b =>
+            modelBuilder.Entity("Athena.Net.LoginServer.Db.Entities.LoginLogEntry", b =>
                 {
                     b.Property<DateTime>("Time")
                         .HasColumnType("datetime2")

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-DEFAULT_COMPOSE="athenadotnet/src/LoginServer/docker-compose.login.yml"
+DEFAULT_COMPOSE="docker-compose.yml"
 
 if [ $# -eq 0 ]; then
   COMPOSE_FILE="$DEFAULT_COMPOSE"

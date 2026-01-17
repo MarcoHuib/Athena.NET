@@ -1,9 +1,9 @@
-name: rathena-sql-edge
+name: athena.net-sql-edge
 
 services:
   sql-edge:
     image: mcr.microsoft.com/azure-sql-edge:latest
-    container_name: rathena-sql-edge
+    container_name: athena.net-sql-edge
     environment:
       ACCEPT_EULA: "Y"
       SA_PASSWORD: "${SA_PASSWORD}"

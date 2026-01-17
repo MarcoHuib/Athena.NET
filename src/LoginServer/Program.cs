@@ -5,11 +5,11 @@ using System.Security.Cryptography;
 using System.Text;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
-using Rathena.LoginServer.Config;
-using Rathena.LoginServer.Db;
-using Rathena.LoginServer.Net;
+using Athena.Net.LoginServer.Config;
+using Athena.Net.LoginServer.Db;
+using Athena.Net.LoginServer.Net;
 
-namespace Rathena.LoginServer;
+namespace Athena.Net.LoginServer;
 
 public static class Program
 {
@@ -17,11 +17,11 @@ public static class Program
     {
         var configPath = ArgsHelper.GetValue(args, "--login-config") ?? "conf/login_athena.conf";
         var interConfigPath = ArgsHelper.GetValue(args, "--inter-config") ?? "conf/inter_athena.conf";
-        var secretsPath = ArgsHelper.GetValue(args, "--secrets") ?? "athenadotnet/SolutionFiles/Secrets/secret.json";
+        var secretsPath = ArgsHelper.GetValue(args, "--secrets") ?? "solutionfiles/secrets/secret.json";
         var subnetConfigPath = ArgsHelper.GetValue(args, "--subnet-config") ?? "conf/subnet_athena.conf";
         var selfTest = ArgsHelper.HasFlag(args, "--self-test");
         var autoMigrate = ArgsHelper.HasFlag(args, "--auto-migrate") ||
-            string.Equals(Environment.GetEnvironmentVariable("RATHENA_LOGIN_DB_AUTOMIGRATE"), "true", StringComparison.OrdinalIgnoreCase);
+            string.Equals(Environment.GetEnvironmentVariable("ATHENA_NET_LOGIN_DB_AUTOMIGRATE"), "true", StringComparison.OrdinalIgnoreCase);
         var config = LoginConfigLoader.Load(configPath);
         var configStore = new LoginConfigStore(config, configPath);
         var interConfig = InterConfigLoader.Load(interConfigPath);
@@ -188,7 +188,7 @@ public static class Program
 
     private static string ResolveConnectionString(InterConfig interConfig, SecretConfig secrets)
     {
-        var envConnection = Environment.GetEnvironmentVariable("RATHENA_LOGIN_DB_CONNECTION");
+        var envConnection = Environment.GetEnvironmentVariable("ATHENA_NET_LOGIN_DB_CONNECTION");
         if (!string.IsNullOrWhiteSpace(envConnection))
         {
             return envConnection;
@@ -204,7 +204,7 @@ public static class Program
 
     private static string ResolveDbProvider(InterConfig interConfig, SecretConfig secrets, string connectionString)
     {
-        var envProvider = Environment.GetEnvironmentVariable("RATHENA_LOGIN_DB_PROVIDER");
+        var envProvider = Environment.GetEnvironmentVariable("ATHENA_NET_LOGIN_DB_PROVIDER");
         if (!string.IsNullOrWhiteSpace(envProvider))
         {
             return envProvider.Trim().ToLowerInvariant();

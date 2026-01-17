@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PROJECT="${1:-athenadotnet/src/LoginServer/LoginServer.csproj}"
+PROJECT="${1:-src/LoginServer/LoginServer.csproj}"
 
 if ! command -v dotnet >/dev/null 2>&1; then
   echo "dotnet not found." >&2
