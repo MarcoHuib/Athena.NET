@@ -1,0 +1,31 @@
+name: char-server
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - "src/CharServer/**"
+      - ".github/workflows/char-server-ci.yml"
+      - "Directory.Build.*"
+      - "*.sln"
+  pull_request:
+    paths:
+      - "src/CharServer/**"
+      - ".github/workflows/char-server-ci.yml"
+      - "Directory.Build.*"
+      - "*.sln"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Build
+        run: dotnet build src/CharServer/CharServer.csproj --configuration Release

@@ -23,6 +23,7 @@
 
 CI
 - [![CI][ci-shield]][ci-url]
+- [![Char Server CI][char-ci-shield]][char-ci-url]
 
 <details>
   <summary>Table of Contents</summary>
@@ -90,3 +91,5 @@ Note: SQL credentials live in `solutionfiles/secrets/secret.json`. The AppHost r
 [stars-url]: https://github.com/MarcoHuib/Athena.NET/stargazers
 [ci-shield]: https://github.com/MarcoHuib/Athena.NET/actions/workflows/ci.yml/badge.svg?style=for-the-badge
 [ci-url]: https://github.com/MarcoHuib/Athena.NET/actions/workflows/ci.yml
+[char-ci-shield]: https://github.com/MarcoHuib/Athena.NET/actions/workflows/char-server-ci.yml/badge.svg?style=for-the-badge
+[char-ci-url]: https://github.com/MarcoHuib/Athena.NET/actions/workflows/char-server-ci.yml
