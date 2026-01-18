@@ -24,7 +24,7 @@ The LoginServer consumes the connection string from Aspire via
 `ConnectionStrings__LoginDb`. The CharServer uses `ConnectionStrings__CharDb`.
 
 ## Seed login server account (optional)
-If you need the legacy server account (`s1`/`p1`) for char-server handshakes:
+If you need server credentials for the char/map handshake:
 ```
 ./scripts/seed-login-server-account.sh
 ```

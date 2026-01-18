@@ -3,3 +3,10 @@ services:
     environment:
       ATHENA_NET_LOGIN_DB_AUTOMIGRATE: "false"
       DOTNET_ENVIRONMENT: "Production"
+  char-server:
+    environment:
+      ATHENA_NET_CHAR_DB_AUTOMIGRATE: "false"
+      DOTNET_ENVIRONMENT: "Production"
+  map-server:
+    environment:
+      DOTNET_ENVIRONMENT: "Production"

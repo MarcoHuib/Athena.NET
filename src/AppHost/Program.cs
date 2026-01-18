@@ -28,6 +28,7 @@ var builder = DistributedApplication.CreateBuilder(args);
 var repoRoot = FindRepoRoot() ?? Directory.GetCurrentDirectory();
 var loginConfigPath = Path.Combine(repoRoot, "conf", "login_athena.conf");
 var charConfigPath = Path.Combine(repoRoot, "conf", "char_athena.conf");
+var mapConfigPath = Path.Combine(repoRoot, "conf", "map_athena.conf");
 var interConfigPath = Path.Combine(repoRoot, "conf", "inter_athena.conf");
 var subnetConfigPath = Path.Combine(repoRoot, "conf", "subnet_athena.conf");
 var loginMsgPath = Path.Combine(repoRoot, "conf", "msg_conf", "login_msg.conf");
@@ -49,6 +50,19 @@ var loginDb = sql.AddDatabase("LoginDb");
 var charDb = sql.AddDatabase("CharDb");
 
 builder.AddProject("login-server", "../LoginServer/LoginServer.csproj")
+    .WithEndpoint("tcp", endpoint =>
+    {
+        endpoint.Port = 6900;
+        endpoint.IsProxied = false;
+    })
+    .WithEnvironment("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317")
+    .WithEnvironment("OTEL_EXPORTER_OTLP_PROTOCOL", "grpc")
+    .WithEnvironment("OTEL_SERVICE_NAME", "login-server")
+    .WithEnvironment("DOTNET_DASHBOARD_OTLP_ENDPOINT_URL", "http://localhost:4317")
+    .WithEnvironment("DOTNET_DASHBOARD_OTLP_HTTP_ENDPOINT_URL", "http://localhost:4318")
+    .WithEnvironment("OTEL_LOGS_EXPORTER", "otlp")
+    .WithEnvironment("OTEL_METRICS_EXPORTER", "otlp")
+    .WithEnvironment("OTEL_TRACES_EXPORTER", "otlp")
     .WithReference(loginDb)
     .WithEnvironment("ATHENA_NET_LOGIN_DB_PROVIDER", "sqlserver")
     .WithEnvironment("ATHENA_NET_LOGIN_DB_AUTOMIGRATE", "true")
@@ -61,6 +75,19 @@ builder.AddProject("login-server", "../LoginServer/LoginServer.csproj")
         "--auto-migrate");
 
 builder.AddProject("char-server", "../CharServer/CharServer.csproj")
+    .WithEndpoint("tcp", endpoint =>
+    {
+        endpoint.Port = 6121;
+        endpoint.IsProxied = false;
+    })
+    .WithEnvironment("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317")
+    .WithEnvironment("OTEL_EXPORTER_OTLP_PROTOCOL", "grpc")
+    .WithEnvironment("OTEL_SERVICE_NAME", "char-server")
+    .WithEnvironment("DOTNET_DASHBOARD_OTLP_ENDPOINT_URL", "http://localhost:4317")
+    .WithEnvironment("DOTNET_DASHBOARD_OTLP_HTTP_ENDPOINT_URL", "http://localhost:4318")
+    .WithEnvironment("OTEL_LOGS_EXPORTER", "otlp")
+    .WithEnvironment("OTEL_METRICS_EXPORTER", "otlp")
+    .WithEnvironment("OTEL_TRACES_EXPORTER", "otlp")
     .WithReference(charDb)
     .WithEnvironment("ATHENA_NET_CHAR_DB_PROVIDER", "sqlserver")
     .WithEnvironment("ATHENA_NET_CHAR_DB_AUTOMIGRATE", "true")
@@ -69,6 +96,24 @@ builder.AddProject("char-server", "../CharServer/CharServer.csproj")
         "--inter-config", interConfigPath,
         "--secrets", secretsPath,
         "--auto-migrate");
+
+builder.AddProject("map-server", "../MapServer/MapServer.csproj")
+    .WithEndpoint("tcp", endpoint =>
+    {
+        endpoint.Port = 5121;
+        endpoint.IsProxied = false;
+    })
+    .WithEnvironment("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317")
+    .WithEnvironment("OTEL_EXPORTER_OTLP_PROTOCOL", "grpc")
+    .WithEnvironment("OTEL_SERVICE_NAME", "map-server")
+    .WithEnvironment("DOTNET_DASHBOARD_OTLP_ENDPOINT_URL", "http://localhost:4317")
+    .WithEnvironment("DOTNET_DASHBOARD_OTLP_HTTP_ENDPOINT_URL", "http://localhost:4318")
+    .WithEnvironment("OTEL_LOGS_EXPORTER", "otlp")
+    .WithEnvironment("OTEL_METRICS_EXPORTER", "otlp")
+    .WithEnvironment("OTEL_TRACES_EXPORTER", "otlp")
+    .WithArgs(
+        "--map-config", mapConfigPath,
+        "--secrets", secretsPath);
 
 builder.Build().Run();
 

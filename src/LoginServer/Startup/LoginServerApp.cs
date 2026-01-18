@@ -3,6 +3,7 @@ using Athena.Net.LoginServer.Db;
 using Athena.Net.LoginServer.Logging;
 using Athena.Net.LoginServer.Net;
 using Athena.Net.LoginServer.Runtime;
+using Athena.Net.LoginServer.Telemetry;
 
 namespace Athena.Net.LoginServer.Startup;
 
@@ -14,6 +15,7 @@ public static class LoginServerApp
 
         var config = LoginConfigLoader.Load(options.ConfigPath);
         LoginLogger.Configure(config);
+        using var telemetry = LoginTelemetry.Start();
         var interConfig = InterConfigLoader.Load(options.InterConfigPath);
         var configStore = new LoginConfigStore(config, options.ConfigPath, interConfig.LoginCaseSensitive);
         var secrets = SecretConfig.Load(options.SecretsPath);

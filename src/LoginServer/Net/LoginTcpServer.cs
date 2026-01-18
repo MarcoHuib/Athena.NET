@@ -2,6 +2,8 @@ using System.Net;
 using System.Net.Sockets;
 using Athena.Net.LoginServer.Config;
 using Athena.Net.LoginServer.Logging;
+using Athena.Net.LoginServer.Telemetry;
+using System.Diagnostics;
 
 namespace Athena.Net.LoginServer.Net;
 
@@ -56,6 +58,10 @@ public sealed class LoginTcpServer
     private async Task HandleClientAsync(TcpClient client, CancellationToken cancellationToken)
     {
         var endpoint = client.Client.RemoteEndPoint as IPEndPoint;
+        LoginTelemetry.ConnectionsAccepted.Add(1);
+        using var activity = LoginTelemetry.ActivitySource.StartActivity("login.client.session", ActivityKind.Server);
+        activity?.SetTag("net.peer.ip", endpoint?.Address.ToString());
+        activity?.SetTag("net.peer.port", endpoint?.Port);
         LoginLogger.Info($"Client connected: {endpoint}");
 
         using (client)

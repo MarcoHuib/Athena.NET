@@ -1,6 +1,7 @@
 using Athena.Net.CharServer.Config;
 using Athena.Net.CharServer.Logging;
 using Athena.Net.CharServer.Net;
+using Athena.Net.CharServer.Telemetry;
 
 namespace Athena.Net.CharServer.Startup;
 
@@ -15,6 +16,7 @@ public static class CharServerApp
         var secrets = SecretConfig.Load(options.SecretsPath);
         var mergedConfig = secrets.ApplyTo(config);
         CharLogger.Configure(mergedConfig);
+        using var telemetry = CharTelemetry.Start();
         var configStore = new CharConfigStore(mergedConfig, options.ConfigPath);
         var tableNames = new Db.CharDbTableNames
         {

@@ -345,6 +345,7 @@ public sealed class ClientSession : IDisposable
 
         if (!result.Success)
         {
+            LoginLogger.Warning($"Login failed for user '{request.UserId}' from {remoteIp} (server={isServer}, code={result.ErrorCode}).");
             if (isServer)
             {
                 await SendCharServerAckAsync(3, cancellationToken);
@@ -365,11 +366,13 @@ public sealed class ClientSession : IDisposable
         {
             if (result.Sex != 2 || result.AccountId >= 5)
             {
+                LoginLogger.Warning($"Char server login refused for user '{request.UserId}' (accountId={result.AccountId}, sex={result.Sex}).");
                 await SendCharServerAckAsync(3, cancellationToken);
                 return;
             }
 
             RegisterCharServer(result, request, cancellationToken);
+            LoginLogger.Status($"Char server login accepted for '{request.UserId}' (accountId={result.AccountId}).");
             await SendCharServerAckAsync(0, cancellationToken);
             return;
         }
@@ -459,6 +462,10 @@ public sealed class ClientSession : IDisposable
                 clientType = node.ClientType;
                 _state.RemoveAuthNode(accountId);
             }
+        }
+        if (result != 0)
+        {
+            LoginLogger.Warning($"Auth request denied (accountId={accountId}, loginId1={loginId1}, loginId2={loginId2}, sex={sex}).");
         }
 
         var buffer = new byte[21];
@@ -1215,6 +1222,7 @@ public sealed class ClientSession : IDisposable
 
         _charServerId = (int)result.AccountId;
         _charServers.Register(_charServerId.Value, info);
+        LoginLogger.Status($"Registered char server '{info.Name}' at {info.Ip}:{info.Port} (type={info.Type}, new={info.IsNew}).");
     }
 
     private bool CheckPassword(LoginRequest request, LoginAccount account)

@@ -25,5 +25,43 @@ services:
       - "6900:6900"
     restart: unless-stopped
 
+  char-server:
+    build:
+      context: .
+      dockerfile: src/CharServer/Dockerfile
+    depends_on:
+      - sql
+      - login-server
+    environment:
+      ATHENA_NET_CHAR_DB_PROVIDER: "sqlserver"
+      ATHENA_NET_CHAR_DB_AUTOMIGRATE: "true"
+      ConnectionStrings__CharDb: "Server=sql,1433;Database=athena.net;User ID=sa;Password=${SA_PASSWORD};Encrypt=False;TrustServerCertificate=True;"
+    command:
+      - "--char-config"
+      - "/app/conf/docker/char_athena.conf"
+      - "--inter-config"
+      - "/app/conf/inter_athena.conf"
+      - "--secrets"
+      - "/app/solutionfiles/secrets/secret.json"
+      - "--auto-migrate"
+    ports:
+      - "6121:6121"
+    restart: unless-stopped
+
+  map-server:
+    build:
+      context: .
+      dockerfile: src/MapServer/Dockerfile
+    depends_on:
+      - char-server
+    command:
+      - "--map-config"
+      - "/app/conf/docker/map_athena.conf"
+      - "--secrets"
+      - "/app/solutionfiles/secrets/secret.json"
+    ports:
+      - "5121:5121"
+    restart: unless-stopped
+
 volumes:
   sql-edge-data:

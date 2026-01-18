@@ -24,6 +24,7 @@
 CI
 - [![Login Server CI][login-ci-shield]][login-ci-url]
 - [![Char Server CI][char-ci-shield]][char-ci-url]
+- [![Map Server CI][map-ci-shield]][map-ci-url]
 
 <details>
   <summary>Table of Contents</summary>
@@ -93,3 +94,5 @@ Note: SQL credentials live in `solutionfiles/secrets/secret.json`. The AppHost r
 [login-ci-url]: https://github.com/MarcoHuib/Athena.NET/actions/workflows/login-server-ci.yml
 [char-ci-shield]: https://github.com/MarcoHuib/Athena.NET/actions/workflows/char-server-ci.yml/badge.svg?style=for-the-badge
 [char-ci-url]: https://github.com/MarcoHuib/Athena.NET/actions/workflows/char-server-ci.yml
+[map-ci-shield]: https://github.com/MarcoHuib/Athena.NET/actions/workflows/map-server-ci.yml/badge.svg?style=for-the-badge
+[map-ci-url]: https://github.com/MarcoHuib/Athena.NET/actions/workflows/map-server-ci.yml

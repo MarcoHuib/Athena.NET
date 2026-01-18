@@ -75,11 +75,9 @@ fi
 if [ -z "$LOGIN_PASS" ]; then
   LOGIN_PASS="$SECRET_LOGIN_PASS"
 fi
-if [ -z "$LOGIN_USER" ]; then
-  LOGIN_USER="s1"
-fi
-if [ -z "$LOGIN_PASS" ]; then
-  LOGIN_PASS="p1"
+if [ -z "$LOGIN_USER" ] || [ -z "$LOGIN_PASS" ]; then
+  echo "Missing login credentials. Set CharServer.UserId/Password in $SECRETS_PATH or pass them as args." >&2
+  exit 1
 fi
 
 USE_MD5_PASSWORDS=""

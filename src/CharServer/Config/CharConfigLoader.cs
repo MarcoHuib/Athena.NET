@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Net;
+using System.Net.Sockets;
 using Athena.Net.CharServer.Logging;
 
 namespace Athena.Net.CharServer.Config;
@@ -8,8 +9,8 @@ public static class CharConfigLoader
 {
     public static CharConfig Load(string path)
     {
-        var userId = "s1";
-        var password = "p1";
+        var userId = string.Empty;
+        var password = string.Empty;
         var serverName = "rAthena";
         var loginIp = IPAddress.Loopback;
         var loginPort = 6900;
@@ -26,6 +27,23 @@ public static class CharConfigLoader
         var charDeleteOption = 2;
         var charDeleteRestriction = 3;
         var startZeny = 0;
+        var wispServerName = "Server";
+        var unknownCharName = "Unknown";
+        var nameIgnoringCase = false;
+        var charNameOption = 0;
+        var charNameLetters = string.Empty;
+        var charNameMinLength = 4;
+        var charRenameParty = false;
+        var charRenameGuild = false;
+        var pincodeEnabled = true;
+        var pincodeChangeTimeSeconds = 0;
+        var pincodeMaxTry = 3;
+        var pincodeForce = true;
+        var pincodeAllowRepeated = false;
+        var pincodeAllowSequential = false;
+        var charMoveEnabled = true;
+        var charMoveToUsed = true;
+        var charMovesUnlimited = false;
         var startPoints = new List<StartPoint>();
         var startPointsDoram = new List<StartPoint>();
         var startPointsPre = new List<StartPoint>();
@@ -66,6 +84,23 @@ public static class CharConfigLoader
                 CharDeleteRestriction = charDeleteRestriction,
                 StartZeny = startZeny,
                 StartStatusPoints = 48,
+                WispServerName = wispServerName,
+                UnknownCharName = unknownCharName,
+                NameIgnoringCase = nameIgnoringCase,
+                CharNameOption = charNameOption,
+                CharNameLetters = charNameLetters,
+                CharNameMinLength = charNameMinLength,
+                CharRenameParty = charRenameParty,
+                CharRenameGuild = charRenameGuild,
+                PincodeEnabled = pincodeEnabled,
+                PincodeChangeTimeSeconds = pincodeChangeTimeSeconds,
+                PincodeMaxTry = pincodeMaxTry,
+                PincodeForce = pincodeForce,
+                PincodeAllowRepeated = pincodeAllowRepeated,
+                PincodeAllowSequential = pincodeAllowSequential,
+                CharMoveEnabled = charMoveEnabled,
+                CharMoveToUsed = charMoveToUsed,
+                CharMovesUnlimited = charMovesUnlimited,
                 StartPoints = startPoints,
                 StartPointsDoram = startPointsDoram,
                 StartPointsPre = startPointsPre,
@@ -112,7 +147,7 @@ public static class CharConfigLoader
             }
             else if (key.Equals("login_ip", StringComparison.OrdinalIgnoreCase))
             {
-                if (IPAddress.TryParse(value, out var ip))
+                if (TryResolveIp(value, out var ip))
                 {
                     loginIp = ip;
                 }
@@ -133,7 +168,7 @@ public static class CharConfigLoader
             }
             else if (key.Equals("char_ip", StringComparison.OrdinalIgnoreCase))
             {
-                if (IPAddress.TryParse(value, out var ip))
+                if (TryResolveIp(value, out var ip))
                 {
                     charIp = ip;
                 }
@@ -197,6 +232,86 @@ public static class CharConfigLoader
                 {
                     startZeny = Math.Max(0, parsed);
                 }
+            }
+            else if (key.Equals("wisp_server_name", StringComparison.OrdinalIgnoreCase))
+            {
+                wispServerName = value;
+            }
+            else if (key.Equals("unknown_char_name", StringComparison.OrdinalIgnoreCase))
+            {
+                unknownCharName = value;
+            }
+            else if (key.Equals("name_ignoring_case", StringComparison.OrdinalIgnoreCase))
+            {
+                nameIgnoringCase = ParseBool(value, nameIgnoringCase);
+            }
+            else if (key.Equals("char_name_option", StringComparison.OrdinalIgnoreCase))
+            {
+                if (int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed))
+                {
+                    charNameOption = parsed;
+                }
+            }
+            else if (key.Equals("char_name_letters", StringComparison.OrdinalIgnoreCase))
+            {
+                charNameLetters = value;
+            }
+            else if (key.Equals("char_name_min_length", StringComparison.OrdinalIgnoreCase))
+            {
+                if (int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed))
+                {
+                    charNameMinLength = Math.Max(0, parsed);
+                }
+            }
+            else if (key.Equals("char_rename_party", StringComparison.OrdinalIgnoreCase))
+            {
+                charRenameParty = ParseBool(value, charRenameParty);
+            }
+            else if (key.Equals("char_rename_guild", StringComparison.OrdinalIgnoreCase))
+            {
+                charRenameGuild = ParseBool(value, charRenameGuild);
+            }
+            else if (key.Equals("pincode_enabled", StringComparison.OrdinalIgnoreCase))
+            {
+                pincodeEnabled = ParseBool(value, pincodeEnabled);
+            }
+            else if (key.Equals("pincode_changetime", StringComparison.OrdinalIgnoreCase))
+            {
+                if (int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed))
+                {
+                    pincodeChangeTimeSeconds = Math.Max(0, parsed) * 60 * 60 * 24;
+                }
+            }
+            else if (key.Equals("pincode_maxtry", StringComparison.OrdinalIgnoreCase))
+            {
+                if (int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed))
+                {
+                    pincodeMaxTry = Math.Max(0, parsed);
+                }
+            }
+            else if (key.Equals("pincode_force", StringComparison.OrdinalIgnoreCase))
+            {
+                pincodeForce = ParseBool(value, pincodeForce);
+            }
+            else if (key.Equals("pincode_allow_repeated", StringComparison.OrdinalIgnoreCase))
+            {
+                pincodeAllowRepeated = ParseBool(value, pincodeAllowRepeated);
+            }
+            else if (key.Equals("pincode_allow_sequential", StringComparison.OrdinalIgnoreCase))
+            {
+                pincodeAllowSequential = ParseBool(value, pincodeAllowSequential);
+            }
+            else if (key.Equals("char_move_enabled", StringComparison.OrdinalIgnoreCase))
+            {
+                charMoveEnabled = ParseBool(value, charMoveEnabled);
+            }
+            else if (key.Equals("char_movetoused", StringComparison.OrdinalIgnoreCase))
+            {
+                charMoveToUsed = ParseBool(value, charMoveToUsed);
+            }
+            else if (key.Equals("char_moves_unlimited", StringComparison.OrdinalIgnoreCase))
+            {
+                charMovesUnlimited = ParseBool(value, charMovesUnlimited);
             }
             else if (key.Equals("start_point", StringComparison.OrdinalIgnoreCase))
             {
@@ -296,6 +411,23 @@ public static class CharConfigLoader
             CharDeleteRestriction = charDeleteRestriction,
             StartZeny = startZeny,
             StartStatusPoints = 48,
+            WispServerName = wispServerName,
+            UnknownCharName = unknownCharName,
+            NameIgnoringCase = nameIgnoringCase,
+            CharNameOption = charNameOption,
+            CharNameLetters = charNameLetters,
+            CharNameMinLength = charNameMinLength,
+            CharRenameParty = charRenameParty,
+            CharRenameGuild = charRenameGuild,
+            PincodeEnabled = pincodeEnabled,
+            PincodeChangeTimeSeconds = pincodeChangeTimeSeconds,
+            PincodeMaxTry = pincodeMaxTry,
+            PincodeForce = pincodeForce,
+            PincodeAllowRepeated = pincodeAllowRepeated,
+            PincodeAllowSequential = pincodeAllowSequential,
+            CharMoveEnabled = charMoveEnabled,
+            CharMoveToUsed = charMoveToUsed,
+            CharMovesUnlimited = charMovesUnlimited,
             StartPoints = startPoints,
             StartPointsDoram = startPointsDoram,
             StartPointsPre = startPointsPre,
@@ -421,6 +553,39 @@ public static class CharConfigLoader
         }
 
         return fallback;
+    }
+
+    private static bool TryResolveIp(string value, out IPAddress ip)
+    {
+        if (IPAddress.TryParse(value, out ip))
+        {
+            return true;
+        }
+
+        try
+        {
+            var addresses = Dns.GetHostAddresses(value);
+            foreach (var address in addresses)
+            {
+                if (address.AddressFamily == AddressFamily.InterNetwork)
+                {
+                    ip = address;
+                    return true;
+                }
+            }
+
+            if (addresses.Length > 0)
+            {
+                ip = addresses[0];
+                return true;
+            }
+        }
+        catch
+        {
+        }
+
+        ip = IPAddress.Any;
+        return false;
     }
 
     private static List<StartPoint> ParseStartPoints(string value)

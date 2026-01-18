@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Collections.Concurrent;
 using System.Linq;
 using System.Net;
 using System.Net.Sockets;
@@ -11,7 +12,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Athena.Net.CharServer.Net;
 
-public sealed class ClientSession : IDisposable
+public sealed class ClientSession : IDisposable, ISession
 {
     private const int CharacterInfoSize = 175;
     private const int CharDelEmail = 1;
@@ -44,6 +45,13 @@ public sealed class ClientSession : IDisposable
         [PacketConstants.ChDeleteChar3Cancel] = 6,
         [PacketConstants.ChCharListReq] = 2,
         [PacketConstants.ChPing] = 6,
+        [PacketConstants.ChReqIsValidCharName] = 34,
+        [PacketConstants.ChReqChangeCharName] = 30,
+        [PacketConstants.ChReqChangeCharacterSlot] = 8,
+        [PacketConstants.ChAvailableSecondPassword] = 6,
+        [PacketConstants.ChSecondPasswordAck] = 10,
+        [PacketConstants.ChMakeSecondPassword] = 10,
+        [PacketConstants.ChEditSecondPassword] = 14,
     };
 
     private readonly TcpClient _client;
@@ -52,7 +60,11 @@ public sealed class ClientSession : IDisposable
     private readonly LoginServerConnector _loginConnector;
     private readonly Func<CharDbContext?> _dbFactory;
     private readonly int _startStatusPoints;
+    private readonly MapServerRegistry _mapRegistry;
+    private readonly MapAuthManager _mapAuthManager;
     private readonly SemaphoreSlim _writeLock = new(1, 1);
+    private byte[]? _prefetchedHeader;
+    private static readonly ConcurrentDictionary<uint, bool> PincodePassed = new();
     private uint _accountId;
     private uint _loginId1;
     private uint _loginId2;
@@ -63,8 +75,14 @@ public sealed class ClientSession : IDisposable
     private byte _charsBilling;
     private string _email = string.Empty;
     private string _birthdate = string.Empty;
+    private string _pincode = string.Empty;
+    private uint _pincodeChange;
+    private int _pincodeTry;
+    private uint _pincodeSeed;
+    private bool _pincodeCorrect;
+    private string _pendingRenameName = string.Empty;
 
-    public ClientSession(int sessionId, TcpClient client, CharConfigStore configStore, LoginServerConnector loginConnector, Func<CharDbContext?> dbFactory, int startStatusPoints)
+    public ClientSession(int sessionId, TcpClient client, CharConfigStore configStore, LoginServerConnector loginConnector, Func<CharDbContext?> dbFactory, int startStatusPoints, MapServerRegistry mapRegistry, MapAuthManager mapAuthManager, byte[]? prefetchedHeader = null)
     {
         SessionId = sessionId;
         _client = client;
@@ -72,8 +90,11 @@ public sealed class ClientSession : IDisposable
         _loginConnector = loginConnector;
         _dbFactory = dbFactory;
         _startStatusPoints = startStatusPoints;
+        _mapRegistry = mapRegistry;
+        _mapAuthManager = mapAuthManager;
         _stream = client.GetStream();
         _charSlots = _configStore.Current.MinChars;
+        _prefetchedHeader = prefetchedHeader;
     }
 
     public int SessionId { get; }
@@ -82,7 +103,8 @@ public sealed class ClientSession : IDisposable
     {
         while (!cancellationToken.IsCancellationRequested)
         {
-            var header = await ReadExactAsync(2, cancellationToken);
+            var header = _prefetchedHeader ?? await ReadExactAsync(2, cancellationToken);
+            _prefetchedHeader = null;
             if (header.Length == 0)
             {
                 return;
@@ -103,6 +125,10 @@ public sealed class ClientSession : IDisposable
     {
         _stream.Dispose();
         _writeLock.Dispose();
+        if (_accountId != 0)
+        {
+            PincodePassed.TryRemove(_accountId, out _);
+        }
     }
 
     public async Task HandleAuthResponseAsync(uint accountId, uint loginId1, uint loginId2, byte sex, byte result, byte clientType)
@@ -125,7 +151,7 @@ public sealed class ClientSession : IDisposable
         }
     }
 
-    public async Task HandleAccountDataAsync(uint accountId, byte charSlots, bool isVip, byte vipSlots, byte billingSlots, string email, string birthdate)
+    public async Task HandleAccountDataAsync(uint accountId, byte charSlots, bool isVip, byte vipSlots, byte billingSlots, string email, string birthdate, string pincode, uint pincodeChange)
     {
         if (_accountId != accountId)
         {
@@ -139,8 +165,13 @@ public sealed class ClientSession : IDisposable
         _charsBilling = billingSlots;
         _email = email;
         _birthdate = birthdate;
+        _pincode = pincode;
+        _pincodeChange = pincodeChange;
+        _pincodeTry = 0;
+        _pincodeCorrect = false;
 
         await SendCharListAsync(CancellationToken.None);
+        await SendPincodeStartAsync(CancellationToken.None);
     }
 
     public Task SendRefuseEnterAsync(byte errorCode, CancellationToken cancellationToken)
@@ -161,6 +192,9 @@ public sealed class ClientSession : IDisposable
             case PacketConstants.ChCharListReq:
                 await SendCharListPageAsync(cancellationToken);
                 break;
+            case PacketConstants.ChSelectChar:
+                await HandleSelectCharAsync(packet, cancellationToken);
+                break;
             case PacketConstants.ChMakeChar:
                 await HandleMakeCharAsync(packet, cancellationToken);
                 break;
@@ -177,6 +211,27 @@ public sealed class ClientSession : IDisposable
                 await HandleDeleteChar3CancelAsync(packet, cancellationToken);
                 break;
             case PacketConstants.ChPing:
+                break;
+            case PacketConstants.ChAvailableSecondPassword:
+                await HandlePincodeWindowAsync(packet, cancellationToken);
+                break;
+            case PacketConstants.ChSecondPasswordAck:
+                await HandlePincodeCheckAsync(packet, cancellationToken);
+                break;
+            case PacketConstants.ChEditSecondPassword:
+                await HandlePincodeChangeAsync(packet, cancellationToken);
+                break;
+            case PacketConstants.ChMakeSecondPassword:
+                await HandlePincodeSetAsync(packet, cancellationToken);
+                break;
+            case PacketConstants.ChReqIsValidCharName:
+                await HandleRenameCheckAsync(packet, cancellationToken);
+                break;
+            case PacketConstants.ChReqChangeCharName:
+                await HandleRenameApplyAsync(packet, cancellationToken);
+                break;
+            case PacketConstants.ChReqChangeCharacterSlot:
+                await HandleMoveCharSlotAsync(packet, cancellationToken);
                 break;
             default:
                 CharLogger.Warning($"Unknown char packet 0x{packetType:X4}, disconnecting.");
@@ -201,6 +256,80 @@ public sealed class ClientSession : IDisposable
         {
             await SendRefuseEnterAsync(0, cancellationToken);
         }
+    }
+
+    private async Task HandleSelectCharAsync(byte[] packet, CancellationToken cancellationToken)
+    {
+        if (!_authenticated)
+        {
+            return;
+        }
+
+        var config = _configStore.Current;
+        if (config.PincodeEnabled && !string.IsNullOrEmpty(_pincode) && !_pincodeCorrect && !PincodePassed.ContainsKey(_accountId))
+        {
+            await SendRefuseEnterAsync(0, cancellationToken);
+            return;
+        }
+
+        if (!_mapRegistry.TryGetAny(out var mapServer))
+        {
+            CharLogger.Warning("No map server available for character selection.");
+            await SendRefuseEnterAsync(0, cancellationToken);
+            return;
+        }
+
+        var slot = packet[2];
+        var db = _dbFactory();
+        if (db == null)
+        {
+            await SendRefuseEnterAsync(0, cancellationToken);
+            return;
+        }
+
+        var character = await db.Characters.FirstOrDefaultAsync(c => c.AccountId == _accountId && c.CharNum == slot && c.DeleteDate == 0, cancellationToken);
+        if (character == null)
+        {
+            await SendRefuseEnterAsync(0, cancellationToken);
+            return;
+        }
+
+        var mapName = string.IsNullOrWhiteSpace(character.LastMap) ? character.SaveMap : character.LastMap;
+        if (string.IsNullOrWhiteSpace(mapName))
+        {
+            mapName = "prontera";
+        }
+
+        var node = new MapAuthNode(
+            _accountId,
+            character.CharId,
+            _loginId1,
+            _loginId2,
+            _sex,
+            mapName,
+            character.LastX,
+            character.LastY,
+            character.BodyDirection,
+            character.Font,
+            0,
+            0,
+            false);
+
+        _mapAuthManager.Add(node);
+        await SendZoneServerAsync(character.CharId, mapName, mapServer, cancellationToken);
+    }
+
+    private Task SendZoneServerAsync(uint charId, string mapName, MapServerInfo mapServer, CancellationToken cancellationToken)
+    {
+        var length = 2 + 4 + PacketConstants.MapNameLength + 4 + 2 + PacketConstants.DomainLength;
+        var buffer = new byte[length];
+        BinaryPrimitives.WriteInt16LittleEndian(buffer.AsSpan(0, 2), PacketConstants.HcNotifyZoneServer);
+        BinaryPrimitives.WriteUInt32LittleEndian(buffer.AsSpan(2, 4), charId);
+        WriteFixedString(buffer.AsSpan(6, PacketConstants.MapNameLength), mapName);
+        var ipBytes = mapServer.Ip.MapToIPv4().GetAddressBytes();
+        ipBytes.CopyTo(buffer.AsSpan(22, 4));
+        BinaryPrimitives.WriteUInt16LittleEndian(buffer.AsSpan(26, 2), (ushort)mapServer.Port);
+        return WriteAsync(buffer, cancellationToken);
     }
 
     private async Task SendCharListAsync(CancellationToken cancellationToken)
@@ -324,7 +453,7 @@ public sealed class ClientSession : IDisposable
             return;
         }
 
-        var name = ReadFixedString(packet.AsSpan(2, 24));
+        var name = NormalizeName(ReadFixedString(packet.AsSpan(2, 24)));
         var slot = packet[26];
         var hairColor = BinaryPrimitives.ReadUInt16LittleEndian(packet.AsSpan(27, 2));
         var hairStyle = BinaryPrimitives.ReadUInt16LittleEndian(packet.AsSpan(29, 2));
@@ -343,6 +472,13 @@ public sealed class ClientSession : IDisposable
             return;
         }
 
+        var nameValidation = await ValidateCharNameAsync(name, cancellationToken);
+        if (nameValidation != NameValidationResult.Ok)
+        {
+            await SendRefuseMakeCharAsync(cancellationToken);
+            return;
+        }
+
         var db = _dbFactory();
         if (db == null)
         {
@@ -354,13 +490,6 @@ public sealed class ClientSession : IDisposable
         {
             var accountCount = await db.Characters.CountAsync(c => c.AccountId == _accountId, cancellationToken);
             if (accountCount >= _charSlots)
-            {
-                await SendRefuseMakeCharAsync(cancellationToken);
-                return;
-            }
-
-            var nameTaken = await db.Characters.AnyAsync(c => c.Name == name, cancellationToken);
-            if (nameTaken)
             {
                 await SendRefuseMakeCharAsync(cancellationToken);
                 return;
@@ -705,6 +834,390 @@ public sealed class ClientSession : IDisposable
         await SendDeleteChar3CancelAsync(charId, 1, cancellationToken);
     }
 
+    private async Task HandlePincodeWindowAsync(byte[] packet, CancellationToken cancellationToken)
+    {
+        if (!_authenticated)
+        {
+            return;
+        }
+
+        var accountId = BinaryPrimitives.ReadUInt32LittleEndian(packet.AsSpan(2, 4));
+        if (accountId != _accountId)
+        {
+            return;
+        }
+
+        await SendPincodeStartAsync(cancellationToken);
+    }
+
+    private async Task HandlePincodeCheckAsync(byte[] packet, CancellationToken cancellationToken)
+    {
+        if (!_authenticated)
+        {
+            return;
+        }
+
+        var config = _configStore.Current;
+        if (!config.PincodeEnabled)
+        {
+            _client.Close();
+            return;
+        }
+
+        var accountId = BinaryPrimitives.ReadUInt32LittleEndian(packet.AsSpan(2, 4));
+        if (accountId != _accountId)
+        {
+            _client.Close();
+            return;
+        }
+
+        var pin = ReadFixedString(packet.AsSpan(6, 4));
+        var decrypted = DecryptPincode(_pincodeSeed, pin);
+        if (decrypted == null)
+        {
+            _client.Close();
+            return;
+        }
+
+        if (string.Equals(_pincode, decrypted, StringComparison.Ordinal))
+        {
+            _pincodeTry = 0;
+            _pincodeCorrect = true;
+            PincodePassed[_accountId] = true;
+            await SendPincodeStateAsync(PincodeState.Passed, cancellationToken);
+            return;
+        }
+
+        _pincodeTry += 1;
+        await SendPincodeStateAsync(PincodeState.Wrong, cancellationToken);
+
+        if (config.PincodeMaxTry > 0 && _pincodeTry >= config.PincodeMaxTry)
+        {
+            _loginConnector.TrySendPincodeAuthFail(_accountId);
+        }
+    }
+
+    private async Task HandlePincodeChangeAsync(byte[] packet, CancellationToken cancellationToken)
+    {
+        if (!_authenticated)
+        {
+            return;
+        }
+
+        var config = _configStore.Current;
+        if (!config.PincodeEnabled)
+        {
+            _client.Close();
+            return;
+        }
+
+        var accountId = BinaryPrimitives.ReadUInt32LittleEndian(packet.AsSpan(2, 4));
+        if (accountId != _accountId)
+        {
+            _client.Close();
+            return;
+        }
+
+        var oldPin = ReadFixedString(packet.AsSpan(6, 4));
+        var newPin = ReadFixedString(packet.AsSpan(10, 4));
+        var decryptedOld = DecryptPincode(_pincodeSeed, oldPin);
+        var decryptedNew = DecryptPincode(_pincodeSeed, newPin);
+        if (decryptedOld == null || decryptedNew == null)
+        {
+            _client.Close();
+            return;
+        }
+
+        if (!string.Equals(_pincode, decryptedOld, StringComparison.Ordinal))
+        {
+            _pincodeTry += 1;
+            await SendPincodeStateAsync(PincodeState.Wrong, cancellationToken);
+
+            if (config.PincodeMaxTry > 0 && _pincodeTry >= config.PincodeMaxTry)
+            {
+                _loginConnector.TrySendPincodeAuthFail(_accountId);
+            }
+            return;
+        }
+
+        if (!IsPincodeAllowed(config, decryptedNew))
+        {
+            await SendPincodeStateAsync(PincodeState.Illegal, cancellationToken);
+            return;
+        }
+
+        _loginConnector.TrySendPincodeUpdate(_accountId, decryptedNew);
+        _pincode = decryptedNew;
+        _pincodeCorrect = true;
+        PincodePassed[_accountId] = true;
+        _pincodeChange = (uint)DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        _pincodeTry = 0;
+        await SendPincodeStateAsync(PincodeState.Passed, cancellationToken);
+    }
+
+    private async Task HandlePincodeSetAsync(byte[] packet, CancellationToken cancellationToken)
+    {
+        if (!_authenticated)
+        {
+            return;
+        }
+
+        var config = _configStore.Current;
+        if (!config.PincodeEnabled)
+        {
+            _client.Close();
+            return;
+        }
+
+        var accountId = BinaryPrimitives.ReadUInt32LittleEndian(packet.AsSpan(2, 4));
+        if (accountId != _accountId)
+        {
+            _client.Close();
+            return;
+        }
+
+        var newPin = ReadFixedString(packet.AsSpan(6, 4));
+        var decryptedNew = DecryptPincode(_pincodeSeed, newPin);
+        if (decryptedNew == null)
+        {
+            _client.Close();
+            return;
+        }
+
+        if (!IsPincodeAllowed(config, decryptedNew))
+        {
+            await SendPincodeStateAsync(PincodeState.Illegal, cancellationToken);
+            return;
+        }
+
+        _loginConnector.TrySendPincodeUpdate(_accountId, decryptedNew);
+        _pincode = decryptedNew;
+        _pincodeCorrect = true;
+        PincodePassed[_accountId] = true;
+        _pincodeChange = (uint)DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        _pincodeTry = 0;
+        await SendPincodeStateAsync(PincodeState.Passed, cancellationToken);
+    }
+
+    private async Task HandleRenameCheckAsync(byte[] packet, CancellationToken cancellationToken)
+    {
+        if (!_authenticated)
+        {
+            return;
+        }
+
+        var accountId = BinaryPrimitives.ReadUInt32LittleEndian(packet.AsSpan(2, 4));
+        if (accountId != _accountId)
+        {
+            return;
+        }
+
+        var charId = BinaryPrimitives.ReadUInt32LittleEndian(packet.AsSpan(6, 4));
+        var name = ReadFixedString(packet.AsSpan(10, 24));
+        var normalized = NormalizeName(name);
+        var db = _dbFactory();
+        if (db == null)
+        {
+            await SendRenameCheckAsync(false, cancellationToken);
+            return;
+        }
+
+        await using (db)
+        {
+            var exists = await db.Characters
+                .AnyAsync(c => c.CharId == charId && c.AccountId == _accountId, cancellationToken);
+            if (!exists)
+            {
+                await SendRenameCheckAsync(false, cancellationToken);
+                return;
+            }
+        }
+
+        var validation = await ValidateCharNameAsync(normalized, cancellationToken);
+        if (validation == NameValidationResult.Ok)
+        {
+            _pendingRenameName = normalized;
+            await SendRenameCheckAsync(true, cancellationToken);
+            return;
+        }
+
+        await SendRenameCheckAsync(false, cancellationToken);
+    }
+
+    private async Task HandleRenameApplyAsync(byte[] packet, CancellationToken cancellationToken)
+    {
+        if (!_authenticated)
+        {
+            return;
+        }
+
+        var charId = BinaryPrimitives.ReadUInt32LittleEndian(packet.AsSpan(2, 4));
+        var newName = ReadFixedString(packet.AsSpan(6, 24));
+        var normalized = NormalizeName(newName);
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            normalized = _pendingRenameName;
+        }
+
+        _pendingRenameName = string.Empty;
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            await SendRenameResultAsync(2, cancellationToken);
+            return;
+        }
+
+        var db = _dbFactory();
+        if (db == null)
+        {
+            await SendRenameResultAsync(3, cancellationToken);
+            return;
+        }
+
+        var config = _configStore.Current;
+        await using (db)
+        {
+            var character = await db.Characters
+                .FirstOrDefaultAsync(c => c.CharId == charId && c.AccountId == _accountId, cancellationToken);
+            if (character == null)
+            {
+                await SendRenameResultAsync(2, cancellationToken);
+                return;
+            }
+
+            if (!string.IsNullOrEmpty(normalized) && string.Equals(character.Name, normalized, StringComparison.Ordinal))
+            {
+                await SendRenameResultAsync(0, cancellationToken);
+                return;
+            }
+
+            if (character.Rename == 0)
+            {
+                await SendRenameResultAsync(1, cancellationToken);
+                return;
+            }
+
+            if (!config.CharRenameParty && character.PartyId != 0)
+            {
+                await SendRenameResultAsync(6, cancellationToken);
+                return;
+            }
+
+            if (!config.CharRenameGuild && character.GuildId != 0)
+            {
+                await SendRenameResultAsync(5, cancellationToken);
+                return;
+            }
+
+            var validation = await ValidateCharNameAsync(normalized, cancellationToken);
+            if (validation == NameValidationResult.Exists)
+            {
+                await SendRenameResultAsync(4, cancellationToken);
+                return;
+            }
+
+            if (validation != NameValidationResult.Ok)
+            {
+                await SendRenameResultAsync(8, cancellationToken);
+                return;
+            }
+
+            character.Name = normalized;
+            character.Rename = (ushort)Math.Max(0, character.Rename - 1);
+            await db.SaveChangesAsync(cancellationToken);
+        }
+
+        await SendRenameResultAsync(0, cancellationToken);
+        await SendCharListAsync(cancellationToken);
+    }
+
+    private async Task HandleMoveCharSlotAsync(byte[] packet, CancellationToken cancellationToken)
+    {
+        if (!_authenticated)
+        {
+            return;
+        }
+
+        var fromSlot = BinaryPrimitives.ReadUInt16LittleEndian(packet.AsSpan(2, 2));
+        var toSlot = BinaryPrimitives.ReadUInt16LittleEndian(packet.AsSpan(4, 2));
+        var config = _configStore.Current;
+
+        if (fromSlot >= config.MaxChars)
+        {
+            await SendMoveCharSlotAckAsync(1, 0, cancellationToken);
+            return;
+        }
+
+        if (!config.CharMoveEnabled)
+        {
+            await SendMoveCharSlotAckAsync(1, 0, cancellationToken);
+            return;
+        }
+
+        if (toSlot >= _charSlots)
+        {
+            await SendMoveCharSlotAckAsync(1, 0, cancellationToken);
+            return;
+        }
+
+        var db = _dbFactory();
+        if (db == null)
+        {
+            await SendMoveCharSlotAckAsync(1, 0, cancellationToken);
+            return;
+        }
+
+        await using (db)
+        {
+            var characters = await db.Characters
+                .Where(c => c.AccountId == _accountId)
+                .ToListAsync(cancellationToken);
+
+            var fromChar = characters.FirstOrDefault(c => c.CharNum == fromSlot);
+            if (fromChar == null)
+            {
+                await SendMoveCharSlotAckAsync(1, 0, cancellationToken);
+                return;
+            }
+
+            var remainingMoves = (ushort)Math.Min(fromChar.Moves, ushort.MaxValue);
+            if (!config.CharMovesUnlimited && remainingMoves == 0)
+            {
+                await SendMoveCharSlotAckAsync(1, remainingMoves, cancellationToken);
+                return;
+            }
+
+            var toChar = characters.FirstOrDefault(c => c.CharNum == toSlot);
+            if (toChar != null)
+            {
+                if (!config.CharMoveToUsed)
+                {
+                    await SendMoveCharSlotAckAsync(1, remainingMoves, cancellationToken);
+                    return;
+                }
+
+                var temp = fromChar.CharNum;
+                fromChar.CharNum = toChar.CharNum;
+                toChar.CharNum = temp;
+            }
+            else
+            {
+                fromChar.CharNum = (byte)Math.Clamp((int)toSlot, 0, byte.MaxValue);
+            }
+
+            if (!config.CharMovesUnlimited && fromChar.Moves > 0)
+            {
+                fromChar.Moves -= 1;
+            }
+
+            await db.SaveChangesAsync(cancellationToken);
+
+            remainingMoves = (ushort)Math.Min(fromChar.Moves, ushort.MaxValue);
+            await SendMoveCharSlotAckAsync(0, remainingMoves, cancellationToken);
+        }
+
+        await SendCharListAsync(cancellationToken);
+    }
+
     private Task SendRefuseMakeCharAsync(CancellationToken cancellationToken)
     {
         var buffer = new byte[3];
@@ -755,6 +1268,84 @@ public sealed class ClientSession : IDisposable
         var buffer = new byte[2 + payload.Length];
         BinaryPrimitives.WriteInt16LittleEndian(buffer.AsSpan(0, 2), PacketConstants.HcAcceptMakeChar);
         payload.CopyTo(buffer.AsSpan(2));
+        return WriteAsync(buffer, cancellationToken);
+    }
+
+    private Task SendRenameCheckAsync(bool isValid, CancellationToken cancellationToken)
+    {
+        var buffer = new byte[4];
+        BinaryPrimitives.WriteInt16LittleEndian(buffer.AsSpan(0, 2), PacketConstants.HcAckIsValidCharName);
+        BinaryPrimitives.WriteUInt16LittleEndian(buffer.AsSpan(2, 2), isValid ? (ushort)1 : (ushort)0);
+        return WriteAsync(buffer, cancellationToken);
+    }
+
+    private Task SendRenameResultAsync(int result, CancellationToken cancellationToken)
+    {
+        var buffer = new byte[6];
+        BinaryPrimitives.WriteInt16LittleEndian(buffer.AsSpan(0, 2), PacketConstants.HcAckChangeCharName);
+        BinaryPrimitives.WriteUInt32LittleEndian(buffer.AsSpan(2, 4), (uint)Math.Max(0, result));
+        return WriteAsync(buffer, cancellationToken);
+    }
+
+    private Task SendMoveCharSlotAckAsync(ushort reason, ushort moves, CancellationToken cancellationToken)
+    {
+        var buffer = new byte[8];
+        BinaryPrimitives.WriteInt16LittleEndian(buffer.AsSpan(0, 2), PacketConstants.HcAckChangeCharacterSlot);
+        BinaryPrimitives.WriteInt16LittleEndian(buffer.AsSpan(2, 2), 8);
+        BinaryPrimitives.WriteUInt16LittleEndian(buffer.AsSpan(4, 2), reason);
+        BinaryPrimitives.WriteUInt16LittleEndian(buffer.AsSpan(6, 2), moves);
+        return WriteAsync(buffer, cancellationToken);
+    }
+
+    private async Task SendPincodeStartAsync(CancellationToken cancellationToken)
+    {
+        var config = _configStore.Current;
+        if (!config.PincodeEnabled)
+        {
+            await SendPincodeStateAsync(PincodeState.Ok, cancellationToken);
+            return;
+        }
+
+        if (string.IsNullOrEmpty(_pincode))
+        {
+            if (config.PincodeForce)
+            {
+                await SendPincodeStateAsync(PincodeState.New, cancellationToken);
+            }
+            else
+            {
+                await SendPincodeStateAsync(PincodeState.Passed, cancellationToken);
+            }
+            return;
+        }
+
+        if (config.PincodeChangeTimeSeconds > 0 && _pincodeChange > 0)
+        {
+            var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            if (_pincodeChange + config.PincodeChangeTimeSeconds <= (uint)now)
+            {
+                await SendPincodeStateAsync(PincodeState.Expired, cancellationToken);
+                return;
+            }
+        }
+
+        if (_pincodeCorrect || PincodePassed.ContainsKey(_accountId))
+        {
+            await SendPincodeStateAsync(PincodeState.Passed, cancellationToken);
+            return;
+        }
+
+        await SendPincodeStateAsync(PincodeState.Ask, cancellationToken);
+    }
+
+    private Task SendPincodeStateAsync(PincodeState state, CancellationToken cancellationToken)
+    {
+        var buffer = new byte[12];
+        BinaryPrimitives.WriteInt16LittleEndian(buffer.AsSpan(0, 2), PacketConstants.HcSecondPasswordLogin);
+        _pincodeSeed = (uint)Random.Shared.Next(0, 0x10000);
+        BinaryPrimitives.WriteUInt32LittleEndian(buffer.AsSpan(2, 4), _pincodeSeed);
+        BinaryPrimitives.WriteUInt32LittleEndian(buffer.AsSpan(6, 4), _accountId);
+        BinaryPrimitives.WriteUInt16LittleEndian(buffer.AsSpan(10, 2), (ushort)state);
         return WriteAsync(buffer, cancellationToken);
     }
 
@@ -909,6 +1500,238 @@ public sealed class ClientSession : IDisposable
     private static bool IsDoramJob(uint job)
     {
         return job == JobSummoner || job == JobBabySummoner;
+    }
+
+    private static string NormalizeName(string name)
+    {
+        return (name ?? string.Empty).Trim();
+    }
+
+    private async Task<NameValidationResult> ValidateCharNameAsync(string name, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            return NameValidationResult.Invalid;
+        }
+
+        var config = _configStore.Current;
+        if (name.Length < config.CharNameMinLength)
+        {
+            return NameValidationResult.Invalid;
+        }
+
+        if (ContainsControlChars(name))
+        {
+            return NameValidationResult.Invalid;
+        }
+
+        if (!string.IsNullOrEmpty(config.WispServerName) &&
+            string.Equals(name, config.WispServerName, StringComparison.OrdinalIgnoreCase))
+        {
+            return NameValidationResult.Invalid;
+        }
+
+        if (name.StartsWith("#", StringComparison.Ordinal))
+        {
+            return NameValidationResult.Invalid;
+        }
+
+        if (!IsNameAllowed(config, name))
+        {
+            return NameValidationResult.Invalid;
+        }
+
+        var db = _dbFactory();
+        if (db == null)
+        {
+            return NameValidationResult.Invalid;
+        }
+
+        await using (db)
+        {
+            if (config.NameIgnoringCase)
+            {
+            var normalizedName = name.ToLowerInvariant();
+            var matches = await db.Characters
+                .Where(c => c.Name.ToLower() == normalizedName)
+                .Select(c => c.Name)
+                .ToListAsync(cancellationToken);
+            return matches.Any(match => string.Equals(match, name, StringComparison.Ordinal))
+                ? NameValidationResult.Exists
+                : NameValidationResult.Ok;
+        }
+
+        var normalizedLookup = name.ToLowerInvariant();
+        var existsInsensitive = await db.Characters
+            .AnyAsync(c => c.Name.ToLower() == normalizedLookup, cancellationToken);
+        return existsInsensitive ? NameValidationResult.Exists : NameValidationResult.Ok;
+        }
+    }
+
+    private static bool ContainsControlChars(string name)
+    {
+        foreach (var ch in name)
+        {
+            if (char.IsControl(ch))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool IsNameAllowed(CharConfig config, string name)
+    {
+        if (config.CharNameOption == 1)
+        {
+            foreach (var ch in name)
+            {
+                if (!config.CharNameLetters.Contains(ch))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        if (config.CharNameOption == 2)
+        {
+            foreach (var ch in name)
+            {
+                if (config.CharNameLetters.Contains(ch))
+                {
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
+
+    private static bool IsPincodeAllowed(CharConfig config, string pincode)
+    {
+        if (pincode.Length != 4)
+        {
+            return false;
+        }
+
+        foreach (var ch in pincode)
+        {
+            if (ch < '0' || ch > '9')
+            {
+                return false;
+            }
+        }
+
+        if (!config.PincodeAllowRepeated)
+        {
+            if (pincode[0] == pincode[1] &&
+                pincode[0] == pincode[2] &&
+                pincode[0] == pincode[3])
+            {
+                return false;
+            }
+        }
+
+        if (!config.PincodeAllowSequential)
+        {
+            if (IsSequential(pincode, 1) || IsSequential(pincode, -1))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool IsSequential(string pin, int step)
+    {
+        var current = pin[0];
+        for (var i = 1; i < pin.Length; i++)
+        {
+            var next = (char)(current + step);
+            if (next > '9')
+            {
+                next = (char)('0' + (next - '9' - 1));
+            }
+            else if (next < '0')
+            {
+                next = (char)('9' - ('0' - next) + 1);
+            }
+
+            if (pin[i] != next)
+            {
+                return false;
+            }
+
+            current = next;
+        }
+
+        return true;
+    }
+
+    private static string? DecryptPincode(uint seed, string pin)
+    {
+        if (pin.Length != 4)
+        {
+            return null;
+        }
+
+        foreach (var ch in pin)
+        {
+            if (ch < '0' || ch > '9')
+            {
+                return null;
+            }
+        }
+
+        var tab = new int[10];
+        for (var i = 0; i < tab.Length; i++)
+        {
+            tab[i] = i;
+        }
+
+        for (var i = 1; i < 10; i++)
+        {
+            const uint multiplier = 0x3498;
+            const uint baseSeed = 0x881234;
+            seed = baseSeed + seed * multiplier;
+            var pos = (int)(seed % (i + 1));
+            if (i != pos)
+            {
+                (tab[i], tab[pos]) = (tab[pos], tab[i]);
+            }
+        }
+
+        var output = new char[4];
+        for (var i = 0; i < 4; i++)
+        {
+            var idx = pin[i] - '0';
+            output[i] = (char)('0' + tab[idx]);
+        }
+
+        return new string(output);
+    }
+
+    private enum NameValidationResult
+    {
+        Ok = 0,
+        Invalid = 1,
+        Exists = 2,
+    }
+
+    private enum PincodeState : ushort
+    {
+        Ok = 0,
+        Ask = 1,
+        NotSet = 2,
+        Expired = 3,
+        New = 4,
+        Illegal = 5,
+        Passed = 0,
+        Wrong = 8,
     }
 
     private bool IsDeleteCodeValid(string code, int option)

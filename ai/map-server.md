@@ -3,6 +3,12 @@
 Goal
 - Build the C# map server with incremental parity: core session, map load, basic NPC and battle flow.
 
+Current state
+- Map server project scaffolded with config/secrets/logging and Aspire hookup.
+- Inter-server handshake (map -> char) implemented: 0x2af8 login, 0x2afa map list (empty), 0x2b26 auth request, 0x2afd/0x2b27 responses.
+- Map server accepts client connections and handles CZ_ENTER/CZ_ENTER2, then replies with ZC_ACCEPT_ENTER or ZC_REFUSE_ENTER after char auth.
+- Unit tests added for config + secrets loading (MapServer.Tests).
+
 Legacy references
 - legacy/src/map/map.cpp
 - legacy/src/map/clif.cpp, npc.cpp, battle.cpp, pc.cpp

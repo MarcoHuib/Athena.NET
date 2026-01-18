@@ -21,6 +21,12 @@ public static class CharLogger
     private static string _filePath = string.Empty;
     private static string _timestampFormat = string.Empty;
     private static bool _configured;
+    private static Action<LogLevel, string>? _telemetrySink;
+
+    public static void SetTelemetrySink(Action<LogLevel, string>? sink)
+    {
+        _telemetrySink = sink;
+    }
 
     public static void Configure(CharConfig config)
     {
@@ -40,6 +46,8 @@ public static class CharLogger
 
     private static void Write(LogLevel level, string message)
     {
+        _telemetrySink?.Invoke(level, message);
+
         var mask = MaskFor(level);
         var line = message;
         var prefix = FormatTimestampPrefix();

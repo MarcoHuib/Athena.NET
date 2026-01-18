@@ -4,8 +4,8 @@ namespace Athena.Net.CharServer.Config;
 
 public sealed class CharConfig
 {
-    public string UserId { get; init; } = "s1";
-    public string Password { get; init; } = "p1";
+    public string UserId { get; init; } = string.Empty;
+    public string Password { get; init; } = string.Empty;
     public string ServerName { get; init; } = "rAthena";
     public IPAddress LoginIp { get; init; } = IPAddress.Loopback;
     public int LoginPort { get; init; } = 6900;
@@ -23,6 +23,23 @@ public sealed class CharConfig
     public int CharDeleteRestriction { get; init; } = 3;
     public int StartZeny { get; init; }
     public int StartStatusPoints { get; init; } = 48;
+    public string WispServerName { get; init; } = "Server";
+    public string UnknownCharName { get; init; } = "Unknown";
+    public bool NameIgnoringCase { get; init; }
+    public int CharNameOption { get; init; }
+    public string CharNameLetters { get; init; } = string.Empty;
+    public int CharNameMinLength { get; init; } = 4;
+    public bool CharRenameParty { get; init; }
+    public bool CharRenameGuild { get; init; }
+    public bool PincodeEnabled { get; init; } = true;
+    public int PincodeChangeTimeSeconds { get; init; }
+    public int PincodeMaxTry { get; init; } = 3;
+    public bool PincodeForce { get; init; } = true;
+    public bool PincodeAllowRepeated { get; init; }
+    public bool PincodeAllowSequential { get; init; }
+    public bool CharMoveEnabled { get; init; } = true;
+    public bool CharMoveToUsed { get; init; } = true;
+    public bool CharMovesUnlimited { get; init; }
     public IReadOnlyList<StartPoint> StartPoints { get; init; } = Array.Empty<StartPoint>();
     public IReadOnlyList<StartPoint> StartPointsDoram { get; init; } = Array.Empty<StartPoint>();
     public IReadOnlyList<StartPoint> StartPointsPre { get; init; } = Array.Empty<StartPoint>();

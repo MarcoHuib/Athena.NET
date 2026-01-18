@@ -87,6 +87,40 @@ public sealed class LoginServerConnector
         return true;
     }
 
+    public bool TrySendPincodeUpdate(uint accountId, string pincode)
+    {
+        var connection = _connection;
+        if (connection == null)
+        {
+            return false;
+        }
+
+        var buffer = new byte[13];
+        BinaryPrimitives.WriteInt16LittleEndian(buffer.AsSpan(0, 2), PacketConstants.LcPincodeUpdate);
+        BinaryPrimitives.WriteInt16LittleEndian(buffer.AsSpan(2, 2), 13);
+        BinaryPrimitives.WriteUInt32LittleEndian(buffer.AsSpan(4, 4), accountId);
+        WriteFixedString(buffer.AsSpan(8, 5), pincode);
+
+        _ = connection.WriteAsync(buffer, CancellationToken.None);
+        return true;
+    }
+
+    public bool TrySendPincodeAuthFail(uint accountId)
+    {
+        var connection = _connection;
+        if (connection == null)
+        {
+            return false;
+        }
+
+        var buffer = new byte[6];
+        BinaryPrimitives.WriteInt16LittleEndian(buffer.AsSpan(0, 2), PacketConstants.LcPincodeAuthFail);
+        BinaryPrimitives.WriteUInt32LittleEndian(buffer.AsSpan(2, 4), accountId);
+
+        _ = connection.WriteAsync(buffer, CancellationToken.None);
+        return true;
+    }
+
     private async Task<bool> TryConnectAsync(CancellationToken cancellationToken)
     {
         var config = _configStore.Current;
@@ -129,17 +163,20 @@ public sealed class LoginServerConnector
         }
         catch (SocketException ex)
         {
-            CharLogger.Warning($"Login server connect failed: {ex.Message}");
+            CharLogger.Warning(
+                $"Login server connect failed ({config.LoginIp}:{config.LoginPort}): {ex.Message}");
             return false;
         }
         catch (IOException ex)
         {
-            CharLogger.Warning($"Login server connection error: {ex.Message}");
+            CharLogger.Warning(
+                $"Login server connection error ({config.LoginIp}:{config.LoginPort}): {ex.Message}");
             return false;
         }
         catch (Exception ex)
         {
-            CharLogger.Warning($"Login server connection error: {ex.Message}");
+            CharLogger.Warning(
+                $"Login server connection error ({config.LoginIp}:{config.LoginPort}): {ex.Message}");
             return false;
         }
     }
@@ -226,6 +263,11 @@ public sealed class LoginServerConnector
             return true;
         }
 
+        if (result != 0)
+        {
+            CharLogger.Warning($"Login auth failed (accountId={accountId}, loginId1={loginId1}, loginId2={loginId2}, sex={sex}, result={result}).");
+        }
+
         _ = session.HandleAuthResponseAsync(accountId, loginId1, loginId2, sex, result, clientType);
         return true;
     }
@@ -245,12 +287,14 @@ public sealed class LoginServerConnector
 
         var email = ReadFixedString(packet.AsSpan(6, 40));
         var birthdate = ReadFixedString(packet.AsSpan(52, 11));
+        var pincode = ReadFixedString(packet.AsSpan(63, 5));
+        var pincodeChange = BinaryPrimitives.ReadUInt32LittleEndian(packet.AsSpan(68, 4));
         var charSlots = packet[51];
         var isVip = packet[72] != 0;
         var vipSlots = packet[73];
         var billingSlots = packet[74];
 
-        _ = session.HandleAccountDataAsync(accountId, charSlots, isVip, vipSlots, billingSlots, email, birthdate);
+        _ = session.HandleAccountDataAsync(accountId, charSlots, isVip, vipSlots, billingSlots, email, birthdate, pincode, pincodeChange);
         return true;
     }
 
