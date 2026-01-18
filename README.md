@@ -54,6 +54,8 @@ The current milestone is a fully compatible LoginServer; CharServer and MapServe
 - [Run with .NET Aspire](docs/aspire.md)
 - [Migrations](docs/migrations.md)
 
+Note: SQL credentials live in `solutionfiles/secrets/secret.json`. The AppHost reads this file to keep Aspire and the servers in sync.
+
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 ## Docs

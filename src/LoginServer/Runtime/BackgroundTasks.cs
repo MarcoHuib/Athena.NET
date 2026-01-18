@@ -11,9 +11,40 @@ public static class BackgroundTasks
 {
     public static Task StartIpBanCleanupAsync(LoginConfigStore configStore, Func<LoginDbContext?> dbFactory, CancellationToken cancellationToken)
     {
-        if (!configStore.Current.IpBanEnabled || configStore.Current.IpBanCleanupIntervalSeconds <= 0)
+        if (!configStore.Current.IpBanEnabled)
         {
             return Task.CompletedTask;
+        }
+
+        if (configStore.Current.IpBanCleanupIntervalSeconds <= 0)
+        {
+            return Task.Run(async () =>
+            {
+                try
+                {
+                    var db = dbFactory();
+                    if (db == null)
+                    {
+                        return;
+                    }
+
+                    await using (db)
+                    {
+                        var now = DateTime.Now;
+                        var affected = await db.IpBanList
+                            .Where(entry => entry.ReleaseTime <= now)
+                            .ExecuteDeleteAsync(cancellationToken);
+                        if (affected > 0)
+                        {
+                            LoginLogger.Info($"IPBan cleanup removed {affected} rows.");
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    LoginLogger.Warning($"IPBan cleanup error: {ex.Message}");
+                }
+            }, cancellationToken);
         }
 
         return Task.Run(async () =>

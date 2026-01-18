@@ -27,24 +27,32 @@ public sealed class LoginDbContext : DbContext
             entity.ToTable(_tableNames.AccountTable);
             entity.HasKey(e => e.AccountId);
 
-            entity.Property(e => e.AccountId)
+            var accountId = entity.Property(e => e.AccountId)
                 .HasColumnName("account_id")
                 .ValueGeneratedOnAdd();
+
+            if (!isMySql)
+            {
+                accountId.UseIdentityColumn(2000000, 1);
+            }
 
             entity.Property(e => e.UserId)
                 .HasColumnName("userid")
                 .HasMaxLength(23)
-                .IsRequired();
+                .IsRequired()
+                .HasDefaultValue(string.Empty);
 
             entity.Property(e => e.UserPass)
                 .HasColumnName("user_pass")
                 .HasMaxLength(32)
-                .IsRequired();
+                .IsRequired()
+                .HasDefaultValue(string.Empty);
 
             entity.Property(e => e.Sex)
                 .HasColumnName("sex")
                 .HasMaxLength(1)
-                .IsRequired();
+                .IsRequired()
+                .HasDefaultValue("M");
 
             if (isMySql)
             {
@@ -55,22 +63,28 @@ public sealed class LoginDbContext : DbContext
             entity.Property(e => e.Email)
                 .HasColumnName("email")
                 .HasMaxLength(39)
-                .IsRequired();
+                .IsRequired()
+                .HasDefaultValue(string.Empty);
 
             entity.Property(e => e.GroupId)
-                .HasColumnName("group_id");
+                .HasColumnName("group_id")
+                .HasDefaultValue(0);
 
             entity.Property(e => e.State)
-                .HasColumnName("state");
+                .HasColumnName("state")
+                .HasDefaultValue(0u);
 
             entity.Property(e => e.UnbanTime)
-                .HasColumnName("unban_time");
+                .HasColumnName("unban_time")
+                .HasDefaultValue(0u);
 
             entity.Property(e => e.ExpirationTime)
-                .HasColumnName("expiration_time");
+                .HasColumnName("expiration_time")
+                .HasDefaultValue(0u);
 
             entity.Property(e => e.LoginCount)
-                .HasColumnName("logincount");
+                .HasColumnName("logincount")
+                .HasDefaultValue(0);
 
             entity.Property(e => e.LastLogin)
                 .HasColumnName("lastlogin");
@@ -78,35 +92,42 @@ public sealed class LoginDbContext : DbContext
             entity.Property(e => e.LastIp)
                 .HasColumnName("last_ip")
                 .HasMaxLength(100)
-                .IsRequired();
+                .IsRequired()
+                .HasDefaultValue(string.Empty);
 
             entity.Property(e => e.Birthdate)
                 .HasColumnName("birthdate")
                 .HasColumnType("date");
 
             entity.Property(e => e.CharacterSlots)
-                .HasColumnName("character_slots");
+                .HasColumnName("character_slots")
+                .HasDefaultValue((byte)0);
 
             entity.Property(e => e.Pincode)
                 .HasColumnName("pincode")
                 .HasMaxLength(4)
-                .IsRequired();
+                .IsRequired()
+                .HasDefaultValue(string.Empty);
 
             entity.Property(e => e.PincodeChange)
-                .HasColumnName("pincode_change");
+                .HasColumnName("pincode_change")
+                .HasDefaultValue(0u);
 
             entity.Property(e => e.VipTime)
-                .HasColumnName("vip_time");
+                .HasColumnName("vip_time")
+                .HasDefaultValue(0u);
 
             entity.Property(e => e.OldGroup)
-                .HasColumnName("old_group");
+                .HasColumnName("old_group")
+                .HasDefaultValue(0);
 
             entity.Property(e => e.WebAuthToken)
                 .HasColumnName("web_auth_token")
                 .HasMaxLength(17);
 
             entity.Property(e => e.WebAuthTokenEnabled)
-                .HasColumnName("web_auth_token_enabled");
+                .HasColumnName("web_auth_token_enabled")
+                .HasDefaultValue(false);
 
             entity.HasIndex(e => e.UserId)
                 .HasDatabaseName("name");
@@ -124,7 +145,8 @@ public sealed class LoginDbContext : DbContext
             entity.Property(e => e.List)
                 .HasColumnName("list")
                 .HasMaxLength(15)
-                .IsRequired();
+                .IsRequired()
+                .HasDefaultValue(string.Empty);
 
             entity.Property(e => e.BanTime)
                 .HasColumnName("btime");
@@ -135,13 +157,14 @@ public sealed class LoginDbContext : DbContext
             entity.Property(e => e.Reason)
                 .HasColumnName("reason")
                 .HasMaxLength(255)
-                .IsRequired();
+                .IsRequired()
+                .HasDefaultValue(string.Empty);
         });
 
         modelBuilder.Entity<LoginLogEntry>(entity =>
         {
             entity.ToTable(_tableNames.LoginLogTable);
-            entity.HasKey(e => new { e.Time, e.Ip, e.User, e.ResultCode, e.Log });
+            entity.HasNoKey();
 
             entity.Property(e => e.Time)
                 .HasColumnName("time");
@@ -150,6 +173,9 @@ public sealed class LoginDbContext : DbContext
                 .HasColumnName("ip")
                 .HasMaxLength(15)
                 .IsRequired();
+
+            entity.HasIndex(e => e.Ip)
+                .HasDatabaseName("ip");
 
             entity.Property(e => e.User)
                 .HasColumnName("user")
@@ -173,6 +199,9 @@ public sealed class LoginDbContext : DbContext
             entity.Property(e => e.AccountId)
                 .HasColumnName("account_id");
 
+            entity.HasIndex(e => e.AccountId)
+                .HasDatabaseName("account_id");
+
             entity.Property(e => e.Key)
                 .HasColumnName("key")
                 .HasMaxLength(32)
@@ -192,6 +221,9 @@ public sealed class LoginDbContext : DbContext
 
             entity.Property(e => e.AccountId)
                 .HasColumnName("account_id");
+
+            entity.HasIndex(e => e.AccountId)
+                .HasDatabaseName("account_id");
 
             entity.Property(e => e.Key)
                 .HasColumnName("key")

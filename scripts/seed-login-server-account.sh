@@ -72,18 +72,47 @@ if [ -z "$SA_PASSWORD" ]; then
 fi
 
 if [ -z "$DB_NAME" ]; then
-  DB_NAME="athena.net"
+  DB_NAME="LoginDb"
 fi
 
 if [ -z "$SQL_SERVER" ]; then
   SQL_SERVER="localhost,1433"
 fi
 
-if [[ "$SQL_SERVER" == localhost* || "$SQL_SERVER" == 127.0.0.1* ]]; then
-  SQL_SERVER="host.docker.internal${SQL_SERVER#localhost}"
-  SQL_SERVER="${SQL_SERVER#127.0.0.1}"
-  if [[ "$SQL_SERVER" != host.docker.internal* ]]; then
-    SQL_SERVER="host.docker.internal,1433"
+normalize_sql_server() {
+  local server="$1"
+  local prefix=""
+
+  if [[ "$server" == tcp:* ]]; then
+    prefix="tcp:"
+    server="${server#tcp:}"
+  fi
+
+  case "$server" in
+    localhost*) server="host.docker.internal${server#localhost}" ;;
+    127.0.0.1*) server="host.docker.internal${server#127.0.0.1}" ;;
+  esac
+
+  if [[ "$server" == "host.docker.internal" ]]; then
+    server="host.docker.internal,1433"
+  fi
+
+  printf "%s%s" "$prefix" "$server"
+}
+
+DOCKER_NETWORK=""
+SQL_EDGE_CONTAINER=""
+
+if [[ "$SQL_SERVER" == localhost* || "$SQL_SERVER" == 127.0.0.1* || "$SQL_SERVER" == tcp:localhost* || "$SQL_SERVER" == tcp:127.0.0.1* ]]; then
+  if SQL_EDGE_CONTAINER="$(docker ps --filter 'ancestor=mcr.microsoft.com/azure-sql-edge:latest' --format '{{.Names}}' | head -n1)"; then
+    if [ -n "$SQL_EDGE_CONTAINER" ]; then
+      DOCKER_NETWORK="container:$SQL_EDGE_CONTAINER"
+      SQL_SERVER="localhost,1433"
+    else
+      SQL_SERVER="$(normalize_sql_server "$SQL_SERVER")"
+    fi
+  else
+    SQL_SERVER="$(normalize_sql_server "$SQL_SERVER")"
   fi
 fi
 
@@ -130,6 +159,7 @@ fi
 docker pull "$TOOLS_IMAGE" >/dev/null
 
 docker run --rm --platform linux/amd64 \
+  ${DOCKER_NETWORK:+--network "$DOCKER_NETWORK"} \
   -e SA_PASSWORD="$SA_PASSWORD" -e SQLCMD_QUERY="$QUERY" -e DB_NAME="$DB_NAME" -e SQL_SERVER="$SQL_SERVER" \
   "$TOOLS_IMAGE" sh -c '
     if [ -x /opt/mssql-tools18/bin/sqlcmd ]; then

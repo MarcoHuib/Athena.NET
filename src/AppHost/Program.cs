@@ -1,4 +1,4 @@
-using System.Security.Cryptography;
+using System.Text.Json;
 
 if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("ASPNETCORE_URLS")))
 {
@@ -30,7 +30,12 @@ var sqlPassword = builder.AddParameter("sql-edge-password", secret: true);
 var sql = builder.AddSqlServer("sql", sqlPassword)
     .WithImage("azure-sql-edge")
     .WithImageTag("latest")
-    .WithEnvironment("ACCEPT_EULA", "Y");
+    .WithEnvironment("ACCEPT_EULA", "Y")
+    .WithEndpoint("tcp", endpoint =>
+    {
+        endpoint.Port = 58043;
+        endpoint.TargetPort = 1433;
+    });
 
 var loginDb = sql.AddDatabase("LoginDb");
 
@@ -48,51 +53,33 @@ static void EnsureSqlEdgePassword()
         return;
     }
 
-    var repoRoot = Directory.GetCurrentDirectory();
-    var aspireDir = Path.Combine(repoRoot, ".aspire");
-    var secretsPath = Path.Combine(aspireDir, "parameters.local.json");
-
-    if (TryReadPassword(secretsPath, out var existingPassword))
+    var repoRoot = FindRepoRoot() ?? Directory.GetCurrentDirectory();
+    if (TryReadSqlPasswordFromSecrets(repoRoot, out var secretsPassword))
     {
-        Environment.SetEnvironmentVariable("Parameters__sql-edge-password", existingPassword);
+        Environment.SetEnvironmentVariable("Parameters__sql-edge-password", secretsPassword);
         return;
     }
-
-    Directory.CreateDirectory(aspireDir);
-
-    var generatedPassword = GenerateSqlPassword();
-    var payload = new
-    {
-        Parameters = new Dictionary<string, string>
-        {
-            ["sql-edge-password"] = generatedPassword
-        }
-    };
-
-    File.WriteAllText(secretsPath, System.Text.Json.JsonSerializer.Serialize(payload, new System.Text.Json.JsonSerializerOptions
-    {
-        WriteIndented = true
-    }));
-
-    Environment.SetEnvironmentVariable("Parameters__sql-edge-password", generatedPassword);
+    throw new InvalidOperationException(
+        "Missing SQL Edge SA password. Set Parameters__sql-edge-password or SqlServer.SaPassword in solutionfiles/secrets/secret.json.");
 }
 
-static bool TryReadPassword(string secretsPath, out string password)
+static bool TryReadSqlPasswordFromSecrets(string repoRoot, out string password)
 {
     password = string.Empty;
+    var secretsPath = Path.Combine(repoRoot, "solutionfiles", "secrets", "secret.json");
     if (!File.Exists(secretsPath))
     {
         return false;
     }
 
     using var stream = File.OpenRead(secretsPath);
-    using var document = System.Text.Json.JsonDocument.Parse(stream);
-    if (!document.RootElement.TryGetProperty("Parameters", out var parameters))
+    using var document = JsonDocument.Parse(stream);
+    if (!document.RootElement.TryGetProperty("SqlServer", out var sqlServer))
     {
         return false;
     }
 
-    if (!parameters.TryGetProperty("sql-edge-password", out var passwordElement))
+    if (!sqlServer.TryGetProperty("SaPassword", out var passwordElement))
     {
         return false;
     }
@@ -101,30 +88,28 @@ static bool TryReadPassword(string secretsPath, out string password)
     return !string.IsNullOrWhiteSpace(password);
 }
 
-static string GenerateSqlPassword()
+static string? FindRepoRoot()
 {
-    const string alphabet = "abcdefghijklmnopqrstuvwxyz";
-    const string upper = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-    const string digits = "0123456789";
-    const string symbols = "!@#$%^&*_-+=?";
-    const string all = alphabet + upper + digits + symbols;
-
-    Span<char> result = stackalloc char[16];
-    result[0] = alphabet[RandomNumberGenerator.GetInt32(alphabet.Length)];
-    result[1] = upper[RandomNumberGenerator.GetInt32(upper.Length)];
-    result[2] = digits[RandomNumberGenerator.GetInt32(digits.Length)];
-    result[3] = symbols[RandomNumberGenerator.GetInt32(symbols.Length)];
-
-    for (var i = 4; i < result.Length; i++)
+    var roots = new[]
     {
-        result[i] = all[RandomNumberGenerator.GetInt32(all.Length)];
+        Environment.CurrentDirectory,
+        AppContext.BaseDirectory
+    };
+
+    foreach (var root in roots)
+    {
+        var dir = new DirectoryInfo(root);
+        while (dir != null)
+        {
+            var secretsPath = Path.Combine(dir.FullName, "solutionfiles", "secrets", "secret.json");
+            if (File.Exists(secretsPath))
+            {
+                return dir.FullName;
+            }
+
+            dir = dir.Parent;
+        }
     }
 
-    for (var i = result.Length - 1; i > 0; i--)
-    {
-        var swapIndex = RandomNumberGenerator.GetInt32(i + 1);
-        (result[i], result[swapIndex]) = (result[swapIndex], result[i]);
-    }
-
-    return new string(result);
+    return null;
 }

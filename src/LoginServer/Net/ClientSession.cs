@@ -374,6 +374,18 @@ public sealed class ClientSession : IDisposable
             return;
         }
 
+        if (Config.GroupIdToConnect >= 0 && result.GroupId != Config.GroupIdToConnect)
+        {
+            await SendNotifyBanAsync(1, cancellationToken);
+            return;
+        }
+
+        if (Config.MinGroupIdToConnect >= 0 && Config.GroupIdToConnect == -1 && result.GroupId < Config.MinGroupIdToConnect)
+        {
+            await SendNotifyBanAsync(1, cancellationToken);
+            return;
+        }
+
         if (_charServers.Servers.Count == 0)
         {
             await SendNotifyBanAsync(1, cancellationToken);
@@ -969,7 +981,7 @@ public sealed class ClientSession : IDisposable
             return;
         }
 
-        _state.RemoveOnlineUsersByCharServer(_charServerId.Value);
+        _state.MarkOnlineUsersUnknownByCharServer(_charServerId.Value);
     }
 
     private async Task HandlePincodeUpdateAsync(byte[] packet, CancellationToken cancellationToken)
@@ -1096,7 +1108,7 @@ public sealed class ClientSession : IDisposable
             {
                 if (await IsDnsblListedAsync(remoteIp, cancellationToken))
                 {
-                    await LogLoginAsync(db, request.UserId, remoteIp, 3, "DNSBL", cancellationToken);
+                    await LogLoginAsync(db, request.UserId, remoteIp, 3, string.Empty, cancellationToken);
                     return AuthResult.Fail(3);
                 }
             }
@@ -1126,7 +1138,7 @@ public sealed class ClientSession : IDisposable
 
             if (!isServer && string.Equals(account.Sex, "S", StringComparison.OrdinalIgnoreCase))
             {
-                await LogLoginAsync(db, userId, remoteIp, 0, "Server account", cancellationToken);
+                await LogLoginAsync(db, userId, remoteIp, 0, string.Empty, cancellationToken);
                 return AuthResult.Fail(0);
             }
 
@@ -1166,23 +1178,8 @@ public sealed class ClientSession : IDisposable
                 }
             }
 
-            if (!isServer)
-            {
-                if (Config.GroupIdToConnect >= 0 && account.GroupId != Config.GroupIdToConnect)
-                {
-                    await LogLoginAsync(db, userId, remoteIp, 1, "Group id restriction", cancellationToken);
-                    return AuthResult.Fail(1);
-                }
-
-                if (Config.MinGroupIdToConnect >= 0 && Config.GroupIdToConnect == -1 && account.GroupId < Config.MinGroupIdToConnect)
-                {
-                    await LogLoginAsync(db, userId, remoteIp, 1, "Min group id restriction", cancellationToken);
-                    return AuthResult.Fail(1);
-                }
-            }
-
-            await UpdateAccountLoginAsync(db, account, remoteIp, cancellationToken);
-            await LogLoginAsync(db, userId, remoteIp, 100, "login ok", cancellationToken);
+        await UpdateAccountLoginAsync(db, account, remoteIp, cancellationToken);
+        await LogLoginAsync(db, userId, remoteIp, 100, "login ok", cancellationToken);
 
             var loginId1 = RandomNumberGenerator.GetInt32(1, int.MaxValue);
             var loginId2 = RandomNumberGenerator.GetInt32(1, int.MaxValue);
@@ -1255,7 +1252,7 @@ public sealed class ClientSession : IDisposable
 
     private async Task UpdateAccountLoginAsync(LoginDbContext db, LoginAccount account, string remoteIp, CancellationToken cancellationToken)
     {
-        account.LastLogin = DateTime.UtcNow;
+        account.LastLogin = DateTime.Now;
         account.LastIp = remoteIp;
         account.UnbanTime = 0;
         account.LoginCount += 1;
@@ -1266,15 +1263,37 @@ public sealed class ClientSession : IDisposable
         db.Entry(account).Property(a => a.UnbanTime).IsModified = true;
         db.Entry(account).Property(a => a.LoginCount).IsModified = true;
 
+        await db.SaveChangesAsync(cancellationToken);
+
         if (Config.UseWebAuthToken && !string.Equals(account.Sex, "S", StringComparison.OrdinalIgnoreCase))
+        {
+            await UpdateWebAuthTokenWithRetryAsync(db, account, cancellationToken);
+        }
+    }
+
+    private async Task UpdateWebAuthTokenWithRetryAsync(LoginDbContext db, LoginAccount account, CancellationToken cancellationToken)
+    {
+        const int maxRetries = 20;
+
+        for (var attempt = 0; attempt < maxRetries; attempt++)
         {
             account.WebAuthToken = GenerateWebAuthToken();
             account.WebAuthTokenEnabled = true;
             db.Entry(account).Property(a => a.WebAuthToken).IsModified = true;
             db.Entry(account).Property(a => a.WebAuthTokenEnabled).IsModified = true;
+
+            try
+            {
+                await db.SaveChangesAsync(cancellationToken);
+                return;
+            }
+            catch (DbUpdateException) when (attempt < maxRetries - 1)
+            {
+                db.Entry(account).State = EntityState.Unchanged;
+            }
         }
 
-        await db.SaveChangesAsync(cancellationToken);
+        LoginLogger.Warning("Failed to generate a unique web_auth_token after multiple retries.");
     }
 
     private async Task LogLoginAsync(LoginDbContext db, string userId, string ip, uint resultCode, string message, CancellationToken cancellationToken)
@@ -1286,15 +1305,39 @@ public sealed class ClientSession : IDisposable
 
         var entry = new LoginLogEntry
         {
-            Time = DateTime.UtcNow,
+            Time = DateTime.Now,
             Ip = ip,
             User = userId,
             ResultCode = (byte)Math.Min(byte.MaxValue, resultCode),
             Log = ResolveLoginMessage(resultCode, message),
         };
+        var tableName = db.Model.FindEntityType(typeof(LoginLogEntry))?.GetTableName() ?? "loginlog";
+        var quoted = QuoteTableName(tableName);
+        var sql = $"INSERT INTO {quoted} ([time],[ip],[user],[rcode],[log]) VALUES (@p0,@p1,@p2,@p3,@p4)";
+        await db.Database.ExecuteSqlRawAsync(sql, new object[]
+        {
+            entry.Time,
+            entry.Ip,
+            entry.User,
+            entry.ResultCode,
+            entry.Log,
+        }, cancellationToken);
+    }
 
-        await db.LoginLogs.AddAsync(entry, cancellationToken);
-        await db.SaveChangesAsync(cancellationToken);
+    private static string QuoteTableName(string tableName)
+    {
+        if (string.IsNullOrWhiteSpace(tableName))
+        {
+            return "[loginlog]";
+        }
+
+        var parts = tableName.Split('.', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (parts.Length == 0)
+        {
+            return "[loginlog]";
+        }
+
+        return string.Join(".", parts.Select(part => $"[{part.Replace("]", "]]", StringComparison.Ordinal)}]"));
     }
 
     private string ResolveLoginMessage(uint resultCode, string message)
@@ -1304,9 +1347,23 @@ public sealed class ClientSession : IDisposable
             return message;
         }
 
+        if (resultCode is >= 99 and <= 104)
+        {
+            var remapped = resultCode - 83;
+            if (_messageStore.Current.TryGet(remapped, out var mapped))
+            {
+                return mapped;
+            }
+        }
+
         if (_messageStore.Current.TryGet(resultCode, out var resolved))
         {
             return resolved;
+        }
+
+        if (_messageStore.Current.TryGet(22, out var fallback))
+        {
+            return fallback;
         }
 
         return "Unknown Error";
@@ -1777,7 +1834,7 @@ public sealed class ClientSession : IDisposable
 
     private static DateTime FromUnixTime(uint value)
     {
-        return DateTimeOffset.FromUnixTimeSeconds(value).UtcDateTime;
+        return DateTimeOffset.FromUnixTimeSeconds(value).LocalDateTime;
     }
 
     private string FormatDate(DateTime time)
@@ -1893,12 +1950,13 @@ public sealed class ClientSession : IDisposable
         uint LoginId1,
         uint LoginId2,
         byte Sex,
+        int GroupId,
         string WebAuthToken,
         uint Ip)
     {
         public static AuthResult Fail(uint error, string unblockTime = "")
         {
-            return new AuthResult(false, error, unblockTime, 0, 0, 0, 0, string.Empty, 0);
+            return new AuthResult(false, error, unblockTime, 0, 0, 0, 0, 0, string.Empty, 0);
         }
 
         public static AuthResult FromAccount(LoginAccount account, int loginId1, int loginId2, string ip)
@@ -1906,7 +1964,7 @@ public sealed class ClientSession : IDisposable
             var sex = (byte)(account.Sex.Equals("F", StringComparison.OrdinalIgnoreCase) ? 0 :
                 account.Sex.Equals("M", StringComparison.OrdinalIgnoreCase) ? 1 : 2);
             var parsedIp = ParseIp(ip);
-            return new AuthResult(true, 0, string.Empty, account.AccountId, (uint)loginId1, (uint)loginId2, sex, account.WebAuthToken ?? string.Empty, parsedIp);
+            return new AuthResult(true, 0, string.Empty, account.AccountId, (uint)loginId1, (uint)loginId2, sex, account.GroupId, account.WebAuthToken ?? string.Empty, parsedIp);
         }
     }
 

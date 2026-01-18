@@ -34,17 +34,23 @@ namespace LoginServer.Migrations
                     b.Property<string>("Key")
                         .HasMaxLength(32)
                         .HasColumnType("nvarchar(32)")
-                        .HasColumnName("key");
+                        .HasColumnName("key")
+                        .HasDefaultValue("");
 
                     b.Property<long>("Index")
                         .HasColumnType("bigint")
-                        .HasColumnName("index");
+                        .HasColumnName("index")
+                        .HasDefaultValue(0L);
 
                     b.Property<long>("Value")
                         .HasColumnType("bigint")
-                        .HasColumnName("value");
+                        .HasColumnName("value")
+                        .HasDefaultValue(0L);
 
                     b.HasKey("AccountId", "Key", "Index");
+
+                    b.HasIndex("AccountId")
+                        .HasDatabaseName("account_id");
 
                     b.ToTable("global_acc_reg_num", (string)null);
                 });
@@ -58,19 +64,25 @@ namespace LoginServer.Migrations
                     b.Property<string>("Key")
                         .HasMaxLength(32)
                         .HasColumnType("nvarchar(32)")
-                        .HasColumnName("key");
+                        .HasColumnName("key")
+                        .HasDefaultValue("");
 
                     b.Property<long>("Index")
                         .HasColumnType("bigint")
-                        .HasColumnName("index");
+                        .HasColumnName("index")
+                        .HasDefaultValue(0L);
 
                     b.Property<string>("Value")
                         .IsRequired()
                         .HasMaxLength(254)
                         .HasColumnType("nvarchar(254)")
-                        .HasColumnName("value");
+                        .HasColumnName("value")
+                        .HasDefaultValue("0");
 
                     b.HasKey("AccountId", "Key", "Index");
+
+                    b.HasIndex("AccountId")
+                        .HasDatabaseName("account_id");
 
                     b.ToTable("global_acc_reg_str", (string)null);
                 });
@@ -80,7 +92,8 @@ namespace LoginServer.Migrations
                     b.Property<string>("List")
                         .HasMaxLength(15)
                         .HasColumnType("nvarchar(15)")
-                        .HasColumnName("list");
+                        .HasColumnName("list")
+                        .HasDefaultValue("");
 
                     b.Property<DateTime>("BanTime")
                         .HasColumnType("datetime2")
@@ -90,7 +103,8 @@ namespace LoginServer.Migrations
                         .IsRequired()
                         .HasMaxLength(255)
                         .HasColumnType("nvarchar(255)")
-                        .HasColumnName("reason");
+                        .HasColumnName("reason")
+                        .HasDefaultValue("");
 
                     b.Property<DateTime>("ReleaseTime")
                         .HasColumnType("datetime2")
@@ -108,7 +122,7 @@ namespace LoginServer.Migrations
                         .HasColumnType("bigint")
                         .HasColumnName("account_id");
 
-                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("AccountId"));
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("AccountId"), 2000000, 1);
 
                     b.Property<DateTime?>("Birthdate")
                         .HasColumnType("date")
@@ -116,27 +130,32 @@ namespace LoginServer.Migrations
 
                     b.Property<byte>("CharacterSlots")
                         .HasColumnType("tinyint")
-                        .HasColumnName("character_slots");
+                        .HasColumnName("character_slots")
+                        .HasDefaultValue((byte)0);
 
                     b.Property<string>("Email")
                         .IsRequired()
                         .HasMaxLength(39)
                         .HasColumnType("nvarchar(39)")
-                        .HasColumnName("email");
+                        .HasColumnName("email")
+                        .HasDefaultValue("");
 
                     b.Property<long>("ExpirationTime")
                         .HasColumnType("bigint")
-                        .HasColumnName("expiration_time");
+                        .HasColumnName("expiration_time")
+                        .HasDefaultValue(0L);
 
                     b.Property<int>("GroupId")
                         .HasColumnType("int")
-                        .HasColumnName("group_id");
+                        .HasColumnName("group_id")
+                        .HasDefaultValue(0);
 
                     b.Property<string>("LastIp")
                         .IsRequired()
                         .HasMaxLength(100)
                         .HasColumnType("nvarchar(100)")
-                        .HasColumnName("last_ip");
+                        .HasColumnName("last_ip")
+                        .HasDefaultValue("");
 
                     b.Property<DateTime?>("LastLogin")
                         .HasColumnType("datetime2")
@@ -144,51 +163,61 @@ namespace LoginServer.Migrations
 
                     b.Property<int>("LoginCount")
                         .HasColumnType("int")
-                        .HasColumnName("logincount");
+                        .HasColumnName("logincount")
+                        .HasDefaultValue(0);
 
                     b.Property<int>("OldGroup")
                         .HasColumnType("int")
-                        .HasColumnName("old_group");
+                        .HasColumnName("old_group")
+                        .HasDefaultValue(0);
 
                     b.Property<string>("Pincode")
                         .IsRequired()
                         .HasMaxLength(4)
                         .HasColumnType("nvarchar(4)")
-                        .HasColumnName("pincode");
+                        .HasColumnName("pincode")
+                        .HasDefaultValue("");
 
                     b.Property<long>("PincodeChange")
                         .HasColumnType("bigint")
-                        .HasColumnName("pincode_change");
+                        .HasColumnName("pincode_change")
+                        .HasDefaultValue(0L);
 
                     b.Property<string>("Sex")
                         .IsRequired()
                         .HasMaxLength(1)
                         .HasColumnType("nvarchar(1)")
-                        .HasColumnName("sex");
+                        .HasColumnName("sex")
+                        .HasDefaultValue("M");
 
                     b.Property<long>("State")
                         .HasColumnType("bigint")
-                        .HasColumnName("state");
+                        .HasColumnName("state")
+                        .HasDefaultValue(0L);
 
                     b.Property<long>("UnbanTime")
                         .HasColumnType("bigint")
-                        .HasColumnName("unban_time");
+                        .HasColumnName("unban_time")
+                        .HasDefaultValue(0L);
 
                     b.Property<string>("UserId")
                         .IsRequired()
                         .HasMaxLength(23)
                         .HasColumnType("nvarchar(23)")
-                        .HasColumnName("userid");
+                        .HasColumnName("userid")
+                        .HasDefaultValue("");
 
                     b.Property<string>("UserPass")
                         .IsRequired()
                         .HasMaxLength(32)
                         .HasColumnType("nvarchar(32)")
-                        .HasColumnName("user_pass");
+                        .HasColumnName("user_pass")
+                        .HasDefaultValue("");
 
                     b.Property<long>("VipTime")
                         .HasColumnType("bigint")
-                        .HasColumnName("vip_time");
+                        .HasColumnName("vip_time")
+                        .HasDefaultValue(0L);
 
                     b.Property<string>("WebAuthToken")
                         .HasMaxLength(17)
@@ -197,7 +226,8 @@ namespace LoginServer.Migrations
 
                     b.Property<bool>("WebAuthTokenEnabled")
                         .HasColumnType("bit")
-                        .HasColumnName("web_auth_token_enabled");
+                        .HasColumnName("web_auth_token_enabled")
+                        .HasDefaultValue(false);
 
                     b.HasKey("AccountId");
 
@@ -221,23 +251,30 @@ namespace LoginServer.Migrations
                     b.Property<string>("Ip")
                         .HasMaxLength(15)
                         .HasColumnType("nvarchar(15)")
-                        .HasColumnName("ip");
+                        .HasColumnName("ip")
+                        .HasDefaultValue("");
 
                     b.Property<string>("User")
                         .HasMaxLength(23)
                         .HasColumnType("nvarchar(23)")
-                        .HasColumnName("user");
+                        .HasColumnName("user")
+                        .HasDefaultValue("");
 
                     b.Property<byte>("ResultCode")
                         .HasColumnType("tinyint")
-                        .HasColumnName("rcode");
+                        .HasColumnName("rcode")
+                        .HasDefaultValue((byte)0);
 
                     b.Property<string>("Log")
                         .HasMaxLength(255)
                         .HasColumnType("nvarchar(255)")
-                        .HasColumnName("log");
+                        .HasColumnName("log")
+                        .HasDefaultValue("");
 
-                    b.HasKey("Time", "Ip", "User", "ResultCode", "Log");
+                    b.HasNoKey();
+
+                    b.HasIndex("Ip")
+                        .HasDatabaseName("ip");
 
                     b.ToTable("loginlog", (string)null);
                 });

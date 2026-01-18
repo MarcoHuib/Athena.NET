@@ -8,6 +8,15 @@ Current state (C#)
 - Config templates live in conf/templates; real conf is gitignored.
 - Message catalog loading from conf/msg_conf/login_msg.conf is implemented.
 - Case-insensitive usernames can be configured; SQL Server + MySQL supported.
+- Password hashing/verification matches legacy (MD5 storage + encrypted client modes).
+- Login DB defaults/indexes aligned with legacy (login/ipban/global_acc_reg/loginlog) and identity seed at 2000000.
+- Auth node lifecycle/timeout handling matches legacy (AUTH_TIMEOUT + online cleanup).
+- Login log messages and group restriction handling aligned with legacy defaults.
+- IPBan cleanup behavior matches legacy when interval is disabled.
+- Loginlog schema parity restored (no primary key, only IP index).
+- Packet behavior parity reviewed and aligned (login refusal/notify paths, unblock time formatting).
+- Subnet handling matches legacy mask/char_ip behavior.
+- Web auth token generation/disable flow aligned with legacy (retries + delay).
 
 Legacy references
 - legacy/src/login/login.cpp
@@ -23,17 +32,10 @@ Legacy references
 - legacy/sql-files/logs.sql
 
 Open parity checks
-- Password hashing/verification: confirm exact scheme(s) (md5, salted, plaintext flags).
-- Account registration/login flags, PIN code behavior, and login log fields.
-- Auth node lifecycle and timeouts (AUTH_TIMEOUT, online_db, waiting_disconnect).
-- IPBan behavior: schedule, cleanup, and table schema parity.
-- Packet behavior: packet versions, edge cases for failed login/ban/expired.
-- Subnet handling: masks and per-server IPs should match legacy behavior.
-- Web auth token enable/disable on login/logout.
+ (none)
 
 Next tasks
 - Diff C# login flow against legacy login.cpp and loginclif.cpp behavior.
-- Compare table schema defaults to legacy main.sql/logs.sql; fix mismatches.
 - Verify error messages and codes match login_msg.conf and legacy defaults.
 - Add tests around auth node TTL and IPBan scheduling.
 

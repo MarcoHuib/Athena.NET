@@ -14,3 +14,4 @@ Notes
 - Console logging honors `console_msg_log`, `console_silent`, and `console_log_filepath` from `conf/login_athena.conf`.
 - `timestamp_format` in `conf/login_athena.conf` prefixes console/file logs (legacy format tokens are supported).
 - `login_case_sensitive` and `login_codepage` in `conf/inter_athena.conf` are supported. `login_codepage` is applied for MySQL connections only.
+- Database credentials are not read from `conf/inter_athena.conf`; keep secrets in `solutionfiles/secrets/secret.json`.

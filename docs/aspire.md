@@ -11,6 +11,8 @@ From repo root:
 dotnet run --project src/AppHost
 ```
 
+SQL Edge is exposed on a fixed host port (58043) for local tooling.
+
 ## Secrets
 Aspire will prompt for the SQL Edge password parameter on first run.
 You can also set it via environment variable:
