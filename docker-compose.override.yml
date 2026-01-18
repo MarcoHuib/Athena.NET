@@ -1,0 +1,5 @@
+services:
+  login-server:
+    volumes:
+      - ./conf:/app/conf:ro
+      - ./solutionfiles/secrets:/app/solutionfiles/secrets:ro

@@ -17,7 +17,7 @@
     &middot;
     <a href="docs/configuration.md">Configuration</a>
     &middot;
-    <a href="docs/docker-compose.md">Docker compose</a>
+    <a href="docs/aspire.md">.NET Aspire</a>
   </p>
 </div>
 
@@ -51,7 +51,7 @@ The current milestone is a fully compatible LoginServer; CharServer and MapServe
 - [Install prerequisites and secrets](docs/installation.md)
 - [Configure runtime settings](docs/configuration.md)
 - [Run locally](docs/run-locally.md)
-- [Run with Docker compose](docs/docker-compose.md)
+- [Run with .NET Aspire](docs/aspire.md)
 - [Migrations](docs/migrations.md)
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
@@ -60,7 +60,7 @@ The current milestone is a fully compatible LoginServer; CharServer and MapServe
 - [Installation](docs/installation.md)
 - [Configuration](docs/configuration.md)
 - [Run locally](docs/run-locally.md)
-- [Docker compose](docs/docker-compose.md)
+- [.NET Aspire](docs/aspire.md)
 - [Migrations](docs/migrations.md)
 - [Checklists](docs/checklists.md)
 - [Helper scripts](docs/scripts.md)

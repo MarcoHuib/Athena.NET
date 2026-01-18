@@ -26,11 +26,13 @@ public static class DbSetup
             var optionsBuilder = new DbContextOptionsBuilder<LoginDbContext>();
             if (dbProvider == "sqlserver")
             {
-                optionsBuilder.UseSqlServer(connectionString);
+                optionsBuilder.UseSqlServer(connectionString, sql =>
+                    sql.EnableRetryOnFailure());
             }
             else if (dbProvider == "mysql")
             {
-                optionsBuilder.UseMySql(connectionString, ServerVersion.AutoDetect(connectionString));
+                optionsBuilder.UseMySql(connectionString, ServerVersion.AutoDetect(connectionString), mysql =>
+                    mysql.EnableRetryOnFailure());
             }
             else
             {
@@ -44,15 +46,7 @@ public static class DbSetup
             var options = optionsBuilder.Options;
             var factory = () => new LoginDbContext(options, tableNames);
 
-            var dbInstance = factory();
-            if (dbInstance != null)
-            {
-                ApplyMigrations(dbInstance, autoMigrate).GetAwaiter().GetResult();
-            }
-            else
-            {
-                LoginLogger.Error("DB: unable to create connection.");
-            }
+            ApplyMigrationsWithRetry(factory, autoMigrate).GetAwaiter().GetResult();
 
             return factory;
         }
@@ -63,30 +57,72 @@ public static class DbSetup
         }
     }
 
-    private static async Task ApplyMigrations(LoginDbContext db, bool autoMigrate)
+    private static async Task ApplyMigrationsWithRetry(Func<LoginDbContext> factory, bool autoMigrate)
     {
-        await using var dbHandle = db;
-        if (autoMigrate)
+        const int maxAttempts = 60;
+        var delay = TimeSpan.FromSeconds(2);
+        Exception? lastError = null;
+
+        for (var attempt = 1; attempt <= maxAttempts; attempt++)
         {
-            var hasMigrations = dbHandle.Database.GetMigrations().Any();
-            if (hasMigrations)
+            try
             {
-                await dbHandle.Database.MigrateAsync();
-                LoginLogger.Status("DB: migrations applied.");
+                await using var dbHandle = factory();
+
+                if (autoMigrate)
+                {
+                    var hasMigrations = dbHandle.Database.GetMigrations().Any();
+                    if (hasMigrations)
+                    {
+                        await dbHandle.Database.MigrateAsync();
+                        LoginLogger.Status("DB: migrations applied.");
+                    }
+                    else
+                    {
+                        await dbHandle.Database.EnsureCreatedAsync();
+                        LoginLogger.Status("DB: schema created (EnsureCreated).");
+                    }
+                }
+
+                var canConnect = await dbHandle.Database.CanConnectAsync();
+                if (canConnect)
+                {
+                    LoginLogger.Status("DB: connected.");
+                    return;
+                }
+
+                lastError = new InvalidOperationException("Database not reachable.");
+                LoginLogger.Status($"DB: waiting for database ({attempt}/{maxAttempts})...");
+                await Task.Delay(delay);
             }
-            else
+            catch (Exception ex) when (attempt < maxAttempts)
             {
-                await dbHandle.Database.EnsureCreatedAsync();
-                LoginLogger.Status("DB: schema created (EnsureCreated).");
+                lastError = ex;
+                LoginLogger.Status($"DB: waiting for database ({attempt}/{maxAttempts})...");
+                await Task.Delay(delay);
+            }
+            catch (Exception ex)
+            {
+                lastError = ex;
+                break;
             }
         }
 
-        var canConnect = await dbHandle.Database.CanConnectAsync();
-        LoginLogger.Status(canConnect ? "DB: connected." : "DB: unable to connect.");
+        LoginLogger.Error("DB: unable to connect.");
+        if (lastError != null)
+        {
+            LoginLogger.Error($"DB: last error ({lastError.Message}).");
+        }
     }
 
     private static string ResolveConnectionString(InterConfig interConfig, SecretConfig secrets)
     {
+        var aspireConnection = Environment.GetEnvironmentVariable("ConnectionStrings__LoginDb");
+        if (!string.IsNullOrWhiteSpace(aspireConnection))
+        {
+            return aspireConnection;
+        }
+
         var envConnection = Environment.GetEnvironmentVariable("ATHENA_NET_LOGIN_DB_CONNECTION");
         if (!string.IsNullOrWhiteSpace(envConnection))
         {

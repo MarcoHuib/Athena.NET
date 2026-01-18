@@ -137,3 +137,7 @@ _NCrunch*
 /conf/inter_athena.conf
 /conf/login_athena.conf
 /conf/subnet_athena.conf
+# Local Aspire secrets
+.aspire/parameters.local.json
+**/.aspire/parameters.local.json
+.env

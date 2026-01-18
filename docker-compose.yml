@@ -1,36 +1,29 @@
-name: athena.net
-
 services:
-  # TODO: add char-server and map-server services here when they land.
-  sql-edge:
+  sql:
     image: mcr.microsoft.com/azure-sql-edge:latest
-    container_name: athena.net-sql-edge
     environment:
       ACCEPT_EULA: "Y"
+      MSSQL_PID: "Developer"
       SA_PASSWORD: "${SA_PASSWORD}"
     ports:
       - "1433:1433"
     volumes:
       - sql-edge-data:/var/opt/mssql
+    restart: unless-stopped
 
   login-server:
     build:
       context: .
       dockerfile: src/LoginServer/Dockerfile
-      args:
-        DOTNET_SDK_IMAGE: ${DOTNET_IMAGE:-mcr.microsoft.com/dotnet/sdk:10.0-preview}
-    image: athena.net-login-server:local
-    container_name: athena.net-login-server
+    depends_on:
+      - sql
     environment:
       ATHENA_NET_LOGIN_DB_PROVIDER: "sqlserver"
-      ATHENA_NET_LOGIN_DB_CONNECTION: "Server=sql-edge,1433;Database=athena.net;User ID=sa;Password=${SA_PASSWORD};Encrypt=True;TrustServerCertificate=True;"
       ATHENA_NET_LOGIN_DB_AUTOMIGRATE: "true"
+      ConnectionStrings__LoginDb: "Server=sql,1433;Database=athena.net;User ID=sa;Password=${SA_PASSWORD};Encrypt=False;TrustServerCertificate=True;"
     ports:
       - "6900:6900"
-    volumes:
-      - ./conf:/app/conf:ro
-    depends_on:
-      - sql-edge
+    restart: unless-stopped
 
 volumes:
   sql-edge-data:

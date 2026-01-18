@@ -20,3 +20,5 @@ Or via env var:
 export ATHENA_NET_LOGIN_DB_AUTOMIGRATE=true
 dotnet run --project src/LoginServer
 ```
+
+Note: .NET Aspire is the preferred local runtime (`docs/aspire.md`). This page is for running LoginServer directly.

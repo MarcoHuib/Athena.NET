@@ -11,7 +11,6 @@
 - Online cleanup runs (unknown char-server sessions are cleared every 10 minutes).
 
 ## Ready-to-ship checklist
-- `docker compose -f docker-compose.yml build` is clean.
-- `./scripts/compose-login-tools.sh up` shows no errors in logs.
-- `./scripts/compose-login-tools.sh self-test` passes.
-- DB migrations are applied (or `ATHENA_NET_LOGIN_DB_AUTOMIGRATE=true` in compose).
+- `dotnet run --project src/AppHost` starts cleanly.
+- `dotnet run --project src/LoginServer -- --self-test` passes.
+- DB migrations are applied (or `ATHENA_NET_LOGIN_DB_AUTOMIGRATE=true`).

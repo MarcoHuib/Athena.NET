@@ -1,0 +1,5 @@
+services:
+  login-server:
+    environment:
+      ATHENA_NET_LOGIN_DB_AUTOMIGRATE: "false"
+      DOTNET_ENVIRONMENT: "Production"

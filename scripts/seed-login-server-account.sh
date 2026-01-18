@@ -2,11 +2,10 @@
 set -euo pipefail
 
 SECRETS_PATH="${1:-solutionfiles/secrets/secret.json}"
-CONTAINER="${2:-athena.net-sql-edge}"
-LOGIN_USER="${3:-s1}"
-LOGIN_PASS="${4:-p1}"
-ACCOUNT_ID="${5:-1}"
-DB_NAME_OVERRIDE="${6:-}"
+LOGIN_USER="${2:-s1}"
+LOGIN_PASS="${3:-p1}"
+ACCOUNT_ID="${4:-1}"
+DB_NAME_OVERRIDE="${5:-}"
 
 if ! command -v docker >/dev/null 2>&1; then
   echo "docker not found. Please install Docker Desktop." >&2
@@ -18,7 +17,7 @@ if [ ! -f "$SECRETS_PATH" ]; then
   exit 1
 fi
 
-read -r SA_PASSWORD DB_NAME < <(python3 - <<'PY' "$SECRETS_PATH"
+read -r SA_PASSWORD DB_NAME SQL_SERVER < <(python3 - <<'PY' "$SECRETS_PATH"
 import json
 import os
 import re
@@ -26,13 +25,20 @@ import sys
 
 path = sys.argv[1]
 sa_password = os.environ.get("SA_PASSWORD", "")
-conn = os.environ.get("ATHENA_NET_LOGIN_DB_CONNECTION", "")
+conn = os.environ.get("ConnectionStrings__LoginDb", "")
+if not conn:
+    conn = os.environ.get("ATHENA_NET_LOGIN_DB_CONNECTION", "")
+
 db = ""
+server = ""
 
 if conn:
-    m = re.search(r"(?:Database|Initial Catalog)\\s*=\\s*([^;]+)", conn, re.I)
+    m = re.search(r"(?:Database|Initial Catalog)\s*=\s*([^;]+)", conn, re.I)
     if m:
         db = m.group(1)
+    m = re.search(r"Server\s*=\s*([^;]+)", conn, re.I)
+    if m:
+        server = m.group(1)
 
 try:
     with open(path, "r", encoding="utf-8") as f:
@@ -45,10 +51,14 @@ if not sa_password:
 
 if not db:
     conn = data.get("LoginDb", {}).get("ConnectionString", "")
-    m = re.search(r"(?:Database|Initial Catalog)\\s*=\\s*([^;]+)", conn, re.I)
+    m = re.search(r"(?:Database|Initial Catalog)\s*=\s*([^;]+)", conn, re.I)
     db = m.group(1) if m else ""
+    m = re.search(r"Server\s*=\s*([^;]+)", conn, re.I)
+    server = m.group(1) if m else ""
+
 print(sa_password)
 print(db)
+print(server)
 PY
 )
 
@@ -63,6 +73,18 @@ fi
 
 if [ -z "$DB_NAME" ]; then
   DB_NAME="athena.net"
+fi
+
+if [ -z "$SQL_SERVER" ]; then
+  SQL_SERVER="localhost,1433"
+fi
+
+if [[ "$SQL_SERVER" == localhost* || "$SQL_SERVER" == 127.0.0.1* ]]; then
+  SQL_SERVER="host.docker.internal${SQL_SERVER#localhost}"
+  SQL_SERVER="${SQL_SERVER#127.0.0.1}"
+  if [[ "$SQL_SERVER" != host.docker.internal* ]]; then
+    SQL_SERVER="host.docker.internal,1433"
+  fi
 fi
 
 escape_sql() {
@@ -99,39 +121,26 @@ END
 SQL
 )
 
-SQLCMD_PATH="$(docker exec "$CONTAINER" sh -c "if command -v sqlcmd >/dev/null 2>&1; then command -v sqlcmd; elif [ -x /opt/mssql-tools18/bin/sqlcmd ]; then echo /opt/mssql-tools18/bin/sqlcmd; elif [ -x /opt/mssql-tools/bin/sqlcmd ]; then echo /opt/mssql-tools/bin/sqlcmd; fi")"
-
-if [ -z "$SQLCMD_PATH" ]; then
-  echo "sqlcmd not found in container. Using helper mssql-tools image..." >&2
-
-  if docker image inspect mcr.microsoft.com/mssql-tools18 >/dev/null 2>&1; then
-    TOOLS_IMAGE="mcr.microsoft.com/mssql-tools18"
-  else
-    TOOLS_IMAGE="mcr.microsoft.com/mssql-tools"
-  fi
-
-  docker pull "$TOOLS_IMAGE" >/dev/null
-  docker run --rm --platform linux/amd64 --network "container:$CONTAINER" \
-    -e SA_PASSWORD="$SA_PASSWORD" -e SQLCMD_QUERY="$QUERY" -e DB_NAME="$DB_NAME" \
-    "$TOOLS_IMAGE" sh -c '
-      if [ -x /opt/mssql-tools18/bin/sqlcmd ]; then
-        SQLCMD=/opt/mssql-tools18/bin/sqlcmd
-      elif [ -x /opt/mssql-tools/bin/sqlcmd ]; then
-        SQLCMD=/opt/mssql-tools/bin/sqlcmd
-      else
-        echo "sqlcmd not found in tools image." >&2
-        exit 1
-      fi
-      "$SQLCMD" -S localhost -U sa -P "$SA_PASSWORD" -C -d "$DB_NAME" -Q "$SQLCMD_QUERY"
-    '
-
-  echo "Seeded login server account for '$LOGIN_USER' in $DB_NAME."
-  exit 0
+if docker image inspect mcr.microsoft.com/mssql-tools18 >/dev/null 2>&1; then
+  TOOLS_IMAGE="mcr.microsoft.com/mssql-tools18"
+else
+  TOOLS_IMAGE="mcr.microsoft.com/mssql-tools"
 fi
 
-docker exec -it "$CONTAINER" \
-  "$SQLCMD_PATH" \
-  -S localhost -U sa -P "$SA_PASSWORD" -C -d "$DB_NAME" \
-  -Q "$QUERY"
+docker pull "$TOOLS_IMAGE" >/dev/null
+
+docker run --rm --platform linux/amd64 \
+  -e SA_PASSWORD="$SA_PASSWORD" -e SQLCMD_QUERY="$QUERY" -e DB_NAME="$DB_NAME" -e SQL_SERVER="$SQL_SERVER" \
+  "$TOOLS_IMAGE" sh -c '
+    if [ -x /opt/mssql-tools18/bin/sqlcmd ]; then
+      SQLCMD=/opt/mssql-tools18/bin/sqlcmd
+    elif [ -x /opt/mssql-tools/bin/sqlcmd ]; then
+      SQLCMD=/opt/mssql-tools/bin/sqlcmd
+    else
+      echo "sqlcmd not found in tools image." >&2
+      exit 1
+    fi
+    "$SQLCMD" -S "$SQL_SERVER" -U sa -P "$SA_PASSWORD" -C -d "$DB_NAME" -Q "$SQLCMD_QUERY"
+  '
 
 echo "Seeded login server account for '$LOGIN_USER' in $DB_NAME."
