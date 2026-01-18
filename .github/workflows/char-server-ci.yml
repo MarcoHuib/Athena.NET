@@ -9,14 +9,10 @@ on:
     paths:
       - "src/CharServer/**"
       - ".github/workflows/char-server-ci.yml"
-      - "Directory.Build.*"
-      - "*.sln"
   pull_request:
     paths:
       - "src/CharServer/**"
       - ".github/workflows/char-server-ci.yml"
-      - "Directory.Build.*"
-      - "*.sln"
   workflow_dispatch:
 
 jobs:

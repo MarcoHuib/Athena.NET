@@ -22,7 +22,7 @@
 </div>
 
 CI
-- [![CI][ci-shield]][ci-url]
+- [![Login Server CI][login-ci-shield]][login-ci-url]
 - [![Char Server CI][char-ci-shield]][char-ci-url]
 
 <details>
@@ -89,7 +89,7 @@ Note: SQL credentials live in `solutionfiles/secrets/secret.json`. The AppHost r
 [issues-url]: https://github.com/MarcoHuib/Athena.NET/issues
 [stars-shield]: https://img.shields.io/github/stars/MarcoHuib/Athena.NET?style=for-the-badge
 [stars-url]: https://github.com/MarcoHuib/Athena.NET/stargazers
-[ci-shield]: https://github.com/MarcoHuib/Athena.NET/actions/workflows/ci.yml/badge.svg?style=for-the-badge
-[ci-url]: https://github.com/MarcoHuib/Athena.NET/actions/workflows/ci.yml
+[login-ci-shield]: https://github.com/MarcoHuib/Athena.NET/actions/workflows/login-server-ci.yml/badge.svg?style=for-the-badge
+[login-ci-url]: https://github.com/MarcoHuib/Athena.NET/actions/workflows/login-server-ci.yml
 [char-ci-shield]: https://github.com/MarcoHuib/Athena.NET/actions/workflows/char-server-ci.yml/badge.svg?style=for-the-badge
 [char-ci-url]: https://github.com/MarcoHuib/Athena.NET/actions/workflows/char-server-ci.yml
