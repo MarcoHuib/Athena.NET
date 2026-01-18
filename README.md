@@ -54,6 +54,7 @@ The current milestone is a fully compatible LoginServer; CharServer and MapServe
 - [Run with .NET Aspire](docs/aspire.md)
 - [Run with Docker Compose](docs/docker-compose.md)
 - [Migrations](docs/migrations.md)
+- [SQL Edge](docs/sql-edge.md)
 
 Note: SQL credentials live in `solutionfiles/secrets/secret.json`. The AppHost reads this file to keep Aspire and the servers in sync. Aspire now uses a persistent SQL Edge volume named `athena-sql` to keep data across restarts.
 
