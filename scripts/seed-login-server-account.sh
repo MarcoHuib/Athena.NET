@@ -2,10 +2,11 @@
 set -euo pipefail
 
 SECRETS_PATH="${1:-solutionfiles/secrets/secret.json}"
-LOGIN_USER="${2:-s1}"
-LOGIN_PASS="${3:-p1}"
+LOGIN_USER_ARG="${2:-}"
+LOGIN_PASS_ARG="${3:-}"
 ACCOUNT_ID="${4:-1}"
 DB_NAME_OVERRIDE="${5:-}"
+LOGIN_CONF_PATH="${6:-conf/login_athena.conf}"
 
 if ! command -v docker >/dev/null 2>&1; then
   echo "docker not found. Please install Docker Desktop." >&2
@@ -17,7 +18,7 @@ if [ ! -f "$SECRETS_PATH" ]; then
   exit 1
 fi
 
-read -r SA_PASSWORD DB_NAME SQL_SERVER < <(python3 - <<'PY' "$SECRETS_PATH"
+IFS=$'\t' read -r SA_PASSWORD DB_NAME SQL_SERVER SECRET_LOGIN_USER SECRET_LOGIN_PASS < <(python3 - <<'PY' "$SECRETS_PATH"
 import json
 import os
 import re
@@ -31,6 +32,8 @@ if not conn:
 
 db = ""
 server = ""
+login_user = ""
+login_pass = ""
 
 if conn:
     m = re.search(r"(?:Database|Initial Catalog)\s*=\s*([^;]+)", conn, re.I)
@@ -56,11 +59,60 @@ if not db:
     m = re.search(r"Server\s*=\s*([^;]+)", conn, re.I)
     server = m.group(1) if m else ""
 
-print(sa_password)
-print(db)
-print(server)
+char_server = data.get("CharServer", {})
+login_user = char_server.get("UserId", "") or ""
+login_pass = char_server.get("Password", "") or ""
+
+print("\t".join([sa_password, db, server, login_user, login_pass]))
 PY
 )
+
+LOGIN_USER="$LOGIN_USER_ARG"
+LOGIN_PASS="$LOGIN_PASS_ARG"
+if [ -z "$LOGIN_USER" ]; then
+  LOGIN_USER="$SECRET_LOGIN_USER"
+fi
+if [ -z "$LOGIN_PASS" ]; then
+  LOGIN_PASS="$SECRET_LOGIN_PASS"
+fi
+if [ -z "$LOGIN_USER" ]; then
+  LOGIN_USER="s1"
+fi
+if [ -z "$LOGIN_PASS" ]; then
+  LOGIN_PASS="p1"
+fi
+
+USE_MD5_PASSWORDS=""
+if [ -f "$LOGIN_CONF_PATH" ]; then
+  USE_MD5_PASSWORDS="$(python3 - <<'PY' "$LOGIN_CONF_PATH"
+import sys
+
+path = sys.argv[1]
+value = ""
+with open(path, "r", encoding="utf-8") as f:
+    for raw in f:
+        line = raw.split("//", 1)[0].strip()
+        if not line or ":" not in line:
+            continue
+        key, val = line.split(":", 1)
+        key = key.strip().lower()
+        if key == "use_md5_passwords":
+            value = val.strip().lower()
+print("yes" if value in ("yes", "on", "true") else "no" if value in ("no", "off", "false") else "")
+PY
+)"
+fi
+
+if [ "$USE_MD5_PASSWORDS" = "yes" ]; then
+  LOGIN_PASS="$(python3 - <<'PY' "$LOGIN_PASS"
+import hashlib
+import sys
+
+password = sys.argv[1].encode("utf-8")
+print(hashlib.md5(password).hexdigest())
+PY
+)"
+fi
 
 if [ -n "$DB_NAME_OVERRIDE" ]; then
   DB_NAME="$DB_NAME_OVERRIDE"
@@ -150,6 +202,13 @@ END
 SQL
 )
 
+QUERY_FILE="$(mktemp)"
+cleanup_query_file() {
+  rm -f "$QUERY_FILE"
+}
+trap cleanup_query_file EXIT
+printf "%s" "$QUERY" > "$QUERY_FILE"
+
 if docker image inspect mcr.microsoft.com/mssql-tools18 >/dev/null 2>&1; then
   TOOLS_IMAGE="mcr.microsoft.com/mssql-tools18"
 else
@@ -160,7 +219,8 @@ docker pull "$TOOLS_IMAGE" >/dev/null
 
 docker run --rm --platform linux/amd64 \
   ${DOCKER_NETWORK:+--network "$DOCKER_NETWORK"} \
-  -e SA_PASSWORD="$SA_PASSWORD" -e SQLCMD_QUERY="$QUERY" -e DB_NAME="$DB_NAME" -e SQL_SERVER="$SQL_SERVER" \
+  -e SA_PASSWORD="$SA_PASSWORD" -e DB_NAME="$DB_NAME" -e SQL_SERVER="$SQL_SERVER" \
+  -v "$QUERY_FILE:/tmp/query.sql:ro" \
   "$TOOLS_IMAGE" sh -c '
     if [ -x /opt/mssql-tools18/bin/sqlcmd ]; then
       SQLCMD=/opt/mssql-tools18/bin/sqlcmd
@@ -170,7 +230,7 @@ docker run --rm --platform linux/amd64 \
       echo "sqlcmd not found in tools image." >&2
       exit 1
     fi
-    "$SQLCMD" -S "$SQL_SERVER" -U sa -P "$SA_PASSWORD" -C -d "$DB_NAME" -Q "$SQLCMD_QUERY"
+    "$SQLCMD" -S "$SQL_SERVER" -U sa -P "$SA_PASSWORD" -C -d "$DB_NAME" -i /tmp/query.sql
   '
 
 echo "Seeded login server account for '$LOGIN_USER' in $DB_NAME."

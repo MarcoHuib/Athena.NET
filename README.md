@@ -52,9 +52,10 @@ The current milestone is a fully compatible LoginServer; CharServer and MapServe
 - [Configure runtime settings](docs/configuration.md)
 - [Run locally](docs/run-locally.md)
 - [Run with .NET Aspire](docs/aspire.md)
+- [Run with Docker Compose](#docker-compose)
 - [Migrations](docs/migrations.md)
 
-Note: SQL credentials live in `solutionfiles/secrets/secret.json`. The AppHost reads this file to keep Aspire and the servers in sync.
+Note: SQL credentials live in `solutionfiles/secrets/secret.json`. The AppHost reads this file to keep Aspire and the servers in sync. Aspire now uses a persistent SQL Edge volume named `athena-sql` to keep data across restarts.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -63,6 +64,7 @@ Note: SQL credentials live in `solutionfiles/secrets/secret.json`. The AppHost r
 - [Configuration](docs/configuration.md)
 - [Run locally](docs/run-locally.md)
 - [.NET Aspire](docs/aspire.md)
+- [Docker Compose](#docker-compose)
 - [Migrations](docs/migrations.md)
 - [Checklists](docs/checklists.md)
 - [Helper scripts](docs/scripts.md)
@@ -75,6 +77,22 @@ Note: SQL credentials live in `solutionfiles/secrets/secret.json`. The AppHost r
 - [x] `login_msg.conf` message catalog support
 - [ ] CharServer migration
 - [ ] MapServer migration
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+## Docker Compose
+From repo root (production-style stack):
+```
+export SA_PASSWORD="<your password>"
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+```
+
+For local config/secrets mounts:
+```
+docker compose -f docker-compose.yml -f docker-compose.override.yml up -d --build
+```
+
+Note: `docker-compose.prod.yml` disables auto-migrate. Run migrations manually if needed.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 

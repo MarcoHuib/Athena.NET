@@ -494,11 +494,25 @@ public static class LoginConfigLoader
         }
 
         importPath = line[(separator + 1)..].Trim().Trim('"');
+        while (importPath.StartsWith("conf/", StringComparison.OrdinalIgnoreCase) ||
+               importPath.StartsWith("conf\\", StringComparison.OrdinalIgnoreCase))
+        {
+            importPath = importPath[5..];
+        }
         return importPath.Length > 0;
     }
 
     private static string ResolveImportPath(string basePath, string importPath)
     {
+        if (!Path.IsPathRooted(importPath))
+        {
+            while (importPath.StartsWith("conf/", StringComparison.OrdinalIgnoreCase) ||
+                   importPath.StartsWith("conf\\", StringComparison.OrdinalIgnoreCase))
+            {
+                importPath = importPath[5..];
+            }
+        }
+
         if (Path.IsPathRooted(importPath))
         {
             return importPath;

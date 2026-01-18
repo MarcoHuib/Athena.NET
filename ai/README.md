@@ -18,7 +18,7 @@ Index
 
 Global constraints
 - Do not commit secrets or generated local config; keep using templates and gitignore.
-- Aspire is the runtime orchestration (SQL Edge + app). Do not reintroduce Docker Compose.
+- Aspire is the local-dev orchestration; Docker Compose is the production/runtime option and may be documented.
 - Use ASCII in new files unless the file already contains Unicode.
 
 Legacy reference root

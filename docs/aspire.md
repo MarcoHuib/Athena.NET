@@ -14,14 +14,14 @@ dotnet run --project src/AppHost
 SQL Edge is exposed on a fixed host port (58043) for local tooling.
 
 ## Secrets
-Aspire will prompt for the SQL Edge password parameter on first run.
-You can also set it via environment variable:
+The AppHost reads the SQL Edge SA password from `solutionfiles/secrets/secret.json`
+(`SqlServer.SaPassword`). You can still override it via environment variable:
 ```
-export sql-edge-password="<your password>"
+export Parameters__sql-edge-password="<your password>"
 ```
 
 The LoginServer consumes the connection string from Aspire via
-`ConnectionStrings__LoginDb`.
+`ConnectionStrings__LoginDb`. The CharServer uses `ConnectionStrings__CharDb`.
 
 ## Seed login server account (optional)
 If you need the legacy server account (`s1`/`p1`) for char-server handshakes:

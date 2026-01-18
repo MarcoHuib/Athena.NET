@@ -25,11 +25,19 @@ if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("DOTNET_DASHBOA
 }
 
 var builder = DistributedApplication.CreateBuilder(args);
+var repoRoot = FindRepoRoot() ?? Directory.GetCurrentDirectory();
+var loginConfigPath = Path.Combine(repoRoot, "conf", "login_athena.conf");
+var charConfigPath = Path.Combine(repoRoot, "conf", "char_athena.conf");
+var interConfigPath = Path.Combine(repoRoot, "conf", "inter_athena.conf");
+var subnetConfigPath = Path.Combine(repoRoot, "conf", "subnet_athena.conf");
+var loginMsgPath = Path.Combine(repoRoot, "conf", "msg_conf", "login_msg.conf");
+var secretsPath = Path.Combine(repoRoot, "solutionfiles", "secrets", "secret.json");
 
 var sqlPassword = builder.AddParameter("sql-edge-password", secret: true);
 var sql = builder.AddSqlServer("sql", sqlPassword)
     .WithImage("azure-sql-edge")
     .WithImageTag("latest")
+    .WithDataVolume("athena-sql")
     .WithEnvironment("ACCEPT_EULA", "Y")
     .WithEndpoint("tcp", endpoint =>
     {
@@ -38,11 +46,29 @@ var sql = builder.AddSqlServer("sql", sqlPassword)
     });
 
 var loginDb = sql.AddDatabase("LoginDb");
+var charDb = sql.AddDatabase("CharDb");
 
 builder.AddProject("login-server", "../LoginServer/LoginServer.csproj")
     .WithReference(loginDb)
     .WithEnvironment("ATHENA_NET_LOGIN_DB_PROVIDER", "sqlserver")
-    .WithEnvironment("ATHENA_NET_LOGIN_DB_AUTOMIGRATE", "true");
+    .WithEnvironment("ATHENA_NET_LOGIN_DB_AUTOMIGRATE", "true")
+    .WithArgs(
+        "--login-config", loginConfigPath,
+        "--inter-config", interConfigPath,
+        "--subnet-config", subnetConfigPath,
+        "--login-msg-config", loginMsgPath,
+        "--secrets", secretsPath,
+        "--auto-migrate");
+
+builder.AddProject("char-server", "../CharServer/CharServer.csproj")
+    .WithReference(charDb)
+    .WithEnvironment("ATHENA_NET_CHAR_DB_PROVIDER", "sqlserver")
+    .WithEnvironment("ATHENA_NET_CHAR_DB_AUTOMIGRATE", "true")
+    .WithArgs(
+        "--char-config", charConfigPath,
+        "--inter-config", interConfigPath,
+        "--secrets", secretsPath,
+        "--auto-migrate");
 
 builder.Build().Run();
 

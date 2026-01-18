@@ -1,7 +1,7 @@
 using System.Globalization;
-using Athena.Net.LoginServer.Logging;
+using Athena.Net.CharServer.Logging;
 
-namespace Athena.Net.LoginServer.Config;
+namespace Athena.Net.CharServer.Config;
 
 public static class InterConfigLoader
 {
@@ -12,18 +12,16 @@ public static class InterConfigLoader
         var user = "";
         var pass = "";
         var db = "";
-        var provider = "mysql";
-        var codepage = string.Empty;
-        var caseSensitive = false;
-        var loginAccountTable = "login";
-        var ipbanTable = "ipbanlist";
-        var loginLogTable = "loginlog";
-        var globalAccRegNumTable = "global_acc_reg_num";
-        var globalAccRegStrTable = "global_acc_reg_str";
+        var provider = string.Empty;
+        var charTable = "char";
+        var inventoryTable = "inventory";
+        var skillTable = "skill";
+        var hotkeyTable = "hotkey";
+        var startStatusPoints = 48;
 
         if (!File.Exists(path))
         {
-            LoginLogger.Info($"Inter config not found: {path}. Using defaults.");
+            CharLogger.Info($"Inter config not found: {path}. Using defaults.");
             return new InterConfig();
         }
 
@@ -44,69 +42,76 @@ public static class InterConfigLoader
             var key = line[..separator].Trim();
             var value = line[(separator + 1)..].Trim();
 
-            if (key.Equals("login_server_ip", StringComparison.OrdinalIgnoreCase))
+            if (key.Equals("char_server_ip", StringComparison.OrdinalIgnoreCase))
             {
                 host = value;
             }
-            else if (key.Equals("login_server_port", StringComparison.OrdinalIgnoreCase))
+            else if (key.Equals("char_server_port", StringComparison.OrdinalIgnoreCase))
             {
                 if (int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed))
                 {
                     port = parsed;
                 }
             }
-            else if (key.Equals("login_server_id", StringComparison.OrdinalIgnoreCase))
+            else if (key.Equals("char_server_id", StringComparison.OrdinalIgnoreCase))
             {
                 user = value;
             }
-            else if (key.Equals("login_server_pw", StringComparison.OrdinalIgnoreCase))
+            else if (key.Equals("char_server_pw", StringComparison.OrdinalIgnoreCase))
             {
                 pass = value;
             }
-            else if (key.Equals("login_server_db", StringComparison.OrdinalIgnoreCase))
+            else if (key.Equals("char_server_db", StringComparison.OrdinalIgnoreCase))
             {
                 db = value;
             }
-            else if (key.Equals("login_codepage", StringComparison.OrdinalIgnoreCase))
-            {
-                codepage = value;
-            }
-            else if (key.Equals("login_case_sensitive", StringComparison.OrdinalIgnoreCase))
-            {
-                caseSensitive = ParseBool(value, caseSensitive);
-            }
-            else if (key.Equals("login_db_provider", StringComparison.OrdinalIgnoreCase))
+            else if (key.Equals("char_db_provider", StringComparison.OrdinalIgnoreCase))
             {
                 provider = value;
             }
-            else if (key.Equals("login_server_account_db", StringComparison.OrdinalIgnoreCase))
+            else if (key.Equals("login_db_provider", StringComparison.OrdinalIgnoreCase) && string.IsNullOrWhiteSpace(provider))
             {
-                loginAccountTable = value;
+                provider = value;
             }
-            else if (key.Equals("ipban_table", StringComparison.OrdinalIgnoreCase))
+            else if (key.Equals("char_db", StringComparison.OrdinalIgnoreCase))
             {
-                ipbanTable = value;
+                charTable = value;
             }
-            else if (key.Equals("log_login_db", StringComparison.OrdinalIgnoreCase))
+            else if (key.Equals("inventory_db", StringComparison.OrdinalIgnoreCase))
             {
-                loginLogTable = value;
+                inventoryTable = value;
             }
-            else if (key.Equals("global_acc_reg_num_table", StringComparison.OrdinalIgnoreCase))
+            else if (key.Equals("skill_db", StringComparison.OrdinalIgnoreCase))
             {
-                globalAccRegNumTable = value;
+                skillTable = value;
             }
-            else if (key.Equals("global_acc_reg_str_table", StringComparison.OrdinalIgnoreCase))
+            else if (key.Equals("hotkey_db", StringComparison.OrdinalIgnoreCase))
             {
-                globalAccRegStrTable = value;
+                hotkeyTable = value;
+            }
+            else if (key.Equals("start_status_points", StringComparison.OrdinalIgnoreCase))
+            {
+                if (int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed))
+                {
+                    startStatusPoints = parsed;
+                }
             }
         }
 
         if (string.IsNullOrWhiteSpace(user) || string.IsNullOrWhiteSpace(db))
         {
-            return new InterConfig();
+            return new InterConfig
+            {
+                CharDbProvider = provider,
+                CharTable = charTable,
+                InventoryTable = inventoryTable,
+                SkillTable = skillTable,
+                HotkeyTable = hotkeyTable,
+                StartStatusPoints = startStatusPoints,
+            };
         }
 
-        var normalizedProvider = provider.Trim().ToLowerInvariant();
+        var normalizedProvider = string.IsNullOrWhiteSpace(provider) ? "mysql" : provider.Trim().ToLowerInvariant();
         string connectionString;
         if (normalizedProvider == "sqlserver" || normalizedProvider == "mssql")
         {
@@ -116,25 +121,17 @@ public static class InterConfigLoader
         else
         {
             connectionString = $"Server={host};Port={port};Database={db};User={user};Password={pass};SslMode=None;";
-            if (!string.IsNullOrWhiteSpace(codepage) &&
-                !connectionString.Contains("CharSet=", StringComparison.OrdinalIgnoreCase) &&
-                !connectionString.Contains("Charset=", StringComparison.OrdinalIgnoreCase))
-            {
-                connectionString += $"CharSet={codepage};";
-            }
         }
 
         return new InterConfig
         {
-            LoginDbProvider = normalizedProvider,
-            LoginDbConnectionString = connectionString,
-            LoginDbCodepage = codepage,
-            LoginCaseSensitive = caseSensitive,
-            LoginAccountTable = loginAccountTable,
-            IpBanTable = ipbanTable,
-            LoginLogTable = loginLogTable,
-            GlobalAccRegNumTable = globalAccRegNumTable,
-            GlobalAccRegStrTable = globalAccRegStrTable,
+            CharDbProvider = normalizedProvider,
+            CharDbConnectionString = connectionString,
+            CharTable = charTable,
+            InventoryTable = inventoryTable,
+            SkillTable = skillTable,
+            HotkeyTable = hotkeyTable,
+            StartStatusPoints = startStatusPoints,
         };
     }
 
@@ -159,7 +156,7 @@ public static class InterConfigLoader
                 var resolved = ResolveImportPath(fullPath, importPath);
                 if (!File.Exists(resolved))
                 {
-                    LoginLogger.Warning($"Inter config import not found: {resolved}. Skipping.");
+                    CharLogger.Warning($"Inter config import not found: {resolved}. Skipping.");
                     continue;
                 }
 
@@ -229,24 +226,5 @@ public static class InterConfigLoader
     {
         var index = line.IndexOf("//", StringComparison.Ordinal);
         return index < 0 ? line : line[..index];
-    }
-
-    private static bool ParseBool(string value, bool fallback)
-    {
-        if (value.Equals("yes", StringComparison.OrdinalIgnoreCase) ||
-            value.Equals("on", StringComparison.OrdinalIgnoreCase) ||
-            value.Equals("true", StringComparison.OrdinalIgnoreCase))
-        {
-            return true;
-        }
-
-        if (value.Equals("no", StringComparison.OrdinalIgnoreCase) ||
-            value.Equals("off", StringComparison.OrdinalIgnoreCase) ||
-            value.Equals("false", StringComparison.OrdinalIgnoreCase))
-        {
-            return false;
-        }
-
-        return fallback;
     }
 }

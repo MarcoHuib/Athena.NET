@@ -3,6 +3,14 @@
 Goal
 - Build the C# char server to match legacy behavior and integrate with login + map servers.
 
+Current state (C#)
+- Char server project scaffolded with config loader/logging and login server connection loop.
+- Login server registration uses 0x2710 and handles auth/account data responses (0x2713/0x2717).
+- Char server listens for client connections and supports auth handshake plus DB-backed char list/create/delete.
+- Char DB context maps the legacy `char`, `inventory`, `skill`, and `hotkey` tables and can auto-migrate via Aspire.
+- Character creation uses start map/zeny/items (including pre-renewal via `ATHENA_NET_CHAR_PRE_RENEWAL`) from `char_athena.conf` and `start_status_points` from `inter_athena.conf`; delete rules honor level/party/guild/birthdate checks.
+- Missing: pincode/second password, rename flow, slot move, accessible map list, map-server (mapif) integration, and accreg/online sync flows.
+
 Legacy references
 - legacy/src/char/char.cpp
 - legacy/src/char/char_clif.cpp
@@ -29,9 +37,11 @@ Phased build plan
 - Fame lists, rankings, and timers.
 
 Next tasks
-- Define schema mapping for char-related tables from main.sql.
-- Implement minimum packet handlers from char_clif for login-to-char flow.
-- Establish inter-server packet protocol (login <-> char <-> map).
+- Add pincode/second password flow (packets + login-server handshake + DB fields).
+- Add char rename + name validation rules (`char_name_option`, `char_name_letters`, `char_name_min_length`, `name_ignoring_case`).
+- Add char slot move + move limits (`char_move_*`).
+- Add accessible map list responses and wire map server list.
+- Establish inter-server packet protocol (login <-> char <-> map) beyond auth (online list, keepalive, map transfer).
 
 Definition of done
 - Same client flow as legacy: login -> char select -> map transfer.
