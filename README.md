@@ -45,7 +45,8 @@ The current milestone is a fully compatible LoginServer; CharServer and MapServe
 
 ## Status
 - LoginServer: functional and actively aligned with legacy behavior.
-- CharServer/MapServer: planned.
+- CharServer: MVP running (login registration, char list/create/delete, map handoff).
+- MapServer: MVP running (char handshake + basic client entry).
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -78,8 +79,10 @@ Note: SQL credentials live in `solutionfiles/secrets/secret.json`. The AppHost r
 - [x] LoginServer login flow parity and SQL Server support
 - [x] Legacy config aliases and `import:` support
 - [x] `login_msg.conf` message catalog support
-- [ ] CharServer migration
-- [ ] MapServer migration
+- [x] CharServer MVP (login registration, char list/create/delete, map handoff)
+- [x] MapServer MVP (char handshake, client entry accept/refuse)
+- [ ] CharServer parity (map list responses, online sync, inter-server extras)
+- [ ] MapServer foundation (map cache/index, spawn/move, basic NPC)
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
