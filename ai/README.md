@@ -22,4 +22,4 @@ Global constraints
 - Use ASCII in new files unless the file already contains Unicode.
 
 Legacy reference root
-- legacy/ is the source of truth for feature parity. Use it for behavior, config, and DB schema.
+- upstream/ is the source of truth for feature parity. Use it for behavior, config, and DB schema.

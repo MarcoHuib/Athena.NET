@@ -4,10 +4,10 @@ Goal
 - Define how legacy data and tools feed the C# servers.
 
 Legacy references
-- legacy/db/ (YAML/TXT data)
-- legacy/npc/ (scripts)
-- legacy/sql-files/ (main.sql, logs.sql, upgrades)
-- legacy/src/tool/ (yaml2sql, mapcache, csv2yaml)
+- upstream/db/ (YAML/TXT data)
+- upstream/npc/ (scripts)
+- upstream/sql-files/ (main.sql, logs.sql, upgrades)
+- upstream/src/tool/ (yaml2sql, mapcache, csv2yaml)
 
 Key decisions
 - Keep legacy YAML/TXT and parse in C#, or convert to SQL and load into DB.

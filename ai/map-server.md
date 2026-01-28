@@ -10,13 +10,13 @@ Current state
 - Unit tests added for config + secrets loading (MapServer.Tests).
 
 Legacy references
-- legacy/src/map/map.cpp
-- legacy/src/map/clif.cpp, npc.cpp, battle.cpp, pc.cpp
-- legacy/conf/map_athena.conf
-- legacy/conf/script_athena.conf
-- legacy/conf/packet_athena.conf
-- legacy/db/ and legacy/npc/ data
-- legacy/sql-files/main.sql
+- upstream/src/map/map.cpp
+- upstream/src/map/clif.cpp, npc.cpp, battle.cpp, pc.cpp
+- upstream/conf/map_athena.conf
+- upstream/conf/script_athena.conf
+- upstream/conf/packet_athena.conf
+- upstream/db/ and upstream/npc/ data
+- upstream/sql-files/main.sql
 
 Phased build plan
 1) MVP network core

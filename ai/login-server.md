@@ -19,17 +19,17 @@ Current state (C#)
 - Web auth token generation/disable flow aligned with legacy (retries + delay).
 
 Legacy references
-- legacy/src/login/login.cpp
-- legacy/src/login/loginclif.cpp
-- legacy/src/login/loginchrif.cpp
-- legacy/src/login/ipban.cpp
-- legacy/src/login/loginlog.cpp
-- legacy/conf/login_athena.conf
-- legacy/conf/inter_athena.conf
-- legacy/conf/subnet_athena.conf
-- legacy/conf/msg_conf/login_msg.conf
-- legacy/sql-files/main.sql
-- legacy/sql-files/logs.sql
+- upstream/src/login/login.cpp
+- upstream/src/login/loginclif.cpp
+- upstream/src/login/loginchrif.cpp
+- upstream/src/login/ipban.cpp
+- upstream/src/login/loginlog.cpp
+- upstream/conf/login_athena.conf
+- upstream/conf/inter_athena.conf
+- upstream/conf/subnet_athena.conf
+- upstream/conf/msg_conf/login_msg.conf
+- upstream/sql-files/main.sql
+- upstream/sql-files/logs.sql
 
 Open parity checks
  (none)

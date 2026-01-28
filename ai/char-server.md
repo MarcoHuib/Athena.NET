@@ -13,16 +13,16 @@ Current state (C#)
 - Missing: accessible map list responses, accreg/online sync flows, and map/char inter-server extras (keepalive, map transfer, online list).
 
 Legacy references
-- legacy/src/char/char.cpp
-- legacy/src/char/char_clif.cpp
-- legacy/src/char/char_mapif.cpp
-- legacy/src/char/char_logif.cpp
-- legacy/src/char/inter.cpp
-- legacy/src/char/int_* (guild, party, storage, mail, homun, mercenary, etc.)
-- legacy/conf/char_athena.conf
-- legacy/conf/inter_athena.conf
-- legacy/sql-files/main.sql
-- legacy/sql-files/logs.sql
+- upstream/src/char/char.cpp
+- upstream/src/char/char_clif.cpp
+- upstream/src/char/char_mapif.cpp
+- upstream/src/char/char_logif.cpp
+- upstream/src/char/inter.cpp
+- upstream/src/char/int_* (guild, party, storage, mail, homun, mercenary, etc.)
+- upstream/conf/char_athena.conf
+- upstream/conf/inter_athena.conf
+- upstream/sql-files/main.sql
+- upstream/sql-files/logs.sql
 
 Phased build plan
 1) MVP handshake
