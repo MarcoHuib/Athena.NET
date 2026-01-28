@@ -1094,15 +1094,6 @@ public sealed class ClientSession : IDisposable
 
         await using (db)
         {
-            if (!isServer && Config.NewAccountFlag)
-            {
-                var regResult = await TryAutoRegisterAsync(db, request, remoteIp, cancellationToken);
-                if (regResult.HasValue && regResult.Value != -1)
-                {
-                    return AuthResult.Fail((uint)regResult.Value);
-                }
-            }
-
             if (!isServer && Config.IpBanEnabled)
             {
                 if (await IsIpBannedAsync(db, remoteIp, cancellationToken))
@@ -1117,6 +1108,15 @@ public sealed class ClientSession : IDisposable
                 {
                     await LogLoginAsync(db, request.UserId, remoteIp, 3, string.Empty, cancellationToken);
                     return AuthResult.Fail(3);
+                }
+            }
+
+            if (!isServer && Config.NewAccountFlag)
+            {
+                var regResult = await TryAutoRegisterAsync(db, request, remoteIp, cancellationToken);
+                if (regResult.HasValue && regResult.Value != -1)
+                {
+                    return AuthResult.Fail((uint)regResult.Value);
                 }
             }
 
