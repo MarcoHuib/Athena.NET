@@ -119,6 +119,24 @@ public sealed class MapClientSession : IDisposable
         _loginId1 = BinaryPrimitives.ReadUInt32LittleEndian(packet.AsSpan(10, 4));
         _sex = packet[18];
 
+        if (_accountId == 0)
+        {
+            await SendRefuseEnterAsync(2, cancellationToken);
+            return;
+        }
+
+        if (_charId == 0)
+        {
+            await SendRefuseEnterAsync(3, cancellationToken);
+            return;
+        }
+
+        if (_sex != 0 && _sex != 1)
+        {
+            await SendRefuseEnterAsync(6, cancellationToken);
+            return;
+        }
+
         var endpoint = _client.Client.RemoteEndPoint as IPEndPoint;
         var clientIp = endpoint?.Address ?? IPAddress.Loopback;
 
