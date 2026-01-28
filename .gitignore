@@ -143,3 +143,5 @@ _NCrunch*
 .aspire/parameters.local.json
 **/.aspire/parameters.local.json
 .env
+
+ai/issues/*
