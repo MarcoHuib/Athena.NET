@@ -242,6 +242,11 @@ public sealed class ClientSession : IDisposable, ISession
 
     private async Task HandleConnectAsync(byte[] packet, CancellationToken cancellationToken)
     {
+        if (packet.Length < 17)
+        {
+            return;
+        }
+
         _accountId = BinaryPrimitives.ReadUInt32LittleEndian(packet.AsSpan(2, 4));
         _loginId1 = BinaryPrimitives.ReadUInt32LittleEndian(packet.AsSpan(6, 4));
         _loginId2 = BinaryPrimitives.ReadUInt32LittleEndian(packet.AsSpan(10, 4));
@@ -264,6 +269,11 @@ public sealed class ClientSession : IDisposable, ISession
         {
             return;
         }
+        if (packet.Length < 3)
+        {
+            return;
+        }
+
 
         var config = _configStore.Current;
         if (config.PincodeEnabled && !string.IsNullOrEmpty(_pincode) && !_pincodeCorrect && !PincodePassed.ContainsKey(_accountId))
@@ -441,6 +451,12 @@ public sealed class ClientSession : IDisposable, ISession
     private async Task HandleMakeCharAsync(byte[] packet, CancellationToken cancellationToken)
     {
         if (!_authenticated)
+        {
+            await SendRefuseMakeCharAsync(cancellationToken);
+            return;
+        }
+
+        if (packet.Length < 36)
         {
             await SendRefuseMakeCharAsync(cancellationToken);
             return;
@@ -649,6 +665,12 @@ public sealed class ClientSession : IDisposable, ISession
             return;
         }
 
+        if (packet.Length < 56)
+        {
+            await SendRefuseDeleteCharAsync(cancellationToken);
+            return;
+        }
+
         var charId = BinaryPrimitives.ReadUInt32LittleEndian(packet.AsSpan(2, 4));
         var code = ReadFixedString(packet.AsSpan(6, 50));
         var config = _configStore.Current;
@@ -695,6 +717,12 @@ public sealed class ClientSession : IDisposable, ISession
     private async Task HandleDeleteChar3ReserveAsync(byte[] packet, CancellationToken cancellationToken)
     {
         if (!_authenticated)
+        {
+            await SendDeleteChar3ReservedAsync(0, 3, 0, cancellationToken);
+            return;
+        }
+
+        if (packet.Length < 6)
         {
             await SendDeleteChar3ReservedAsync(0, 3, 0, cancellationToken);
             return;
@@ -750,6 +778,12 @@ public sealed class ClientSession : IDisposable, ISession
     private async Task HandleDeleteChar3AcceptAsync(byte[] packet, CancellationToken cancellationToken)
     {
         if (!_authenticated)
+        {
+            await SendDeleteChar3ResultAsync(0, 3, cancellationToken);
+            return;
+        }
+
+        if (packet.Length < 12)
         {
             await SendDeleteChar3ResultAsync(0, 3, cancellationToken);
             return;

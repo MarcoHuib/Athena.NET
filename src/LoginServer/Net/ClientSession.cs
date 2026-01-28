@@ -239,26 +239,61 @@ public sealed class ClientSession : IDisposable
                 _clientHash = packet.AsSpan(2, 16).ToArray();
                 break;
             case PacketConstants.CaLogin:
-            await HandleLoginAsync(ParsePlainLogin(packet), false, cancellationToken);
-            break;
+                if (packet.Length < 55)
+                {
+                    _client.Close();
+                    break;
+                }
+                await HandleLoginAsync(ParsePlainLogin(packet), false, cancellationToken);
+                break;
             case PacketConstants.CaLogin2:
-            await HandleLoginAsync(ParseMd5Login(packet), false, cancellationToken);
-            break;
+                if (packet.Length < 47)
+                {
+                    _client.Close();
+                    break;
+                }
+                await HandleLoginAsync(ParseMd5Login(packet), false, cancellationToken);
+                break;
             case PacketConstants.CaLogin3:
-            await HandleLoginAsync(ParseMd5Login(packet), false, cancellationToken);
-            break;
+                if (packet.Length < 47)
+                {
+                    _client.Close();
+                    break;
+                }
+                await HandleLoginAsync(ParseMd5Login(packet), false, cancellationToken);
+                break;
             case PacketConstants.CaLogin4:
-            await HandleLoginAsync(ParseMd5Login(packet), false, cancellationToken);
-            break;
+                if (packet.Length < 47)
+                {
+                    _client.Close();
+                    break;
+                }
+                await HandleLoginAsync(ParseMd5Login(packet), false, cancellationToken);
+                break;
             case PacketConstants.CaLoginPcBang:
-            await HandleLoginAsync(ParsePlainLogin(packet), false, cancellationToken);
-            break;
+                if (packet.Length < 55)
+                {
+                    _client.Close();
+                    break;
+                }
+                await HandleLoginAsync(ParsePlainLogin(packet), false, cancellationToken);
+                break;
             case PacketConstants.CaLoginChannel:
-            await HandleLoginAsync(ParsePlainLogin(packet), false, cancellationToken);
-            break;
+                if (packet.Length < 55)
+                {
+                    _client.Close();
+                    break;
+                }
+                await HandleLoginAsync(ParsePlainLogin(packet), false, cancellationToken);
+                break;
             case PacketConstants.CaSsoLoginReq:
-            await HandleLoginAsync(ParseSsoLogin(packet), false, cancellationToken);
-            break;
+                if (packet.Length < 92)
+                {
+                    _client.Close();
+                    break;
+                }
+                await HandleLoginAsync(ParseSsoLogin(packet), false, cancellationToken);
+                break;
             case PacketConstants.LcCharServerLogin:
                 await HandleCharServerLoginAsync(packet, cancellationToken);
                 break;
