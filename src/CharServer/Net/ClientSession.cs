@@ -875,6 +875,11 @@ public sealed class ClientSession : IDisposable, ISession
             return;
         }
 
+        if (packet.Length < 6)
+        {
+            return;
+        }
+
         var accountId = BinaryPrimitives.ReadUInt32LittleEndian(packet.AsSpan(2, 4));
         if (accountId != _accountId)
         {
@@ -888,6 +893,12 @@ public sealed class ClientSession : IDisposable, ISession
     {
         if (!_authenticated)
         {
+            return;
+        }
+
+        if (packet.Length < 10)
+        {
+            _client.Close();
             return;
         }
 
@@ -935,6 +946,12 @@ public sealed class ClientSession : IDisposable, ISession
     {
         if (!_authenticated)
         {
+            return;
+        }
+
+        if (packet.Length < 14)
+        {
+            _client.Close();
             return;
         }
 
@@ -996,6 +1013,12 @@ public sealed class ClientSession : IDisposable, ISession
             return;
         }
 
+        if (packet.Length < 10)
+        {
+            _client.Close();
+            return;
+        }
+
         var config = _configStore.Current;
         if (!config.PincodeEnabled)
         {
@@ -1037,6 +1060,12 @@ public sealed class ClientSession : IDisposable, ISession
     {
         if (!_authenticated)
         {
+            return;
+        }
+
+        if (packet.Length < 34)
+        {
+            await SendRenameCheckAsync(false, cancellationToken);
             return;
         }
 
@@ -1082,6 +1111,12 @@ public sealed class ClientSession : IDisposable, ISession
     {
         if (!_authenticated)
         {
+            return;
+        }
+
+        if (packet.Length < 30)
+        {
+            await SendRenameResultAsync(2, cancellationToken);
             return;
         }
 
@@ -1168,6 +1203,12 @@ public sealed class ClientSession : IDisposable, ISession
     {
         if (!_authenticated)
         {
+            return;
+        }
+
+        if (packet.Length < 6)
+        {
+            await SendMoveCharSlotAckAsync(1, 0, cancellationToken);
             return;
         }
 
