@@ -3,12 +3,11 @@
 |---|---|---|---|---|
 | 1 | Ignore repeated enter requests when _authRequested is true | Reject if session already has sd (character already logged in) | PARTIAL | Both prevent duplicate enter, but checks differ. |
 | 2 | Parse account_id/char_id/login_id1/sex from packet | Parse account_id/char_id/login_id1/sex via packet_db positions | YES | Both extract same core fields. |
-| 3 | No explicit packet validation in HandleEnterAsync | clif_parse_WantToConnection_sub validates length/account/char/sex | DIFF | rAthena rejects invalid fields; Athena does not in this method. |
-| 4 | Send auth request to char server; refuse if request fails | On error, disconnects with info log; auth handled in map auth node flow | PARTIAL | Both rely on downstream auth but failure handling differs. |
+| 3 | No explicit packet validation in HandleEnterAsync | clif_parse_WantToConnection_sub validates length/account/char/sex | YES | Athena validates account/char/sex when present in HandleEnterAsync. |
+| 4 | Send auth request to char server; refuse if request fails | On error, disconnects with info log; auth handled in map auth node flow | YES | Both rely on downstream auth; Athena disconnects on auth request failure when configured. |
 
 ## Concrete parity gaps
-- Packet validation: rAthena validates length/account/char/sex in clif_parse_WantToConnection_sub; Athena has no explicit validation in HandleEnterAsync.
-- Failure handling: Athena refuses enter when TrySendAuthRequest fails; rAthena logs and disconnects on parse errors.
+- Ignore repeated enter requests when _authRequested is true: Both prevent duplicate enter, but checks differ.
 
 ## Evidence
 ### Athena.NET HandleEnterAsync

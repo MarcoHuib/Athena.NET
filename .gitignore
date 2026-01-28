@@ -146,3 +146,5 @@ _NCrunch*
 
 ai/issues/*
 ai/.last_commit_ts
+ai/.issue_state/*
+ai/agent-status.md

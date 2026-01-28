@@ -2,7 +2,7 @@
 | Step | Athena.NET behavior | rAthena behavior | Match | Notes |
 |---|---|---|---|---|
 | 1 | If UseMd5Passwords && PasswordEnc != 0 then SendRefuseLoginAsync(3) | If use_md5_passwds and passwdenc md5 -> logclif_auth_failed(..., 3) | YES | Both reject md5-encoded login when server-side md5 is enabled. |
-| 2 | If NewAccountFlag && AutoRegisterBaseId != null, replace UserId | New account creation via _M/_F suffix in login_mmo_auth | DIFF | Athena rewrites UserId from AutoRegisterBaseId; rAthena uses _M/_F suffix logic. |
+| 2 | If NewAccountFlag && AutoRegisterBaseId != null, replace UserId | New account creation via _M/_F suffix in login_mmo_auth | YES | Athena parses _M/_F suffix into AutoRegisterBaseId/Sex and auto-registers when enabled. |
 | 3 | On !result.Success send RefuseLogin(error) and ApplyDynamicIpBanAsync on 0/1 | logclif_auth_failed + ipban_log when result 0/1 | PARTIAL | Both apply extra action on error 0/1; exact ban mechanism differs. |
 | 4 | If isServer and (Sex != 2 or AccountId >= 5) reject; else RegisterCharServer + ack 0 | Char server connect requires sd->sex == 'S' and account_id < MAX_SERVERS; sends 0/3 | YES | Both enforce server-account constraints and send success/deny codes. |
 | 5 | If GroupIdToConnect set and mismatch -> NotifyBan(1) | group_id_to_connect check -> logclif_sent_auth_result(fd,1) | YES | Same restriction with server closed code 1. |
@@ -13,7 +13,6 @@
 | 10 | AddAuthNode, AddOnlineUser(-1), ScheduleWaitingDisconnect, SendAcceptLoginAsync | login_add_auth_node, login_add_online_user, waiting_disconnect timer, send accept | YES | Auth node lifecycle aligns. |
 
 ## Concrete parity gaps
-- Auto-register user id rewrite: Athena rewrites UserId from AutoRegisterBaseId; rAthena uses _M/_F suffix logic.
 - Auth failure -> refuse + dynamic IP ban on error 0/1: Both apply extra action on error 0/1; exact ban mechanism differs.
 
 ## Evidence
@@ -21,9 +20,9 @@
 - Athena.NET
 ```
 /Users/marco/ai/athena-agent/athena-net/src/LoginServer/Net/ClientSession.cs
-  331 |     {
-  332 |         if (Config.UseMd5Passwords && request.PasswordEnc != 0)
-  333 |         {
+  366 |     {
+  367 |         if (Config.UseMd5Passwords && request.PasswordEnc != 0)
+  368 |         {
 ```
 - rAthena
 ```
@@ -37,9 +36,9 @@
 - Athena.NET
 ```
 /Users/marco/ai/athena-agent/athena-net/src/LoginServer/Net/ClientSession.cs
-  337 | 
-  338 |         if (Config.NewAccountFlag && request.AutoRegisterBaseId != null)
-  339 |         {
+  372 | 
+  373 |         if (Config.NewAccountFlag && request.AutoRegisterBaseId != null)
+  374 |         {
 ```
 - rAthena
 ```
@@ -53,9 +52,9 @@
 - Athena.NET
 ```
 /Users/marco/ai/athena-agent/athena-net/src/LoginServer/Net/ClientSession.cs
-  354 |             {
-  355 |                 await SendRefuseLoginAsync(result.ErrorCode, result.UnblockTime, cancellationToken);
-  356 |                 if (result.ErrorCode is 0 or 1)
+  389 |             {
+  390 |                 await SendRefuseLoginAsync(result.ErrorCode, result.UnblockTime, cancellationToken);
+  391 |                 if (result.ErrorCode is 0 or 1)
 ```
 - rAthena
 ```
@@ -69,9 +68,9 @@
 - Athena.NET
 ```
 /Users/marco/ai/athena-agent/athena-net/src/LoginServer/Net/ClientSession.cs
-  348 |             LoginLogger.Warning($"Login failed for user '{request.UserId}' from {remoteIp} (server={isServer}, code={result.ErrorCode}).");
-  349 |             if (isServer)
-  350 |             {
+  383 |             LoginLogger.Warning($"Login failed for user '{request.UserId}' from {remoteIp} (server={isServer}, code={result.ErrorCode}).");
+  384 |             if (isServer)
+  385 |             {
 ```
 - rAthena
 ```
@@ -85,9 +84,9 @@
 - Athena.NET
 ```
 /Users/marco/ai/athena-agent/athena-net/src/LoginServer/Net/ClientSession.cs
-  379 | 
-  380 |         if (Config.GroupIdToConnect >= 0 && result.GroupId != Config.GroupIdToConnect)
-  381 |         {
+  414 | 
+  415 |         if (Config.GroupIdToConnect >= 0 && result.GroupId != Config.GroupIdToConnect)
+  416 |         {
 ```
 - rAthena
 ```
@@ -101,9 +100,9 @@
 - Athena.NET
 ```
 /Users/marco/ai/athena-agent/athena-net/src/LoginServer/Net/ClientSession.cs
-  385 | 
-  386 |         if (Config.MinGroupIdToConnect >= 0 && Config.GroupIdToConnect == -1 && result.GroupId < Config.MinGroupIdToConnect)
-  387 |         {
+  420 | 
+  421 |         if (Config.MinGroupIdToConnect >= 0 && Config.GroupIdToConnect == -1 && result.GroupId < Config.MinGroupIdToConnect)
+  422 |         {
 ```
 - rAthena
 ```
@@ -117,9 +116,9 @@
 - Athena.NET
 ```
 /Users/marco/ai/athena-agent/athena-net/src/LoginServer/Net/ClientSession.cs
-  391 | 
-  392 |         if (_charServers.Servers.Count == 0)
-  393 |         {
+  426 | 
+  427 |         if (_charServers.Servers.Count == 0)
+  428 |         {
 ```
 - rAthena
 ```
@@ -133,9 +132,9 @@
 - Athena.NET
 ```
 /Users/marco/ai/athena-agent/athena-net/src/LoginServer/Net/ClientSession.cs
-  399 |         {
-  400 |             if (existing.CharServerId >= 0)
-  401 |             {
+  434 |         {
+  435 |             if (existing.CharServerId >= 0)
+  436 |             {
 ```
 - rAthena
 ```
@@ -149,9 +148,9 @@
 - Athena.NET
 ```
 /Users/marco/ai/athena-agent/athena-net/src/LoginServer/Net/ClientSession.cs
-  407 | 
-  408 |             if (existing.CharServerId == -1)
-  409 |             {
+  442 | 
+  443 |             if (existing.CharServerId == -1)
+  444 |             {
 ```
 - rAthena
 ```
@@ -165,9 +164,9 @@
 - Athena.NET
 ```
 /Users/marco/ai/athena-agent/athena-net/src/LoginServer/Net/ClientSession.cs
-  414 | 
-  415 |         _state.AddAuthNode(new AuthNode
-  416 |         {
+  449 | 
+  450 |         _state.AddAuthNode(new AuthNode
+  451 |         {
 ```
 - rAthena
 ```
@@ -182,7 +181,7 @@
 | Step | Athena.NET behavior | rAthena behavior | Match | Notes |
 |---|---|---|---|---|
 | 1 | DB required: if db is null -> Fail(1) | Account DB accessed via login_get_accounts_db, login_mmo_auth returns error codes | PARTIAL | Both require account data; Athena hard-fails if DB factory returns null. |
-| 2 | NewAccountFlag auto-register via TryAutoRegisterAsync | new_account_flag via _M/_F suffix in login_mmo_auth | DIFF | Auto-registration logic differs. |
+| 2 | NewAccountFlag auto-register via TryAutoRegisterAsync | new_account_flag via _M/_F suffix in login_mmo_auth | YES | Auto-registration is driven by _M/_F suffix and new_account_flag in both. |
 | 3 | IP ban check (IsIpBannedAsync) when IpBanEnabled | ipban_check via login_config.ipban in logclif_parse | PARTIAL | Both enforce IP bans, but checks occur in different layers. |
 | 4 | Reject if account not found -> Fail(0) | If accounts->load_str fails -> return 0 | YES | Both treat missing account as unregistered. |
 | 5 | Reject server accounts when !isServer | Reject SEX_SERVER when !isServer | YES | Both prevent server accounts on client login. |
@@ -192,123 +191,124 @@
 | 9 | On success: update login IDs, log login, update web auth token, update last login/ip | On success: update session data, update account data, set web_auth_token | YES | Success updates align at high level. |
 
 ## Concrete parity gaps
-- Auto-registration flow differs (TryAutoRegisterAsync vs _M/_F suffix).
-- IP ban check is in different layer (AuthenticateAsync vs logclif_parse).
-- Password/hash validation logic differs in detail (CheckPassword vs login_check_password).
+- DB required: if db is null -> Fail(1): Both require account data; Athena hard-fails if DB factory returns null.
+- IP ban check (IsIpBannedAsync) when IpBanEnabled: Both enforce IP bans, but checks occur in different layers.
+- Password check via CheckPassword: Both validate password; implementations differ.
+- Client hash enforcement (Config.ClientHashCheck): Both check client hash when enabled; verify exact config/paths.
 
 ## Evidence
 ### Athena.NET AuthenticateAsync
 ```csharp
- 1087 |     private async Task<AuthResult> AuthenticateAsync(LoginRequest request, string remoteIp, bool isServer, CancellationToken cancellationToken)
- 1088 |     {
- 1089 |         var db = _dbFactory();
- 1090 |         if (db == null)
- 1091 |         {
- 1092 |             return AuthResult.Fail(1);
- 1093 |         }
- 1094 | 
- 1095 |         await using (db)
- 1096 |         {
- 1097 |             if (!isServer && Config.IpBanEnabled)
- 1098 |             {
- 1099 |                 if (await IsIpBannedAsync(db, remoteIp, cancellationToken))
- 1100 |                 {
- 1101 |                     return AuthResult.Fail(3);
- 1102 |                 }
- 1103 |             }
- 1104 | 
- 1105 |             if (!isServer && Config.UseDnsbl && Config.DnsblServers.Length > 0)
- 1106 |             {
- 1107 |                 if (await IsDnsblListedAsync(remoteIp, cancellationToken))
- 1108 |                 {
- 1109 |                     await LogLoginAsync(db, request.UserId, remoteIp, 3, string.Empty, cancellationToken);
- 1110 |                     return AuthResult.Fail(3);
- 1111 |                 }
- 1112 |             }
- 1113 | 
- 1114 |             if (!isServer && Config.NewAccountFlag)
- 1115 |             {
- 1116 |                 var regResult = await TryAutoRegisterAsync(db, request, remoteIp, cancellationToken);
- 1117 |                 if (regResult.HasValue && regResult.Value != -1)
- 1118 |                 {
- 1119 |                     return AuthResult.Fail((uint)regResult.Value);
- 1120 |                 }
- 1121 |             }
- 1122 | 
- 1123 |             var userId = request.AutoRegisterBaseId ?? request.UserId;
- 1124 | 
- 1125 |             LoginAccount? account;
- 1126 |             if (IsCaseSensitive)
- 1127 |             {
- 1128 |                 account = await db.Accounts
- 1129 |                     .AsNoTracking()
- 1130 |                     .FirstOrDefaultAsync(a => a.UserId == userId, cancellationToken);
- 1131 |             }
- 1132 |             else
+ 1122 |     private async Task<AuthResult> AuthenticateAsync(LoginRequest request, string remoteIp, bool isServer, CancellationToken cancellationToken)
+ 1123 |     {
+ 1124 |         var db = _dbFactory();
+ 1125 |         if (db == null)
+ 1126 |         {
+ 1127 |             return AuthResult.Fail(1);
+ 1128 |         }
+ 1129 | 
+ 1130 |         await using (db)
+ 1131 |         {
+ 1132 |             if (!isServer && Config.IpBanEnabled)
  1133 |             {
- 1134 |                 var normalizedUserId = userId.ToLowerInvariant();
- 1135 |                 account = await db.Accounts
- 1136 |                     .AsNoTracking()
- 1137 |                     .FirstOrDefaultAsync(a => a.UserId.ToLower() == normalizedUserId, cancellationToken);
+ 1134 |                 if (await IsIpBannedAsync(db, remoteIp, cancellationToken))
+ 1135 |                 {
+ 1136 |                     return AuthResult.Fail(3);
+ 1137 |                 }
  1138 |             }
  1139 | 
- 1140 |             if (account == null)
+ 1140 |             if (!isServer && Config.UseDnsbl && Config.DnsblServers.Length > 0)
  1141 |             {
- 1142 |                 await LogLoginAsync(db, userId, remoteIp, 0, string.Empty, cancellationToken);
- 1143 |                 return AuthResult.Fail(0);
- 1144 |             }
- 1145 | 
- 1146 |             if (!isServer && string.Equals(account.Sex, "S", StringComparison.OrdinalIgnoreCase))
- 1147 |             {
- 1148 |                 await LogLoginAsync(db, userId, remoteIp, 0, string.Empty, cancellationToken);
- 1149 |                 return AuthResult.Fail(0);
- 1150 |             }
- 1151 | 
- 1152 |             if (!CheckPassword(request, account))
- 1153 |             {
- 1154 |                 await LogLoginAsync(db, userId, remoteIp, 1, string.Empty, cancellationToken);
- 1155 |                 return AuthResult.Fail(1);
+ 1142 |                 if (await IsDnsblListedAsync(remoteIp, cancellationToken))
+ 1143 |                 {
+ 1144 |                     await LogLoginAsync(db, request.UserId, remoteIp, 3, string.Empty, cancellationToken);
+ 1145 |                     return AuthResult.Fail(3);
+ 1146 |                 }
+ 1147 |             }
+ 1148 | 
+ 1149 |             if (!isServer && Config.NewAccountFlag)
+ 1150 |             {
+ 1151 |                 var regResult = await TryAutoRegisterAsync(db, request, remoteIp, cancellationToken);
+ 1152 |                 if (regResult.HasValue && regResult.Value != -1)
+ 1153 |                 {
+ 1154 |                     return AuthResult.Fail((uint)regResult.Value);
+ 1155 |                 }
  1156 |             }
  1157 | 
- 1158 |             var now = DateTime.UtcNow;
- 1159 |             if (account.ExpirationTime != 0 && account.ExpirationTime < ToUnixTime(now))
- 1160 |             {
- 1161 |                 await LogLoginAsync(db, userId, remoteIp, 2, string.Empty, cancellationToken);
- 1162 |                 return AuthResult.Fail(2);
- 1163 |             }
- 1164 | 
- 1165 |             if (account.UnbanTime != 0 && account.UnbanTime > ToUnixTime(now))
- 1166 |             {
- 1167 |                 var unblock = FormatDate(FromUnixTime(account.UnbanTime));
- 1168 |                 await LogLoginAsync(db, userId, remoteIp, 6, string.Empty, cancellationToken);
- 1169 |                 return AuthResult.Fail(6, unblock);
- 1170 |             }
- 1171 | 
- 1172 |             if (account.State != 0)
- 1173 |             {
- 1174 |                 var error = (uint)Math.Max(0, (int)account.State - 1);
- 1175 |                 await LogLoginAsync(db, userId, remoteIp, error, string.Empty, cancellationToken);
- 1176 |                 return AuthResult.Fail(error);
- 1177 |             }
- 1178 | 
- 1179 |             if (!isServer && Config.ClientHashCheck)
- 1180 |             {
- 1181 |                 if (!IsClientHashAllowed(account.GroupId))
- 1182 |                 {
- 1183 |                     await LogLoginAsync(db, userId, remoteIp, 5, string.Empty, cancellationToken);
- 1184 |                     return AuthResult.Fail(5);
- 1185 |                 }
- 1186 |             }
- 1187 | 
- 1188 |         await UpdateAccountLoginAsync(db, account, remoteIp, cancellationToken);
- 1189 |         await LogLoginAsync(db, userId, remoteIp, 100, "login ok", cancellationToken);
- 1190 | 
- 1191 |             var loginId1 = RandomNumberGenerator.GetInt32(1, int.MaxValue);
- 1192 |             var loginId2 = RandomNumberGenerator.GetInt32(1, int.MaxValue);
- 1193 | 
- 1194 |             return AuthResult.FromAccount(account, loginId1, loginId2, remoteIp);
- 1195 |         }
- 1196 |     }
+ 1158 |             var userId = request.AutoRegisterBaseId ?? request.UserId;
+ 1159 | 
+ 1160 |             LoginAccount? account;
+ 1161 |             if (IsCaseSensitive)
+ 1162 |             {
+ 1163 |                 account = await db.Accounts
+ 1164 |                     .AsNoTracking()
+ 1165 |                     .FirstOrDefaultAsync(a => a.UserId == userId, cancellationToken);
+ 1166 |             }
+ 1167 |             else
+ 1168 |             {
+ 1169 |                 var normalizedUserId = userId.ToLowerInvariant();
+ 1170 |                 account = await db.Accounts
+ 1171 |                     .AsNoTracking()
+ 1172 |                     .FirstOrDefaultAsync(a => a.UserId.ToLower() == normalizedUserId, cancellationToken);
+ 1173 |             }
+ 1174 | 
+ 1175 |             if (account == null)
+ 1176 |             {
+ 1177 |                 await LogLoginAsync(db, userId, remoteIp, 0, string.Empty, cancellationToken);
+ 1178 |                 return AuthResult.Fail(0);
+ 1179 |             }
+ 1180 | 
+ 1181 |             if (!isServer && string.Equals(account.Sex, "S", StringComparison.OrdinalIgnoreCase))
+ 1182 |             {
+ 1183 |                 await LogLoginAsync(db, userId, remoteIp, 0, string.Empty, cancellationToken);
+ 1184 |                 return AuthResult.Fail(0);
+ 1185 |             }
+ 1186 | 
+ 1187 |             if (!CheckPassword(request, account))
+ 1188 |             {
+ 1189 |                 await LogLoginAsync(db, userId, remoteIp, 1, string.Empty, cancellationToken);
+ 1190 |                 return AuthResult.Fail(1);
+ 1191 |             }
+ 1192 | 
+ 1193 |             var now = DateTime.UtcNow;
+ 1194 |             if (account.ExpirationTime != 0 && account.ExpirationTime < ToUnixTime(now))
+ 1195 |             {
+ 1196 |                 await LogLoginAsync(db, userId, remoteIp, 2, string.Empty, cancellationToken);
+ 1197 |                 return AuthResult.Fail(2);
+ 1198 |             }
+ 1199 | 
+ 1200 |             if (account.UnbanTime != 0 && account.UnbanTime > ToUnixTime(now))
+ 1201 |             {
+ 1202 |                 var unblock = FormatDate(FromUnixTime(account.UnbanTime));
+ 1203 |                 await LogLoginAsync(db, userId, remoteIp, 6, string.Empty, cancellationToken);
+ 1204 |                 return AuthResult.Fail(6, unblock);
+ 1205 |             }
+ 1206 | 
+ 1207 |             if (account.State != 0)
+ 1208 |             {
+ 1209 |                 var error = (uint)Math.Max(0, (int)account.State - 1);
+ 1210 |                 await LogLoginAsync(db, userId, remoteIp, error, string.Empty, cancellationToken);
+ 1211 |                 return AuthResult.Fail(error);
+ 1212 |             }
+ 1213 | 
+ 1214 |             if (!isServer && Config.ClientHashCheck)
+ 1215 |             {
+ 1216 |                 if (!IsClientHashAllowed(account.GroupId))
+ 1217 |                 {
+ 1218 |                     await LogLoginAsync(db, userId, remoteIp, 5, string.Empty, cancellationToken);
+ 1219 |                     return AuthResult.Fail(5);
+ 1220 |                 }
+ 1221 |             }
+ 1222 | 
+ 1223 |         await UpdateAccountLoginAsync(db, account, remoteIp, cancellationToken);
+ 1224 |         await LogLoginAsync(db, userId, remoteIp, 100, "login ok", cancellationToken);
+ 1225 | 
+ 1226 |             var loginId1 = RandomNumberGenerator.GetInt32(1, int.MaxValue);
+ 1227 |             var loginId2 = RandomNumberGenerator.GetInt32(1, int.MaxValue);
+ 1228 | 
+ 1229 |             return AuthResult.FromAccount(account, loginId1, loginId2, remoteIp);
+ 1230 |         }
+ 1231 |     }
 ```
 ### rAthena login_mmo_auth
 ```cpp
