@@ -49,11 +49,13 @@
   143 |         if (!_charConnector.TrySendAuthRequest(this, _accountId, _charId, _loginId1, _sex, clientIp))
   144 |         {
   145 |             await SendRefuseEnterAsync(0, cancellationToken);
-  146 |             return;
-  147 |         }
-  148 | 
-  149 |         _authRequested = true;
-  150 |     }
+  146 |             MapLogger.Warning("Auth request to char server failed. Disconnecting map client.");
+  147 |             _client.Close();
+  148 |             return;
+  149 |         }
+  150 | 
+  151 |         _authRequested = true;
+  152 |     }
 ```
 ### rAthena clif_parse_WantToConnection
 ```cpp

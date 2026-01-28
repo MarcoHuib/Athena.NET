@@ -143,6 +143,8 @@ public sealed class MapClientSession : IDisposable
         if (!_charConnector.TrySendAuthRequest(this, _accountId, _charId, _loginId1, _sex, clientIp))
         {
             await SendRefuseEnterAsync(0, cancellationToken);
+            MapLogger.Warning("Auth request to char server failed. Disconnecting map client.");
+            _client.Close();
             return;
         }
 

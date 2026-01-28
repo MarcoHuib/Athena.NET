@@ -145,3 +145,4 @@ _NCrunch*
 .env
 
 ai/issues/*
+ai/.last_commit_ts
