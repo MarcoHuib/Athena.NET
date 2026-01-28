@@ -25,17 +25,35 @@
   119 |         _loginId1 = BinaryPrimitives.ReadUInt32LittleEndian(packet.AsSpan(10, 4));
   120 |         _sex = packet[18];
   121 | 
-  122 |         var endpoint = _client.Client.RemoteEndPoint as IPEndPoint;
-  123 |         var clientIp = endpoint?.Address ?? IPAddress.Loopback;
-  124 | 
-  125 |         if (!_charConnector.TrySendAuthRequest(this, _accountId, _charId, _loginId1, _sex, clientIp))
-  126 |         {
-  127 |             await SendRefuseEnterAsync(0, cancellationToken);
-  128 |             return;
-  129 |         }
-  130 | 
-  131 |         _authRequested = true;
-  132 |     }
+  122 |         if (_accountId == 0)
+  123 |         {
+  124 |             await SendRefuseEnterAsync(2, cancellationToken);
+  125 |             return;
+  126 |         }
+  127 | 
+  128 |         if (_charId == 0)
+  129 |         {
+  130 |             await SendRefuseEnterAsync(3, cancellationToken);
+  131 |             return;
+  132 |         }
+  133 | 
+  134 |         if (_sex != 0 && _sex != 1)
+  135 |         {
+  136 |             await SendRefuseEnterAsync(6, cancellationToken);
+  137 |             return;
+  138 |         }
+  139 | 
+  140 |         var endpoint = _client.Client.RemoteEndPoint as IPEndPoint;
+  141 |         var clientIp = endpoint?.Address ?? IPAddress.Loopback;
+  142 | 
+  143 |         if (!_charConnector.TrySendAuthRequest(this, _accountId, _charId, _loginId1, _sex, clientIp))
+  144 |         {
+  145 |             await SendRefuseEnterAsync(0, cancellationToken);
+  146 |             return;
+  147 |         }
+  148 | 
+  149 |         _authRequested = true;
+  150 |     }
 ```
 ### rAthena clif_parse_WantToConnection
 ```cpp
