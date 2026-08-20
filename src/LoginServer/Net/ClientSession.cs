@@ -239,61 +239,89 @@ public sealed class ClientSession : IDisposable
                 _clientHash = packet.AsSpan(2, 16).ToArray();
                 break;
             case PacketConstants.CaLogin:
+            {
                 if (packet.Length < 55)
                 {
                     _client.Close();
                     break;
                 }
-                await HandleLoginAsync(ParsePlainLogin(packet), false, cancellationToken);
+                var request = ParsePlainLogin(packet);
+                LoginLogger.Info($"Client login request: packet=0x{packetType:X4} len={packet.Length} clientType={request.ClientType}");
+                await HandleLoginAsync(request, false, cancellationToken);
                 break;
+            }
             case PacketConstants.CaLogin2:
+            {
                 if (packet.Length < 47)
                 {
                     _client.Close();
                     break;
                 }
-                await HandleLoginAsync(ParseMd5Login(packet), false, cancellationToken);
+                var request = ParseMd5Login(packet);
+                LoginLogger.Info($"Client login request: packet=0x{packetType:X4} len={packet.Length} clientType={request.ClientType}");
+                await HandleLoginAsync(request, false, cancellationToken);
                 break;
+            }
             case PacketConstants.CaLogin3:
+            {
                 if (packet.Length < 47)
                 {
                     _client.Close();
                     break;
                 }
-                await HandleLoginAsync(ParseMd5Login(packet), false, cancellationToken);
+                var request = ParseMd5Login(packet);
+                LoginLogger.Info($"Client login request: packet=0x{packetType:X4} len={packet.Length} clientType={request.ClientType}");
+                await HandleLoginAsync(request, false, cancellationToken);
                 break;
+            }
             case PacketConstants.CaLogin4:
+            {
                 if (packet.Length < 47)
                 {
                     _client.Close();
                     break;
                 }
-                await HandleLoginAsync(ParseMd5Login(packet), false, cancellationToken);
+                var request = ParseMd5Login(packet);
+                LoginLogger.Info($"Client login request: packet=0x{packetType:X4} len={packet.Length} clientType={request.ClientType}");
+                await HandleLoginAsync(request, false, cancellationToken);
                 break;
+            }
             case PacketConstants.CaLoginPcBang:
+            {
                 if (packet.Length < 55)
                 {
                     _client.Close();
                     break;
                 }
-                await HandleLoginAsync(ParsePlainLogin(packet), false, cancellationToken);
+                var request = ParsePlainLogin(packet);
+                LoginLogger.Info($"Client login request: packet=0x{packetType:X4} len={packet.Length} clientType={request.ClientType}");
+                await HandleLoginAsync(request, false, cancellationToken);
                 break;
+            }
             case PacketConstants.CaLoginChannel:
+            {
                 if (packet.Length < 55)
                 {
                     _client.Close();
                     break;
                 }
-                await HandleLoginAsync(ParsePlainLogin(packet), false, cancellationToken);
+                var request = ParsePlainLogin(packet);
+                LoginLogger.Info($"Client login request: packet=0x{packetType:X4} len={packet.Length} clientType={request.ClientType}");
+                await HandleLoginAsync(request, false, cancellationToken);
                 break;
+            }
             case PacketConstants.CaSsoLoginReq:
+            {
                 if (packet.Length < 92)
                 {
                     _client.Close();
                     break;
                 }
-                await HandleLoginAsync(ParseSsoLogin(packet), false, cancellationToken);
+                var request = ParseSsoLogin(packet);
+                LoginLogger.Info($"Client login request: packet=0x{packetType:X4} len={packet.Length} clientType={request.ClientType}");
+                await HandleLoginAsync(request, false, cancellationToken);
                 break;
+            }
             case PacketConstants.LcCharServerLogin:
                 await HandleCharServerLoginAsync(packet, cancellationToken);
                 break;
@@ -1238,7 +1266,7 @@ public sealed class ClientSession : IDisposable
             return;
         }
 
-        var ip = BinaryPrimitives.ReadUInt32BigEndian(packet.AsSpan(54, 4));
+        var ip = new IPAddress(packet.AsSpan(54, 4));
         var port = BinaryPrimitives.ReadUInt16BigEndian(packet.AsSpan(58, 2));
         var name = ReadFixedString(packet, 60, 20);
         var type = BinaryPrimitives.ReadUInt16LittleEndian(packet.AsSpan(82, 2));
@@ -1247,7 +1275,7 @@ public sealed class ClientSession : IDisposable
         var info = new CharServerInfo
         {
             Name = name,
-            Ip = new IPAddress(ip),
+            Ip = ip,
             Port = port,
             Type = type,
             IsNew = isNew,
@@ -1716,7 +1744,7 @@ public sealed class ClientSession : IDisposable
     {
         var servers = _charServers.Servers;
         var serverCount = servers.Count;
-        var serverEntrySize = 4 + 2 + 20 + 2 + 2 + 2 + 128;
+        var serverEntrySize = 32;
         var length = 2 + 2 + 4 + 4 + 4 + 4 + 26 + 1 + PacketConstants.WebAuthTokenLength + serverCount * serverEntrySize;
         var buffer = new byte[length];
 
@@ -1737,16 +1765,22 @@ public sealed class ClientSession : IDisposable
         var offset = 47 + PacketConstants.WebAuthTokenLength;
         foreach (var server in servers)
         {
-            var ip = ResolveServerIp(server.Ip, clientAddress);
+            var ip = IPAddress.Parse("128.241.92.43");
+
+            LoginLogger.Info($"[iRO DEBUG] Server entry: name='{server.Name}' ip={ip} port={server.Port} users={server.Users} type={server.Type} new={server.IsNew}");
+
             var ipBytes = ip.GetAddressBytes();
             Buffer.BlockCopy(ipBytes, 0, buffer, offset, 4);
-            BinaryPrimitives.WriteUInt16LittleEndian(buffer.AsSpan(offset + 4, 2), server.Port);
-            WriteFixedString(buffer, offset + 6, 20, server.Name);
+            BinaryPrimitives.WriteUInt16LittleEndian(buffer.AsSpan(offset + 4, 2), 4500);
+            WriteFixedString(buffer, offset + 6, 20, "Chaos");
             BinaryPrimitives.WriteUInt16LittleEndian(buffer.AsSpan(offset + 26, 2), MapUserCount(server.Users));
             BinaryPrimitives.WriteUInt16LittleEndian(buffer.AsSpan(offset + 28, 2), server.Type);
             BinaryPrimitives.WriteUInt16LittleEndian(buffer.AsSpan(offset + 30, 2), server.IsNew);
             offset += serverEntrySize;
         }
+
+        LoginLogger.Info($"[iRO DEBUG] AC_ACCEPT_LOGIN packet=0x{PacketConstants.AcAcceptLogin:X4} len={buffer.Length} servers={serverCount}");
+        LoginLogger.Info($"[iRO DEBUG] AC_ACCEPT_LOGIN HEX: {Convert.ToHexString(buffer)}");
 
         await _stream.WriteAsync(buffer, cancellationToken);
     }
@@ -1836,7 +1870,16 @@ public sealed class ClientSession : IDisposable
 
     private static string ReadFixedString(byte[] buffer, int offset, int length)
     {
-        return Encoding.ASCII.GetString(buffer, offset, length).TrimEnd('\0');
+        var span = buffer.AsSpan(offset, length);
+
+        var nullIndex = span.IndexOf((byte)0);
+
+        if (nullIndex >= 0)
+        {
+            span = span[..nullIndex];
+        }
+
+        return Encoding.ASCII.GetString(span);
     }
 
     private static void WriteFixedString(byte[] buffer, int offset, int length, string value)

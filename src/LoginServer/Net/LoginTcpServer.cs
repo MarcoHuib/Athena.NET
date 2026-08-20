@@ -1,9 +1,9 @@
+using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using Athena.Net.LoginServer.Config;
 using Athena.Net.LoginServer.Logging;
 using Athena.Net.LoginServer.Telemetry;
-using System.Diagnostics;
 
 namespace Athena.Net.LoginServer.Net;
 
@@ -19,7 +19,14 @@ public sealed class LoginTcpServer
 
     public int BoundPort { get; private set; }
 
-    public LoginTcpServer(LoginConfigStore configStore, LoginMessageStore messageStore, Func<Db.LoginDbContext?> dbFactory, CharServerRegistry charServers, LoginState state, Config.SubnetConfig subnetConfig)
+    public LoginTcpServer(
+        LoginConfigStore configStore,
+        LoginMessageStore messageStore,
+        Func<Db.LoginDbContext?> dbFactory,
+        CharServerRegistry charServers,
+        LoginState state,
+        Config.SubnetConfig subnetConfig
+    )
     {
         _configStore = configStore;
         _messageStore = messageStore;
@@ -27,6 +34,7 @@ public sealed class LoginTcpServer
         _charServers = charServers;
         _state = state;
         _subnetConfig = subnetConfig;
+
         var config = _configStore.Current;
         _listener = new TcpListener(config.BindIp, config.LoginPort);
     }
@@ -34,14 +42,19 @@ public sealed class LoginTcpServer
     public async Task RunAsync(CancellationToken cancellationToken)
     {
         _listener.Start();
+
         BoundPort = ((IPEndPoint)_listener.LocalEndpoint).Port;
-        LoginLogger.Status("Login server listening...");
+
+        LoginLogger.Status(
+            $"Login server listening on {_configStore.Current.BindIp}:{BoundPort}..."
+        );
 
         try
         {
             while (!cancellationToken.IsCancellationRequested)
             {
                 var client = await _listener.AcceptTcpClientAsync(cancellationToken);
+
                 _ = HandleClientAsync(client, cancellationToken);
             }
         }
@@ -58,17 +71,42 @@ public sealed class LoginTcpServer
     private async Task HandleClientAsync(TcpClient client, CancellationToken cancellationToken)
     {
         var endpoint = client.Client.RemoteEndPoint as IPEndPoint;
+
         LoginTelemetry.ConnectionsAccepted.Add(1);
-        using var activity = LoginTelemetry.ActivitySource.StartActivity("login.client.session", ActivityKind.Server);
+
+        using var activity = LoginTelemetry.ActivitySource.StartActivity(
+            "login.client.session",
+            ActivityKind.Server
+        );
+
         activity?.SetTag("net.peer.ip", endpoint?.Address.ToString());
         activity?.SetTag("net.peer.port", endpoint?.Port);
+
         LoginLogger.Info($"Client connected: {endpoint}");
 
         using (client)
-        using (var session = new ClientSession(client, _configStore, _messageStore, _dbFactory, _charServers, _state, _subnetConfig))
         {
             try
             {
+                // ---------------------------------------------------------
+                // TEMPORARY iRO PROTOCOL DIAGNOSTIC
+                //
+                // Peek at the first bytes sent by the client.
+                // SocketFlags.Peek means the bytes remain in the socket,
+                // so ClientSession will still receive the complete packet.
+                // ---------------------------------------------------------
+                await LogInitialPacketAsync(client, cancellationToken);
+
+                using var session = new ClientSession(
+                    client,
+                    _configStore,
+                    _messageStore,
+                    _dbFactory,
+                    _charServers,
+                    _state,
+                    _subnetConfig
+                );
+
                 await session.RunAsync(cancellationToken);
             }
             catch (IOException)
@@ -79,12 +117,87 @@ public sealed class LoginTcpServer
             {
                 // Server shutdown.
             }
+            catch (SocketException ex)
+            {
+                LoginLogger.Warning(
+                    $"Socket error for {endpoint}: {ex.SocketErrorCode} - {ex.Message}"
+                );
+            }
             catch (Exception ex)
             {
-                LoginLogger.Warning($"Client session error: {ex.Message}");
+                LoginLogger.Warning($"Client session error for {endpoint}: {ex.Message}");
             }
         }
 
         LoginLogger.Info($"Client disconnected: {endpoint}");
+    }
+
+    private static async Task LogInitialPacketAsync(
+        TcpClient client,
+        CancellationToken cancellationToken
+    )
+    {
+        const int packetLength = 55;
+
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+
+        timeoutCts.CancelAfter(TimeSpan.FromSeconds(5));
+
+        try
+        {
+            // CA_LOGIN (0x0064) is 55 bytes.
+            // Wait until the complete packet is available so TCP fragmentation
+            // does not give us a misleading partial dump.
+            while (client.Available < packetLength)
+            {
+                await Task.Delay(10, timeoutCts.Token);
+            }
+
+            var buffer = new byte[packetLength];
+
+            var bytesPeeked = await client.Client.ReceiveAsync(
+                buffer.AsMemory(0, packetLength),
+                SocketFlags.Peek,
+                timeoutCts.Token
+            );
+
+            if (bytesPeeked < packetLength)
+            {
+                LoginLogger.Warning(
+                    $"[iRO DEBUG] Expected {packetLength} bytes, "
+                        + $"but only {bytesPeeked} bytes were available."
+                );
+
+                return;
+            }
+
+            ushort packetId = BitConverter.ToUInt16(buffer, 0);
+
+            uint version = BitConverter.ToUInt32(buffer, 2);
+
+            var idBytes = buffer.AsSpan(6, 24);
+
+            var passwordBytes = buffer.AsSpan(30, 24);
+
+            byte clientType = buffer[54];
+
+            LoginLogger.Info($"[iRO DEBUG] Packet ID : 0x{packetId:X4}");
+
+            LoginLogger.Info($"[iRO DEBUG] Version   : {version}");
+
+            LoginLogger.Info($"[iRO DEBUG] ID HEX    : {Convert.ToHexString(idBytes)}");
+
+            LoginLogger.Info($"[iRO DEBUG] PASS HEX  : {Convert.ToHexString(passwordBytes)}");
+
+            LoginLogger.Info($"[iRO DEBUG] ClientType: {clientType}");
+
+            LoginLogger.Info(
+                $"[iRO DEBUG] Full packet ({packetLength} bytes): " + Convert.ToHexString(buffer)
+            );
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            LoginLogger.Warning("[iRO DEBUG] Timed out waiting for complete CA_LOGIN packet.");
+        }
     }
 }

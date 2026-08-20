@@ -16,6 +16,10 @@ public static class CharServerApp
         var secrets = SecretConfig.Load(options.SecretsPath);
         var mergedConfig = secrets.ApplyTo(config);
         CharLogger.Configure(mergedConfig);
+        CharLogger.Status($"[CONFIG] Char config path: {Path.GetFullPath(options.ConfigPath)}");
+        CharLogger.Status(
+            $"[CONFIG] Effective PIN: enabled={mergedConfig.PincodeEnabled.ToString().ToLowerInvariant()} " +
+            $"force={mergedConfig.PincodeForce.ToString().ToLowerInvariant()}");
         using var telemetry = CharTelemetry.Start();
         var configStore = new CharConfigStore(mergedConfig, options.ConfigPath);
         var tableNames = new Db.CharDbTableNames

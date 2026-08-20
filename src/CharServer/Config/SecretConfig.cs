@@ -73,6 +73,9 @@ public sealed class SecretConfig
     {
         return new CharConfig
         {
+            IroRenewalCompatibility = config.IroRenewalCompatibility,
+            IroAdvertisedMapIp = config.IroAdvertisedMapIp,
+            IroAdvertisedMapPort = config.IroAdvertisedMapPort,
             UserId = string.IsNullOrWhiteSpace(CharServerUserId) ? config.UserId : CharServerUserId,
             Password = string.IsNullOrWhiteSpace(CharServerPassword) ? config.Password : CharServerPassword,
             ServerName = config.ServerName,
@@ -99,6 +102,12 @@ public sealed class SecretConfig
             StartItemsDoram = config.StartItemsDoram,
             StartItemsPre = config.StartItemsPre,
             UsePreRenewalStartPoints = config.UsePreRenewalStartPoints,
+            PincodeEnabled = config.PincodeEnabled,
+            PincodeChangeTimeSeconds = config.PincodeChangeTimeSeconds,
+            PincodeMaxTry = config.PincodeMaxTry,
+            PincodeForce = config.PincodeForce,
+            PincodeAllowRepeated = config.PincodeAllowRepeated,
+            PincodeAllowSequential = config.PincodeAllowSequential,
             ConsoleEnabled = config.ConsoleEnabled,
             ConsoleMsgLog = config.ConsoleMsgLog,
             ConsoleSilent = config.ConsoleSilent,

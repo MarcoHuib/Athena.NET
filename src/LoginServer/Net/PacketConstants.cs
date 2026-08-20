@@ -1,4 +1,4 @@
-namespace Athena.Net.LoginServer.Net;
+    namespace Athena.Net.LoginServer.Net;
 
 public static class PacketConstants
 {
@@ -51,7 +51,7 @@ public static class PacketConstants
     public const short LcAccountStatusNotify = 0x2731;
     public const short LcAccountSexNotify = 0x2723;
 
-    public const short AcAcceptLogin = 0xac4;
+    public const short AcAcceptLogin = 0x0a4d;
     public const short AcAckHash = 0x1dc;
     public const short AcRefuseLogin = 0x83e;
     public const short ScNotifyBan = 0x81;
