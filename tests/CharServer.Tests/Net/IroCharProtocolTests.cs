@@ -80,6 +80,21 @@ public sealed class IroCharProtocolTests
         Assert.Null(failure);
         var success = ClientSession.BuildAcceptMakeCharPacket(new byte[ClientSession.CharacterInfoSize]);
         Assert.Equal((short)0x0b6f, BinaryPrimitives.ReadInt16LittleEndian(success));
+        Assert.Equal(177, success.Length);
+    }
+
+    [Fact]
+    public void CharacterCreate_UniqueNameAndFreeSlotEight_IsAccepted()
+    {
+        var existing = new[] { new CharCharacter { CharId = 1, Name = "Test", CharNum = 0 } };
+
+        var failure = ClientSession.DetermineCharacterCreateFailure(
+            ClientSession.NameValidationResult.Ok, existing, slot: 8, availableSlots: 9);
+
+        Assert.Null(failure);
+        var success = ClientSession.BuildAcceptMakeCharPacket(new byte[ClientSession.CharacterInfoSize]);
+        Assert.Equal((short)0x0b6f, BinaryPrimitives.ReadInt16LittleEndian(success));
+        Assert.Equal(177, success.Length);
     }
 
     [Fact]

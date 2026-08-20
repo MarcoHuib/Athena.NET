@@ -88,13 +88,50 @@ public sealed class IroCharacterInfoSerializationTests
     [Theory]
     [InlineData((byte)0)]
     [InlineData((byte)1)]
+    [InlineData((byte)8)]
     public void WriteCharacterInfo_WritesCharacterSlotAtOffset138(byte slot)
     {
         var result = new byte[ClientSession.CharacterInfoSize];
+        var character = new CharCharacter
+        {
+            Name = "Test",
+            Str = 11,
+            Agi = 12,
+            Vit = 13,
+            Int = 14,
+            Dex = 15,
+            Luk = 16,
+            CharNum = slot,
+            HairColor = 17,
+            Rename = 0,
+            LastMap = "prontera",
+        };
 
-        ClientSession.WriteCharacterInfo(result, new CharCharacter { CharNum = slot });
+        ClientSession.WriteCharacterInfo(result, character);
 
-        Assert.Equal(slot, result[138]);
+        Assert.Equal(175, result.Length);
+        Assert.Equal("Test", ReadFixedString(result.AsSpan(108, 24)));
+        Assert.Equal(new byte[] { 11, 12, 13, 14, 15, 16 }, result.AsSpan(132, 6).ToArray());
+        Assert.Equal(slot, result[ClientSession.CharacterInfoSlotOffset]);
+        Assert.Equal((byte)17, result[139]);
+        Assert.Equal((short)1, BinaryPrimitives.ReadInt16LittleEndian(result.AsSpan(140, 2)));
+        Assert.Equal("prontera", ReadFixedString(result.AsSpan(142, 16)));
+    }
+
+    [Fact]
+    public void CharacterPage_WritesSlotAtAbsolutePacketOffset142()
+    {
+        var characterInfo = new byte[ClientSession.CharacterInfoSize];
+        ClientSession.WriteCharacterInfo(
+            characterInfo,
+            new CharCharacter { CharId = 1, Name = "Test", CharNum = 8 });
+
+        var packet = ClientSession.BuildCharacterPagePacket(characterInfo);
+
+        Assert.Equal((short)0x0b72, BinaryPrimitives.ReadInt16LittleEndian(packet));
+        Assert.Equal((short)179, BinaryPrimitives.ReadInt16LittleEndian(packet.AsSpan(2, 2)));
+        Assert.Equal(179, packet.Length);
+        Assert.Equal((byte)8, packet[4 + ClientSession.CharacterInfoSlotOffset]);
     }
 
     private static string ReadFixedString(ReadOnlySpan<byte> value)

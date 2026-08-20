@@ -505,8 +505,20 @@ public sealed class ClientSession : IDisposable, ISession
             }
         }
 
-        var payload = BuildCharacterInfoPayload(characters);
+        var iroCompatibility = _configStore.Current.IroRenewalCompatibility;
+        var payload = BuildCharacterInfoPayload(characters, iroCompatibility);
         var buffer = BuildCharacterPagePacket(payload);
+        if (iroCompatibility)
+        {
+            for (var index = 0; index < characters.Count; index++)
+            {
+                var character = characters[index];
+                var packetOffset = 4 + (index * CharacterInfoSize) + CharacterInfoSlotOffset;
+                CharLogger.Debug(
+                    $"[iRO DEBUG] 0x0B72 charId={character.CharId} slot={character.CharNum} " +
+                    $"packetOffset={packetOffset} value={buffer[packetOffset]}");
+            }
+        }
         LogCharacterList(PacketConstants.HcAckCharInfoPerPage, characters.Count, buffer.Length);
         await WriteAsync(buffer, cancellationToken);
 
@@ -1665,7 +1677,8 @@ public sealed class ClientSession : IDisposable, ISession
 
     private Task SendAcceptMakeCharAsync(CharCharacter character, CancellationToken cancellationToken)
     {
-        var payload = BuildCharacterInfoPayload(new[] { character });
+        var payload = BuildCharacterInfoPayload(
+            new[] { character }, _configStore.Current.IroRenewalCompatibility);
         var buffer = BuildAcceptMakeCharPacket(payload);
         CharLogger.Debug(
             $"[iRO DEBUG] Sending character creation success packet=0x{PacketConstants.HcAcceptMakeChar:X4} " +
@@ -1783,7 +1796,11 @@ public sealed class ClientSession : IDisposable, ISession
         return buffer;
     }
 
-    private static byte[] BuildCharacterInfoPayload(IReadOnlyList<CharCharacter> characters)
+    internal const int CharacterInfoSlotOffset = 138;
+
+    private static byte[] BuildCharacterInfoPayload(
+        IReadOnlyList<CharCharacter> characters,
+        bool iroDebug = false)
     {
         if (characters.Count == 0)
         {
@@ -1794,7 +1811,18 @@ public sealed class ClientSession : IDisposable, ISession
         var offset = 0;
         foreach (var character in characters)
         {
-            WriteCharacterInfo(payload.AsSpan(offset, CharacterInfoSize), character);
+            var characterInfo = payload.AsSpan(offset, CharacterInfoSize);
+            WriteCharacterInfo(characterInfo, character);
+            if (iroDebug)
+            {
+                CharLogger.Debug(
+                    $"[iRO DEBUG] CHARACTER_INFO charId={character.CharId} name='{character.Name}' " +
+                    $"dbSlot={character.CharNum} modelSlot={character.CharNum} " +
+                    $"serializedSlot={characterInfo[CharacterInfoSlotOffset]} slotOffset={CharacterInfoSlotOffset}");
+                CharLogger.Debug(
+                    $"[iRO DEBUG] CHARACTER_INFO tail132_145=" +
+                    Convert.ToHexString(characterInfo.Slice(132, 14)));
+            }
             offset += CharacterInfoSize;
         }
 
@@ -1957,7 +1985,7 @@ public sealed class ClientSession : IDisposable, ISession
         buffer[137] = (byte)Math.Min(character.Luk, byte.MaxValue);
 
         // 138 - Character slot
-        buffer[138] = character.CharNum;
+        buffer[CharacterInfoSlotOffset] = character.CharNum;
 
         // 139 - Hair color byte
         buffer[139] =
