@@ -8,7 +8,7 @@ using Athena.Net.MapServer.Logging;
 
 namespace Athena.Net.MapServer.Net;
 
-public sealed class CharServerConnector
+public sealed class CharServerConnector : ICharacterPositionPersistence
 {
     private static readonly Dictionary<short, int> PacketLengths = new()
     {
@@ -42,6 +42,47 @@ public sealed class CharServerConnector
 
     public bool TrySendAuthRequest(MapClientSession session, uint accountId, uint charId, uint loginId1, byte sex, IPAddress clientIp)
     {
+        return TrySendAuthRequest(session, accountId, charId, loginId1, sex, clientIp, validateSex: true);
+    }
+
+    public bool TrySendIroAuthRequest(MapClientSession session, uint accountId, uint charId, uint loginId1, IPAddress clientIp)
+    {
+        return TrySendAuthRequest(session, accountId, charId, loginId1, 0, clientIp, validateSex: false);
+    }
+
+    public async Task<bool> SavePositionAsync(
+        uint accountId,
+        uint charId,
+        string mapName,
+        ushort x,
+        ushort y,
+        CancellationToken cancellationToken)
+    {
+        var connection = _connection;
+        if (connection == null || string.IsNullOrWhiteSpace(mapName))
+        {
+            return false;
+        }
+
+        var mapBytes = Encoding.ASCII.GetBytes(mapName);
+        if (mapBytes.Length > PacketConstants.MapNameLength)
+        {
+            return false;
+        }
+
+        var packet = new byte[30];
+        BinaryPrimitives.WriteInt16LittleEndian(packet, PacketConstants.MapSavePosition);
+        BinaryPrimitives.WriteUInt32LittleEndian(packet.AsSpan(2), accountId);
+        BinaryPrimitives.WriteUInt32LittleEndian(packet.AsSpan(6), charId);
+        mapBytes.CopyTo(packet.AsSpan(10, PacketConstants.MapNameLength));
+        BinaryPrimitives.WriteUInt16LittleEndian(packet.AsSpan(26), x);
+        BinaryPrimitives.WriteUInt16LittleEndian(packet.AsSpan(28), y);
+        await connection.WriteAsync(packet, cancellationToken);
+        return true;
+    }
+
+    private bool TrySendAuthRequest(MapClientSession session, uint accountId, uint charId, uint loginId1, byte sex, IPAddress clientIp, bool validateSex)
+    {
         var connection = _connection;
         if (connection == null)
         {
@@ -58,7 +99,7 @@ public sealed class CharServerConnector
         buffer[14] = sex;
         var ipBytes = clientIp.MapToIPv4().GetAddressBytes();
         ipBytes.CopyTo(buffer.AsSpan(15, 4));
-        buffer[19] = 0;
+        buffer[19] = validateSex ? (byte)0 : (byte)1;
 
         _ = connection.WriteAsync(buffer, CancellationToken.None);
         return true;

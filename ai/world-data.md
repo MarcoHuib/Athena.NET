@@ -1,0 +1,84 @@
+# Athena.NET world data
+
+## Character position persistence
+
+CharServer owns `CharDbContext` and persistent character rows. In schema order,
+the location columns are `last_map`, `last_x`, `last_y`, `last_instanceid`, then
+`save_map`, `save_x`, `save_y`. Thus a row projection such as
+`iz_int 18 26 0 iz_int 18 26` contains current/login location first and savepoint
+second. Character creation initializes both groups from `start_point`.
+
+Character selection now resolves `LastMap/LastX/LastY`; only when `LastMap` is
+empty does it use `SaveMap/SaveX/SaveY`. MapServer keeps current state in memory,
+marks it dirty after movement, and sends internal `0x2B28/30` to CharServer on a
+successful same-server warp and on session EOF/cancellation. CharServer accepts a
+save only from an authenticated MapServer connection that consumed the matching
+single-use `(accountId,charId)` auth node, then updates only `last_map/last_x/last_y`
+for the matching non-deleted row. Savepoint columns are deliberately unchanged.
+
+There is no per-movement database write and no periodic checkpoint yet. A normal
+disconnect persists the latest dirty position; a sudden process crash can still
+lose movement since the last warp.
+
+## rAthena warp import
+
+Source repository commit:
+`6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca`.
+
+Renewal input is the combination enabled by rAthena's warp configs:
+
+- `legacy/rathena/npc/warps` (81 files)
+- `legacy/rathena/npc/re/warps` (58 files)
+
+`tools/WorldDataImporter` parses tab-separated declarative `warp` records into
+unambiguous center/radius geometry. It supports comments, whitespace, same-map and
+cross-map destinations, zero/larger radii, and statically resolvable
+`duplicate(name)`. WARPNPC scripts and unresolved WARPNPC duplicates are reported
+as dynamic/scripted. Their static visual name/map/center/radius is retained, but
+no destination or execution is inferred.
+
+Current deterministic output `data/world/warps.json` reports:
+
+```text
+files:                         139
+static warps:                 3585
+resolved static duplicates:      0
+dynamic/scripted WARPNPC:       126
+unsupported/malformed:            0
+maps with static warps:          576
+```
+
+Regeneration command and GPL-3.0 provenance are in `data/world/README.md`.
+MapServer copies the generated file to its output and loads it at startup; there
+is no runtime dependency on the legacy checkout and no hand-coded tutorial list.
+
+## Static and scripted warp actors
+
+Every declarative `warp` has rAthena class `JT_WARPNPC`; dynamic WARPNPC scripts
+also retain visual-only actor geometry. `WorldMapRegistry` creates stable logical
+`WarpActor` instances from that same imported state. A thread-safe allocator uses
+rAthena's separate NPC domain beginning at `110000000`, avoiding normal low
+character IDs without copying official capture IDs.
+
+On each stock-iRO `0x007D/3`, MapServer clears the current visibility cycle and
+sends visible warp actors within the rAthena-compatible 14-cell square range.
+Movement can add actors newly entering range, without duplicate spawn in the same
+cycle. Same-map `0x0091` causes another `0x007D`, which begins the destination
+visibility cycle. Explicit despawn is not synthesized because map reload resets
+the client world in the captured flow.
+
+The actor packet is capture-proven `0x09FF`: a fixed 84-byte modern idle-unit
+prefix plus actor name. Dynamic values come from Athena actor state; NPC defaults
+and constants match three official WARPNPC records and upstream layout. `0x0368`
+actor-info response remains unimplemented because the capture did not require it
+for portal visibility.
+
+## Still missing
+
+- periodic/debounced position checkpoints and crash recovery;
+- generic NPC/script execution;
+- dynamic scripted warp destinations;
+- actor despawn/view-range exit handling;
+- actor-info response semantics;
+- collision/GAT pathfinding;
+- cross-MapServer `0x0092` routing and auth transfer.

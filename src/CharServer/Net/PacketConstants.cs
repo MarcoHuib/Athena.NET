@@ -25,6 +25,7 @@ public static class PacketConstants
     public const short MapAuthRequest = 0x2b26;
     public const short MapAuthOk = 0x2afd;
     public const short MapAuthFail = 0x2b27;
+    public const short MapSavePosition = 0x2b28;
 
     public const short ChReqConnect = 0x65;
     public const short ChSelectChar = 0x66;
