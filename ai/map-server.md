@@ -41,20 +41,22 @@ Work in capture-driven slices:
 - items/skills/combat/mobs
 - party/guild/storage/chat/quests and other iRO features as exercised
 
-## Useful rAthena reference areas
+## Useful legacy reference areas
+Both repositories live under `legacy/` and should be treated as read-only reference material unless explicitly asked otherwise. For this server, use `legacy/rathena/` primarily for architecture/domain behavior and `legacy/openkore/` for packet naming or iRO/community protocol clues.
+
 Use heavily for architecture/game mechanics, not as iRO packet authority:
-- `upstream/src/map/map.cpp`
-- `upstream/src/map/clif.cpp`
-- `upstream/src/map/pc.cpp`
-- `upstream/src/map/npc.cpp`
-- `upstream/src/map/battle.cpp`
-- `upstream/src/map/skill.cpp`
-- `upstream/src/map/status.cpp`
-- `upstream/conf/map_athena.conf`
-- `upstream/conf/script_athena.conf`
-- `upstream/db/`
-- `upstream/npc/`
-- `upstream/sql-files/main.sql`
+- `legacy/rathena/src/map/map.cpp`
+- `legacy/rathena/src/map/clif.cpp`
+- `legacy/rathena/src/map/pc.cpp`
+- `legacy/rathena/src/map/npc.cpp`
+- `legacy/rathena/src/map/battle.cpp`
+- `legacy/rathena/src/map/skill.cpp`
+- `legacy/rathena/src/map/status.cpp`
+- `legacy/rathena/conf/map_athena.conf`
+- `legacy/rathena/conf/script_athena.conf`
+- `legacy/rathena/db/`
+- `legacy/rathena/npc/`
+- `legacy/rathena/sql-files/main.sql`
 
 ## Safety and diagnostics
 - Never log the full 1001-byte `0x0C1F` at runtime if it contains live authentication material.

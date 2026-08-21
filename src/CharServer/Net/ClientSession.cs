@@ -79,8 +79,7 @@ public sealed class ClientSession : IDisposable, ISession
     private uint _pincodeSeed;
     private bool _pincodeCorrect;
     private string _pendingRenameName = string.Empty;
-    private IReadOnlyList<CharCharacter> _characterPages = Array.Empty<CharCharacter>();
-    private int _processedSyncRequests;
+    private IroCharacterListSyncState? _iroCharacterListSync;
     private int _announcedSyncCount;
     private bool _pincodePending;
 
@@ -439,15 +438,17 @@ public sealed class ClientSession : IDisposable, ISession
         }
 
         var config = _configStore.Current;
-        _characterPages = characters;
-        _processedSyncRequests = 0;
+        _iroCharacterListSync = config.IroRenewalCompatibility
+            ? new IroCharacterListSyncState(characters)
+            : null;
         if (config.IroRenewalCompatibility)
         {
+            CharLogger.Debug(
+                $"[iRO DEBUG] Loaded characters count={characters.Count} " +
+                $"slots=[{string.Join(',', characters.Select(character => character.CharNum))}]");
             foreach (var character in characters)
             {
-                CharLogger.Debug(
-                    $"[iRO DEBUG] Existing character charId={character.CharId} " +
-                    $"name='{character.Name}' slot={character.CharNum}");
+                CharLogger.Debug($"[iRO DEBUG] Loaded character slot={character.CharNum}");
             }
         }
         await SendAcceptEnter2Async(config, cancellationToken);
@@ -476,16 +477,49 @@ public sealed class ClientSession : IDisposable, ISession
         IReadOnlyList<CharCharacter> characters;
         if (_configStore.Current.IroRenewalCompatibility)
         {
-            if (_processedSyncRequests >= _announcedSyncCount)
+            var sync = _iroCharacterListSync;
+            if (sync == null)
+            {
+                return;
+            }
+
+            var responses = sync.HandleRequest();
+            if (sync.RequestsReceived > _announcedSyncCount)
             {
                 CharLogger.Warning(
                     $"[iRO DEBUG] Ignoring unexpected 0x09A1 after {_announcedSyncCount} sync requests");
                 return;
             }
 
+            if (responses.Count == 0)
+            {
+                CharLogger.Debug(
+                    $"[iRO DEBUG] Received 0x09A1 sync request {sync.RequestsReceived}/{_announcedSyncCount}; " +
+                    "character list already complete, ignoring");
+                return;
+            }
+
             CharLogger.Debug(
-                $"[iRO DEBUG] Received 0x09A1 sync request {_processedSyncRequests + 1}/{_announcedSyncCount}");
-            characters = _characterPages.Skip(_processedSyncRequests * 3).Take(3).ToArray();
+                $"[iRO DEBUG] Received 0x09A1 sync request {sync.RequestsReceived}/{_announcedSyncCount}");
+            foreach (var response in responses)
+            {
+                var characterCount = (response.Length - 4) / CharacterInfoSize;
+                var slots = Enumerable.Range(0, characterCount)
+                    .Select(index => response[4 + (index * CharacterInfoSize) + CharacterInfoSlotOffset]);
+                CharLogger.Debug(
+                    $"[iRO DEBUG] Sending 0x{PacketConstants.HcAckCharInfoPerPage:X4} " +
+                    $"characters={characterCount} characterInfoSize={CharacterInfoSize} " +
+                    $"packetLength={response.Length} slots=[{string.Join(',', slots)}]");
+                await WriteAsync(response, cancellationToken);
+            }
+
+            CharLogger.Debug("[iRO DEBUG] Character list data complete");
+            if (_pincodePending)
+            {
+                _pincodePending = false;
+                await SendPincodeStartAsync(cancellationToken);
+            }
+            return;
         }
         else
         {
@@ -522,19 +556,24 @@ public sealed class ClientSession : IDisposable, ISession
         LogCharacterList(PacketConstants.HcAckCharInfoPerPage, characters.Count, buffer.Length);
         await WriteAsync(buffer, cancellationToken);
 
-        if (_configStore.Current.IroRenewalCompatibility)
+    }
+
+    internal static IReadOnlyList<byte[]> BuildIroCharacterListResponses(
+        IReadOnlyList<CharCharacter> characters)
+    {
+        var orderedCharacters = characters.OrderBy(character => character.CharNum).ToArray();
+        var payload = BuildCharacterInfoPayload(orderedCharacters);
+        var responses = new List<byte[]> { BuildCharacterPagePacket(payload) };
+
+        // Current rAthena mirrors Gravity's special finalization behavior: when the
+        // data response contains exactly three characters, an empty response follows
+        // immediately so the client executes its character-list finalization path.
+        if (orderedCharacters.Length == 3)
         {
-            _processedSyncRequests++;
-            if (_processedSyncRequests >= _announcedSyncCount)
-            {
-                CharLogger.Debug("[iRO DEBUG] Character page sync complete");
-                if (_pincodePending)
-                {
-                    _pincodePending = false;
-                    await SendPincodeStartAsync(cancellationToken);
-                }
-            }
+            responses.Add(BuildCharacterPagePacket(ReadOnlySpan<byte>.Empty));
         }
+
+        return responses;
     }
 
     internal static byte[] BuildCharacterPagePacket(ReadOnlySpan<byte> characterInfo)

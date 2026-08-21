@@ -33,6 +33,7 @@
   <ol>
     <li><a href="#about">About</a></li>
     <li><a href="#protocol-strategy">Protocol strategy</a></li>
+    <li><a href="#reference-projects">Reference projects</a></li>
     <li><a href="#status">Status</a></li>
     <li><a href="#quick-start">Quick Start</a></li>
     <li><a href="#docs">Documentation</a></li>
@@ -54,11 +55,21 @@ Client-facing protocol work is capture-driven. The evidence priority is:
 1. Successful official iRO Wireshark captures for the targeted client generation.
 2. Repeatable behavior of the unmodified stock iRO client against Athena.NET.
 3. Regression tests derived from verified traffic.
-4. rAthena/OpenKore as implementation and structural references.
+4. The local reference projects `legacy/rathena/` and `legacy/openkore/` as implementation and structural references.
 
 This prevents regional kRO assumptions from silently becoming iRO behavior.
 
 The target architecture does not require patching `Ragexe.exe`, replacing the official executable, or introducing a custom client protocol. Development network redirection may be used to point official endpoints at local Athena.NET services while leaving the client itself unmodified.
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+## Reference projects
+The repository keeps two legacy reference projects under `legacy/`:
+
+- `legacy/rathena/` — the primary reference for Login/Char/Map server architecture, gameplay systems, database/schema concepts, maps, scripts, NPCs, items, skills, mobs, tooling, and mature server behavior.
+- `legacy/openkore/` — a secondary reference for packet names, iRO/community protocol observations, regional behavior clues, and interpreting client/server traffic.
+
+These folders are **reference projects, not compatibility targets**. Athena.NET does not aim to support generic rAthena/kRO clients, and it does not treat OpenKore packet tables as authoritative. For client-facing behavior, verified stock-iRO captures and repeatable stock-client runtime behavior always win. The `legacy/` trees should normally be treated as read-only and should not be edited as part of Athena.NET feature work unless that is explicitly requested.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 

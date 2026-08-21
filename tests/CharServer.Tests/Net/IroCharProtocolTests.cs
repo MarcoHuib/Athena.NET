@@ -180,6 +180,105 @@ public sealed class IroCharProtocolTests
     }
 
     [Fact]
+    public void CharacterListSync_ZeroCharacters_SendsOneEmptyResponseThenIgnoresLaterRequests()
+    {
+        var sync = new IroCharacterListSyncState(Array.Empty<CharCharacter>());
+
+        var firstResponses = sync.HandleRequest();
+
+        var response = Assert.Single(firstResponses);
+        Assert.Equal(new byte[] { 0x72, 0x0b, 0x04, 0x00 }, response);
+        for (var request = 2; request <= PacketConstants.IroCharSyncCount; request++)
+        {
+            Assert.Empty(sync.HandleRequest());
+        }
+        Assert.True(sync.IsComplete);
+        Assert.Equal(PacketConstants.IroCharSyncCount, sync.RequestsReceived);
+    }
+
+    [Fact]
+    public void CharacterListSync_OneCharacter_Sends179ByteResponseWithoutEmptyTerminator()
+    {
+        var sync = new IroCharacterListSyncState(
+            new[] { CreateCharacter(charId: 1, slot: 0, name: "Test") });
+
+        var firstResponses = sync.HandleRequest();
+
+        var response = Assert.Single(firstResponses);
+        Assert.Equal(179, response.Length);
+        Assert.Equal((short)0x0b72, BinaryPrimitives.ReadInt16LittleEndian(response));
+        Assert.Equal((byte)0, response[4 + ClientSession.CharacterInfoSlotOffset]);
+        for (var request = 2; request <= PacketConstants.IroCharSyncCount; request++)
+        {
+            Assert.Empty(sync.HandleRequest());
+        }
+    }
+
+    [Fact]
+    public void CharacterListSync_TwoCharacters_SortsSlotsAndWritesBoth175ByteBlocks()
+    {
+        var sync = new IroCharacterListSyncState(
+            new[]
+            {
+                CreateCharacter(charId: 2, slot: 1, name: "Kaas"),
+                CreateCharacter(charId: 1, slot: 0, name: "Test"),
+            });
+
+        var firstResponses = sync.HandleRequest();
+
+        var response = Assert.Single(firstResponses);
+        Assert.Equal(4 + (2 * ClientSession.CharacterInfoSize), response.Length);
+        Assert.Equal(354, response.Length);
+        Assert.Equal((short)354, BinaryPrimitives.ReadInt16LittleEndian(response.AsSpan(2, 2)));
+
+        var firstSlotOffset = 4 + ClientSession.CharacterInfoSlotOffset;
+        var secondSlotOffset = 4 + ClientSession.CharacterInfoSize + ClientSession.CharacterInfoSlotOffset;
+        Assert.Equal(142, firstSlotOffset);
+        Assert.Equal(317, secondSlotOffset);
+        Assert.Equal((byte)0, response[firstSlotOffset]);
+        Assert.Equal((byte)1, response[secondSlotOffset]);
+        for (var request = 2; request <= PacketConstants.IroCharSyncCount; request++)
+        {
+            Assert.Empty(sync.HandleRequest());
+        }
+    }
+
+    [Fact]
+    public void CharacterListSync_ExactlyThreeCharacters_AppendsImmediateEmptyTerminator()
+    {
+        var sync = new IroCharacterListSyncState(
+            Enumerable.Range(0, 3)
+                .Select(index => CreateCharacter((uint)(index + 1), (byte)index, $"Character{index}"))
+                .ToArray());
+
+        var firstResponses = sync.HandleRequest();
+        var secondResponses = sync.HandleRequest();
+
+        Assert.Equal(2, firstResponses.Count);
+        Assert.Equal(529, firstResponses[0].Length);
+        Assert.Equal(new byte[] { 0x72, 0x0b, 0x04, 0x00 }, firstResponses[1]);
+        Assert.Empty(secondResponses);
+    }
+
+    [Theory]
+    [InlineData(4)]
+    [InlineData(5)]
+    [InlineData(6)]
+    public void CharacterListSync_MoreThanThreeCharacters_SendsOnlyPopulatedResponse(int characterCount)
+    {
+        var characters = Enumerable.Range(0, characterCount)
+            .Select(index => CreateCharacter((uint)(index + 1), (byte)index, $"Character{index}"))
+            .ToArray();
+        var sync = new IroCharacterListSyncState(characters);
+
+        var responses = sync.HandleRequest();
+
+        var response = Assert.Single(responses);
+        Assert.Equal(4 + (characterCount * ClientSession.CharacterInfoSize), response.Length);
+        Assert.Empty(sync.HandleRequest());
+    }
+
+    [Fact]
     public void CharacterSelectAndIroZoneHandoff_UseCapturedLayouts()
     {
         var select = new byte[] { 0x66, 0x00, 0x00 };
@@ -238,5 +337,17 @@ public sealed class IroCharProtocolTests
     {
         var terminator = value.IndexOf((byte)0);
         return Encoding.ASCII.GetString(terminator >= 0 ? value[..terminator] : value);
+    }
+
+    private static CharCharacter CreateCharacter(uint charId, byte slot, string name)
+    {
+        return new CharCharacter
+        {
+            CharId = charId,
+            CharNum = slot,
+            Name = name,
+            LastMap = "prontera",
+            Sex = "M",
+        };
     }
 }

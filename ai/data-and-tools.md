@@ -1,16 +1,20 @@
 # iRO data and tooling development prompt
 
 ## Goal
-Reuse the mature rAthena data ecosystem where practical while producing a clean, reproducible data pipeline for an iRO-only Athena.NET server.
+Reuse the mature `legacy/rathena/` data ecosystem where practical while producing a clean, reproducible data pipeline for an iRO-only Athena.NET server.
 
-The project does not need generic kRO client protocol support, but rAthena remains the main reference for gameplay data, scripts, map cache concepts, databases, and server mechanics.
+The project does not need generic kRO client protocol support, but `legacy/rathena/` remains the main reference for gameplay data, scripts, map cache concepts, databases, and server mechanics.
 
-## Primary reference sources
-- `upstream/db/` - items, mobs, skills, jobs, maps, constants, and related YAML/TXT data.
-- `upstream/npc/` - NPC and script content.
-- `upstream/sql-files/` - schema and upgrade concepts.
-- `upstream/src/tool/` - mapcache/yaml conversion/tooling ideas.
-- `upstream/src/map/` - runtime interpretation of the data.
+## Legacy reference projects
+- `legacy/rathena/` — primary source for gameplay data, scripts, database/schema concepts, map-cache tooling, and server mechanics.
+- `legacy/openkore/` — protocol/community reference only; generally not a source for authoritative gameplay datasets.
+
+## Primary rAthena reference sources
+- `legacy/rathena/db/` - items, mobs, skills, jobs, maps, constants, and related YAML/TXT data.
+- `legacy/rathena/npc/` - NPC and script content.
+- `legacy/rathena/sql-files/` - schema and upgrade concepts.
+- `legacy/rathena/src/tool/` - mapcache/yaml conversion/tooling ideas.
+- `legacy/rathena/src/map/` - runtime interpretation of the data.
 
 ## iRO-first data policy
 - Prefer iRO-correct values/content when they differ from rAthena defaults.
@@ -24,7 +28,7 @@ The project does not need generic kRO client protocol support, but rAthena remai
 - Build C# loaders with validation and deterministic startup diagnostics.
 - Keep iRO overrides in explicit files/tables instead of hidden code constants.
 - Generate/cache derived assets such as map indexes reproducibly.
-- Preserve upstream identifiers when the iRO protocol/game data expects them.
+- Preserve source identifiers when the iRO protocol/game data expects them.
 
 ## Immediate priorities after MapServer auth
 - map cache/index sufficient to load the character's start map

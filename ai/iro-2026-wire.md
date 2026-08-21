@@ -5,6 +5,13 @@ This file is the protocol authority for the current stock iRO client targeted by
 
 Only add a statement to **Verified** when it is supported by an official successful capture, repeatable runtime evidence, or an exact regression fixture derived from that evidence. Keep unknowns under **Open**.
 
+
+## Local reference projects
+- `legacy/rathena/` is the local reference for server architecture, gameplay/domain behavior, data formats, scripts, database concepts, and implementation patterns.
+- `legacy/openkore/` is the local reference for packet naming, iRO/community protocol clues, and interpretation of captured traffic.
+- Both are reference-only and read-only by default. Neither is authoritative over verified stock-iRO capture/runtime evidence.
+- Do not use a generic rAthena/kRO `PACKETVER` branch or an OpenKore packet table as proof of the iRO wire format without capture/runtime confirmation.
+
 ## Verified LoginServer flow
 - Client login request: `0x0064`, 55 bytes.
 - Observed client version field: `18`.

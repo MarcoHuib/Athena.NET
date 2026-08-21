@@ -5,6 +5,8 @@
 ## Critical protocol rule
 The supported stock iRO client does **not** use the legacy/generic Athena.NET CZ_ENTER/CZ_ENTER2 path as its first observed MapServer packet.
 
+The local reference projects are `legacy/rathena/` and `legacy/openkore/`. Use rAthena for MapServer architecture/game mechanics and OpenKore for packet/community clues; keep both read-only unless explicitly asked to modify them.
+
 Verified entry:
 - `0x0C1F`
 - 1001 bytes

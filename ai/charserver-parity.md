@@ -5,6 +5,8 @@
 ## Purpose
 Map verified iRO CharServer behavior to useful rAthena architecture and domain logic. The iRO capture is authoritative for client-facing packets.
 
+Reference projects are stored locally at `legacy/rathena/` and `legacy/openkore/`. Use them read-only by default; neither overrides verified iRO capture evidence.
+
 ## iRO contract versus reusable rAthena concepts
 | iRO area | Verified Athena.NET target | Useful rAthena concepts |
 |---|---|---|

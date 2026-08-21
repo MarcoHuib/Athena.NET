@@ -5,6 +5,8 @@
 ## Purpose
 Map the iRO LoginServer requirements onto useful rAthena concepts so implementation can reuse proven server design without inheriting the wrong regional wire protocol.
 
+Reference projects are stored locally at `legacy/rathena/` and `legacy/openkore/`. Use them read-only by default; rAthena is mainly architectural/domain reference, while OpenKore is useful for packet naming and iRO/community clues.
+
 ## iRO client-facing contract
 | Area | Athena.NET iRO requirement | rAthena use |
 |---|---|---|
@@ -22,7 +24,7 @@ Map the iRO LoginServer requirements onto useful rAthena concepts so implementat
 - Use rAthena to understand *why* an auth/server-list field exists, not to decide its iRO byte layout.
 - Keep packet parsing length-bounded and fixed strings NUL-terminated.
 - Keep secrets out of diagnostics.
-- Prefer exact serializer/parser tests over line-by-line parity comparisons with upstream.
+- Prefer exact serializer/parser tests over line-by-line parity comparisons with the legacy reference trees.
 
 ## Anti-regression checks
 - `0x0064` length remains 55.
@@ -31,7 +33,7 @@ Map the iRO LoginServer requirements onto useful rAthena concepts so implementat
 - Server/world entries remain 32 bytes for this client target.
 - No generic `0x0AC4` branch becomes the iRO default.
 
-## Useful upstream concepts
+## Useful legacy reference concepts
 - login authentication/account state
 - IP bans and login logging
 - auth-node expiration/cleanup
@@ -39,4 +41,4 @@ Map the iRO LoginServer requirements onto useful rAthena concepts so implementat
 - configuration/import patterns
 - SQL schema concepts
 
-Do not treat upstream packet IDs or `PACKETVER` regional branches as authoritative when they conflict with `ai/iro-2026-wire.md`.
+Do not treat packet IDs or `PACKETVER` regional branches from `legacy/rathena/` or `legacy/openkore/` as authoritative when they conflict with `ai/iro-2026-wire.md`.

@@ -3,7 +3,7 @@
 ## Goal
 Implement the LoginServer behavior required by the current unmodified stock iRO client and provide a stable authenticated handoff to Athena.NET's CharServer.
 
-Generic kRO/rAthena client compatibility is not a goal. rAthena is reference material for architecture, account/auth concepts, configuration, persistence, bans, logging, and inter-server behavior.
+Generic kRO/rAthena client compatibility is not a goal. `legacy/rathena/` is reference material for architecture, account/auth concepts, configuration, persistence, bans, logging, and inter-server behavior.
 
 ## Current verified iRO state
 - Stock client login request `0x0064` is parsed as 55 bytes.
@@ -22,19 +22,21 @@ Generic kRO/rAthena client compatibility is not a goal. rAthena is reference mat
 - Keep account/password verification, bans, auth-node lifecycle, server registration, and session ownership robust even when those internal concepts are borrowed from rAthena.
 - Treat world-list contents/configuration as server policy, but serialize them in the verified iRO format.
 
-## Useful rAthena reference areas
+## Useful legacy reference areas
+Both repositories live under `legacy/` and should be treated as read-only reference material unless explicitly asked otherwise. For this server, use `legacy/rathena/` primarily for architecture/domain behavior and `legacy/openkore/` for packet naming or iRO/community protocol clues.
+
 Use these for implementation ideas, not as iRO wire authority:
-- `upstream/src/login/login.cpp`
-- `upstream/src/login/loginclif.cpp`
-- `upstream/src/login/loginchrif.cpp`
-- `upstream/src/login/ipban.cpp`
-- `upstream/src/login/loginlog.cpp`
-- `upstream/conf/login_athena.conf`
-- `upstream/conf/inter_athena.conf`
-- `upstream/conf/subnet_athena.conf`
-- `upstream/conf/msg_conf/login_msg.conf`
-- `upstream/sql-files/main.sql`
-- `upstream/sql-files/logs.sql`
+- `legacy/rathena/src/login/login.cpp`
+- `legacy/rathena/src/login/loginclif.cpp`
+- `legacy/rathena/src/login/loginchrif.cpp`
+- `legacy/rathena/src/login/ipban.cpp`
+- `legacy/rathena/src/login/loginlog.cpp`
+- `legacy/rathena/conf/login_athena.conf`
+- `legacy/rathena/conf/inter_athena.conf`
+- `legacy/rathena/conf/subnet_athena.conf`
+- `legacy/rathena/conf/msg_conf/login_msg.conf`
+- `legacy/rathena/sql-files/main.sql`
+- `legacy/rathena/sql-files/logs.sql`
 
 ## Next work
 - Keep regression tests for `0x0064` parsing and `0x0A4D` serialization capture-derived and exact.

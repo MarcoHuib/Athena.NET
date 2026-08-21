@@ -3,7 +3,7 @@
 ## Goal
 Implement the CharServer required by the current unmodified stock iRO client, from authenticated world entry through character management and verified MapServer handoff.
 
-Generic kRO/rAthena client parity is not a goal. rAthena remains a reference for character rules, database design, inter-server architecture, start data, deletion/rename concepts, and mature subsystem behavior.
+Generic kRO/rAthena client parity is not a goal. `legacy/rathena/` remains a reference for character rules, database design, inter-server architecture, start data, deletion/rename concepts, and mature subsystem behavior.
 
 ## Current verified runtime state
 - `0x0065` CharServer entry works.
@@ -46,18 +46,20 @@ See `ai/iro-2026-wire.md`. Critical CharServer values:
 - Keep iRO wire state explicit and stateful; do not resend full character data for every sync request unless verified.
 - Do not add `0x006B`, `0x020D`, or PIN packets to the iRO init flow without new evidence.
 
-## Useful rAthena reference areas
+## Useful legacy reference areas
+Both repositories live under `legacy/` and should be treated as read-only reference material unless explicitly asked otherwise. For this server, use `legacy/rathena/` primarily for architecture/domain behavior and `legacy/openkore/` for packet naming or iRO/community protocol clues.
+
 Use for behavior/data concepts, not regional client packet authority:
-- `upstream/src/char/char.cpp`
-- `upstream/src/char/char_clif.cpp`
-- `upstream/src/char/char_mapif.cpp`
-- `upstream/src/char/char_logif.cpp`
-- `upstream/src/char/inter.cpp`
-- `upstream/src/char/int_*`
-- `upstream/conf/char_athena.conf`
-- `upstream/conf/inter_athena.conf`
-- `upstream/sql-files/main.sql`
-- `upstream/sql-files/logs.sql`
+- `legacy/rathena/src/char/char.cpp`
+- `legacy/rathena/src/char/char_clif.cpp`
+- `legacy/rathena/src/char/char_mapif.cpp`
+- `legacy/rathena/src/char/char_logif.cpp`
+- `legacy/rathena/src/char/inter.cpp`
+- `legacy/rathena/src/char/int_*`
+- `legacy/rathena/conf/char_athena.conf`
+- `legacy/rathena/conf/inter_athena.conf`
+- `legacy/rathena/sql-files/main.sql`
+- `legacy/rathena/sql-files/logs.sql`
 
 ## Immediate next milestone
 The CharServer path is sufficiently proven to move focus to MapServer authentication. Only return to CharServer when MapServer evidence shows the handoff/auth node must carry additional iRO data.
