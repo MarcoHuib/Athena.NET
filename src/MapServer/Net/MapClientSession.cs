@@ -11,21 +11,27 @@ public sealed class MapClientSession : IDisposable
     {
         [PacketConstants.CzEnter] = 19,
         [PacketConstants.CzEnter2] = 19,
-        [PacketConstants.CzNotifyActorInit] = 2,
+        // The stock-iRO capture carries one opaque trailing byte. Legacy references use 2 bytes.
+        [PacketConstants.CzNotifyActorInit] = 3,
         [PacketConstants.CzClientVersion] = 6,
         [PacketConstants.CzPingLive] = 2,
         [PacketConstants.IroCzMapAuth] = PacketConstants.IroCzMapAuthLength,
+        // The first capture-observed post-load client record. Its eight payload bytes remain opaque.
+        [PacketConstants.IroCzPostEnter0360] = PacketConstants.IroCzPostEnter0360Length,
     };
 
     private readonly TcpClient _client;
     private readonly NetworkStream _stream;
     private readonly CharServerConnector _charConnector;
     private readonly SemaphoreSlim _writeLock = new(1, 1);
+    private readonly CancellationTokenSource _sessionCancellation = new();
     private uint _accountId;
     private uint _charId;
     private uint _loginId1;
     private byte _sex;
     private bool _authRequested;
+    private bool _iroAuthRequested;
+    private int _disposed;
 
     public MapClientSession(int sessionId, TcpClient client, CharServerConnector charConnector)
     {
@@ -35,13 +41,29 @@ public sealed class MapClientSession : IDisposable
         _charConnector = charConnector;
     }
 
+    internal MapClientSession(
+        int sessionId,
+        TcpClient client,
+        CharServerConnector charConnector,
+        bool iroAuthenticated)
+        : this(sessionId, client, charConnector)
+    {
+        _iroAuthRequested = iroAuthenticated;
+        _authRequested = iroAuthenticated;
+    }
+
     public int SessionId { get; }
 
     public async Task RunAsync(CancellationToken cancellationToken)
     {
-        while (!cancellationToken.IsCancellationRequested)
+        using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken,
+            _sessionCancellation.Token);
+        var sessionToken = linkedCancellation.Token;
+
+        while (!sessionToken.IsCancellationRequested)
         {
-            var packet = await ReadNextPacketAsync(_stream, cancellationToken);
+            var packet = await ReadNextPacketAsync(_stream, sessionToken);
             if (packet.Length == 0)
             {
                 return;
@@ -49,14 +71,25 @@ public sealed class MapClientSession : IDisposable
 
             var packetType = BinaryPrimitives.ReadInt16LittleEndian(packet);
             MapLogger.Info($"[iRO MAP DEBUG] Map client packet=0x{packetType:X4} len={packet.Length}");
-            await HandlePacketAsync(packetType, packet, cancellationToken);
+            await HandlePacketAsync(packetType, packet, sessionToken);
         }
     }
 
     public void HandleAuthOk(MapAuthOkData authOk)
     {
-        if (!_authRequested || authOk.AccountId != _accountId || authOk.LoginId1 != _loginId1)
+        if (!_authRequested ||
+            authOk.AccountId != _accountId ||
+            authOk.CharId != _charId ||
+            authOk.LoginId1 != _loginId1)
         {
+            return;
+        }
+
+        if (_iroAuthRequested)
+        {
+            MapLogger.Info(
+                $"[iRO MAP DEBUG] 0x0C1F MapAuthNode authentication succeeded accountId={authOk.AccountId} charId={authOk.CharId} sessionMatch=true");
+            _ = SendIroInitialBootstrapAsync(authOk, CancellationToken.None);
             return;
         }
 
@@ -76,8 +109,15 @@ public sealed class MapClientSession : IDisposable
 
     public void Dispose()
     {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+        {
+            return;
+        }
+
+        _sessionCancellation.Cancel();
         _stream.Dispose();
         _writeLock.Dispose();
+        _sessionCancellation.Dispose();
     }
 
     private async Task HandlePacketAsync(short packetType, byte[] packet, CancellationToken cancellationToken)
@@ -89,6 +129,13 @@ public sealed class MapClientSession : IDisposable
                 await HandleEnterAsync(packet, cancellationToken);
                 break;
             case PacketConstants.CzNotifyActorInit:
+                if (_iroAuthRequested)
+                {
+                    MapLogger.Info(
+                        $"[iRO MAP DEBUG] Received stock iRO map-loaded packet=0x{packetType:X4} len={packet.Length}");
+                    break;
+                }
+
                 await SendNotifyActorInitAsync(cancellationToken);
                 break;
             case PacketConstants.CzClientVersion:
@@ -97,16 +144,66 @@ public sealed class MapClientSession : IDisposable
                 await SendPingLiveAsync(cancellationToken);
                 break;
             case PacketConstants.IroCzMapAuth:
-                LogUnsupportedPacket(packetType, packet);
                 MapLogger.Info(
                     $"[iRO MAP DEBUG] Received stock iRO map auth packet=0x{packetType:X4} len={packet.Length}");
-                MapLogger.Info("[iRO MAP DEBUG] 0x0C1F parsing not implemented yet");
+                await HandleIroMapAuthAsync(packet, cancellationToken);
+                break;
+            case PacketConstants.IroCzPostEnter0360 when _iroAuthRequested:
+                MapLogger.Info(
+                    $"[iRO MAP DEBUG] Reached next post-enter client boundary packet=0x{packetType:X4} len={packet.Length}");
                 break;
             default:
                 LogUnsupportedPacket(packetType, packet);
-                _client.Close();
+                RequestClose();
                 break;
         }
+    }
+
+    private async Task HandleIroMapAuthAsync(byte[] packet, CancellationToken cancellationToken)
+    {
+        if (_authRequested || !IroMapAuthPacket.TryParse(packet, out var auth))
+        {
+            await SendRefuseEnterAsync(0, cancellationToken);
+            return;
+        }
+
+        _accountId = auth.AccountId;
+        _charId = auth.CharId;
+        _loginId1 = auth.LoginId1;
+        MapLogger.Info(
+            $"[iRO MAP DEBUG] Parsed 0x0C1F accountId={_accountId} charId={_charId}");
+
+        if (_accountId == 0 || _charId == 0)
+        {
+            await SendRefuseEnterAsync(0, cancellationToken);
+            return;
+        }
+
+        var endpoint = _client.Client.RemoteEndPoint as IPEndPoint;
+        var clientIp = endpoint?.Address ?? IPAddress.Loopback;
+        if (!_charConnector.TrySendIroAuthRequest(this, _accountId, _charId, _loginId1, clientIp))
+        {
+            await SendRefuseEnterAsync(0, cancellationToken);
+            MapLogger.Warning("iRO auth request to char server failed. Disconnecting map client.");
+            RequestClose();
+            return;
+        }
+
+        _iroAuthRequested = true;
+        _authRequested = true;
+    }
+
+    private Task SendIroInitialBootstrapAsync(MapAuthOkData authOk, CancellationToken cancellationToken)
+    {
+        MapLogger.Info("[iRO MAP DEBUG] Sending 0x0B18 len=4");
+        MapLogger.Info($"[iRO MAP DEBUG] Sending 0x0283 len=6 accountId={authOk.AccountId}");
+        MapLogger.Info("[iRO MAP DEBUG] Sending 0x0ADE len=6 overweightPercent=70");
+        MapLogger.Info(
+            $"[iRO MAP DEBUG] Sending 0x02EB len=13 map='{authOk.MapName}' x={authOk.X} y={authOk.Y}");
+        var payload = IroMapEnterPackets.BuildInitialBootstrap(
+            authOk,
+            unchecked((uint)Environment.TickCount));
+        return WriteAsync(payload, cancellationToken);
     }
 
     private async Task HandleEnterAsync(byte[] packet, CancellationToken cancellationToken)
@@ -146,7 +243,7 @@ public sealed class MapClientSession : IDisposable
         {
             await SendRefuseEnterAsync(0, cancellationToken);
             MapLogger.Warning("Auth request to char server failed. Disconnecting map client.");
-            _client.Close();
+            RequestClose();
             return;
         }
 
@@ -255,9 +352,6 @@ public sealed class MapClientSession : IDisposable
     {
         MapLogger.Warning(
             $"[iRO MAP DEBUG] Unsupported map client packet=0x{packetType:X4} len={packet.Length}");
-        var prefixLength = Math.Min(packet.Length, 64);
-        MapLogger.Info(
-            $"[iRO MAP DEBUG] Packet prefix={Convert.ToHexString(packet[..prefixLength])}");
     }
 
     private async Task WriteAsync(byte[] payload, CancellationToken cancellationToken)
@@ -270,6 +364,14 @@ public sealed class MapClientSession : IDisposable
         finally
         {
             _writeLock.Release();
+        }
+    }
+
+    private void RequestClose()
+    {
+        if (!_sessionCancellation.IsCancellationRequested)
+        {
+            _sessionCancellation.Cancel();
         }
     }
 

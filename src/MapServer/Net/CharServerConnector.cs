@@ -42,6 +42,16 @@ public sealed class CharServerConnector
 
     public bool TrySendAuthRequest(MapClientSession session, uint accountId, uint charId, uint loginId1, byte sex, IPAddress clientIp)
     {
+        return TrySendAuthRequest(session, accountId, charId, loginId1, sex, clientIp, validateSex: true);
+    }
+
+    public bool TrySendIroAuthRequest(MapClientSession session, uint accountId, uint charId, uint loginId1, IPAddress clientIp)
+    {
+        return TrySendAuthRequest(session, accountId, charId, loginId1, 0, clientIp, validateSex: false);
+    }
+
+    private bool TrySendAuthRequest(MapClientSession session, uint accountId, uint charId, uint loginId1, byte sex, IPAddress clientIp, bool validateSex)
+    {
         var connection = _connection;
         if (connection == null)
         {
@@ -58,7 +68,7 @@ public sealed class CharServerConnector
         buffer[14] = sex;
         var ipBytes = clientIp.MapToIPv4().GetAddressBytes();
         ipBytes.CopyTo(buffer.AsSpan(15, 4));
-        buffer[19] = 0;
+        buffer[19] = validateSex ? (byte)0 : (byte)1;
 
         _ = connection.WriteAsync(buffer, CancellationToken.None);
         return true;

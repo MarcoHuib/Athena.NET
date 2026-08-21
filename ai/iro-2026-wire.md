@@ -52,14 +52,50 @@ Only add a statement to **Verified** when it is supported by an official success
 - First observed stock-iRO client packet to the official MapServer: `0x0C1F`.
 - Observed `0x0C1F` length: 1001 bytes.
 - The captured packet contains a large authentication/token payload.
+- Capture-proven little-endian `0x0C1F` fields are account ID at offset `0x02`,
+  selected character ID at `0x06`, and login ID 1 at `0x0A`. Each was correlated
+  to the same successful LoginServer/CharServer session. Bytes `0x0E..0x3E8`
+  remain opaque.
+- The first captured server packets are `0x0B18/4`, `0x0283/6`, `0x0ADE/6`,
+  `0x02EB/13`, then `0x0B32/19`.
+- Captured `0x02EB` is accept-enter with a 32-bit tick, packed position/direction,
+  `xSize=5`, `ySize=5`, and a 16-bit font.
+- The first later client packet is captured as `0x007D/3`; its trailing byte is
+  opaque and conflicts with generic upstream's 2-byte layout.
+- Athena runtime now independently proves that the stock client enters the world
+  and sends `0x007D/3` after accepting the four-packet Athena bootstrap.
+- The official capture's `0x007D` bytes are `7D 00 BA`. Only the ID and total
+  length are semantic evidence; `BA` remains opaque.
+- The first official server record after `0x007D` is frame 422, `0x0C20/28`.
+  Its length field is 28, but neither current rAthena nor current iRO OpenKore
+  provides a matching name or field layout. It must not be synthesized yet.
+- The first later client record is frame 423, `0x0360/10`. All eight bytes after
+  its ID remain opaque for this iRO generation. Generic upstream's `0x0360/6`
+  interpretation does not override the captured ten-byte boundary.
+- The complete official server burst before that `0x007D` is 487 bytes and 26
+  packets. After `0x02EB` it contains `0x0B32`, status/appearance packets,
+  reputation/config packets, an inventory transaction, one unknown `0x0BF2/13`,
+  more status packets, and `0x0A24`.
+- Captured `0x0B32/19` is a four-byte header plus one 15-byte `NV_BASIC` skill-tree
+  entry at level zero. It is not evidence that the character has learned the skill.
+- Official `0x0071` client map names include `.gat`. Athena's internal map names
+  remain extensionless; only the client-facing handoff is normalized to `.gat`.
 
 ## Open MapServer questions
-- Exact field layout of `0x0C1F`.
-- Which fields correspond to account ID, character ID, login IDs, timestamps/nonces, world/session IDs, and external authentication material.
+- Meaning and validation requirements of the remaining opaque `0x0C1F` fields.
+- Whether login ID 2, timestamps/nonces, world/session IDs, or external
+  authentication material occur in the opaque remainder.
 - Which parts must be validated versus treated as opaque.
 - How the iRO MapServer entry maps to Athena.NET's existing CharServer auth-node handoff.
-- Exact first server response(s) after successful `0x0C1F` authentication.
-- Packets required before first map spawn, inventory/status synchronization, and movement.
+- How Athena's future MapServer skill-tree model should derive `0x0B32` entries,
+  and which later packets are required before first map spawn, inventory/status
+  synchronization, and movement.
+- Which subset of the proven pre-`0x007D` state burst is mandatory for client
+  world construction, and the name/layout of `0x0BF2/13`.
+- The third byte and modern handling of client `0x007D/3`.
+- The meaning/layout and required Athena state for official `0x0C20/28`, and
+  whether omitting it affects later client initialization.
+- The semantics of the eight payload bytes in captured client `0x0360/10`.
 
 ## Explicitly disproven assumptions for this target
 Do not reintroduce these without newer verified iRO evidence:

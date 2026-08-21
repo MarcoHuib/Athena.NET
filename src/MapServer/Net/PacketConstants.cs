@@ -20,6 +20,8 @@ public static class PacketConstants
     public const short CzPingLive = 0x0b1c;
     public const short IroCzMapAuth = 0x0c1f;
     public const int IroCzMapAuthLength = 1001;
+    public const short IroCzPostEnter0360 = 0x0360;
+    public const int IroCzPostEnter0360Length = 10;
 
     public const short ZcAcceptEnter = 0x2eb;
     public const short ZcRefuseEnter = 0x74;

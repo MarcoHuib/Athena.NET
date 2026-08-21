@@ -24,6 +24,47 @@ public sealed class IroMapPacketFramingTests
         Assert.Equal(expected, actual);
     }
 
+    [Fact]
+    public async Task ReadNextPacketAsync_PreservesPacketBoundaryWhenReadContainsMultiplePackets()
+    {
+        var mapAuth = new byte[PacketConstants.IroCzMapAuthLength];
+        BinaryPrimitives.WriteInt16LittleEndian(mapAuth, PacketConstants.IroCzMapAuth);
+        var ping = new byte[2];
+        BinaryPrimitives.WriteInt16LittleEndian(ping, PacketConstants.CzPingLive);
+        await using var stream = new MemoryStream([.. mapAuth, .. ping]);
+
+        var first = await MapClientSession.ReadNextPacketAsync(stream, CancellationToken.None);
+        var second = await MapClientSession.ReadNextPacketAsync(stream, CancellationToken.None);
+
+        Assert.Equal(mapAuth, first);
+        Assert.Equal(ping, second);
+    }
+
+    [Fact]
+    public async Task ReadNextPacketAsync_ReassemblesThreeByte007dAcrossFragmentedReads()
+    {
+        var expected = new byte[] { 0x7d, 0x00, 0xba };
+        await using var stream = new ChunkedReadStream(expected, 1, 2);
+
+        var actual = await MapClientSession.ReadNextPacketAsync(stream, CancellationToken.None);
+
+        Assert.Equal(expected, actual);
+    }
+
+    [Fact]
+    public async Task ReadNextPacketAsync_PreservesOpaque007dByteBeforeCoalescedNextPacket()
+    {
+        var mapLoaded = new byte[] { 0x7d, 0x00, 0xba };
+        var postEnter = new byte[] { 0x60, 0x03, 0xf8, 0xcb, 0xde, 0x04, 0xab, 0xc9, 0x08, 0x90 };
+        await using var stream = new MemoryStream([.. mapLoaded, .. postEnter]);
+
+        var first = await MapClientSession.ReadNextPacketAsync(stream, CancellationToken.None);
+        var second = await MapClientSession.ReadNextPacketAsync(stream, CancellationToken.None);
+
+        Assert.Equal(mapLoaded, first);
+        Assert.Equal(postEnter, second);
+    }
+
     private sealed class ChunkedReadStream : Stream
     {
         private readonly Queue<ReadOnlyMemory<byte>> _chunks;

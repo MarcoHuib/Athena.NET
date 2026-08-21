@@ -155,13 +155,15 @@ public sealed class MapServerSession : IDisposable, ISession
         var sex = packet[14];
         var ipBytes = packet.AsSpan(15, 4).ToArray();
         var clientIp = new IPAddress(ipBytes);
+        var iroAuth = packet[19] == 1;
 
-        if (_authManager.TryGet(accountId, out var node) &&
-            node.CharId == charId &&
-            node.LoginId1 == loginId1 &&
-            node.Sex == sex)
+        if (_authManager.TryConsume(
+                accountId,
+                charId,
+                loginId1,
+                iroAuth ? null : sex,
+                out var node))
         {
-            _authManager.TryRemove(accountId, out _);
             await SendAuthOkAsync(node, cancellationToken);
             return;
         }

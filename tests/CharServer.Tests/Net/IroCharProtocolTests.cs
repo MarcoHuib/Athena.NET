@@ -295,6 +295,18 @@ public sealed class IroCharProtocolTests
         Assert.Equal((ushort)4501, BinaryPrimitives.ReadUInt16LittleEndian(handoff.AsSpan(26, 2)));
     }
 
+    [Theory]
+    [InlineData("iz_int03", "iz_int03.gat")]
+    [InlineData("iz_int03.gat", "iz_int03.gat")]
+    [InlineData("IZ_INT03.GAT", "IZ_INT03.GAT")]
+    public void IroZoneHandoff_UsesClientFacingGatMapName(string storedMap, string expectedWireMap)
+    {
+        var handoff = ClientSession.BuildIroZoneServerPacket(
+            2, storedMap, IPAddress.Parse("127.0.0.1"), 5121);
+
+        Assert.Equal(expectedWireMap, ReadFixedString(handoff.AsSpan(6, 16)));
+    }
+
     [Fact]
     public void PageSync_WithIroPinDisabled_ProducesNo08b9Packet()
     {

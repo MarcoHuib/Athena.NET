@@ -21,6 +21,31 @@ public sealed class MapAuthManager
         return _nodes.TryRemove(accountId, out node!);
     }
 
+    public bool TryConsume(
+        uint accountId,
+        uint charId,
+        uint loginId1,
+        byte? sex,
+        out MapAuthNode node)
+    {
+        node = default!;
+        if (!_nodes.TryGetValue(accountId, out var candidate) ||
+            candidate.CharId != charId ||
+            candidate.LoginId1 != loginId1 ||
+            (sex.HasValue && candidate.Sex != sex.Value))
+        {
+            return false;
+        }
+
+        if (!_nodes.TryRemove(new KeyValuePair<uint, MapAuthNode>(accountId, candidate)))
+        {
+            return false;
+        }
+
+        node = candidate;
+        return true;
+    }
+
     public void Clear()
     {
         _nodes.Clear();

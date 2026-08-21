@@ -383,10 +383,11 @@ public sealed class ClientSession : IDisposable, ISession
         if (_configStore.Current.IroRenewalCompatibility)
         {
             var config = _configStore.Current;
+            var wireMapName = NormalizeIroMapName(mapName);
             var iroBuffer = BuildIroZoneServerPacket(
                 charId, mapName, config.IroAdvertisedMapIp, config.IroAdvertisedMapPort);
             CharLogger.Debug(
-                $"[iRO DEBUG] Sending 0x0071 map='{mapName}' " +
+                $"[iRO DEBUG] Sending 0x0071 map='{mapName}' wireMap='{wireMapName}' " +
                 $"advertisedEndpoint={config.IroAdvertisedMapIp}:{config.IroAdvertisedMapPort} packetLength={iroBuffer.Length}");
             return WriteAsync(iroBuffer, cancellationToken);
         }
@@ -407,10 +408,17 @@ public sealed class ClientSession : IDisposable, ISession
         var buffer = new byte[28];
         BinaryPrimitives.WriteInt16LittleEndian(buffer, PacketConstants.IroHcNotifyZoneServer);
         BinaryPrimitives.WriteUInt32LittleEndian(buffer.AsSpan(2, 4), charId);
-        WriteFixedString(buffer.AsSpan(6, PacketConstants.MapNameLength), mapName);
+        WriteFixedString(buffer.AsSpan(6, PacketConstants.MapNameLength), NormalizeIroMapName(mapName));
         ip.MapToIPv4().GetAddressBytes().CopyTo(buffer.AsSpan(22, 4));
         BinaryPrimitives.WriteUInt16LittleEndian(buffer.AsSpan(26, 2), (ushort)port);
         return buffer;
+    }
+
+    internal static string NormalizeIroMapName(string mapName)
+    {
+        return mapName.EndsWith(".gat", StringComparison.OrdinalIgnoreCase)
+            ? mapName
+            : $"{mapName}.gat";
     }
 
     private async Task SendCharListAsync(CancellationToken cancellationToken)
