@@ -14,6 +14,7 @@ public sealed class MapClientSession : IDisposable
         [PacketConstants.CzNotifyActorInit] = 2,
         [PacketConstants.CzClientVersion] = 6,
         [PacketConstants.CzPingLive] = 2,
+        [PacketConstants.IroCzMapAuth] = PacketConstants.IroCzMapAuthLength,
     };
 
     private readonly TcpClient _client;
@@ -40,19 +41,14 @@ public sealed class MapClientSession : IDisposable
     {
         while (!cancellationToken.IsCancellationRequested)
         {
-            var header = await ReadExactAsync(2, cancellationToken);
-            if (header.Length == 0)
-            {
-                return;
-            }
-
-            var packetType = BinaryPrimitives.ReadInt16LittleEndian(header);
-            var packet = await ReadPacketAsync(packetType, header, cancellationToken);
+            var packet = await ReadNextPacketAsync(_stream, cancellationToken);
             if (packet.Length == 0)
             {
                 return;
             }
 
+            var packetType = BinaryPrimitives.ReadInt16LittleEndian(packet);
+            MapLogger.Info($"[iRO MAP DEBUG] Map client packet=0x{packetType:X4} len={packet.Length}");
             await HandlePacketAsync(packetType, packet, cancellationToken);
         }
     }
@@ -100,8 +96,14 @@ public sealed class MapClientSession : IDisposable
             case PacketConstants.CzPingLive:
                 await SendPingLiveAsync(cancellationToken);
                 break;
+            case PacketConstants.IroCzMapAuth:
+                LogUnsupportedPacket(packetType, packet);
+                MapLogger.Info(
+                    $"[iRO MAP DEBUG] Received stock iRO map auth packet=0x{packetType:X4} len={packet.Length}");
+                MapLogger.Info("[iRO MAP DEBUG] 0x0C1F parsing not implemented yet");
+                break;
             default:
-                MapLogger.Warning($"Unknown map client packet 0x{packetType:X4}, disconnecting.");
+                LogUnsupportedPacket(packetType, packet);
                 _client.Close();
                 break;
         }
@@ -185,16 +187,34 @@ public sealed class MapClientSession : IDisposable
         return WriteAsync(buffer, cancellationToken);
     }
 
-    private async Task<byte[]> ReadPacketAsync(short packetType, byte[] header, CancellationToken cancellationToken)
+    internal static async Task<byte[]> ReadNextPacketAsync(Stream stream, CancellationToken cancellationToken)
+    {
+        var header = await ReadExactAsync(stream, 2, cancellationToken);
+        if (header.Length == 0)
+        {
+            return Array.Empty<byte>();
+        }
+
+        var packetType = BinaryPrimitives.ReadInt16LittleEndian(header);
+        return await ReadPacketAsync(stream, packetType, header, cancellationToken);
+    }
+
+    private static async Task<byte[]> ReadPacketAsync(
+        Stream stream,
+        short packetType,
+        byte[] header,
+        CancellationToken cancellationToken)
     {
         if (!PacketLengths.TryGetValue(packetType, out var length))
         {
-            MapLogger.Warning($"Unknown map client packet 0x{packetType:X4}, disconnecting.");
+            LogUnsupportedPacket(packetType, header);
             return Array.Empty<byte>();
         }
 
         var payloadLength = length - 2;
-        var payload = payloadLength == 0 ? Array.Empty<byte>() : await ReadExactAsync(payloadLength, cancellationToken);
+        var payload = payloadLength == 0
+            ? Array.Empty<byte>()
+            : await ReadExactAsync(stream, payloadLength, cancellationToken);
         if (payloadLength > 0 && payload.Length == 0)
         {
             return Array.Empty<byte>();
@@ -210,13 +230,16 @@ public sealed class MapClientSession : IDisposable
         return packet;
     }
 
-    private async Task<byte[]> ReadExactAsync(int length, CancellationToken cancellationToken)
+    private static async Task<byte[]> ReadExactAsync(
+        Stream stream,
+        int length,
+        CancellationToken cancellationToken)
     {
         var buffer = new byte[length];
         var read = 0;
         while (read < length)
         {
-            var bytes = await _stream.ReadAsync(buffer.AsMemory(read, length - read), cancellationToken);
+            var bytes = await stream.ReadAsync(buffer.AsMemory(read, length - read), cancellationToken);
             if (bytes == 0)
             {
                 return Array.Empty<byte>();
@@ -226,6 +249,15 @@ public sealed class MapClientSession : IDisposable
         }
 
         return buffer;
+    }
+
+    private static void LogUnsupportedPacket(short packetType, ReadOnlySpan<byte> packet)
+    {
+        MapLogger.Warning(
+            $"[iRO MAP DEBUG] Unsupported map client packet=0x{packetType:X4} len={packet.Length}");
+        var prefixLength = Math.Min(packet.Length, 64);
+        MapLogger.Info(
+            $"[iRO MAP DEBUG] Packet prefix={Convert.ToHexString(packet[..prefixLength])}");
     }
 
     private async Task WriteAsync(byte[] payload, CancellationToken cancellationToken)

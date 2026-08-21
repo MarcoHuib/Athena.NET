@@ -60,4 +60,6 @@ public static class PacketConstants
     public const short HcSecondPasswordLogin = 0x8b9;
     public const short HcAckChangeCharacterSlot = 0xb70;
     public const short HcNotifyZoneServer = 0xac5;
+    public const short IroHcNotifyZoneServer = 0x71;
+    public const int IroCharSyncCount = 12;
 }

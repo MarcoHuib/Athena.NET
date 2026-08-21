@@ -1,0 +1,21 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "sqlproj: Build Ragnarok",
+			"type": "process",
+			"command": "dotnet",
+			"args": [
+				"build",
+				"/Users/marco/Projects/Athena.NET/Ragnarok/Ragnarok.sqlproj"
+			],
+			"problemMatcher": "$sqlproj-problem-matcher",
+			"isBackground": true,
+			"group": {
+				"kind": "build",
+				"isDefault": true
+			},
+			"detail": "Builds the Ragnarok SQL project"
+		}
+	]
+}

@@ -5,7 +5,7 @@ namespace Athena.Net.MapServer.Logging;
 public static class MapLogger
 {
     private static bool _configured;
-    private static Action<string, string>? _telemetrySink;
+    private static Action<string>? _telemetrySink;
 
     public static void Configure(MapConfig config)
     {
@@ -17,7 +17,7 @@ public static class MapLogger
         _configured = true;
     }
 
-    public static void SetTelemetrySink(Action<string, string>? sink)
+    public static void SetTelemetrySink(Action<string>? sink)
     {
         _telemetrySink = sink;
     }
@@ -29,7 +29,7 @@ public static class MapLogger
 
     private static void Write(string level, string message)
     {
-        _telemetrySink?.Invoke(level, message);
+        _telemetrySink?.Invoke(level);
         Console.WriteLine($"{DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} [{level}] {message}");
     }
 }

@@ -14,15 +14,13 @@ namespace Athena.Net.CharServer.Net;
 
 public sealed class ClientSession : IDisposable, ISession
 {
-    private const int CharacterInfoSize = 175;
+    internal const int CharacterInfoSize = 175;
     private const int CharDelEmail = 1;
     private const int CharDelBirthdate = 2;
     private const int CharDelRestrictParty = 1;
     private const int CharDelRestrictGuild = 2;
     private const int JobSummoner = 4218;
     private const int JobBabySummoner = 4220;
-    private const ushort JobSecondJobStart = 4331;
-    private const ushort JobSecondJobEnd = 4350;
     private const uint WeaponHiddenOptionMask = 0x20
         | 0x80000
         | 0x100000
@@ -81,6 +79,9 @@ public sealed class ClientSession : IDisposable, ISession
     private uint _pincodeSeed;
     private bool _pincodeCorrect;
     private string _pendingRenameName = string.Empty;
+    private IroCharacterListSyncState? _iroCharacterListSync;
+    private int _announcedSyncCount;
+    private bool _pincodePending;
 
     public ClientSession(int sessionId, TcpClient client, CharConfigStore configStore, LoginServerConnector loginConnector, Func<CharDbContext?> dbFactory, int startStatusPoints, MapServerRegistry mapRegistry, MapAuthManager mapAuthManager, byte[]? prefetchedHeader = null)
     {
@@ -111,11 +112,9 @@ public sealed class ClientSession : IDisposable, ISession
             }
 
             var packetType = BinaryPrimitives.ReadInt16LittleEndian(header);
+
             var packet = await ReadPacketAsync(packetType, header, cancellationToken);
-            if (packet.Length == 0)
-            {
-                return;
-            }
+            CharLogger.Debug($"[iRO DEBUG] Char client packet=0x{packetType:X4} len={packet.Length}");
 
             await HandlePacketAsync(packetType, packet, cancellationToken);
         }
@@ -170,8 +169,8 @@ public sealed class ClientSession : IDisposable, ISession
         _pincodeTry = 0;
         _pincodeCorrect = false;
 
+        _pincodePending = true;
         await SendCharListAsync(CancellationToken.None);
-        await SendPincodeStartAsync(CancellationToken.None);
     }
 
     public Task SendRefuseEnterAsync(byte errorCode, CancellationToken cancellationToken)
@@ -211,6 +210,7 @@ public sealed class ClientSession : IDisposable, ISession
                 await HandleDeleteChar3CancelAsync(packet, cancellationToken);
                 break;
             case PacketConstants.ChPing:
+                await HandleAccountCheckAsync(packet, cancellationToken);
                 break;
             case PacketConstants.ChAvailableSecondPassword:
                 await HandlePincodeWindowAsync(packet, cancellationToken);
@@ -263,6 +263,43 @@ public sealed class ClientSession : IDisposable, ISession
         }
     }
 
+    private async Task HandleAccountCheckAsync(byte[] packet, CancellationToken cancellationToken)
+    {
+        var accountId = ParseAccountCheck(packet);
+        CharLogger.Debug("[iRO DEBUG] Received 0x0187 account check");
+        if (accountId != _accountId)
+        {
+            CharLogger.Warning("Char keep-alive account mismatch.");
+            _client.Close();
+            return;
+        }
+
+        if (_configStore.Current.IroRenewalCompatibility)
+        {
+            var echo = BuildAccountCheckEcho(accountId);
+            CharLogger.Debug("[iRO DEBUG] Sending 0x0187 account check echo");
+            await WriteAsync(echo, cancellationToken);
+        }
+    }
+
+    internal static uint ParseAccountCheck(ReadOnlySpan<byte> packet)
+    {
+        if (packet.Length != 6 || BinaryPrimitives.ReadInt16LittleEndian(packet[..2]) != PacketConstants.ChPing)
+        {
+            throw new ArgumentException("Char account check must be packet 0x0187 with length 6.", nameof(packet));
+        }
+
+        return BinaryPrimitives.ReadUInt32LittleEndian(packet.Slice(2, 4));
+    }
+
+    internal static byte[] BuildAccountCheckEcho(uint accountId)
+    {
+        var packet = new byte[6];
+        BinaryPrimitives.WriteInt16LittleEndian(packet, PacketConstants.ChPing);
+        BinaryPrimitives.WriteUInt32LittleEndian(packet.AsSpan(2, 4), accountId);
+        return packet;
+    }
+
     private async Task HandleSelectCharAsync(byte[] packet, CancellationToken cancellationToken)
     {
         if (!_authenticated)
@@ -289,7 +326,7 @@ public sealed class ClientSession : IDisposable, ISession
             return;
         }
 
-        var slot = packet[2];
+        var slot = ParseCharacterSelect(packet);
         var db = _dbFactory();
         if (db == null)
         {
@@ -303,6 +340,8 @@ public sealed class ClientSession : IDisposable, ISession
             await SendRefuseEnterAsync(0, cancellationToken);
             return;
         }
+
+        CharLogger.Debug($"[iRO DEBUG] Character select slot={slot} charId={character.CharId}");
 
         var mapName = string.IsNullOrWhiteSpace(character.LastMap) ? character.SaveMap : character.LastMap;
         if (string.IsNullOrWhiteSpace(mapName))
@@ -329,8 +368,29 @@ public sealed class ClientSession : IDisposable, ISession
         await SendZoneServerAsync(character.CharId, mapName, mapServer, cancellationToken);
     }
 
+    internal static byte ParseCharacterSelect(ReadOnlySpan<byte> packet)
+    {
+        if (packet.Length != 3 || BinaryPrimitives.ReadInt16LittleEndian(packet[..2]) != PacketConstants.ChSelectChar)
+        {
+            throw new ArgumentException("CH_SELECT_CHAR must be packet 0x0066 with length 3.", nameof(packet));
+        }
+
+        return packet[2];
+    }
+
     private Task SendZoneServerAsync(uint charId, string mapName, MapServerInfo mapServer, CancellationToken cancellationToken)
     {
+        if (_configStore.Current.IroRenewalCompatibility)
+        {
+            var config = _configStore.Current;
+            var iroBuffer = BuildIroZoneServerPacket(
+                charId, mapName, config.IroAdvertisedMapIp, config.IroAdvertisedMapPort);
+            CharLogger.Debug(
+                $"[iRO DEBUG] Sending 0x0071 map='{mapName}' " +
+                $"advertisedEndpoint={config.IroAdvertisedMapIp}:{config.IroAdvertisedMapPort} packetLength={iroBuffer.Length}");
+            return WriteAsync(iroBuffer, cancellationToken);
+        }
+
         var length = 2 + 4 + PacketConstants.MapNameLength + 4 + 2 + PacketConstants.DomainLength;
         var buffer = new byte[length];
         BinaryPrimitives.WriteInt16LittleEndian(buffer.AsSpan(0, 2), PacketConstants.HcNotifyZoneServer);
@@ -340,6 +400,17 @@ public sealed class ClientSession : IDisposable, ISession
         ipBytes.CopyTo(buffer.AsSpan(22, 4));
         BinaryPrimitives.WriteUInt16LittleEndian(buffer.AsSpan(26, 2), (ushort)mapServer.Port);
         return WriteAsync(buffer, cancellationToken);
+    }
+
+    internal static byte[] BuildIroZoneServerPacket(uint charId, string mapName, IPAddress ip, int port)
+    {
+        var buffer = new byte[28];
+        BinaryPrimitives.WriteInt16LittleEndian(buffer, PacketConstants.IroHcNotifyZoneServer);
+        BinaryPrimitives.WriteUInt32LittleEndian(buffer.AsSpan(2, 4), charId);
+        WriteFixedString(buffer.AsSpan(6, PacketConstants.MapNameLength), mapName);
+        ip.MapToIPv4().GetAddressBytes().CopyTo(buffer.AsSpan(22, 4));
+        BinaryPrimitives.WriteUInt16LittleEndian(buffer.AsSpan(26, 2), (ushort)port);
+        return buffer;
     }
 
     private async Task SendCharListAsync(CancellationToken cancellationToken)
@@ -367,9 +438,33 @@ public sealed class ClientSession : IDisposable, ISession
         }
 
         var config = _configStore.Current;
+        _iroCharacterListSync = config.IroRenewalCompatibility
+            ? new IroCharacterListSyncState(characters)
+            : null;
+        if (config.IroRenewalCompatibility)
+        {
+            CharLogger.Debug(
+                $"[iRO DEBUG] Loaded characters count={characters.Count} " +
+                $"slots=[{string.Join(',', characters.Select(character => character.CharNum))}]");
+            foreach (var character in characters)
+            {
+                CharLogger.Debug($"[iRO DEBUG] Loaded character slot={character.CharNum}");
+            }
+        }
         await SendAcceptEnter2Async(config, cancellationToken);
-        await SendAcceptEnterAsync(config, characters, cancellationToken);
-        await SendCharListNotifyAsync(cancellationToken);
+        if (config.IroRenewalCompatibility)
+        {
+            CharLogger.Debug("[iRO DEBUG] Skipping legacy 0x006B for iRO");
+        }
+        else
+        {
+            await SendAcceptEnterAsync(config, characters, cancellationToken);
+        }
+
+        _announcedSyncCount = config.IroRenewalCompatibility
+            ? PacketConstants.IroCharSyncCount
+            : Math.Max((_charSlots + 2) / 3, 1);
+        await SendCharListNotifyAsync(_announcedSyncCount, cancellationToken);
     }
 
     private async Task SendCharListPageAsync(CancellationToken cancellationToken)
@@ -379,44 +474,149 @@ public sealed class ClientSession : IDisposable, ISession
             return;
         }
 
-        var db = _dbFactory();
-        if (db == null)
+        IReadOnlyList<CharCharacter> characters;
+        if (_configStore.Current.IroRenewalCompatibility)
         {
+            var sync = _iroCharacterListSync;
+            if (sync == null)
+            {
+                return;
+            }
+
+            var responses = sync.HandleRequest();
+            if (sync.RequestsReceived > _announcedSyncCount)
+            {
+                CharLogger.Warning(
+                    $"[iRO DEBUG] Ignoring unexpected 0x09A1 after {_announcedSyncCount} sync requests");
+                return;
+            }
+
+            if (responses.Count == 0)
+            {
+                CharLogger.Debug(
+                    $"[iRO DEBUG] Received 0x09A1 sync request {sync.RequestsReceived}/{_announcedSyncCount}; " +
+                    "character list already complete, ignoring");
+                return;
+            }
+
+            CharLogger.Debug(
+                $"[iRO DEBUG] Received 0x09A1 sync request {sync.RequestsReceived}/{_announcedSyncCount}");
+            foreach (var response in responses)
+            {
+                var characterCount = (response.Length - 4) / CharacterInfoSize;
+                var slots = Enumerable.Range(0, characterCount)
+                    .Select(index => response[4 + (index * CharacterInfoSize) + CharacterInfoSlotOffset]);
+                CharLogger.Debug(
+                    $"[iRO DEBUG] Sending 0x{PacketConstants.HcAckCharInfoPerPage:X4} " +
+                    $"characters={characterCount} characterInfoSize={CharacterInfoSize} " +
+                    $"packetLength={response.Length} slots=[{string.Join(',', slots)}]");
+                await WriteAsync(response, cancellationToken);
+            }
+
+            CharLogger.Debug("[iRO DEBUG] Character list data complete");
+            if (_pincodePending)
+            {
+                _pincodePending = false;
+                await SendPincodeStartAsync(cancellationToken);
+            }
             return;
         }
-
-        List<CharCharacter> characters;
-        await using (db)
+        else
         {
-            characters = await db.Characters
-                .AsNoTracking()
-                .Where(c => c.AccountId == _accountId)
-                .OrderBy(c => c.CharNum)
-                .ToListAsync(cancellationToken);
+            var db = _dbFactory();
+            if (db == null)
+            {
+                return;
+            }
+
+            await using (db)
+            {
+                characters = await db.Characters
+                    .AsNoTracking()
+                    .Where(c => c.AccountId == _accountId)
+                    .OrderBy(c => c.CharNum)
+                    .ToListAsync(cancellationToken);
+            }
         }
 
-        var payload = BuildCharacterInfoPayload(characters);
-        var length = (short)(4 + payload.Length);
-        var buffer = new byte[length];
-        BinaryPrimitives.WriteInt16LittleEndian(buffer.AsSpan(0, 2), PacketConstants.HcAckCharInfoPerPage);
-        BinaryPrimitives.WriteInt16LittleEndian(buffer.AsSpan(2, 2), length);
-        payload.CopyTo(buffer.AsSpan(4));
+        var iroCompatibility = _configStore.Current.IroRenewalCompatibility;
+        var payload = BuildCharacterInfoPayload(characters, iroCompatibility);
+        var buffer = BuildCharacterPagePacket(payload);
+        if (iroCompatibility)
+        {
+            for (var index = 0; index < characters.Count; index++)
+            {
+                var character = characters[index];
+                var packetOffset = 4 + (index * CharacterInfoSize) + CharacterInfoSlotOffset;
+                CharLogger.Debug(
+                    $"[iRO DEBUG] 0x0B72 charId={character.CharId} slot={character.CharNum} " +
+                    $"packetOffset={packetOffset} value={buffer[packetOffset]}");
+            }
+        }
+        LogCharacterList(PacketConstants.HcAckCharInfoPerPage, characters.Count, buffer.Length);
         await WriteAsync(buffer, cancellationToken);
+
+    }
+
+    internal static IReadOnlyList<byte[]> BuildIroCharacterListResponses(
+        IReadOnlyList<CharCharacter> characters)
+    {
+        var orderedCharacters = characters.OrderBy(character => character.CharNum).ToArray();
+        var payload = BuildCharacterInfoPayload(orderedCharacters);
+        var responses = new List<byte[]> { BuildCharacterPagePacket(payload) };
+
+        // Current rAthena mirrors Gravity's special finalization behavior: when the
+        // data response contains exactly three characters, an empty response follows
+        // immediately so the client executes its character-list finalization path.
+        if (orderedCharacters.Length == 3)
+        {
+            responses.Add(BuildCharacterPagePacket(ReadOnlySpan<byte>.Empty));
+        }
+
+        return responses;
+    }
+
+    internal static byte[] BuildCharacterPagePacket(ReadOnlySpan<byte> characterInfo)
+    {
+        var buffer = new byte[4 + characterInfo.Length];
+        BinaryPrimitives.WriteInt16LittleEndian(buffer, PacketConstants.HcAckCharInfoPerPage);
+        BinaryPrimitives.WriteInt16LittleEndian(buffer.AsSpan(2, 2), (short)buffer.Length);
+        characterInfo.CopyTo(buffer.AsSpan(4));
+        return buffer;
     }
 
     private async Task SendAcceptEnter2Async(CharConfig config, CancellationToken cancellationToken)
     {
+        var buffer = BuildAcceptEnter2Packet(config, _charsVip, _charsBilling, _charSlots);
+
+        CharLogger.Debug(
+            $"[iRO DEBUG] Sending 0x{PacketConstants.HcAcceptEnter2:X4} normal={buffer[4]} " +
+            $"premium={buffer[5]} billing={buffer[6]} producible={buffer[7]} valid={buffer[8]}");
+        await WriteAsync(buffer, cancellationToken);
+    }
+
+    internal static byte[] BuildAcceptEnter2Packet(CharConfig config, byte vipSlots, byte billingSlots, int charSlots)
+    {
         var buffer = new byte[29];
         BinaryPrimitives.WriteInt16LittleEndian(buffer.AsSpan(0, 2), PacketConstants.HcAcceptEnter2);
         BinaryPrimitives.WriteInt16LittleEndian(buffer.AsSpan(2, 2), 29);
-        buffer[4] = (byte)Math.Clamp(config.MinChars, 0, byte.MaxValue);
-        buffer[5] = _charsVip;
-        buffer[6] = _charsBilling;
-        buffer[7] = (byte)Math.Clamp(_charSlots, 0, byte.MaxValue);
-        buffer[8] = (byte)Math.Clamp(config.MaxChars, 0, byte.MaxValue);
-        buffer.AsSpan(9, 20).Clear();
-
-        await WriteAsync(buffer, cancellationToken);
+        if (config.IroRenewalCompatibility)
+        {
+            buffer[4] = 9;
+            buffer[5] = 9;
+            buffer[6] = 0;
+            buffer[7] = 9;
+            buffer[8] = 9;
+        }
+        else
+        {
+            buffer[4] = (byte)Math.Clamp(config.MinChars, 0, byte.MaxValue);
+            buffer[5] = vipSlots;
+            buffer[6] = billingSlots;
+            buffer[7] = (byte)Math.Clamp(charSlots, 0, byte.MaxValue);
+            buffer[8] = (byte)Math.Clamp(config.MaxChars, 0, byte.MaxValue);
+        }
+        return buffer;
     }
 
     private async Task SendAcceptEnterAsync(CharConfig config, IReadOnlyList<CharCharacter> characters, CancellationToken cancellationToken)
@@ -436,85 +636,159 @@ public sealed class ClientSession : IDisposable, ISession
             payload.CopyTo(buffer.AsSpan(27));
         }
 
+        LogCharacterList(PacketConstants.HcAcceptEnter, characters.Count, length);
         await WriteAsync(buffer, cancellationToken);
     }
 
-    private async Task SendCharListNotifyAsync(CancellationToken cancellationToken)
+    private async Task SendCharListNotifyAsync(int syncCount, CancellationToken cancellationToken)
+    {
+        var buffer = BuildCharListNotifyPacket(syncCount);
+        CharLogger.Debug(
+            $"[iRO DEBUG] Sending 0x{PacketConstants.HcCharListNotify:X4} syncCount={syncCount} packetLength={buffer.Length}");
+        await WriteAsync(buffer, cancellationToken);
+    }
+
+    internal static byte[] BuildCharListNotifyPacket(int syncCount)
     {
         var buffer = new byte[6];
         BinaryPrimitives.WriteInt16LittleEndian(buffer.AsSpan(0, 2), PacketConstants.HcCharListNotify);
-        var pages = Math.Max((_charSlots + 2) / 3, 1);
-        BinaryPrimitives.WriteUInt32LittleEndian(buffer.AsSpan(2, 4), (uint)pages);
-        await WriteAsync(buffer, cancellationToken);
+        BinaryPrimitives.WriteUInt32LittleEndian(buffer.AsSpan(2, 4), (uint)Math.Max(syncCount, 1));
+        return buffer;
+    }
+
+    private static void LogCharacterList(short packetType, int characterCount, int packetLength)
+    {
+        CharLogger.Debug(
+            $"[iRO DEBUG] Sending character list packet=0x{packetType:X4} " +
+            $"characters={characterCount} characterInfoSize={CharacterInfoSize} packetLength={packetLength}");
     }
 
     private async Task HandleMakeCharAsync(byte[] packet, CancellationToken cancellationToken)
     {
         if (!_authenticated)
         {
-            await SendRefuseMakeCharAsync(cancellationToken);
+            await RejectMakeCharAsync(CharacterCreateFailure.Denied, "session is not authenticated", cancellationToken);
             return;
         }
 
         if (packet.Length < 36)
         {
-            await SendRefuseMakeCharAsync(cancellationToken);
+            await RejectMakeCharAsync(
+                CharacterCreateFailure.InvalidInput,
+                $"invalid packet length len={packet.Length}",
+                cancellationToken);
             return;
         }
 
         var config = _configStore.Current;
         if (!config.CharNew)
         {
-            await SendRefuseMakeCharAsync(cancellationToken);
+            await RejectMakeCharAsync(CharacterCreateFailure.Denied, "character creation is disabled", cancellationToken);
             return;
         }
 
-        var name = NormalizeName(ReadFixedString(packet.AsSpan(2, 24)));
-        var slot = packet[26];
-        var hairColor = BinaryPrimitives.ReadUInt16LittleEndian(packet.AsSpan(27, 2));
-        var hairStyle = BinaryPrimitives.ReadUInt16LittleEndian(packet.AsSpan(29, 2));
-        var job = BinaryPrimitives.ReadUInt32LittleEndian(packet.AsSpan(31, 4));
-        var sex = packet[35];
+        var request = ParseIroCharacterCreate(packet);
+        var name = NormalizeName(request.Name);
+        var slot = request.Slot;
+        var hairColor = request.HairColor;
+        var hairStyle = request.HairStyle;
+        var job = request.Job;
+        var sex = request.Sex;
 
-        if (string.IsNullOrWhiteSpace(name) || slot >= _charSlots)
+        CharLogger.Debug(
+            $"[iRO DEBUG] Character create request packet=0x{PacketConstants.ChMakeChar:X4} len={packet.Length}");
+        CharLogger.Debug(
+            $"[iRO DEBUG] Character create name='{name}' slot={slot} hairColor={hairColor} " +
+            $"hairStyle={hairStyle} job={job} sex={sex}");
+        CharLogger.Debug($"[iRO DEBUG] Character create bytes={Convert.ToHexString(packet)}");
+
+        if (string.IsNullOrWhiteSpace(name))
         {
-            await SendRefuseMakeCharAsync(cancellationToken);
+            await RejectMakeCharAsync(CharacterCreateFailure.InvalidInput, "invalid name", cancellationToken);
+            return;
+        }
+
+        if (slot >= _charSlots)
+        {
+            await RejectMakeCharAsync(CharacterCreateFailure.InvalidSlot, $"invalid slot slot={slot}", cancellationToken);
+            return;
+        }
+
+        if (sex is not 0 and not 1)
+        {
+            await RejectMakeCharAsync(CharacterCreateFailure.InvalidInput, $"invalid sex sex={sex}", cancellationToken);
             return;
         }
 
         if (job != 0 && job != JobSummoner && job != JobBabySummoner)
         {
-            await SendRefuseMakeCharAsync(cancellationToken);
+            await RejectMakeCharAsync(CharacterCreateFailure.InvalidInput, $"invalid job job={job}", cancellationToken);
             return;
         }
 
         var nameValidation = await ValidateCharNameAsync(name, cancellationToken);
+        CharLogger.Debug(
+            $"[iRO DEBUG] Name lookup '{name}': exists={(nameValidation == NameValidationResult.Exists).ToString().ToLowerInvariant()}");
         if (nameValidation != NameValidationResult.Ok)
         {
-            await SendRefuseMakeCharAsync(cancellationToken);
+            var failure = nameValidation switch
+            {
+                NameValidationResult.Exists => CharacterCreateFailure.NameTaken,
+                NameValidationResult.DatabaseError => CharacterCreateFailure.DatabaseError,
+                _ => CharacterCreateFailure.InvalidInput,
+            };
+            var detail = nameValidation switch
+            {
+                NameValidationResult.Exists => "name already exists",
+                NameValidationResult.DatabaseError => "name lookup database unavailable",
+                _ => "invalid name",
+            };
+            await RejectMakeCharAsync(failure, detail, cancellationToken);
             return;
         }
 
         var db = _dbFactory();
         if (db == null)
         {
-            await SendRefuseMakeCharAsync(cancellationToken);
+            await RejectMakeCharAsync(CharacterCreateFailure.DatabaseError, "database unavailable", cancellationToken);
             return;
         }
 
         await using (db)
         {
-            var accountCount = await db.Characters.CountAsync(c => c.AccountId == _accountId, cancellationToken);
-            if (accountCount >= _charSlots)
+            var existingCharacters = await db.Characters
+                .AsNoTracking()
+                .Where(c => c.AccountId == _accountId)
+                .Select(c => new CharCharacter
+                {
+                    CharId = c.CharId,
+                    Name = c.Name,
+                    CharNum = c.CharNum,
+                })
+                .ToListAsync(cancellationToken);
+
+            var slotCharacter = existingCharacters.FirstOrDefault(c => c.CharNum == slot);
+            CharLogger.Debug(
+                $"[iRO DEBUG] Slot lookup slot={slot}: occupied={(slotCharacter != null).ToString().ToLowerInvariant()}" +
+                (slotCharacter == null ? string.Empty : $" charId={slotCharacter.CharId}"));
+
+            var validationFailure = DetermineCharacterCreateFailure(
+                nameValidation, existingCharacters, slot, _charSlots);
+            if (validationFailure == CharacterCreateFailure.AccountLimitReached)
             {
-                await SendRefuseMakeCharAsync(cancellationToken);
+                await RejectMakeCharAsync(
+                    validationFailure.Value,
+                    $"account character limit reached count={existingCharacters.Count} limit={_charSlots}",
+                    cancellationToken);
                 return;
             }
 
-            var slotTaken = await db.Characters.AnyAsync(c => c.AccountId == _accountId && c.CharNum == slot, cancellationToken);
-            if (slotTaken)
+            if (validationFailure == CharacterCreateFailure.SlotOccupied)
             {
-                await SendRefuseMakeCharAsync(cancellationToken);
+                await RejectMakeCharAsync(
+                    validationFailure.Value,
+                    $"slot occupied slot={slot} charId={slotCharacter!.CharId}",
+                    cancellationToken);
                 return;
             }
 
@@ -607,7 +881,20 @@ public sealed class ClientSession : IDisposable, ISession
             };
 
             db.Characters.Add(character);
-            await db.SaveChangesAsync(cancellationToken);
+            try
+            {
+                await db.SaveChangesAsync(cancellationToken);
+            }
+            catch (DbUpdateException exception)
+            {
+                CharLogger.Error($"Character create database constraint failure: {exception.GetType().Name}");
+                await RejectMakeCharAsync(
+                    CharacterCreateFailure.DatabaseError,
+                    $"database constraint {exception.GetType().Name}",
+                    cancellationToken);
+                return;
+            }
+            CharLogger.Debug($"[iRO DEBUG] Character created charId={character.CharId}");
 
             var items = SelectStartItems(config, job)
                 .Select(item => new CharInventory
@@ -655,6 +942,65 @@ public sealed class ClientSession : IDisposable, ISession
 
             await SendAcceptMakeCharAsync(character, cancellationToken);
         }
+    }
+
+    internal static CharacterCreateRequest ParseIroCharacterCreate(ReadOnlySpan<byte> packet)
+    {
+        if (packet.Length != 36 || BinaryPrimitives.ReadInt16LittleEndian(packet[..2]) != PacketConstants.ChMakeChar)
+        {
+            throw new ArgumentException("iRO CH_MAKE_CHAR must be packet 0x0A39 with length 36.", nameof(packet));
+        }
+
+        return new CharacterCreateRequest(
+            ReadFixedString(packet.Slice(2, 24)),
+            packet[26],
+            BinaryPrimitives.ReadUInt16LittleEndian(packet.Slice(27, 2)),
+            BinaryPrimitives.ReadUInt16LittleEndian(packet.Slice(29, 2)),
+            BinaryPrimitives.ReadUInt32LittleEndian(packet.Slice(31, 4)),
+            packet[35]);
+    }
+
+    internal static CharacterCreateFailure? DetermineCharacterCreateFailure(
+        NameValidationResult nameValidation,
+        IReadOnlyList<CharCharacter> existingCharacters,
+        byte slot,
+        int availableSlots)
+    {
+        if (nameValidation == NameValidationResult.Exists)
+        {
+            return CharacterCreateFailure.NameTaken;
+        }
+
+        if (nameValidation != NameValidationResult.Ok)
+        {
+            return CharacterCreateFailure.InvalidInput;
+        }
+
+        if (slot >= availableSlots)
+        {
+            return CharacterCreateFailure.InvalidSlot;
+        }
+
+        if (existingCharacters.Count >= availableSlots)
+        {
+            return CharacterCreateFailure.AccountLimitReached;
+        }
+
+        return existingCharacters.Any(character => character.CharNum == slot)
+            ? CharacterCreateFailure.SlotOccupied
+            : null;
+    }
+
+    internal static bool IsCharacterNameTaken(
+        IEnumerable<string> existingNames,
+        string requestedName,
+        bool nameIgnoringCase)
+    {
+        var comparison = nameIgnoringCase
+            ? StringComparison.Ordinal
+            : StringComparison.OrdinalIgnoreCase;
+        return existingNames.Any(existingName =>
+            string.Equals(existingName, requestedName, comparison));
     }
 
     private async Task HandleDeleteCharAsync(byte[] packet, CancellationToken cancellationToken)
@@ -1293,12 +1639,43 @@ public sealed class ClientSession : IDisposable, ISession
         await SendCharListAsync(cancellationToken);
     }
 
-    private Task SendRefuseMakeCharAsync(CancellationToken cancellationToken)
+    private Task RejectMakeCharAsync(
+        CharacterCreateFailure failure,
+        string detail,
+        CancellationToken cancellationToken)
+    {
+        CharLogger.Debug($"[iRO DEBUG] Character create rejected: {detail}");
+        return SendRefuseMakeCharAsync(failure, cancellationToken);
+    }
+
+    private Task SendRefuseMakeCharAsync(
+        CharacterCreateFailure failure,
+        CancellationToken cancellationToken)
+    {
+        var reason = GetCharacterCreateFailureWireReason(failure);
+        var buffer = BuildRefuseMakeCharPacket(reason);
+        CharLogger.Debug(
+            $"[iRO DEBUG] Sending character creation failure packet=0x{PacketConstants.HcRefuseMakeChar:X4} " +
+            $"reason={buffer[2]} packetLength={buffer.Length}");
+        return WriteAsync(buffer, cancellationToken);
+    }
+
+    internal static byte GetCharacterCreateFailureWireReason(CharacterCreateFailure failure)
+    {
+        return failure switch
+        {
+            CharacterCreateFailure.NameTaken => 0x00,
+            CharacterCreateFailure.InvalidSlot => 0x03,
+            _ => 0xff,
+        };
+    }
+
+    internal static byte[] BuildRefuseMakeCharPacket(byte reason)
     {
         var buffer = new byte[3];
         BinaryPrimitives.WriteInt16LittleEndian(buffer.AsSpan(0, 2), PacketConstants.HcRefuseMakeChar);
-        buffer[2] = 0;
-        return WriteAsync(buffer, cancellationToken);
+        buffer[2] = reason;
+        return buffer;
     }
 
     private Task SendRefuseDeleteCharAsync(CancellationToken cancellationToken)
@@ -1339,11 +1716,21 @@ public sealed class ClientSession : IDisposable, ISession
 
     private Task SendAcceptMakeCharAsync(CharCharacter character, CancellationToken cancellationToken)
     {
-        var payload = BuildCharacterInfoPayload(new[] { character });
-        var buffer = new byte[2 + payload.Length];
-        BinaryPrimitives.WriteInt16LittleEndian(buffer.AsSpan(0, 2), PacketConstants.HcAcceptMakeChar);
-        payload.CopyTo(buffer.AsSpan(2));
+        var payload = BuildCharacterInfoPayload(
+            new[] { character }, _configStore.Current.IroRenewalCompatibility);
+        var buffer = BuildAcceptMakeCharPacket(payload);
+        CharLogger.Debug(
+            $"[iRO DEBUG] Sending character creation success packet=0x{PacketConstants.HcAcceptMakeChar:X4} " +
+            $"characterInfoSize={CharacterInfoSize} packetLength={buffer.Length}");
         return WriteAsync(buffer, cancellationToken);
+    }
+
+    internal static byte[] BuildAcceptMakeCharPacket(ReadOnlySpan<byte> characterInfo)
+    {
+        var buffer = new byte[2 + characterInfo.Length];
+        BinaryPrimitives.WriteInt16LittleEndian(buffer.AsSpan(0, 2), PacketConstants.HcAcceptMakeChar);
+        characterInfo.CopyTo(buffer.AsSpan(2));
+        return buffer;
     }
 
     private Task SendRenameCheckAsync(bool isValid, CancellationToken cancellationToken)
@@ -1375,56 +1762,84 @@ public sealed class ClientSession : IDisposable, ISession
     private async Task SendPincodeStartAsync(CancellationToken cancellationToken)
     {
         var config = _configStore.Current;
+        CharLogger.Debug(
+            $"[iRO DEBUG] PIN start effective enabled={config.PincodeEnabled.ToString().ToLowerInvariant()} " +
+            $"force={config.PincodeForce.ToString().ToLowerInvariant()} hasPin={!string.IsNullOrEmpty(_pincode)} " +
+            $"pinCorrect={_pincodeCorrect}");
+
+        var state = DeterminePincodeStartState(
+            config,
+            _pincode,
+            _pincodeChange,
+            _pincodeCorrect,
+            PincodePassed.ContainsKey(_accountId),
+            DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+        if (state == null)
+        {
+            CharLogger.Debug("[iRO DEBUG] PIN disabled; skipping 0x08B9");
+            return;
+        }
+
+        await SendPincodeStateAsync(state.Value, cancellationToken);
+    }
+
+    internal static PincodeState? DeterminePincodeStartState(
+        CharConfig config,
+        string pincode,
+        uint pincodeChange,
+        bool pincodeCorrect,
+        bool pincodePassed,
+        long now)
+    {
         if (!config.PincodeEnabled)
         {
-            await SendPincodeStateAsync(PincodeState.Ok, cancellationToken);
-            return;
+            return config.IroRenewalCompatibility ? null : PincodeState.Ok;
         }
 
-        if (string.IsNullOrEmpty(_pincode))
+        if (string.IsNullOrEmpty(pincode))
         {
-            if (config.PincodeForce)
-            {
-                await SendPincodeStateAsync(PincodeState.New, cancellationToken);
-            }
-            else
-            {
-                await SendPincodeStateAsync(PincodeState.Passed, cancellationToken);
-            }
-            return;
+            return config.PincodeForce ? PincodeState.New : PincodeState.Passed;
         }
 
-        if (config.PincodeChangeTimeSeconds > 0 && _pincodeChange > 0)
+        if (config.PincodeChangeTimeSeconds > 0 && pincodeChange > 0 &&
+            pincodeChange + config.PincodeChangeTimeSeconds <= now)
         {
-            var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-            if (_pincodeChange + config.PincodeChangeTimeSeconds <= (uint)now)
-            {
-                await SendPincodeStateAsync(PincodeState.Expired, cancellationToken);
-                return;
-            }
+            return PincodeState.Expired;
         }
 
-        if (_pincodeCorrect || PincodePassed.ContainsKey(_accountId))
+        if (pincodeCorrect || pincodePassed)
         {
-            await SendPincodeStateAsync(PincodeState.Passed, cancellationToken);
-            return;
+            return PincodeState.Passed;
         }
 
-        await SendPincodeStateAsync(PincodeState.Ask, cancellationToken);
+        return PincodeState.Ask;
     }
 
     private Task SendPincodeStateAsync(PincodeState state, CancellationToken cancellationToken)
     {
-        var buffer = new byte[12];
-        BinaryPrimitives.WriteInt16LittleEndian(buffer.AsSpan(0, 2), PacketConstants.HcSecondPasswordLogin);
         _pincodeSeed = (uint)Random.Shared.Next(0, 0x10000);
-        BinaryPrimitives.WriteUInt32LittleEndian(buffer.AsSpan(2, 4), _pincodeSeed);
-        BinaryPrimitives.WriteUInt32LittleEndian(buffer.AsSpan(6, 4), _accountId);
-        BinaryPrimitives.WriteUInt16LittleEndian(buffer.AsSpan(10, 2), (ushort)state);
+        var buffer = BuildPincodeStatePacket(state, _pincodeSeed, _accountId);
+        CharLogger.Debug(
+            $"[iRO DEBUG] Sending 0x{PacketConstants.HcSecondPasswordLogin:X4} state={(ushort)state} " +
+            $"packetLength={buffer.Length}");
         return WriteAsync(buffer, cancellationToken);
     }
 
-    private static byte[] BuildCharacterInfoPayload(IReadOnlyList<CharCharacter> characters)
+    internal static byte[] BuildPincodeStatePacket(PincodeState state, uint seed, uint accountId)
+    {
+        var buffer = new byte[12];
+        BinaryPrimitives.WriteInt16LittleEndian(buffer.AsSpan(0, 2), PacketConstants.HcSecondPasswordLogin);
+        BinaryPrimitives.WriteUInt32LittleEndian(buffer.AsSpan(2, 4), seed);
+        BinaryPrimitives.WriteUInt32LittleEndian(buffer.AsSpan(6, 4), accountId);
+        BinaryPrimitives.WriteUInt16LittleEndian(buffer.AsSpan(10, 2), (ushort)state);
+        return buffer;
+    }
+
+    internal const int CharacterInfoSlotOffset = 138;
+
+    private static byte[] BuildCharacterInfoPayload(
+        IReadOnlyList<CharCharacter> characters,
+        bool iroDebug = false)
     {
         if (characters.Count == 0)
         {
@@ -1435,66 +1850,237 @@ public sealed class ClientSession : IDisposable, ISession
         var offset = 0;
         foreach (var character in characters)
         {
-            WriteCharacterInfo(payload.AsSpan(offset, CharacterInfoSize), character);
+            var characterInfo = payload.AsSpan(offset, CharacterInfoSize);
+            WriteCharacterInfo(characterInfo, character);
+            if (iroDebug)
+            {
+                CharLogger.Debug(
+                    $"[iRO DEBUG] CHARACTER_INFO charId={character.CharId} name='{character.Name}' " +
+                    $"dbSlot={character.CharNum} modelSlot={character.CharNum} " +
+                    $"serializedSlot={characterInfo[CharacterInfoSlotOffset]} slotOffset={CharacterInfoSlotOffset}");
+                CharLogger.Debug(
+                    $"[iRO DEBUG] CHARACTER_INFO tail132_145=" +
+                    Convert.ToHexString(characterInfo.Slice(132, 14)));
+            }
             offset += CharacterInfoSize;
         }
 
         return payload;
     }
 
-    private static void WriteCharacterInfo(Span<byte> buffer, CharCharacter character)
+    internal static void WriteCharacterInfo(Span<byte> buffer, CharCharacter character)
     {
+        if (buffer.Length != CharacterInfoSize)
+        {
+            throw new ArgumentException($"iRO CHARACTER_INFO2 must be exactly {CharacterInfoSize} bytes.", nameof(buffer));
+        }
+
         buffer.Clear();
-        var bodyValue = character.Body > JobSecondJobStart && character.Body < JobSecondJobEnd ? (ushort)1 : (ushort)0;
-        var weaponValue = (character.Option & WeaponHiddenOptionMask) != 0 ? (ushort)0 : character.Weapon;
-        BinaryPrimitives.WriteUInt32LittleEndian(buffer.Slice(0, 4), character.CharId);
-        BinaryPrimitives.WriteInt64LittleEndian(buffer.Slice(4, 8), (long)character.BaseExp);
-        BinaryPrimitives.WriteInt32LittleEndian(buffer.Slice(12, 4), (int)Math.Min(character.Zeny, int.MaxValue));
-        BinaryPrimitives.WriteInt64LittleEndian(buffer.Slice(16, 8), (long)character.JobExp);
-        BinaryPrimitives.WriteInt32LittleEndian(buffer.Slice(24, 4), character.JobLevel);
-        BinaryPrimitives.WriteInt32LittleEndian(buffer.Slice(28, 4), 0);
-        BinaryPrimitives.WriteInt32LittleEndian(buffer.Slice(32, 4), 0);
-        BinaryPrimitives.WriteInt32LittleEndian(buffer.Slice(36, 4), (int)character.Option);
-        BinaryPrimitives.WriteInt32LittleEndian(buffer.Slice(40, 4), character.Karma);
-        BinaryPrimitives.WriteInt32LittleEndian(buffer.Slice(44, 4), character.Manner);
-        BinaryPrimitives.WriteInt16LittleEndian(buffer.Slice(48, 2), (short)Math.Min(character.StatusPoint, short.MaxValue));
-        BinaryPrimitives.WriteInt64LittleEndian(buffer.Slice(50, 8), character.Hp);
-        BinaryPrimitives.WriteInt64LittleEndian(buffer.Slice(58, 8), character.MaxHp);
-        BinaryPrimitives.WriteInt64LittleEndian(buffer.Slice(66, 8), character.Sp);
-        BinaryPrimitives.WriteInt64LittleEndian(buffer.Slice(74, 8), character.MaxSp);
-        BinaryPrimitives.WriteInt16LittleEndian(buffer.Slice(82, 2), 150);
-        BinaryPrimitives.WriteInt16LittleEndian(buffer.Slice(84, 2), (short)Math.Min(character.Class, short.MaxValue));
-        BinaryPrimitives.WriteInt16LittleEndian(buffer.Slice(86, 2), (short)Math.Min(character.Hair, short.MaxValue));
-        BinaryPrimitives.WriteInt16LittleEndian(buffer.Slice(88, 2), (short)Math.Min(bodyValue, short.MaxValue));
-        BinaryPrimitives.WriteInt16LittleEndian(buffer.Slice(90, 2), (short)Math.Min(weaponValue, short.MaxValue));
-        BinaryPrimitives.WriteInt16LittleEndian(buffer.Slice(92, 2), (short)Math.Min(character.BaseLevel, short.MaxValue));
-        BinaryPrimitives.WriteInt16LittleEndian(buffer.Slice(94, 2), (short)Math.Min(character.SkillPoint, short.MaxValue));
-        BinaryPrimitives.WriteInt16LittleEndian(buffer.Slice(96, 2), (short)Math.Min(character.HeadBottom, short.MaxValue));
-        BinaryPrimitives.WriteInt16LittleEndian(buffer.Slice(98, 2), (short)Math.Min(character.Shield, short.MaxValue));
-        BinaryPrimitives.WriteInt16LittleEndian(buffer.Slice(100, 2), (short)Math.Min(character.HeadTop, short.MaxValue));
-        BinaryPrimitives.WriteInt16LittleEndian(buffer.Slice(102, 2), (short)Math.Min(character.HeadMid, short.MaxValue));
-        BinaryPrimitives.WriteInt16LittleEndian(buffer.Slice(104, 2), (short)Math.Min(character.HairColor, short.MaxValue));
-        BinaryPrimitives.WriteInt16LittleEndian(buffer.Slice(106, 2), (short)Math.Min(character.ClothesColor, short.MaxValue));
-        WriteFixedString(buffer.Slice(108, 24), character.Name);
+
+        var weaponValue =
+            (character.Option & WeaponHiddenOptionMask) != 0
+                ? (ushort)0
+                : character.Weapon;
+
+        // 0..3 - Character ID
+        BinaryPrimitives.WriteUInt32LittleEndian(
+            buffer.Slice(0, 4),
+            character.CharId);
+
+        // 4..11 - Base EXP (64-bit)
+        BinaryPrimitives.WriteUInt64LittleEndian(
+            buffer.Slice(4, 8),
+            character.BaseExp);
+
+        // 12..15 - Zeny
+        BinaryPrimitives.WriteUInt32LittleEndian(
+            buffer.Slice(12, 4),
+            character.Zeny);
+
+        // 16..23 - Job EXP (64-bit)
+        BinaryPrimitives.WriteUInt64LittleEndian(
+            buffer.Slice(16, 8),
+            character.JobExp);
+
+        // 24..27 - Job level
+        BinaryPrimitives.WriteInt32LittleEndian(
+            buffer.Slice(24, 4),
+            character.JobLevel);
+
+        // 28..31 - body state
+        BinaryPrimitives.WriteInt32LittleEndian(
+            buffer.Slice(28, 4),
+            0);
+
+        // 32..35 - health state
+        BinaryPrimitives.WriteInt32LittleEndian(
+            buffer.Slice(32, 4),
+            0);
+
+        // 36..39 - option/effect state
+        BinaryPrimitives.WriteInt32LittleEndian(
+            buffer.Slice(36, 4),
+            (int)character.Option);
+
+        // 40..43 - karma
+        BinaryPrimitives.WriteInt32LittleEndian(
+            buffer.Slice(40, 4),
+            character.Karma);
+
+        // 44..47 - manner
+        BinaryPrimitives.WriteInt32LittleEndian(
+            buffer.Slice(44, 4),
+            character.Manner);
+
+        // 48..49 - status points
+        BinaryPrimitives.WriteInt16LittleEndian(
+            buffer.Slice(48, 2),
+            (short)Math.Min(character.StatusPoint, short.MaxValue));
+
+        // 50..57 - HP
+        BinaryPrimitives.WriteUInt64LittleEndian(
+            buffer.Slice(50, 8),
+            character.Hp);
+
+        // 58..65 - Max HP
+        BinaryPrimitives.WriteUInt64LittleEndian(
+            buffer.Slice(58, 8),
+            character.MaxHp);
+
+        // 66..73 - SP
+        BinaryPrimitives.WriteUInt64LittleEndian(
+            buffer.Slice(66, 8),
+            character.Sp);
+
+        // 74..81 - Max SP
+        BinaryPrimitives.WriteUInt64LittleEndian(
+            buffer.Slice(74, 8),
+            character.MaxSp);
+
+        // 82..83 - Walk speed
+        BinaryPrimitives.WriteInt16LittleEndian(
+            buffer.Slice(82, 2),
+            150);
+
+        // 84..85 - Job/class
+        BinaryPrimitives.WriteUInt16LittleEndian(
+            buffer.Slice(84, 2),
+            character.Class);
+
+        // 86..87 - Hair style
+        BinaryPrimitives.WriteUInt16LittleEndian(
+            buffer.Slice(86, 2),
+            character.Hair);
+
+        // 88..89 - Body style. Modern (2023-12-20+) CHARACTER_INFO carries the value directly.
+        BinaryPrimitives.WriteUInt16LittleEndian(buffer.Slice(88, 2), character.Body);
+
+        // 90..91 - Weapon
+        BinaryPrimitives.WriteUInt16LittleEndian(
+            buffer.Slice(90, 2),
+            weaponValue);
+
+        // 92..93 - Base level
+        BinaryPrimitives.WriteUInt16LittleEndian(
+            buffer.Slice(92, 2),
+            character.BaseLevel);
+
+        // 94..95 - Skill points
+        BinaryPrimitives.WriteUInt16LittleEndian(
+            buffer.Slice(94, 2),
+            (ushort)Math.Min(character.SkillPoint, ushort.MaxValue));
+
+        // 96..107 - Equipment and palettes
+        BinaryPrimitives.WriteUInt16LittleEndian(
+            buffer.Slice(96, 2),
+            character.HeadBottom);
+        BinaryPrimitives.WriteUInt16LittleEndian(
+            buffer.Slice(98, 2),
+            character.Shield);
+        BinaryPrimitives.WriteUInt16LittleEndian(
+            buffer.Slice(100, 2),
+            character.HeadTop);
+        BinaryPrimitives.WriteUInt16LittleEndian(
+            buffer.Slice(102, 2),
+            character.HeadMid);
+        BinaryPrimitives.WriteUInt16LittleEndian(
+            buffer.Slice(104, 2),
+            character.HairColor);
+        BinaryPrimitives.WriteUInt16LittleEndian(
+            buffer.Slice(106, 2),
+            character.ClothesColor);
+
+        // 108..131 - Character name
+        WriteFixedString(
+            buffer.Slice(108, 24),
+            character.Name);
+
+        // 132..137 - Stats
         buffer[132] = (byte)Math.Min(character.Str, byte.MaxValue);
         buffer[133] = (byte)Math.Min(character.Agi, byte.MaxValue);
         buffer[134] = (byte)Math.Min(character.Vit, byte.MaxValue);
         buffer[135] = (byte)Math.Min(character.Int, byte.MaxValue);
         buffer[136] = (byte)Math.Min(character.Dex, byte.MaxValue);
         buffer[137] = (byte)Math.Min(character.Luk, byte.MaxValue);
-        buffer[138] = character.CharNum;
-        buffer[139] = (byte)Math.Min(character.HairColor, byte.MaxValue);
+
+        // 138 - Character slot
+        buffer[CharacterInfoSlotOffset] = character.CharNum;
+
+        // 139 - Hair color byte
+        buffer[139] =
+            (byte)Math.Min(character.HairColor, byte.MaxValue);
+
+        // Rename flag
         var renameFlag = character.Rename > 0 ? 0 : 1;
-        BinaryPrimitives.WriteInt16LittleEndian(buffer.Slice(140, 2), (short)renameFlag);
-        WriteFixedString(buffer.Slice(142, 16), character.LastMap);
+
+        BinaryPrimitives.WriteInt16LittleEndian(
+            buffer.Slice(140, 2),
+            (short)renameFlag);
+
+        // 142..157 - Last map
+        WriteFixedString(
+            buffer.Slice(142, 16),
+            character.LastMap);
+
+        // Delete time
         var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-        var deleteRemaining = character.DeleteDate > now ? (int)Math.Min(character.DeleteDate - now, int.MaxValue) : 0;
-        BinaryPrimitives.WriteInt32LittleEndian(buffer.Slice(158, 4), deleteRemaining);
-        BinaryPrimitives.WriteInt32LittleEndian(buffer.Slice(162, 4), character.Robe);
-        BinaryPrimitives.WriteInt32LittleEndian(buffer.Slice(166, 4), (int)Math.Min(character.Moves, int.MaxValue));
-        var nameChangeCount = character.Rename > 0 ? 1 : 0;
-        BinaryPrimitives.WriteInt32LittleEndian(buffer.Slice(170, 4), nameChangeCount);
-        buffer[174] = character.Sex.Equals("M", StringComparison.OrdinalIgnoreCase) ? (byte)1 : (byte)0;
+
+        var deleteRemaining =
+            character.DeleteDate > now
+                ? (int)Math.Min(
+                    character.DeleteDate - now,
+                    int.MaxValue)
+                : 0;
+
+        BinaryPrimitives.WriteInt32LittleEndian(
+            buffer.Slice(158, 4),
+            deleteRemaining);
+
+        // Robe
+        BinaryPrimitives.WriteInt32LittleEndian(
+            buffer.Slice(162, 4),
+            character.Robe);
+
+        // Character slot moves
+        BinaryPrimitives.WriteInt32LittleEndian(
+            buffer.Slice(166, 4),
+            (int)Math.Min(character.Moves, int.MaxValue));
+
+        // Rename count
+        var nameChangeCount =
+            character.Rename > 0 ? 1 : 0;
+
+        BinaryPrimitives.WriteInt32LittleEndian(
+            buffer.Slice(170, 4),
+            nameChangeCount);
+
+        // 174 - Sex
+        buffer[174] =
+            character.Sex.Equals(
+                "M",
+                StringComparison.OrdinalIgnoreCase)
+                ? (byte)1
+                : (byte)0;
     }
 
     private static void WriteFixedString(Span<byte> buffer, string value)
@@ -1603,7 +2189,7 @@ public sealed class ClientSession : IDisposable, ISession
         if (!string.IsNullOrEmpty(config.WispServerName) &&
             string.Equals(name, config.WispServerName, StringComparison.OrdinalIgnoreCase))
         {
-            return NameValidationResult.Invalid;
+            return NameValidationResult.Exists;
         }
 
         if (name.StartsWith("#", StringComparison.Ordinal))
@@ -1619,27 +2205,27 @@ public sealed class ClientSession : IDisposable, ISession
         var db = _dbFactory();
         if (db == null)
         {
-            return NameValidationResult.Invalid;
+            return NameValidationResult.DatabaseError;
         }
 
         await using (db)
         {
             if (config.NameIgnoringCase)
             {
-            var normalizedName = name.ToLowerInvariant();
-            var matches = await db.Characters
-                .Where(c => c.Name.ToLower() == normalizedName)
-                .Select(c => c.Name)
-                .ToListAsync(cancellationToken);
-            return matches.Any(match => string.Equals(match, name, StringComparison.Ordinal))
-                ? NameValidationResult.Exists
-                : NameValidationResult.Ok;
-        }
+                var normalizedName = name.ToLowerInvariant();
+                var matches = await db.Characters
+                    .Where(c => c.Name.ToLower() == normalizedName)
+                    .Select(c => c.Name)
+                    .ToListAsync(cancellationToken);
+                return matches.Any(match => string.Equals(match, name, StringComparison.Ordinal))
+                    ? NameValidationResult.Exists
+                    : NameValidationResult.Ok;
+            }
 
-        var normalizedLookup = name.ToLowerInvariant();
-        var existsInsensitive = await db.Characters
-            .AnyAsync(c => c.Name.ToLower() == normalizedLookup, cancellationToken);
-        return existsInsensitive ? NameValidationResult.Exists : NameValidationResult.Ok;
+            var normalizedLookup = name.ToLowerInvariant();
+            var existsInsensitive = await db.Characters
+                .AnyAsync(c => c.Name.ToLower() == normalizedLookup, cancellationToken);
+            return existsInsensitive ? NameValidationResult.Exists : NameValidationResult.Ok;
         }
     }
 
@@ -1790,14 +2376,26 @@ public sealed class ClientSession : IDisposable, ISession
         return new string(output);
     }
 
-    private enum NameValidationResult
+    internal enum NameValidationResult
     {
         Ok = 0,
         Invalid = 1,
         Exists = 2,
+        DatabaseError = 3,
     }
 
-    private enum PincodeState : ushort
+    internal enum CharacterCreateFailure
+    {
+        NameTaken,
+        SlotOccupied,
+        InvalidSlot,
+        InvalidInput,
+        AccountLimitReached,
+        DatabaseError,
+        Denied,
+    }
+
+    internal enum PincodeState : ushort
     {
         Ok = 0,
         Ask = 1,
@@ -1940,3 +2538,11 @@ public sealed class ClientSession : IDisposable, ISession
         }
     }
 }
+
+internal readonly record struct CharacterCreateRequest(
+    string Name,
+    byte Slot,
+    ushort HairColor,
+    ushort HairStyle,
+    uint Job,
+    byte Sex);

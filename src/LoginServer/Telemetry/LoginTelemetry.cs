@@ -58,9 +58,9 @@ public sealed class LoginTelemetry : IDisposable
         });
 
         var otelLogger = loggerFactory.CreateLogger(ServiceName);
-        Logging.LoginLogger.SetTelemetrySink((level, message) =>
+        Logging.LoginLogger.SetTelemetrySink(level =>
         {
-            otelLogger.Log(MapLogLevel(level), message);
+            otelLogger.Log(MapLogLevel(level), "LoginServer log event ({SourceLevel})", level);
         });
 
         using (var activity = ActivitySource.StartActivity("login.startup"))

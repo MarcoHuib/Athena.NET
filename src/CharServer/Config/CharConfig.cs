@@ -4,6 +4,14 @@ namespace Athena.Net.CharServer.Config;
 
 public sealed class CharConfig
 {
+    public bool IroRenewalCompatibility { get; init; } = !string.Equals(
+        Environment.GetEnvironmentVariable("ATHENA_NET_CHAR_IRO_RENEWAL"),
+        "false",
+        StringComparison.OrdinalIgnoreCase);
+    public IPAddress IroAdvertisedMapIp { get; init; } = ParseIpEnvironment(
+        "ATHENA_NET_CHAR_IRO_MAP_IP", "128.241.92.42");
+    public int IroAdvertisedMapPort { get; init; } = ParseIntEnvironment(
+        "ATHENA_NET_CHAR_IRO_MAP_PORT", 4501);
     public string UserId { get; init; } = string.Empty;
     public string Password { get; init; } = string.Empty;
     public string ServerName { get; init; } = "rAthena";
@@ -52,4 +60,18 @@ public sealed class CharConfig
     public int ConsoleSilent { get; init; }
     public string ConsoleLogFilePath { get; init; } = "./log/char-msg_log.log";
     public string TimestampFormat { get; init; } = string.Empty;
+
+    private static IPAddress ParseIpEnvironment(string name, string fallback)
+    {
+        return IPAddress.TryParse(Environment.GetEnvironmentVariable(name), out var value)
+            ? value
+            : IPAddress.Parse(fallback);
+    }
+
+    private static int ParseIntEnvironment(string name, int fallback)
+    {
+        return int.TryParse(Environment.GetEnvironmentVariable(name), out var value) && value is > 0 and <= ushort.MaxValue
+            ? value
+            : fallback;
+    }
 }

@@ -18,6 +18,8 @@ public static class PacketConstants
     public const short CzNotifyActorInit = 0x7d;
     public const short CzClientVersion = 0x44a;
     public const short CzPingLive = 0x0b1c;
+    public const short IroCzMapAuth = 0x0c1f;
+    public const int IroCzMapAuthLength = 1001;
 
     public const short ZcAcceptEnter = 0x2eb;
     public const short ZcRefuseEnter = 0x74;

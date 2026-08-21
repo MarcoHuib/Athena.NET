@@ -21,9 +21,9 @@ public static class LoginLogger
     private static string _filePath = string.Empty;
     private static string _timestampFormat = string.Empty;
     private static bool _configured;
-    private static Action<LogLevel, string>? _telemetrySink;
+    private static Action<LogLevel>? _telemetrySink;
 
-    public static void SetTelemetrySink(Action<LogLevel, string>? sink)
+    public static void SetTelemetrySink(Action<LogLevel>? sink)
     {
         _telemetrySink = sink;
     }
@@ -46,7 +46,7 @@ public static class LoginLogger
 
     private static void Write(LogLevel level, string message)
     {
-        _telemetrySink?.Invoke(level, message);
+        _telemetrySink?.Invoke(level);
 
         var mask = MaskFor(level);
         var line = message;

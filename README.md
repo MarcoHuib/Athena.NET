@@ -7,8 +7,10 @@
 <div align="center">
   <img src="docs/assets/logo.png" alt="Athena.NET Logo" style="display: block; margin: 0 auto 6px;">
   <h1 align="center" style="margin-top: 0;">Athena.NET</h1>
+
   <p align="center">
-    A modern C# reimplementation of the rAthena server stack.
+    A modern, cross-platform Ragnarok Online private server written in C# and built for the official International Ragnarok Online (iRO) client.
+    <br />
     <br />
     <a href="docs/"><strong>Explore the docs »</strong></a>
     <br />
@@ -21,7 +23,8 @@
   </p>
 </div>
 
-CI
+## CI
+
 - [![Login Server CI][login-ci-shield]][login-ci-url]
 - [![Char Server CI][char-ci-shield]][char-ci-url]
 - [![Map Server CI][map-ci-shield]][map-ci-url]
@@ -30,27 +33,51 @@ CI
   <summary>Table of Contents</summary>
   <ol>
     <li><a href="#about">About</a></li>
-    <li><a href="#status">Status</a></li>
+    <li><a href="#project-status">Project Status</a></li>
+    <li><a href="#reference-projects">Reference Projects</a></li>
     <li><a href="#quick-start">Quick Start</a></li>
-    <li><a href="#docs">Documentation</a></li>
+    <li><a href="#documentation">Documentation</a></li>
     <li><a href="#roadmap">Roadmap</a></li>
+    <li><a href="#project-scope">Project Scope</a></li>
   </ol>
 </details>
 
 ## About
-Athena.NET is a clean, cross-platform C# rewrite of rAthena, focused on correctness, parity, and fast iteration.
-The current milestone is a fully compatible LoginServer; CharServer and MapServer will follow as the migration progresses.
+
+Athena.NET is a clean, modern C# implementation of a Ragnarok Online server stack focused exclusively on compatibility with the official **International Ragnarok Online (iRO)** client.
+
+The project is inspired by the architecture and many years of experience behind mature Ragnarok Online server projects such as rAthena, while being designed as a modern .NET codebase with clear server boundaries, automated tests, cross-platform development, and maintainable infrastructure.
+
+The goal is simple: build a modern iRO private server implementation without requiring a custom or modified game client.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
-## Status
-- LoginServer: functional and actively aligned with legacy behavior.
-- CharServer: MVP running (login registration, char list/create/delete, map handoff).
-- MapServer: MVP running (char handshake + basic client entry).
+## Project Status
+
+Athena.NET is under active development.
+
+- **LoginServer** — working with the current stock iRO login flow.
+- **CharServer** — character loading, creation, persistence and server handoff are working.
+- **MapServer** — server foundation is running and current development is focused on completing the stock iRO map-entry flow.
+- **Gameplay systems** — maps, movement, NPCs, items, skills, mobs, combat, quests and social systems will follow as the MapServer matures.
+
+The project is not yet ready for production use or hosting a public game server.
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+## Reference Projects
+
+Athena.NET keeps two well-known Ragnarok Online projects in the `legacy/` directory as development references:
+
+- `legacy/rathena/` — reference for server architecture, gameplay systems, database concepts, maps, scripts, NPCs, items, skills, mobs and tooling.
+- `legacy/openkore/` — reference for client/server behavior and protocol research.
+
+They are reference projects only. Athena.NET is not intended to be a generic rAthena or kRO-compatible server; the supported client target is iRO.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 ## Quick Start
+
 - [Install prerequisites and secrets](docs/installation.md)
 - [Configure runtime settings](docs/configuration.md)
 - [Run locally](docs/run-locally.md)
@@ -59,11 +86,12 @@ The current milestone is a fully compatible LoginServer; CharServer and MapServe
 - [Migrations](docs/migrations.md)
 - [SQL Edge](docs/sql-edge.md)
 
-Note: SQL credentials live in `solutionfiles/secrets/secret.json`. The AppHost reads this file to keep Aspire and the servers in sync. Aspire now uses a persistent SQL Edge volume named `athena-sql` to keep data across restarts.
+Local development can be run through .NET Aspire, which starts the Athena.NET services and supporting infrastructure together.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
-## Docs
+## Documentation
+
 - [Installation](docs/installation.md)
 - [Configuration](docs/configuration.md)
 - [Run locally](docs/run-locally.md)
@@ -73,16 +101,36 @@ Note: SQL credentials live in `solutionfiles/secrets/secret.json`. The AppHost r
 - [Checklists](docs/checklists.md)
 - [Helper scripts](docs/scripts.md)
 
+Developer and protocol research notes are maintained separately under `ai/` so the public project README can remain focused on the project itself.
+
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 ## Roadmap
-- [x] LoginServer login flow parity and SQL Server support
-- [x] Legacy config aliases and `import:` support
-- [x] `login_msg.conf` message catalog support
-- [x] CharServer MVP (login registration, char list/create/delete, map handoff)
-- [x] MapServer MVP (char handshake, client entry accept/refuse)
-- [ ] CharServer parity (map list responses, online sync, inter-server extras)
-- [ ] MapServer foundation (map cache/index, spawn/move, basic NPC)
+
+- [x] iRO LoginServer connectivity
+- [x] iRO CharServer connectivity
+- [x] Character loading and creation
+- [x] Character persistence and selection
+- [x] Handoff from CharServer to MapServer
+- [ ] Complete MapServer authentication and first-map entry
+- [ ] Player spawn, status and inventory
+- [ ] Movement and map switching
+- [ ] NPC and script interaction
+- [ ] Items, equipment and skills
+- [ ] Mobs and combat
+- [ ] Quests, parties, guilds, storage and chat
+- [ ] Administration and operational tooling
+- [ ] Production hardening and deployment documentation
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+## Project Scope
+
+Athena.NET is an unofficial server implementation and is not affiliated with, endorsed by, or sponsored by Gravity Co., Ltd. or WarpPortal.
+
+Ragnarok Online and related names and assets are the property of their respective owners.
+
+Athena.NET is distributed under the terms described in [LICENSE](LICENSE).
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
