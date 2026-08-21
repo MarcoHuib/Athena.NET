@@ -175,25 +175,13 @@ public sealed class LoginTcpServer
 
             uint version = BitConverter.ToUInt32(buffer, 2);
 
-            var idBytes = buffer.AsSpan(6, 24);
-
-            var passwordBytes = buffer.AsSpan(30, 24);
-
             byte clientType = buffer[54];
 
             LoginLogger.Info($"[iRO DEBUG] Packet ID : 0x{packetId:X4}");
 
             LoginLogger.Info($"[iRO DEBUG] Version   : {version}");
 
-            LoginLogger.Info($"[iRO DEBUG] ID HEX    : {Convert.ToHexString(idBytes)}");
-
-            LoginLogger.Info($"[iRO DEBUG] PASS HEX  : {Convert.ToHexString(passwordBytes)}");
-
             LoginLogger.Info($"[iRO DEBUG] ClientType: {clientType}");
-
-            LoginLogger.Info(
-                $"[iRO DEBUG] Full packet ({packetLength} bytes): " + Convert.ToHexString(buffer)
-            );
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {

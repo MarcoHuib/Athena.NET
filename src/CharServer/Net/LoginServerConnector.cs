@@ -265,7 +265,7 @@ public sealed class LoginServerConnector
 
         if (result != 0)
         {
-            CharLogger.Warning($"Login auth failed (accountId={accountId}, loginId1={loginId1}, loginId2={loginId2}, sex={sex}, result={result}).");
+            CharLogger.Warning($"Login auth failed (sex={sex}, result={result}).");
         }
 
         _ = session.HandleAuthResponseAsync(accountId, loginId1, loginId2, sex, result, clientType);

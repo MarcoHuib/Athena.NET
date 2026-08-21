@@ -408,7 +408,7 @@ public sealed class ClientSession : IDisposable
 
         if (!result.Success)
         {
-            LoginLogger.Warning($"Login failed for user '{request.UserId}' from {remoteIp} (server={isServer}, code={result.ErrorCode}).");
+            LoginLogger.Warning($"Login failed (server={isServer}, code={result.ErrorCode}).");
             if (isServer)
             {
                 await SendCharServerAckAsync(3, cancellationToken);
@@ -429,13 +429,13 @@ public sealed class ClientSession : IDisposable
         {
             if (result.Sex != 2 || result.AccountId >= 5)
             {
-                LoginLogger.Warning($"Char server login refused for user '{request.UserId}' (accountId={result.AccountId}, sex={result.Sex}).");
+                LoginLogger.Warning($"Char server login refused (sex={result.Sex}).");
                 await SendCharServerAckAsync(3, cancellationToken);
                 return;
             }
 
             RegisterCharServer(result, request, cancellationToken);
-            LoginLogger.Status($"Char server login accepted for '{request.UserId}' (accountId={result.AccountId}).");
+            LoginLogger.Status("Char server login accepted.");
             await SendCharServerAckAsync(0, cancellationToken);
             return;
         }
@@ -528,7 +528,7 @@ public sealed class ClientSession : IDisposable
         }
         if (result != 0)
         {
-            LoginLogger.Warning($"Auth request denied (accountId={accountId}, loginId1={loginId1}, loginId2={loginId2}, sex={sex}).");
+            LoginLogger.Warning($"Auth request denied (sex={sex}).");
         }
 
         var buffer = new byte[21];
@@ -1501,7 +1501,7 @@ public sealed class ClientSession : IDisposable
 
             await db.IpBanList.AddAsync(ban, cancellationToken);
             await db.SaveChangesAsync(cancellationToken);
-            LoginLogger.Info($"IPBan added for {list} ({Config.DynamicPassFailureBanDurationMinutes}m).");
+            LoginLogger.Info($"IPBan added ({Config.DynamicPassFailureBanDurationMinutes}m).");
         }
     }
 
@@ -1780,7 +1780,6 @@ public sealed class ClientSession : IDisposable
         }
 
         LoginLogger.Info($"[iRO DEBUG] AC_ACCEPT_LOGIN packet=0x{PacketConstants.AcAcceptLogin:X4} len={buffer.Length} servers={serverCount}");
-        LoginLogger.Info($"[iRO DEBUG] AC_ACCEPT_LOGIN HEX: {Convert.ToHexString(buffer)}");
 
         await _stream.WriteAsync(buffer, cancellationToken);
     }
@@ -1992,7 +1991,7 @@ public sealed class ClientSession : IDisposable
                 var entry = await Dns.GetHostEntryAsync(query);
                 if (entry.AddressList.Length > 0)
                 {
-                    LoginLogger.Warning($"DNSBL match: {query}");
+                    LoginLogger.Warning("DNSBL match detected.");
                     return true;
                 }
             }

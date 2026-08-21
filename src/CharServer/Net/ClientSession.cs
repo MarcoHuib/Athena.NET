@@ -267,10 +267,10 @@ public sealed class ClientSession : IDisposable, ISession
     private async Task HandleAccountCheckAsync(byte[] packet, CancellationToken cancellationToken)
     {
         var accountId = ParseAccountCheck(packet);
-        CharLogger.Debug($"[iRO DEBUG] Received 0x0187 accountId={accountId}");
+        CharLogger.Debug("[iRO DEBUG] Received 0x0187 account check");
         if (accountId != _accountId)
         {
-            CharLogger.Warning($"Char keep-alive account mismatch: expected {_accountId}, received {accountId}.");
+            CharLogger.Warning("Char keep-alive account mismatch.");
             _client.Close();
             return;
         }
@@ -278,7 +278,7 @@ public sealed class ClientSession : IDisposable, ISession
         if (_configStore.Current.IroRenewalCompatibility)
         {
             var echo = BuildAccountCheckEcho(accountId);
-            CharLogger.Debug($"[iRO DEBUG] Sending 0x0187 echo accountId={accountId}");
+            CharLogger.Debug("[iRO DEBUG] Sending 0x0187 account check echo");
             await WriteAsync(echo, cancellationToken);
         }
     }
@@ -855,7 +855,7 @@ public sealed class ClientSession : IDisposable, ISession
                     cancellationToken);
                 return;
             }
-            CharLogger.Debug($"[iRO DEBUG] Character created charId={character.CharId} accountId={_accountId}");
+            CharLogger.Debug($"[iRO DEBUG] Character created charId={character.CharId}");
 
             var items = SelectStartItems(config, job)
                 .Select(item => new CharInventory
