@@ -7,10 +7,10 @@
 <div align="center">
   <img src="docs/assets/logo.png" alt="Athena.NET Logo" style="display: block; margin: 0 auto 6px;">
   <h1 align="center" style="margin-top: 0;">Athena.NET</h1>
+
   <p align="center">
-    A modern C# private server implementation focused exclusively on the stock International Ragnarok Online (iRO) client.
+    A modern, cross-platform Ragnarok Online private server written in C# and built for the official International Ragnarok Online (iRO) client.
     <br />
-    Strongly inspired by rAthena's architecture, gameplay systems, data model, and tooling — but with client-facing protocol behavior driven by verified iRO traffic.
     <br />
     <a href="docs/"><strong>Explore the docs »</strong></a>
     <br />
@@ -24,6 +24,7 @@
 </div>
 
 ## CI
+
 - [![Login Server CI][login-ci-shield]][login-ci-url]
 - [![Char Server CI][char-ci-shield]][char-ci-url]
 - [![Map Server CI][map-ci-shield]][map-ci-url]
@@ -32,57 +33,51 @@
   <summary>Table of Contents</summary>
   <ol>
     <li><a href="#about">About</a></li>
-    <li><a href="#protocol-strategy">Protocol strategy</a></li>
-    <li><a href="#reference-projects">Reference projects</a></li>
-    <li><a href="#status">Status</a></li>
+    <li><a href="#project-status">Project Status</a></li>
+    <li><a href="#reference-projects">Reference Projects</a></li>
     <li><a href="#quick-start">Quick Start</a></li>
-    <li><a href="#docs">Documentation</a></li>
+    <li><a href="#documentation">Documentation</a></li>
     <li><a href="#roadmap">Roadmap</a></li>
-    <li><a href="#project-scope">Project scope</a></li>
+    <li><a href="#project-scope">Project Scope</a></li>
   </ol>
 </details>
 
 ## About
-Athena.NET is a clean, cross-platform C# implementation of a Ragnarok Online server stack with one compatibility target: the current supported **stock iRO client**.
 
-The project borrows heavily from rAthena where that is valuable: Login/Char/Map server separation, database concepts, gameplay rules, data formats, NPC/scripts, tools, and years of server-engineering experience. Athena.NET does **not** treat generic rAthena/kRO packet parity as a goal. Where verified iRO traffic differs, iRO behavior wins.
+Athena.NET is a clean, modern C# implementation of a Ragnarok Online server stack focused exclusively on compatibility with the official **International Ragnarok Online (iRO)** client.
 
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
+The project is inspired by the architecture and many years of experience behind mature Ragnarok Online server projects such as rAthena, while being designed as a modern .NET codebase with clear server boundaries, automated tests, cross-platform development, and maintainable infrastructure.
 
-## Protocol strategy
-Client-facing protocol work is capture-driven. The evidence priority is:
-
-1. Successful official iRO Wireshark captures for the targeted client generation.
-2. Repeatable behavior of the unmodified stock iRO client against Athena.NET.
-3. Regression tests derived from verified traffic.
-4. The local reference projects `legacy/rathena/` and `legacy/openkore/` as implementation and structural references.
-
-This prevents regional kRO assumptions from silently becoming iRO behavior.
-
-The target architecture does not require patching `Ragexe.exe`, replacing the official executable, or introducing a custom client protocol. Development network redirection may be used to point official endpoints at local Athena.NET services while leaving the client itself unmodified.
+The goal is simple: build a modern iRO private server implementation without requiring a custom or modified game client.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
-## Reference projects
-The repository keeps two legacy reference projects under `legacy/`:
+## Project Status
 
-- `legacy/rathena/` — the primary reference for Login/Char/Map server architecture, gameplay systems, database/schema concepts, maps, scripts, NPCs, items, skills, mobs, tooling, and mature server behavior.
-- `legacy/openkore/` — a secondary reference for packet names, iRO/community protocol observations, regional behavior clues, and interpreting client/server traffic.
+Athena.NET is under active development.
 
-These folders are **reference projects, not compatibility targets**. Athena.NET does not aim to support generic rAthena/kRO clients, and it does not treat OpenKore packet tables as authoritative. For client-facing behavior, verified stock-iRO captures and repeatable stock-client runtime behavior always win. The `legacy/` trees should normally be treated as read-only and should not be edited as part of Athena.NET feature work unless that is explicitly requested.
+- **LoginServer** — working with the current stock iRO login flow.
+- **CharServer** — character loading, creation, persistence and server handoff are working.
+- **MapServer** — server foundation is running and current development is focused on completing the stock iRO map-entry flow.
+- **Gameplay systems** — maps, movement, NPCs, items, skills, mobs, combat, quests and social systems will follow as the MapServer matures.
+
+The project is not yet ready for production use or hosting a public game server.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
-## Status
-- **LoginServer:** stock-iRO login flow works, including the verified `0x0064` request and `0x0A4D` world-list response.
-- **CharServer:** stock-iRO character list, keepalive, create, persistence, select, and `0x0071` MapServer handoff are working in the current test flow.
-- **MapServer:** process/inter-server foundation exists; current milestone is decoding and authenticating the stock-iRO `0x0C1F` 1001-byte MapServer entry packet.
+## Reference Projects
 
-See `ai/iro-2026-wire.md` for the current verified wire facts and explicitly disproven assumptions.
+Athena.NET keeps two well-known Ragnarok Online projects in the `legacy/` directory as development references:
+
+- `legacy/rathena/` — reference for server architecture, gameplay systems, database concepts, maps, scripts, NPCs, items, skills, mobs and tooling.
+- `legacy/openkore/` — reference for client/server behavior and protocol research.
+
+They are reference projects only. Athena.NET is not intended to be a generic rAthena or kRO-compatible server; the supported client target is iRO.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 ## Quick Start
+
 - [Install prerequisites and secrets](docs/installation.md)
 - [Configure runtime settings](docs/configuration.md)
 - [Run locally](docs/run-locally.md)
@@ -91,11 +86,12 @@ See `ai/iro-2026-wire.md` for the current verified wire facts and explicitly dis
 - [Migrations](docs/migrations.md)
 - [SQL Edge](docs/sql-edge.md)
 
-Note: SQL credentials live in `solutionfiles/secrets/secret.json`. The AppHost reads this file to keep Aspire and the servers in sync. Aspire uses the persistent SQL Edge volume `athena-sql` to retain local data across restarts.
+Local development can be run through .NET Aspire, which starts the Athena.NET services and supporting infrastructure together.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
-## Docs
+## Documentation
+
 - [Installation](docs/installation.md)
 - [Configuration](docs/configuration.md)
 - [Run locally](docs/run-locally.md)
@@ -104,31 +100,37 @@ Note: SQL credentials live in `solutionfiles/secrets/secret.json`. The AppHost r
 - [Migrations](docs/migrations.md)
 - [Checklists](docs/checklists.md)
 - [Helper scripts](docs/scripts.md)
-- `ai/README.md` - development/agent policy
-- `ai/iro-2026-wire.md` - verified stock-iRO protocol knowledge
+
+Developer and protocol research notes are maintained separately under `ai/` so the public project README can remain focused on the project itself.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 ## Roadmap
-- [x] Stock-iRO LoginServer authentication and world handoff
-- [x] Stock-iRO CharServer entry and character synchronization
-- [x] 175-byte iRO `CHARACTER_INFO` serialization
-- [x] Stock-iRO character creation and persistence
-- [x] Stock-iRO character select and `0x0071` MapServer handoff
-- [ ] Decode and authenticate `0x0C1F` MapServer entry
-- [ ] Reach stable first-map spawn with the stock iRO client
-- [ ] Initial status/inventory/equipment synchronization
+
+- [x] iRO LoginServer connectivity
+- [x] iRO CharServer connectivity
+- [x] Character loading and creation
+- [x] Character persistence and selection
+- [x] Handoff from CharServer to MapServer
+- [ ] Complete MapServer authentication and first-map entry
+- [ ] Player spawn, status and inventory
 - [ ] Movement and map switching
-- [ ] NPC/script interaction
-- [ ] Items, skills, mobs, combat, quests, party/guild/storage/chat and other iRO gameplay systems
-- [ ] Production hardening, observability, migration tooling, and deployment documentation
+- [ ] NPC and script interaction
+- [ ] Items, equipment and skills
+- [ ] Mobs and combat
+- [ ] Quests, parties, guilds, storage and chat
+- [ ] Administration and operational tooling
+- [ ] Production hardening and deployment documentation
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
-## Project scope
-Athena.NET is an unofficial server implementation and is not affiliated with, endorsed by, or sponsored by Gravity Co., Ltd. or WarpPortal. Ragnarok Online and related names/assets are trademarks/property of their respective owners.
+## Project Scope
 
-The repository remains distributed under the license in [LICENSE](LICENSE). Do not modify the GPL license text itself.
+Athena.NET is an unofficial server implementation and is not affiliated with, endorsed by, or sponsored by Gravity Co., Ltd. or WarpPortal.
+
+Ragnarok Online and related names and assets are the property of their respective owners.
+
+Athena.NET is distributed under the terms described in [LICENSE](LICENSE).
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
