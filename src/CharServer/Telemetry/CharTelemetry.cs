@@ -58,9 +58,9 @@ public sealed class CharTelemetry : IDisposable
         });
 
         var otelLogger = loggerFactory.CreateLogger(ServiceName);
-        Logging.CharLogger.SetTelemetrySink((level, message) =>
+        Logging.CharLogger.SetTelemetrySink(level =>
         {
-            otelLogger.Log(MapLogLevel(level), message);
+            otelLogger.Log(MapLogLevel(level), "CharServer log event ({SourceLevel})", level);
         });
 
         using (var activity = ActivitySource.StartActivity("char.startup"))

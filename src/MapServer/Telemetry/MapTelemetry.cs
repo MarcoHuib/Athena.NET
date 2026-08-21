@@ -58,9 +58,9 @@ public sealed class MapTelemetry : IDisposable
         });
 
         var otelLogger = loggerFactory.CreateLogger(ServiceName);
-        Logging.MapLogger.SetTelemetrySink((level, message) =>
+        Logging.MapLogger.SetTelemetrySink(level =>
         {
-            otelLogger.Log(MapLogLevel(level), message);
+            otelLogger.Log(MapLogLevel(level), "MapServer log event ({SourceLevel})", level);
         });
 
         using (var activity = ActivitySource.StartActivity("map.startup"))
