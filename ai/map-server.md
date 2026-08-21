@@ -1,42 +1,66 @@
-# Map server migration prompt
+# iRO MapServer development prompt
 
-Goal
-- Build the C# map server with incremental parity: core session, map load, basic NPC and battle flow.
+## Goal
+Make Athena.NET accept the current unmodified stock iRO client after `0x0071`, authenticate the selected character, spawn it on the map, and then implement iRO gameplay incrementally.
 
-Current state
-- Map server project scaffolded with config/secrets/logging and Aspire hookup.
-- Inter-server handshake (map -> char) implemented: 0x2af8 login, 0x2afa map list (empty), 0x2b26 auth request, 0x2afd/0x2b27 responses.
-- Map server accepts client connections and handles CZ_ENTER/CZ_ENTER2, then replies with ZC_ACCEPT_ENTER or ZC_REFUSE_ENTER after char auth.
-- Unit tests added for config + secrets loading (MapServer.Tests).
+This is now the primary project milestone.
 
-Legacy references
-- upstream/src/map/map.cpp
-- upstream/src/map/clif.cpp, npc.cpp, battle.cpp, pc.cpp
-- upstream/conf/map_athena.conf
-- upstream/conf/script_athena.conf
-- upstream/conf/packet_athena.conf
-- upstream/db/ and upstream/npc/ data
-- upstream/sql-files/main.sql
+Generic kRO/rAthena client entry compatibility is not a goal. Existing CZ_ENTER/CZ_ENTER2 code is reference/legacy code unless verified iRO evidence later uses it.
 
-Phased build plan
-1) MVP network core
-- Map server start, client connection, basic packet loop.
-- Inter-server handshake with char server.
-- Load map cache (map_cache.dat) and map index.
+## Current state
+- MapServer process/config/secrets/logging and Aspire integration exist.
+- MapServer registers with CharServer and existing internal char-map auth messaging exists.
+- CharServer can now successfully create/select a character and send `0x0071` map handoff.
+- The verified official MapServer endpoint in the capture is `128.241.92.42:4501`; development redirection can route that externally to Athena.NET's internal MapServer listener.
+- Athena.NET recognizes `0x0C1F` framing as a fixed 1001-byte stock-iRO client packet but does not yet fully parse/authenticate it.
 
-2) Gameplay foundation
-- Character spawn, movement, map switching.
-- Basic NPC interaction and script execution.
+## Verified iRO evidence
+- CharServer handoff is `0x0071`, 28 bytes.
+- After handoff the stock client opens a new MapServer TCP connection.
+- First official client packet is `0x0C1F`, 1001 bytes.
+- The packet contains a large authentication/token payload.
 
-3) Systems parity
-- Battle, skills, items, mobs, quests, storage, guild/party, and chat.
+## Immediate next milestone: 0x0C1F authentication
+1. Confirm the redirected stock client reaches Athena.NET MapServer.
+2. Capture/log only safe framing metadata: packet ID, length, connection/session correlation. Do not dump tokens.
+3. Decode the sanitized official `0x0C1F` fixture field by field.
+4. Identify stable IDs/fields that can be correlated with the LoginServer/CharServer session and selected character.
+5. Determine which large token fields must be validated, reproduced, ignored as opaque, or replaced by Athena.NET-issued state.
+6. Map the iRO request to the existing CharServer auth-node handoff without weakening account/character ownership checks.
+7. Reconstruct the official first MapServer response sequence from the verified capture.
+8. Add exact parser/serializer/state-machine tests before broad gameplay work.
 
-Data and tooling
-- Decide how to ingest legacy db and npc formats (YAML, TXT, scripts).
-- Determine which legacy tools to port (yaml2sql, mapcache, etc.).
+## After MapServer authentication
+Work in capture-driven slices:
+- successful connection/accept sequence
+- character/map spawn
+- status and basic character data sync
+- inventory/equipment sync
+- movement and map switching
+- NPC/script interaction
+- items/skills/combat/mobs
+- party/guild/storage/chat/quests and other iRO features as exercised
 
-Definition of done
-- Client can enter a map and interact with simple NPCs, with data loaded from legacy db.
+## Useful rAthena reference areas
+Use heavily for architecture/game mechanics, not as iRO packet authority:
+- `upstream/src/map/map.cpp`
+- `upstream/src/map/clif.cpp`
+- `upstream/src/map/pc.cpp`
+- `upstream/src/map/npc.cpp`
+- `upstream/src/map/battle.cpp`
+- `upstream/src/map/skill.cpp`
+- `upstream/src/map/status.cpp`
+- `upstream/conf/map_athena.conf`
+- `upstream/conf/script_athena.conf`
+- `upstream/db/`
+- `upstream/npc/`
+- `upstream/sql-files/main.sql`
 
-Cleanup notes
-- Remove completed phases to keep the prompt short.
+## Safety and diagnostics
+- Never log the full 1001-byte `0x0C1F` at runtime if it contains live authentication material.
+- Use sanitized fixtures in tests.
+- Reject malformed lengths and impossible IDs safely.
+- Do not bypass CharServer auth-node/ownership checks merely to enter the map.
+
+## Definition of done for current milestone
+A supported unmodified stock iRO client selects a character, connects to Athena.NET MapServer, authenticates through the verified iRO entry flow, and reaches a stable first-map state.

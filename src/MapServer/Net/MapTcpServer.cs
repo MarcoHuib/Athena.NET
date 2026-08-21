@@ -56,7 +56,7 @@ public sealed class MapTcpServer
         using var activity = MapTelemetry.ActivitySource.StartActivity("map.client.session", ActivityKind.Server);
         activity?.SetTag("net.peer.ip", endpoint?.Address.ToString());
         activity?.SetTag("net.peer.port", endpoint?.Port);
-        MapLogger.Info($"Client connected: {endpoint}");
+        MapLogger.Info($"[iRO MAP DEBUG] Client connected: {endpoint}");
 
         using (client)
         using (var session = new MapClientSession(sessionId, client, _charConnector))
@@ -79,6 +79,6 @@ public sealed class MapTcpServer
             }
         }
 
-        MapLogger.Info($"Client disconnected: {endpoint}");
+        MapLogger.Info($"[iRO MAP DEBUG] Client disconnected: {endpoint}");
     }
 }
