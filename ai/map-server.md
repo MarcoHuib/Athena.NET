@@ -243,7 +243,7 @@ The third byte remains opaque. Reassembled traffic from that boundary is:
 |---:|---:|---:|---|---|---|
 | 1 | 421 | C1001 | C->S | `0x007D/3` | map-loaded/load-end acknowledgement; ID/direction correlated with upstream, iRO length capture-proven |
 | 2 | 422 | S487 | S->C | `0x0C20/28` | first response; variable length and bytes capture-proven, semantics unknown |
-| 3 | 423 | C1004 | C->S | `0x0360/10` | first later client boundary; payload opaque |
+| 3 | 423 | C1004 | C->S | `0x0360/7`, `0x08C9/3` | two coalesced client packets, each with an opaque trailing iRO byte |
 | 4 | 426 | S515 | S->C | `2 x 0x0ACB/12`, then `12 x 0x00B0/8` | long and 32-bit parameter/status updates |
 | 5 | 427 | C1014 | C->S | `0x0C21/29`, declared length 28 plus one opaque byte | semantics unknown |
 | 6 | 428-429 | S627 | S->C | 76 packets through S2143 | base stats, parameter/status updates, appearance, map properties, actor/world records, navigation, broadcast, and cash-shop data |
@@ -275,12 +275,13 @@ is replayed.
 - Current rAthena contains no `0x0C20`/`0x0C21` definitions. Current OpenKore's
   iRO table contains neither; its ROla table only marks both variable-length,
   without names or layouts. This is not sufficient evidence to implement them.
-- Generic OpenKore tables describe `0x0360/6`; the stock-iRO capture instead
-  proves one ten-byte client record. The additional bytes remain opaque.
+- Generic OpenKore tables describe `0x0360/6`; the walking capture proves that
+  the prior ten-byte TCP payload consists of `0x0360/7` and `0x08C9/3`, not one
+  ten-byte Ragnarok packet. The final byte of each remains opaque.
 
 ### Implemented boundary and hard-gate result
 
-The iRO framing table registers `0x007D/3` and capture-observed `0x0360/10`.
+The iRO framing table registers `0x007D/3`, `0x0360/7`, and `0x08C9/3`.
 Both are non-terminal known boundaries. No server response is implemented after
 `0x007D`: although `0x0C20/28` is the first official response, its field layout,
 semantics, dynamic values, and Athena state source are unknown. Sending the
@@ -291,9 +292,242 @@ Expected next diagnostics are:
 ```text
 [iRO MAP DEBUG] Map client packet=0x007D len=3
 [iRO MAP DEBUG] Received stock iRO map-loaded packet=0x007D len=3
-[iRO MAP DEBUG] Map client packet=0x0360 len=10
-[iRO MAP DEBUG] Reached next post-enter client boundary packet=0x0360 len=10
+[iRO MAP DEBUG] Map client packet=0x0360 len=7
+[iRO MAP DEBUG] Reached next post-enter client boundary packet=0x0360 len=7
+[iRO MAP DEBUG] Map client packet=0x08C9 len=3
+[iRO MAP DEBUG] Received opaque stock iRO packet=0x08C9 len=3
 ```
+
+## Walking capture: world, movement, and map transitions
+
+Primary evidence is
+`/Users/marco/Downloads/full-ragnarok-flow-with-walking.pcapng`. Relevant TCP
+connections are LoginServer `192.168.178.55:63054 -> 128.241.92.36:6800`,
+CharServer `:63056 -> 128.241.92.43:4500`, first MapServer
+`:53249 -> 128.241.92.42:4501`, and second MapServer
+`:53884 -> 128.241.92.42:4506`.
+
+### Proven chronological flow
+
+```text
+frame 114  C->Char       0x0066 character select
+frame 115  Char->C       0x0071 iz_int01.gat, 128.241.92.42:4501
+frame 127  C->Map :4501  0x0C1F/1001
+frame 150  Map->C        0x02EB, (22,37,0)
+frame 156  C->Map        0x007D/3
+frame 163  Map->C        0x0AE2/7, UI type 7, data 0
+frames 250..405          four 0x035F/6 -> 0x0087/12 movement pairs
+frame 407  Map->C        0x0091 iz_int01.gat, (51,30)
+frame 408  C->Map        0x007D/3, same TCP; no new auth
+frames 425..449          three more movement pairs
+frame 455  Map->C        0x0092 int_land01.gat, (85,107), 128.241.92.42:4506
+           client closes :4501 and opens :4506
+frame 462  C->Map :4506  second 0x0C1F/1001
+frame 466  Map->C        0x02EB, (85,107,0)
+frame 471  C->Map        0x007D/3
+frames 539..560          two movement pairs on int_land01
+```
+
+### Initial world state and UI
+
+`0x0071` proves `iz_int01.gat`; `0x02EB` independently proves spawn
+`(22,37,direction 0)`. Athena's `iz_int03 (18,26)` is selected from the configured
+five-entry `start_point` list and persisted in character state. Both `iz_int01`
+and `iz_int03` are real parallel intro instances and share client resources.
+The capture concerns one character/tutorial instance and does not prove Athena's
+configured selection is obsolete, so no start-point change is made.
+
+Captured `0x0AE2` is exactly seven bytes: uint16 ID, uint8 UI type `7`, int32
+data `0`, little-endian. OpenKore calls it `open_ui`; rAthena's matching enum calls
+type 7 `OUT_UI_ATTENDANCE`. It occurs after the first `0x007D` during world-state
+initialization. Athena has no attendance counter/state, so the packet is not sent
+with a fabricated zero. It is a strong candidate for one missing official UI,
+but the capture alone cannot prove which observed screen the user meant.
+
+### Capture-proven movement
+
+Request `0x035F/6` is:
+
+| Offset | Type | Meaning |
+|---:|---|---|
+| 0 | uint16 | ID `0x035F` |
+| 2 | byte[3] | packed destination x/y; low nibble is zero in all samples |
+| 5 | byte | opaque stock-iRO trailing byte |
+
+Samples across both maps:
+
+| Frame | Packed destination | Decoded target | Opaque byte |
+|---:|---|---|---:|
+| 250 | `05 01 E0` | `(20,30)` | `79` |
+| 260 | `06 41 70` | `(25,23)` | `B7` |
+| 270 | `06 41 60` | `(25,22)` | `50` |
+| 401 | `06 81 E0` | `(26,30)` | `1E` |
+| 425 | `0E 81 C0` | `(58,28)` | `CF` |
+| 539 | `13 46 60` | `(77,102)` | `40` |
+
+Response `0x0087/12` is uint16 ID, uint32 little-endian server tick, then six
+packed movement bytes. Those bytes encode source x/y, destination x/y, and two
+four-bit subcell values. The first four responses correlate as
+`(22,37)->(20,30)`, `(20,30)->(25,23)`, `(25,23)->(25,22)`, and
+`(25,22)->(26,30)`, with subcell `8/8`. Later clicks made before prior movement
+completed show official intermediate source/subcell values; Athena currently has
+no path/timing engine to reproduce those intermediate states.
+
+Athena implements the minimal proven case: parse the destination, retain the
+sixth byte as opaque, build `0x0087` from the current in-memory position and a
+monotone 32-bit millisecond tick, then advance the in-memory position to the
+target. This has no collision, pathfinding, travel-time interpolation, or
+per-tile database persistence claim.
+
+### 0x0368 correction
+
+Frame 586 proves `0x0368/7`: uint16 ID, uint32 actor ID, one opaque trailing byte.
+OpenKore iRO maps it to `actor_info_request`; rAthena's generic six-byte handler
+reads the actor ID. Official responses correlate it with actor/name data. It is
+not a movement request. Athena previously logged length 2 because unknown framing
+had read only the ID before returning an unsupported boundary. The iRO table now
+uses seven bytes and keeps the packet non-terminal; no actor response is invented.
+
+### Map transitions
+
+`0x0091/22` layout is uint16 ID, map[16], uint16 x, uint16 y. Frame 407 sends
+`iz_int01.gat (51,30)`. TCP `:4501` stays open, no new `0x0C1F` occurs, and the
+client sends `0x007D/3` again.
+
+`0x0092/28` layout is uint16 ID, map[16], uint16 x/y, IPv4[4] in network byte
+order, and uint16 little-endian port. Frame 455 sends `int_land01.gat (85,107)`
+and `128.241.92.42:4506`. The old connection closes; the new connection starts
+with `0x0C1F/1001`, bootstrap, and `0x007D/3`. Local iRO map tables label
+`int_land01.rsw` `Remote Island`, and resource tables alias it to `int_land`.
+
+The two map-auth packets have equal packet/account/character/login-ID header
+bytes. Opaque equality ranges are `0x014..0x3DF` and `0x3E7`; changed ranges are
+`0x00E..0x013`, `0x3E0..0x3E6`, and `0x3E8`. No scope or token semantics are
+inferred from those changes.
+
+### World / warp state
+
+The first tutorial door now has capture evidence and matching real warp data:
+
+```text
+frame 401  C->S  0x035F/6 target (26,30)
+frame 405  S->C  0x0087/12 (25,22) -> (26,30)
+frame 407  S->C  0x0091/22 iz_int01.gat (51,30)
+frame 408  C->S  0x007D/3 on the same TCP connection
+```
+
+No other client Ragnarok packet occurs between frames 401 and 407. The movement
+response precedes the map change. The request-to-map-change interval is about
+1.223 seconds and the response-to-map-change interval about 1.048 seconds; Athena
+does not claim to reproduce walking-time interpolation.
+
+Local rAthena data in `npc/re/warps/cities/izlude.txt` independently defines the
+door at center `(27,30)`, radius `(1,1)`, to `(51,30)` for `iz_int` and every
+`iz_int01..04` variant. `npc.cpp:npc_touch_areanpc` proves these radii are an
+inclusive area, so captured target `(26,30)` is inside the real warp zone. It also
+defines the reverse door at `(47,30)`, radius `(1,1)`, to `(22,30)` for all five
+maps. The reverse route is upstream-mapdata proven but was not exercised in this
+capture.
+
+Athena now has an immutable `WorldMapRegistry` of data-driven `WarpDefinition`
+records for those real same-map tutorial doors. After parsing movement it sends
+the already proven `0x0087`, updates map/position, and sends a structured
+`0x0091`. The serializer emits ID at offset 0, ASCII map[16] at offset 2 with
+client-facing `.gat`, and little-endian x/y at offsets 18/20. The TCP session
+stays open; the next `0x007D/3` and movement are accepted from `(51,30)`.
+
+Runtime subsequently proved the first version only matched the requested target:
+a click ending at `(28,30)` warped successfully, while a route crossing the door
+and ending outside it could miss. Warp matching now enumerates a direct integer
+grid line from the session position to the requested target using the standard
+Bresenham error-step algorithm. Each traversed cell is checked in travel order,
+so the first intersected warp wins independently of registry ordering. When a
+route intersects, `0x0087` ends at that first intersection cell rather than the
+far-side requested target; old-map state is never advanced beyond the portal.
+Then the existing `0x0091` transition applies destination state. This is a small
+world approximation, not official pathfinding: GAT collision, obstacle detours,
+walking interpolation, and timing remain unimplemented.
+
+This minimal model has no collision, pathfinding, NPC, actor, or loaded map-cache
+state. Normal movement and same-server warps are currently in-memory only. The
+MapServer has no character-position persistence command to CharServer, so a
+disconnect/restart can restore the prior database location; expanding that
+internal protocol was kept outside this client-protocol task.
+
+The later route is separately proven:
+
+```text
+frame 425  target (58,28), frame 426 movement from (51,30)
+frame 435  target (56,19), frame 436 movement from intermediate (55,28)
+frame 448  target (57,14), frame 449 movement from intermediate (56,20)
+frame 455  0x0092/28 int_land01.gat (85,107), 128.241.92.42:4506
+```
+
+rAthena's `#ship_out01` script is centered at `(56,15)` with radius `(1,1)` and
+warps to `int_land01 (85,107)`, correlating the captured target `(57,14)` and
+handoff. `0x0092` remains unimplemented. Supporting it correctly requires map
+ownership/routing, a configured destination endpoint, persistence, transfer of a
+fresh single-use auth ticket, closure of the old connection, and validation of a
+new `0x0C1F` on the destination server. Athena can host many logically owned maps
+in one process and use `0x0091` between them; it should reserve `0x0092` for an
+explicitly configured cross-endpoint ownership boundary rather than rewriting an
+official handoff accidentally.
+
+### Portal visual investigation
+
+The glow is not merely suggested by a packet name. Capture frame 163 contains a
+variable `0x09FF/93` actor-exists record for `#room_out` with object type `6`,
+dynamic actor ID `2304`, class/job `45`, packed position `(27,30)`, and x/y sizes
+`1/1`. That position is exactly the real forward warp center. OpenKore iRO names
+`0x09FF` `actor_exists`; rAthena's matching structure is the modern idle-unit
+record, and `npc.hpp` proves class 45 is `JT_WARPNPC`.
+
+The correlation repeats after the room transition:
+
+| Frame | Packet | Name | Actor ID | Class | Position | Size |
+|---:|---|---|---:|---:|---|---|
+| 163 | `0x09FF/93` | `#room_out` | 2304 | 45 | `(27,30)` | `1/1` |
+| 413 | `0x09FF/92` | `#room_in` | 2305 | 45 | `(47,30)` | `1/1` |
+| 428 | `0x09FF/93` | `#ship_out` | 2309 | 45 | `(56,15)` | `1/1` |
+
+This strongly supports a server-spawned warp-NPC actor as the visible portal,
+with the client rendering class `JT_WARPNPC`; it is not evidence for a separate
+special-effect packet. Athena does not synthesize it yet. A correct implementation
+still needs a world-actor registry, collision-free dynamic actor-ID allocation,
+map-load visibility lifecycle, the exact state mapping for all iRO `0x09FF`
+fields, despawn behavior, and actor-info responses. Replaying actor ID 2304 or a
+captured record would be incorrect.
+
+Captured `0x0368/7` does not establish a portal link. On the second MapServer its
+proved actor request targets actor ID 7966, whose preceding `0x09FF` record is the
+NPC `Lumin#new01_ship` at `(73,100)`, class 639—not a `JT_WARPNPC`. The periodic
+`0x0360/7` is likewise left unrelated to warp or portal state.
+
+### Persistent position and generated world data
+
+CharServer remains persistence owner. MapServer now sends authenticated internal
+`0x2B28/30` containing account ID, character ID, map[16], x and y after `0x0091`
+and when a dirty authenticated session reaches EOF or graceful cancellation.
+CharServer only accepts it when that same authenticated MapServer session consumed
+the `(accountId,charId)` auth node, and updates `last_map/last_x/last_y` on the
+matching non-deleted row. `save_map/save_x/save_y` remain respawn/savepoint state.
+Normal movement is in-memory and dirty; no per-tile write or timed checkpoint is
+performed.
+
+The former hard-coded tutorial list is replaced by `data/world/warps.json`,
+generated deterministically from 139 files in the common and Renewal rAthena warp
+folders at commit `6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca`.
+It contains 3585 static warps across 576 maps, plus 126 classified dynamic/scripted
+WARPNPC visuals, zero resolved static duplicates in this source snapshot, and zero
+malformed/unsupported static records. Dynamic scripts retain visual geometry but
+never receive a guessed destination.
+
+Static and visual-only WARPNPC definitions now produce stable `WarpActor` state.
+Actor IDs come from a thread-safe rAthena NPC domain beginning at 110000000, not
+captured IDs. On `0x007D`, the server emits visible actors in a 14-cell square via
+structured `0x09FF`; movement emits newly in-range actors once per visibility
+cycle. This makes `#room_out`, then `#room_in`, and later visual-only `#ship_out`
+available from the same imported definitions that drive their geometry.
 
 ## Hypotheses / unknown
 - Semantics and validation requirements for `0x0C1F` bytes `0x0E..0x3E8`,

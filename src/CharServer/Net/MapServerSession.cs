@@ -3,7 +3,9 @@ using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using Athena.Net.CharServer.Config;
+using Athena.Net.CharServer.Db;
 using Athena.Net.CharServer.Logging;
+using Microsoft.EntityFrameworkCore;
 
 namespace Athena.Net.CharServer.Net;
 
@@ -13,6 +15,7 @@ public sealed class MapServerSession : IDisposable, ISession
     {
         [PacketConstants.MapLogin] = 60,
         [PacketConstants.MapAuthRequest] = 20,
+        [PacketConstants.MapSavePosition] = 30,
     };
 
     private readonly TcpClient _client;
@@ -20,13 +23,22 @@ public sealed class MapServerSession : IDisposable, ISession
     private readonly CharConfigStore _configStore;
     private readonly MapServerRegistry _registry;
     private readonly MapAuthManager _authManager;
+    private readonly Func<CharDbContext?> _dbFactory;
+    private readonly HashSet<(uint AccountId, uint CharId)> _ownedCharacters = new();
     private readonly SemaphoreSlim _writeLock = new(1, 1);
     private bool _authenticated;
     private IPAddress _mapIp = IPAddress.Loopback;
     private int _mapPort;
     private byte[]? _prefetchedHeader;
 
-    public MapServerSession(int sessionId, TcpClient client, CharConfigStore configStore, MapServerRegistry registry, MapAuthManager authManager, byte[]? prefetchedHeader = null)
+    public MapServerSession(
+        int sessionId,
+        TcpClient client,
+        CharConfigStore configStore,
+        MapServerRegistry registry,
+        MapAuthManager authManager,
+        Func<CharDbContext?> dbFactory,
+        byte[]? prefetchedHeader = null)
     {
         SessionId = sessionId;
         _client = client;
@@ -34,6 +46,7 @@ public sealed class MapServerSession : IDisposable, ISession
         _configStore = configStore;
         _registry = registry;
         _authManager = authManager;
+        _dbFactory = dbFactory;
         _prefetchedHeader = prefetchedHeader;
     }
 
@@ -80,6 +93,9 @@ public sealed class MapServerSession : IDisposable, ISession
                 break;
             case PacketConstants.MapAuthRequest:
                 await HandleAuthRequestAsync(packet, cancellationToken);
+                break;
+            case PacketConstants.MapSavePosition:
+                await HandleSavePositionAsync(packet, cancellationToken);
                 break;
             default:
                 CharLogger.Warning($"Unknown map server packet 0x{packetType:X4}, disconnecting.");
@@ -164,11 +180,64 @@ public sealed class MapServerSession : IDisposable, ISession
                 iroAuth ? null : sex,
                 out var node))
         {
+            _ownedCharacters.Add((node.AccountId, node.CharId));
             await SendAuthOkAsync(node, cancellationToken);
             return;
         }
 
         await SendAuthFailAsync(accountId, charId, loginId1, sex, clientIp, cancellationToken);
+    }
+
+    private async Task HandleSavePositionAsync(byte[] packet, CancellationToken cancellationToken)
+    {
+        if (!_authenticated)
+        {
+            return;
+        }
+
+        var accountId = BinaryPrimitives.ReadUInt32LittleEndian(packet.AsSpan(2, 4));
+        var charId = BinaryPrimitives.ReadUInt32LittleEndian(packet.AsSpan(6, 4));
+        var mapName = ReadFixedString(packet.AsSpan(10, PacketConstants.MapNameLength));
+        var x = BinaryPrimitives.ReadUInt16LittleEndian(packet.AsSpan(26, 2));
+        var y = BinaryPrimitives.ReadUInt16LittleEndian(packet.AsSpan(28, 2));
+        if (!IsPositionSaveAuthorized(_authenticated, _ownedCharacters, accountId, charId) ||
+            string.IsNullOrWhiteSpace(mapName) ||
+            mapName.Length > 11)
+        {
+            CharLogger.Warning(
+                $"Rejected character position save accountId={accountId} charId={charId} for map server session {SessionId}.");
+            return;
+        }
+
+        await using var db = _dbFactory();
+        if (db == null)
+        {
+            return;
+        }
+
+        var character = await db.Characters.FirstOrDefaultAsync(
+            candidate => candidate.AccountId == accountId && candidate.CharId == charId && candidate.DeleteDate == 0,
+            cancellationToken);
+        if (character == null)
+        {
+            CharLogger.Warning(
+                $"Rejected character position save for missing character accountId={accountId} charId={charId}.");
+            return;
+        }
+
+        character.LastMap = mapName;
+        character.LastX = x;
+        character.LastY = y;
+        await db.SaveChangesAsync(cancellationToken);
+    }
+
+    internal static bool IsPositionSaveAuthorized(
+        bool authenticated,
+        IReadOnlySet<(uint AccountId, uint CharId)> ownedCharacters,
+        uint accountId,
+        uint charId)
+    {
+        return authenticated && ownedCharacters.Contains((accountId, charId));
     }
 
     private Task SendLoginAckAsync(byte result, CancellationToken cancellationToken)

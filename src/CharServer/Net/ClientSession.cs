@@ -343,11 +343,7 @@ public sealed class ClientSession : IDisposable, ISession
 
         CharLogger.Debug($"[iRO DEBUG] Character select slot={slot} charId={character.CharId}");
 
-        var mapName = string.IsNullOrWhiteSpace(character.LastMap) ? character.SaveMap : character.LastMap;
-        if (string.IsNullOrWhiteSpace(mapName))
-        {
-            mapName = "prontera";
-        }
+        var location = ResolveCharacterLocation(character);
 
         var node = new MapAuthNode(
             _accountId,
@@ -355,9 +351,9 @@ public sealed class ClientSession : IDisposable, ISession
             _loginId1,
             _loginId2,
             _sex,
-            mapName,
-            character.LastX,
-            character.LastY,
+            location.MapName,
+            location.X,
+            location.Y,
             character.BodyDirection,
             character.Font,
             0,
@@ -365,7 +361,22 @@ public sealed class ClientSession : IDisposable, ISession
             false);
 
         _mapAuthManager.Add(node);
-        await SendZoneServerAsync(character.CharId, mapName, mapServer, cancellationToken);
+        await SendZoneServerAsync(character.CharId, location.MapName, mapServer, cancellationToken);
+    }
+
+    internal static (string MapName, ushort X, ushort Y) ResolveCharacterLocation(CharCharacter character)
+    {
+        if (!string.IsNullOrWhiteSpace(character.LastMap))
+        {
+            return (character.LastMap, character.LastX, character.LastY);
+        }
+
+        if (!string.IsNullOrWhiteSpace(character.SaveMap))
+        {
+            return (character.SaveMap, character.SaveX, character.SaveY);
+        }
+
+        return ("prontera", 0, 0);
     }
 
     internal static byte ParseCharacterSelect(ReadOnlySpan<byte> packet)

@@ -105,7 +105,14 @@ public sealed class CharTcpServer
         var packetType = BinaryPrimitives.ReadInt16LittleEndian(header);
         if (packetType == PacketConstants.MapLogin)
         {
-            return new MapServerSession(sessionId, client, _configStore, _mapRegistry, _mapAuthManager, header);
+            return new MapServerSession(
+                sessionId,
+                client,
+                _configStore,
+                _mapRegistry,
+                _mapAuthManager,
+                _dbFactory,
+                header);
         }
 
         return new ClientSession(sessionId, client, _configStore, _loginConnector, _dbFactory, _startStatusPoints, _mapRegistry, _mapAuthManager, header);

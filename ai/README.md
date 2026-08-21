@@ -56,6 +56,7 @@ If `legacy/rathena/`, `legacy/openkore/`, kRO packet definitions, or old packet 
 - `ai/map-server.md` - current iRO MapServer state and next work.
 - `ai/mapserver-parity.md` - MapServer reference map; generic CZ_ENTER behavior is reference-only unless iRO evidence matches it.
 - `ai/data-and-tools.md` - `legacy/rathena/`-derived data/tooling strategy for an iRO server.
+- `ai/world-data.md` - generated warp-data, persistence, and static world-actor architecture.
 
 ## Definition of project success
 Athena.NET is successful when an unmodified supported stock iRO client can complete the full flow:

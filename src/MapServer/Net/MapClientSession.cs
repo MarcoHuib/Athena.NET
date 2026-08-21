@@ -2,6 +2,7 @@ using System.Buffers.Binary;
 using System.Net;
 using System.Net.Sockets;
 using Athena.Net.MapServer.Logging;
+using Athena.Net.MapServer.World;
 
 namespace Athena.Net.MapServer.Net;
 
@@ -16,43 +17,84 @@ public sealed class MapClientSession : IDisposable
         [PacketConstants.CzClientVersion] = 6,
         [PacketConstants.CzPingLive] = 2,
         [PacketConstants.IroCzMapAuth] = PacketConstants.IroCzMapAuthLength,
-        // The first capture-observed post-load client record. Its eight payload bytes remain opaque.
+        // Stock iRO appends one still-opaque byte to these otherwise familiar client packets.
         [PacketConstants.IroCzPostEnter0360] = PacketConstants.IroCzPostEnter0360Length,
+        [PacketConstants.IroCzPostEnter08c9] = PacketConstants.IroCzPostEnter08c9Length,
+        [PacketConstants.IroCzRequestMove] = PacketConstants.IroCzRequestMoveLength,
+        [PacketConstants.IroCzActorInfoRequest] = PacketConstants.IroCzActorInfoRequestLength,
     };
 
     private readonly TcpClient _client;
     private readonly NetworkStream _stream;
     private readonly CharServerConnector _charConnector;
+    private readonly ICharacterPositionPersistence _positionPersistence;
+    private readonly WorldMapRegistry _worldMapRegistry;
     private readonly SemaphoreSlim _writeLock = new(1, 1);
     private readonly CancellationTokenSource _sessionCancellation = new();
+    private readonly HashSet<uint> _visibleActorIds = new();
     private uint _accountId;
     private uint _charId;
     private uint _loginId1;
+    private string _mapName = string.Empty;
+    private ushort _x;
+    private ushort _y;
     private byte _sex;
     private bool _authRequested;
     private bool _iroAuthRequested;
+    private bool _authenticated;
+    private bool _positionDirty;
     private int _disposed;
 
     public MapClientSession(int sessionId, TcpClient client, CharServerConnector charConnector)
+        : this(sessionId, client, charConnector, WorldMapRegistry.Tutorial)
+    {
+    }
+
+    private MapClientSession(
+        int sessionId,
+        TcpClient client,
+        CharServerConnector charConnector,
+        WorldMapRegistry worldMapRegistry,
+        ICharacterPositionPersistence? positionPersistence = null)
     {
         SessionId = sessionId;
         _client = client;
         _stream = client.GetStream();
         _charConnector = charConnector;
+        _positionPersistence = positionPersistence ?? charConnector;
+        _worldMapRegistry = worldMapRegistry;
     }
 
     internal MapClientSession(
         int sessionId,
         TcpClient client,
         CharServerConnector charConnector,
-        bool iroAuthenticated)
-        : this(sessionId, client, charConnector)
+        bool iroAuthenticated,
+        string mapName = "",
+        ushort x = 0,
+        ushort y = 0,
+        WorldMapRegistry? worldMapRegistry = null,
+        ICharacterPositionPersistence? positionPersistence = null)
+        : this(
+            sessionId,
+            client,
+            charConnector,
+            worldMapRegistry ?? WorldMapRegistry.Tutorial,
+            positionPersistence)
     {
         _iroAuthRequested = iroAuthenticated;
         _authRequested = iroAuthenticated;
+        _mapName = mapName;
+        _x = x;
+        _y = y;
+        _authenticated = iroAuthenticated;
     }
 
     public int SessionId { get; }
+
+    internal string CurrentMapName => _mapName;
+    internal ushort CurrentX => _x;
+    internal ushort CurrentY => _y;
 
     public async Task RunAsync(CancellationToken cancellationToken)
     {
@@ -61,17 +103,24 @@ public sealed class MapClientSession : IDisposable
             _sessionCancellation.Token);
         var sessionToken = linkedCancellation.Token;
 
-        while (!sessionToken.IsCancellationRequested)
+        try
         {
-            var packet = await ReadNextPacketAsync(_stream, sessionToken);
-            if (packet.Length == 0)
+            while (!sessionToken.IsCancellationRequested)
             {
-                return;
-            }
+                var packet = await ReadNextPacketAsync(_stream, sessionToken);
+                if (packet.Length == 0)
+                {
+                    return;
+                }
 
-            var packetType = BinaryPrimitives.ReadInt16LittleEndian(packet);
-            MapLogger.Info($"[iRO MAP DEBUG] Map client packet=0x{packetType:X4} len={packet.Length}");
-            await HandlePacketAsync(packetType, packet, sessionToken);
+                var packetType = BinaryPrimitives.ReadInt16LittleEndian(packet);
+                MapLogger.Info($"[iRO MAP DEBUG] Map client packet=0x{packetType:X4} len={packet.Length}");
+                await HandlePacketAsync(packetType, packet, sessionToken);
+            }
+        }
+        finally
+        {
+            await PersistPositionIfDirtyAsync(CancellationToken.None);
         }
     }
 
@@ -87,6 +136,11 @@ public sealed class MapClientSession : IDisposable
 
         if (_iroAuthRequested)
         {
+            _mapName = authOk.MapName;
+            _x = authOk.X;
+            _y = authOk.Y;
+            _authenticated = true;
+            _positionDirty = false;
             MapLogger.Info(
                 $"[iRO MAP DEBUG] 0x0C1F MapAuthNode authentication succeeded accountId={authOk.AccountId} charId={authOk.CharId} sessionMatch=true");
             _ = SendIroInitialBootstrapAsync(authOk, CancellationToken.None);
@@ -133,6 +187,8 @@ public sealed class MapClientSession : IDisposable
                 {
                     MapLogger.Info(
                         $"[iRO MAP DEBUG] Received stock iRO map-loaded packet=0x{packetType:X4} len={packet.Length}");
+                    _visibleActorIds.Clear();
+                    await SendVisibleWarpActorsAsync(cancellationToken);
                     break;
                 }
 
@@ -151,6 +207,17 @@ public sealed class MapClientSession : IDisposable
             case PacketConstants.IroCzPostEnter0360 when _iroAuthRequested:
                 MapLogger.Info(
                     $"[iRO MAP DEBUG] Reached next post-enter client boundary packet=0x{packetType:X4} len={packet.Length}");
+                break;
+            case PacketConstants.IroCzPostEnter08c9 when _iroAuthRequested:
+                MapLogger.Info(
+                    $"[iRO MAP DEBUG] Received opaque stock iRO packet=0x{packetType:X4} len={packet.Length}");
+                break;
+            case PacketConstants.IroCzRequestMove when _iroAuthRequested:
+                await HandleIroMovementAsync(packet, cancellationToken);
+                break;
+            case PacketConstants.IroCzActorInfoRequest when _iroAuthRequested:
+                MapLogger.Info(
+                    $"[iRO MAP DEBUG] Received stock iRO actor-info request packet=0x{packetType:X4} len={packet.Length}");
                 break;
             default:
                 LogUnsupportedPacket(packetType, packet);
@@ -191,6 +258,115 @@ public sealed class MapClientSession : IDisposable
 
         _iroAuthRequested = true;
         _authRequested = true;
+    }
+
+    private async Task HandleIroMovementAsync(byte[] packet, CancellationToken cancellationToken)
+    {
+        if (!IroMovementPackets.TryParseRequest(packet, out var request))
+        {
+            RequestClose();
+            return;
+        }
+
+        var fromX = _x;
+        var fromY = _y;
+        MapLogger.Info(
+            $"[iRO MAP DEBUG] Movement request from=({fromX},{fromY}) target=({request.TargetX},{request.TargetY})");
+
+        var intersectsWarp = _worldMapRegistry.TryFindFirstWarpAlongRoute(
+            _mapName,
+            fromX,
+            fromY,
+            request.TargetX,
+            request.TargetY,
+            out var intersection);
+        var movementTargetX = intersectsWarp ? intersection.X : request.TargetX;
+        var movementTargetY = intersectsWarp ? intersection.Y : request.TargetY;
+
+        var response = IroMovementPackets.BuildResponse(
+            unchecked((uint)Environment.TickCount),
+            fromX,
+            fromY,
+            movementTargetX,
+            movementTargetY);
+        MapLogger.Info(
+            $"[iRO MAP DEBUG] Sending 0x0087 len=12 from=({fromX},{fromY}) to=({movementTargetX},{movementTargetY})");
+        await WriteAsync(response, cancellationToken);
+
+        _x = movementTargetX;
+        _y = movementTargetY;
+        _positionDirty = true;
+
+        if (intersectsWarp)
+        {
+            MapLogger.Info(
+                $"[iRO MAP DEBUG] Movement path intersects warp map='{_mapName}' at=({intersection.X},{intersection.Y}) requestedTarget=({request.TargetX},{request.TargetY})");
+            await SendSameServerWarpAsync(intersection.Warp, cancellationToken);
+        }
+        else
+        {
+            await SendVisibleWarpActorsAsync(cancellationToken);
+        }
+    }
+
+    private async Task SendSameServerWarpAsync(WarpDefinition warp, CancellationToken cancellationToken)
+    {
+        MapLogger.Info(
+            $"[iRO MAP DEBUG] Warp triggered map='{_mapName}' at=({_x},{_y}) -> map='{warp.DestinationMap}' x={warp.DestinationX} y={warp.DestinationY}");
+
+        _mapName = warp.DestinationMap;
+        _x = warp.DestinationX;
+        _y = warp.DestinationY;
+
+        var response = IroMapTransitionPackets.BuildSameServerMapChange(_mapName, _x, _y);
+        MapLogger.Info(
+            $"[iRO MAP DEBUG] Sending 0x0091 len={response.Length} map='{IroMapTransitionPackets.NormalizeWireMapName(_mapName)}' x={_x} y={_y}");
+        await WriteAsync(response, cancellationToken);
+        await PersistPositionIfDirtyAsync(cancellationToken);
+    }
+
+    private async Task SendVisibleWarpActorsAsync(CancellationToken cancellationToken)
+    {
+        foreach (var actor in _worldMapRegistry.GetVisibleWarpActors(_mapName, _x, _y))
+        {
+            if (!_visibleActorIds.Add(actor.ActorId))
+            {
+                continue;
+            }
+
+            var packet = IroWorldActorPackets.BuildWarpActor(actor);
+            MapLogger.Info(
+                $"[iRO MAP DEBUG] Sending warp actor id={actor.ActorId} name='{actor.Name}' class={WarpActor.ClassId} map='{actor.MapName}' x={actor.X} y={actor.Y}");
+            await WriteAsync(packet, cancellationToken);
+        }
+    }
+
+    private async Task PersistPositionIfDirtyAsync(CancellationToken cancellationToken)
+    {
+        if (!_authenticated || !_positionDirty || string.IsNullOrWhiteSpace(_mapName))
+        {
+            return;
+        }
+
+        try
+        {
+            MapLogger.Info(
+                $"[iRO MAP DEBUG] Persisting character position charId={_charId} map='{_mapName}' x={_x} y={_y}");
+            if (await _positionPersistence.SavePositionAsync(
+                    _accountId,
+                    _charId,
+                    _mapName,
+                    _x,
+                    _y,
+                    cancellationToken))
+            {
+                _positionDirty = false;
+            }
+        }
+        catch (Exception ex) when (ex is IOException or SocketException or OperationCanceledException)
+        {
+            MapLogger.Warning($"Character position persistence failed: {ex.Message}");
+        }
     }
 
     private Task SendIroInitialBootstrapAsync(MapAuthOkData authOk, CancellationToken cancellationToken)

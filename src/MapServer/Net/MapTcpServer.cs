@@ -4,6 +4,7 @@ using System.Net.Sockets;
 using Athena.Net.MapServer.Config;
 using Athena.Net.MapServer.Logging;
 using Athena.Net.MapServer.Telemetry;
+using Athena.Net.MapServer.World;
 
 namespace Athena.Net.MapServer.Net;
 
@@ -29,6 +30,8 @@ public sealed class MapTcpServer
         _listener.Start();
         BoundPort = ((IPEndPoint)_listener.LocalEndpoint).Port;
         MapLogger.Status($"Map server listening on {_configStore.Current.BindIp}:{BoundPort}...");
+        MapLogger.Status(
+            $"WORLD: loaded {WorldMapRegistry.Tutorial.MapCount} maps, {WorldMapRegistry.Tutorial.StaticWarpCount} static warps, {WorldMapRegistry.Tutorial.DynamicWarpActorCount} dynamic/scripted warp actors.");
 
         try
         {
