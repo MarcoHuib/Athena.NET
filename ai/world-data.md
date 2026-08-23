@@ -33,6 +33,11 @@ ordered Actions. An invisible trigger therefore needs no Actor. Runtime indexes
 (`EntitiesById`, map actors, and OnTouch route lookups) are derived in memory;
 there are no separately maintained actor/trigger/action files.
 
+An entity may preserve a parsed script binding separately from executable
+Triggers. The binding records trigger geometry, normalized source, required
+runtime capabilities, and explicit `SourceParsed`/`RuntimeExecutable` state.
+This lets Athena own the actor and source without registering unsafe behavior.
+
 The typed extension points are intentionally narrow in the current slice:
 `OnTouch`, `Warp`, and `SetSavePoint`. Class 45 actors preserve the verified
 `JT_WARPNPC` visual. `SetSavePoint` data is loaded and ordered, but MapServer
@@ -65,6 +70,16 @@ dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- convert
   --kind warp \
   --output data/world/entities
 ```
+
+Use `--map iz_int` with the same filters for the runtime-tested base tutorial
+map. The checked-in slice contains only the three tutorial entities for
+`iz_int` and the same three for `iz_int03`.
+
+The stock iRO client has runtime-proven all six executable entities, including
+the ordered `#ship_out` actions and same-MapServer transition to `int_land`.
+The `int_land/#intro_to_izlude` actor and script are now WorldEntity-owned, but
+its preserved `OnTouch` binding remains non-executable: it requires quest-state,
+dialogue/player-selection, and quest-completion semantics Athena does not implement.
 
 Filters may select `--source-file`, `--map`, `--name`, and/or `--kind`. At least
 one is mandatory so an accidental unrestricted conversion cannot generate the

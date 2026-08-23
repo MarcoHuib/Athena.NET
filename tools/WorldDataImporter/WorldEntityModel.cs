@@ -1,8 +1,9 @@
 using System.Text.Json.Serialization;
 
-internal sealed record WorldEntityDefinition(int SchemaVersion, string Id, string Kind, WorldActorComponent? Actor, IReadOnlyList<WorldTriggerDefinition> Triggers, WorldSourceInfo Source);
+internal sealed record WorldEntityDefinition(int SchemaVersion, string Id, string Kind, WorldActorComponent? Actor, IReadOnlyList<WorldTriggerDefinition> Triggers, IReadOnlyList<ScriptBehaviorDefinition>? Scripts, WorldSourceInfo Source);
 internal sealed record WorldActorComponent(string Name, string Map, ushort X, ushort Y, byte Direction, ushort Class);
 internal sealed record WorldTriggerDefinition(string Type, string Map, ushort X, ushort Y, ushort RadiusX, ushort RadiusY, IReadOnlyList<WorldActionDefinition> Actions);
+internal sealed record ScriptBehaviorDefinition(string Trigger, string Map, ushort X, ushort Y, ushort RadiusX, ushort RadiusY, bool SourceParsed, bool RuntimeExecutable, IReadOnlyList<string> RequiredCapabilities, string NormalizedSource);
 [JsonPolymorphic(TypeDiscriminatorPropertyName = "Type")]
 [JsonDerivedType(typeof(SetSavePointAction), "SetSavePoint")]
 [JsonDerivedType(typeof(WarpAction), "Warp")]

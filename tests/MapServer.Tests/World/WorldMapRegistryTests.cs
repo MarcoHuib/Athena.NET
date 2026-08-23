@@ -132,6 +132,41 @@ public sealed class WorldMapRegistryTests
             warp.OrderedActions,
             action => Assert.Equal(new SetSavePointAction("int_land03", 77, 101), action),
             action => Assert.Equal(new WarpAction("int_land03", 85, 107), action));
-        Assert.Equal(3, WorldMapRegistry.Tutorial.EntityCount);
+        Assert.Equal(7, WorldMapRegistry.Tutorial.EntityCount);
+    }
+
+    [Fact]
+    public void Tutorial_BaseMapEntitiesOverrideLegacyAndShipOutIsExecutable()
+    {
+        Assert.True(WorldMapRegistry.Tutorial.TryFindWarp("iz_int", 27, 30, out var roomOut));
+        Assert.Equal(("iz_int", (ushort)51, (ushort)30), (roomOut.DestinationMap, roomOut.DestinationX, roomOut.DestinationY));
+        Assert.True(WorldMapRegistry.Tutorial.TryFindWarp("iz_int", 47, 30, out var roomIn));
+        Assert.Equal(("iz_int", (ushort)22, (ushort)30), (roomIn.DestinationMap, roomIn.DestinationX, roomIn.DestinationY));
+        Assert.True(WorldMapRegistry.Tutorial.TryFindWarp("iz_int", 56, 15, out var ship));
+        Assert.Collection(
+            ship.OrderedActions,
+            action => Assert.Equal(new SetSavePointAction("int_land", 77, 101), action),
+            action => Assert.Equal(new WarpAction("int_land", 85, 107), action));
+        Assert.Single(WorldMapRegistry.Tutorial.GetVisibleWarpActors("iz_int", 56, 15), actor => actor.Name == "#ship_out");
+        Assert.Equal(7, WorldMapRegistry.Tutorial.EntityCount);
+    }
+
+    [Fact]
+    public void IntroToIzlude_WorldEntityReplacesLegacyActorWithoutExecutableTrigger()
+    {
+        var actor = Assert.Single(
+            WorldMapRegistry.Tutorial.GetVisibleWarpActors("int_land", 49, 57),
+            candidate => candidate.Name == "#intro_to_izlude");
+
+        Assert.Equal(((ushort)49, (ushort)57, (byte)2, (byte)2),
+            (actor.X, actor.Y, actor.RadiusX, actor.RadiusY));
+        Assert.False(WorldMapRegistry.Tutorial.TryFindWarp("int_land", 49, 57, out _));
+        var entity = WorldMapRegistry.Tutorial.EntitiesById["warp:int_land:intro_to_izlude"];
+        Assert.Empty(entity.Triggers);
+        var script = Assert.Single(entity.Scripts);
+        Assert.True(script.SourceParsed);
+        Assert.False(script.RuntimeExecutable);
+        Assert.Equal(7, WorldMapRegistry.Tutorial.EntityCount);
+        Assert.Equal(123, WorldMapRegistry.Tutorial.DynamicWarpActorCount);
     }
 }

@@ -19,8 +19,11 @@ public sealed class WorldMapRegistry
         var allocator = new WorldActorIdAllocator();
         var dynamicActors = (dynamicWarpActors ?? []).ToArray();
         _dynamicWarpActorCount = dynamicActors.Length;
-        _warpActors = _warps.Where(warp => warp.HasWarpActor && warp.RadiusX <= byte.MaxValue && warp.RadiusY <= byte.MaxValue)
+        var entityActorKeys = _entitiesById.Values.Where(entity => entity.Actor is not null).Select(entity => SemanticKey(entity.Actor!.Map, entity.Actor.Name)).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var entityActors = _entitiesById.Values.Where(entity => entity.Actor?.Class == 45).Select(ToActorDefinition).Where(actor => actor is not null).Select(actor => actor!);
+        _warpActors = _warps.Where(warp => warp.HasWarpActor && warp.RadiusX <= byte.MaxValue && warp.RadiusY <= byte.MaxValue && !entityActorKeys.Contains(SemanticKey(warp.SourceMap, warp.Name)))
             .Select(warp => new WarpActorDefinition(warp.Name, warp.SourceMap, warp.SourceX, warp.SourceY, (byte)warp.RadiusX, (byte)warp.RadiusY))
+            .Concat(entityActors)
             .Concat(dynamicActors)
             .Select(actor => new WarpActor(allocator.Allocate(), actor.Name.Length > 24 ? actor.Name[..24] : actor.Name, actor.MapName, actor.X, actor.Y, actor.RadiusX, actor.RadiusY)).ToArray();
     }
@@ -69,8 +72,14 @@ public sealed class WorldMapRegistry
         WorldActorComponent? actor = null;
         if (root.TryGetProperty("Actor", out var actorJson)) actor = new(actorJson.GetProperty("Name").GetString()!, actorJson.GetProperty("Map").GetString()!, actorJson.GetProperty("X").GetUInt16(), actorJson.GetProperty("Y").GetUInt16(), actorJson.GetProperty("Direction").GetByte(), actorJson.GetProperty("Class").GetUInt16());
         var triggers = root.GetProperty("Triggers").EnumerateArray().Select(trigger => new WorldTriggerDefinition(trigger.GetProperty("Type").GetString()!, trigger.GetProperty("Map").GetString()!, trigger.GetProperty("X").GetUInt16(), trigger.GetProperty("Y").GetUInt16(), trigger.GetProperty("RadiusX").GetUInt16(), trigger.GetProperty("RadiusY").GetUInt16(), trigger.GetProperty("Actions").EnumerateArray().Select(ParseAction).ToArray())).ToArray();
+        var scripts = root.TryGetProperty("Scripts", out var scriptsJson)
+            ? scriptsJson.EnumerateArray().Select(script => new ScriptBehaviorDefinition(
+                script.GetProperty("Trigger").GetString()!, script.GetProperty("Map").GetString()!, script.GetProperty("X").GetUInt16(), script.GetProperty("Y").GetUInt16(),
+                script.GetProperty("RadiusX").GetUInt16(), script.GetProperty("RadiusY").GetUInt16(), script.GetProperty("SourceParsed").GetBoolean(), script.GetProperty("RuntimeExecutable").GetBoolean(),
+                script.GetProperty("RequiredCapabilities").EnumerateArray().Select(value => value.GetString()!).ToArray(), script.GetProperty("NormalizedSource").GetString()!)).ToArray()
+            : [];
         var source = root.GetProperty("Source");
-        return new(root.GetProperty("SchemaVersion").GetInt32(), root.GetProperty("Id").GetString()!, root.GetProperty("Kind").GetString()!, actor, triggers, new(source.GetProperty("Repository").GetString()!, source.GetProperty("Commit").GetString()!, source.GetProperty("File").GetString()!, source.GetProperty("Line").GetInt32()));
+        return new(root.GetProperty("SchemaVersion").GetInt32(), root.GetProperty("Id").GetString()!, root.GetProperty("Kind").GetString()!, actor, triggers, scripts, new(source.GetProperty("Repository").GetString()!, source.GetProperty("Commit").GetString()!, source.GetProperty("File").GetString()!, source.GetProperty("Line").GetInt32()));
     }
     private static WorldActionDefinition ParseAction(JsonElement action) => action.GetProperty("Type").GetString() switch
     {
@@ -85,6 +94,17 @@ public sealed class WorldMapRegistry
             var warp = trigger.Actions.OfType<WarpAction>().LastOrDefault(); if (warp is null) continue;
             yield return new(entity.Actor?.Name ?? entity.Id, trigger.Map, trigger.X, trigger.Y, trigger.RadiusX, trigger.RadiusY, warp.Map, warp.X, warp.Y, entity.Actor?.Class == 45, entity.Source.File, entity.Source.Line, trigger.Actions);
         }
+    }
+    private static WarpActorDefinition? ToActorDefinition(WorldEntityDefinition entity)
+    {
+        var actor = entity.Actor!;
+        var trigger = entity.Triggers.FirstOrDefault();
+        var script = entity.Scripts.FirstOrDefault();
+        var radiusX = trigger?.RadiusX ?? script?.RadiusX ?? 0;
+        var radiusY = trigger?.RadiusY ?? script?.RadiusY ?? 0;
+        return radiusX <= byte.MaxValue && radiusY <= byte.MaxValue
+            ? new(actor.Name, actor.Map, actor.X, actor.Y, (byte)radiusX, (byte)radiusY)
+            : null;
     }
     private static string SemanticKey(string map, string name) => $"{map}:{name}";
     private static WorldMapRegistry LoadGenerated() { var data = Path.Combine(AppContext.BaseDirectory, "data", "world"); return Load(Path.Combine(data, "entities"), Path.Combine(data, "warps.json")); }

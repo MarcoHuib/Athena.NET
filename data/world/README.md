@@ -1,8 +1,9 @@
 # Generated rAthena world data
 
 `entities/` is the new one-file-per-logical-entity source-of-truth. The current
-vertical slice contains only `iz_int03/#room_out03`, `#room_in03`, and
-`#ship_out03`. Do not run an unrestricted conversion; the CLI requires filters.
+vertical slice contains only the three tutorial warps on `iz_int` and their
+`iz_int03` counterparts, plus the non-executable preserved script entity
+`int_land/#intro_to_izlude`. Do not run an unrestricted conversion; the CLI requires filters.
 
 See `ai/world-data.md` for the audit and filtered-conversion commands.
 

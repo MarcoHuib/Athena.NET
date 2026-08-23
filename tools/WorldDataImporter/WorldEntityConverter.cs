@@ -33,13 +33,15 @@ internal static partial class WorldEntityConverter
             else if (declaration.Directive == "script" && IsWarpNpc(declaration))
             {
                 if (TryScripted(declaration, declaration, out var entity)) entities.Add(entity);
-                else unsupported.Add(Unsupported(declaration, "WARPNPC script is not safely deterministic"));
+                else if (TryPreserveScript(declaration, declaration, out entity)) entities.Add(entity);
+                else unsupported.Add(Unsupported(declaration, "Malformed WARPNPC script"));
             }
             else if (TryDuplicateName(declaration.Directive, out var templateName) && IsWarpNpc(declaration) && templates.TryGetValue(templateName, out var template))
             {
                 // Deliberately evaluate the template with the duplicate's own name.
                 if (TryScripted(declaration, template, out var entity)) entities.Add(entity);
-                else unsupported.Add(Unsupported(declaration, "WARPNPC duplicate is not safely deterministic"));
+                else if (TryPreserveScript(declaration, template, out entity)) entities.Add(entity);
+                else unsupported.Add(Unsupported(declaration, "Malformed WARPNPC duplicate"));
             }
         }
         return new(entities.OrderBy(item => item.Id, StringComparer.Ordinal).ToArray(), unsupported);
@@ -68,7 +70,23 @@ internal static partial class WorldEntityConverter
         new(1, DeterministicId.For("warp", source.Map, source.Name), "Warp",
             new(source.Name, source.Map, source.X, source.Y, source.Direction, 45),
             [new("OnTouch", source.Map, source.X, source.Y, rx, ry, actions)],
+            null,
             new("rAthena", Commit, source.Source.File, source.Source.Line));
+
+    private static bool TryPreserveScript(RathenaDeclaration instance, RathenaDeclaration template, out WorldEntityDefinition entity)
+    {
+        entity = default!;
+        var visual = instance.Arguments.Split(',').Select(value => value.Trim().TrimEnd('{')).ToArray();
+        if (visual.Length < 3 || visual[0] != "WARPNPC" || !U16(visual[1], out var rx) || !U16(visual[2], out var ry)) return false;
+        var onTouch = template.ScriptBody.IndexOf("OnTouch:", StringComparison.Ordinal);
+        if (onTouch < 0) return false;
+        var normalized = string.Join('\n', template.ScriptBody[onTouch..].Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n').Select(line => line.TrimEnd())).Trim();
+        entity = new(1, DeterministicId.For("warp", instance.Map, instance.Name), "Warp",
+            new(instance.Name, instance.Map, instance.X, instance.Y, instance.Direction, 45), [],
+            [new("OnTouch", instance.Map, instance.X, instance.Y, rx, ry, true, false, ScriptCapabilities.Classify(normalized), normalized)],
+            new("rAthena", Commit, instance.Source.File, instance.Source.Line));
+        return true;
+    }
     private static bool IsWarpNpc(RathenaDeclaration value) => value.Arguments.Contains("WARPNPC", StringComparison.Ordinal);
     private static bool TryDuplicateName(string directive, out string name)
     {
@@ -77,6 +95,20 @@ internal static partial class WorldEntityConverter
     }
     private static bool U16(string value, out ushort result) => ushort.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out result);
     private static UnsupportedConversion Unsupported(RathenaDeclaration value, string reason) => new(value.Name, value.Source.File, value.Source.Line, reason);
+}
+
+internal static class ScriptCapabilities
+{
+    public static IReadOnlyList<string> Classify(string source)
+    {
+        var capabilities = new List<string>();
+        Add("Conditional", "if ("); Add("QuestState", "isbegin_quest("); Add("Dialogue", "mes ");
+        Add("DialogueNext", "next;"); Add("Selection", "select("); Add("CompleteQuest", "completequest ");
+        Add("Close", "close"); Add("VariableAssignment", "="); Add("NpcIdentity", "strnpcinfo(");
+        Add("StringReplace", "replacestr("); Add("Warp", "warp "); Add("SavePoint", "savepoint ");
+        return capabilities;
+        void Add(string capability, string token) { if (source.Contains(token, StringComparison.Ordinal)) capabilities.Add(capability); }
+    }
 }
 
 internal static partial class DeterministicWarpScriptEvaluator
