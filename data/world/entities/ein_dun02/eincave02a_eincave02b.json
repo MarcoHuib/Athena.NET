@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:ein_dun02:eincave02a_eincave02b",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "EinCave02A_EinCave02B",
+    "Map": "ein_dun02",
+    "X": 228,
+    "Y": 109,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "ein_dun02",
+      "X": 228,
+      "Y": 109,
+      "RadiusX": 1,
+      "RadiusY": 1,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "ein_dun02",
+          "X": 191,
+          "Y": 130
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/warps/dungeons/ein_dun.txt",
+    "Line": 22
+  }
+}

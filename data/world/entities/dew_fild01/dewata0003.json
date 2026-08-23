@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:dew_fild01:dewata0003",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "dewata0003",
+    "Map": "dew_fild01",
+    "X": 57,
+    "Y": 273,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "dew_fild01",
+      "X": 57,
+      "Y": 273,
+      "RadiusX": 1,
+      "RadiusY": 1,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "dew_in01",
+          "X": 15,
+          "Y": 33
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/re/warps/cities/dewata.txt",
+    "Line": 19
+  }
+}

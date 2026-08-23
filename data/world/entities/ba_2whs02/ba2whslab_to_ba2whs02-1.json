@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:ba_2whs02:ba2whslab_to_ba2whs02-1",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "#ba2whslab_to_ba2whs02-1",
+    "Map": "ba_2whs02",
+    "X": 63,
+    "Y": 325,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "ba_2whs02",
+      "X": 63,
+      "Y": 325,
+      "RadiusX": 2,
+      "RadiusY": 2,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "ba_2whs02",
+          "X": 69,
+          "Y": 325
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/re/warps/other/ba_2whs.txt",
+    "Line": 15
+  }
+}

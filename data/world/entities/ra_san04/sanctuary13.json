@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:ra_san04:sanctuary13",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "sanctuary13",
+    "Map": "ra_san04",
+    "X": 35,
+    "Y": 221,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "ra_san04",
+      "X": 35,
+      "Y": 221,
+      "RadiusX": 1,
+      "RadiusY": 1,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "ra_san02",
+          "X": 213,
+          "Y": 9
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/warps/dungeons/ra_san.txt",
+    "Line": 39
+  }
+}

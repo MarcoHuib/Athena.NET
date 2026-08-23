@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:job3_sha01:shadowc1",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "shadowc1",
+    "Map": "job3_sha01",
+    "X": 71,
+    "Y": 19,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "job3_sha01",
+      "X": 71,
+      "Y": 19,
+      "RadiusX": 1,
+      "RadiusY": 1,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "tha_t01",
+          "X": 149,
+          "Y": 224
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/re/warps/other/jobquests.txt",
+    "Line": 52
+  }
+}

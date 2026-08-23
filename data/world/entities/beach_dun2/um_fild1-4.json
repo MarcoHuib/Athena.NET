@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:beach_dun2:um_fild1-4",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "um_fild1-4",
+    "Map": "beach_dun2",
+    "X": 258,
+    "Y": 244,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "beach_dun2",
+      "X": 258,
+      "Y": 244,
+      "RadiusX": 1,
+      "RadiusY": 1,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "um_fild01",
+          "X": 35,
+          "Y": 276
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/warps/fields/umbala_fild.txt",
+    "Line": 19
+  }
+}

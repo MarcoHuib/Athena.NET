@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:lhz_dun01:lhz_dun3-1",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "lhz_dun3-1",
+    "Map": "lhz_dun01",
+    "X": 149,
+    "Y": 9,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "lhz_dun01",
+      "X": 149,
+      "Y": 9,
+      "RadiusX": 1,
+      "RadiusY": 1,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "lhz_dun02",
+          "X": 153,
+          "Y": 19
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/warps/dungeons/lhz_dun.txt",
+    "Line": 37
+  }
+}

@@ -182,12 +182,19 @@ SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
 SET CONCAT_NULL_YIELDS_NULL ON;
 SET ARITHABORT ON;
-IF NOT EXISTS (SELECT 1 FROM [login] WHERE userid = N'$SQL_USER')
+IF EXISTS (SELECT 1 FROM [login] WHERE userid = N'$SQL_USER' AND (sex <> 'S' OR account_id >= 5))
+BEGIN
+  THROW 50001, 'Configured CharServer identity exists but is not an authorized server account.', 1;
+END
+ELSE IF EXISTS (SELECT 1 FROM [login] WHERE userid = N'$SQL_USER')
+BEGIN
+  UPDATE [login] SET user_pass = N'$SQL_PASS' WHERE userid = N'$SQL_USER';
+END
+ELSE
 BEGIN
   IF EXISTS (SELECT 1 FROM [login] WHERE account_id = $ACCOUNT_ID)
   BEGIN
-    INSERT INTO [login] (userid, user_pass, sex, email, group_id, state, unban_time, expiration_time, logincount, last_ip, character_slots, pincode, pincode_change, vip_time, old_group, web_auth_token_enabled)
-    VALUES (N'$SQL_USER', N'$SQL_PASS', 'S', N'$SQL_EMAIL', 0, 0, 0, 0, 0, '127.0.0.1', 0, '', 0, 0, 0, 0);
+    THROW 50002, 'Reserved CharServer account ID is already occupied.', 1;
   END
   ELSE
   BEGIN

@@ -1,0 +1,79 @@
+{
+  "SchemaVersion": 1,
+  "SourceRepository": "rAthena",
+  "SourceCommit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+  "FilesAnalyzed": 1138,
+  "TopLevel": {
+    "Total": 43951,
+    "Categories": [
+      {
+        "Category": "duplicate",
+        "Count": 11788
+      },
+      {
+        "Category": "function",
+        "Count": 195
+      },
+      {
+        "Category": "mapflag",
+        "Count": 6138
+      },
+      {
+        "Category": "script:NPC",
+        "Count": 9805
+      },
+      {
+        "Category": "script:WARPNPC",
+        "Count": 181
+      },
+      {
+        "Category": "shop:cashshop",
+        "Count": 18
+      },
+      {
+        "Category": "shop:marketshop",
+        "Count": 45
+      },
+      {
+        "Category": "shop:shop",
+        "Count": 406
+      },
+      {
+        "Category": "spawn:boss_monster",
+        "Count": 122
+      },
+      {
+        "Category": "spawn:monster",
+        "Count": 10243
+      },
+      {
+        "Category": "unknown/unclassified",
+        "Count": 537
+      },
+      {
+        "Category": "warp",
+        "Count": 4473
+      }
+    ]
+  },
+  "EmbeddedBehavior": {
+    "OnTouch": 1008,
+    "OnTouchVariant": 802,
+    "OnClickEquivalent": 9805,
+    "OnInit": 1533,
+    "TimerOrEvent": 4177
+  },
+  "DatabaseOrOtherConverters": [
+    {
+      "Classification": "Mob database definitions",
+      "Location": "legacy/rathena/db",
+      "Note": "Stats and species data are database-oriented; NPC-tree monster directives are placements/spawns."
+    },
+    {
+      "Classification": "Item/skill/quest databases",
+      "Location": "legacy/rathena/db",
+      "Note": "Require dedicated database converters, not world-entity conversion."
+    }
+  ],
+  "OverlapNote": "WARPNPC is a subset of script declarations; duplicate is a source mechanism whose target may be any content kind. Embedded event labels overlap their containing script declarations."
+}

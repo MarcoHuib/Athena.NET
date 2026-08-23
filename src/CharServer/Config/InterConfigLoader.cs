@@ -17,6 +17,7 @@ public static class InterConfigLoader
         var inventoryTable = "inventory";
         var skillTable = "skill";
         var hotkeyTable = "hotkey";
+        var questTable = "quest";
         var startStatusPoints = 48;
 
         if (!File.Exists(path))
@@ -89,6 +90,10 @@ public static class InterConfigLoader
             {
                 hotkeyTable = value;
             }
+            else if (key.Equals("quest_db", StringComparison.OrdinalIgnoreCase))
+            {
+                questTable = value;
+            }
             else if (key.Equals("start_status_points", StringComparison.OrdinalIgnoreCase))
             {
                 if (int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed))
@@ -107,6 +112,7 @@ public static class InterConfigLoader
                 InventoryTable = inventoryTable,
                 SkillTable = skillTable,
                 HotkeyTable = hotkeyTable,
+                QuestTable = questTable,
                 StartStatusPoints = startStatusPoints,
             };
         }
@@ -131,6 +137,7 @@ public static class InterConfigLoader
             InventoryTable = inventoryTable,
             SkillTable = skillTable,
             HotkeyTable = hotkeyTable,
+            QuestTable = questTable,
             StartStatusPoints = startStatusPoints,
         };
     }

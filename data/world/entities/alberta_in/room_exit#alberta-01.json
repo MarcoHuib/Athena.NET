@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:alberta_in:room_exit#alberta-01",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "Room_Exit#alberta-01",
+    "Map": "alberta_in",
+    "X": 73,
+    "Y": 142,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "alberta_in",
+      "X": 73,
+      "Y": 142,
+      "RadiusX": 1,
+      "RadiusY": 1,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "alberta",
+          "X": 48,
+          "Y": 145
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/re/warps/cities/alberta.txt",
+    "Line": 10
+  }
+}

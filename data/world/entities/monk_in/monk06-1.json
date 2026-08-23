@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:monk_in:monk06-1",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "monk06-1",
+    "Map": "monk_in",
+    "X": 69,
+    "Y": 84,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "monk_in",
+      "X": 69,
+      "Y": 84,
+      "RadiusX": 1,
+      "RadiusY": 3,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "monk_in",
+          "X": 38,
+          "Y": 92
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/re/warps/fields/prontera_fild.txt",
+    "Line": 123
+  }
+}

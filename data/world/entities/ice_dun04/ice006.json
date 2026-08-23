@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:ice_dun04:ice006",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "ice006",
+    "Map": "ice_dun04",
+    "X": 33,
+    "Y": 140,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "ice_dun04",
+      "X": 33,
+      "Y": 140,
+      "RadiusX": 1,
+      "RadiusY": 1,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "ice_dun03",
+          "X": 149,
+          "Y": 130
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/warps/dungeons/ice_dun.txt",
+    "Line": 24
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:payg_cas03:payg-3-06_payg-3-05",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "payg-3-06_payg-3-05",
+    "Map": "payg_cas03",
+    "X": 261,
+    "Y": 34,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "payg_cas03",
+      "X": 261,
+      "Y": 34,
+      "RadiusX": 1,
+      "RadiusY": 1,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "payg_cas03",
+          "X": 270,
+          "Y": 66
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/warps/guildcastles.txt",
+    "Line": 268
+  }
+}

@@ -1,4 +1,3 @@
-using System.Linq;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Athena.Net.CharServer.Config;
@@ -50,7 +49,7 @@ public static class DbSetup
         }
         catch (Exception ex)
         {
-            CharLogger.Error($"DB: connection check failed ({ex.Message}).");
+            CharLogger.Error($"DB: initialization failed ({ex.GetType().Name}: {ex.Message}).");
             return () => null;
         }
     }
@@ -63,47 +62,47 @@ public static class DbSetup
 
         for (var attempt = 1; attempt <= maxAttempts; attempt++)
         {
+            await using var dbHandle = factory();
+            bool canConnect;
             try
             {
-                await using var dbHandle = factory();
-
-                if (autoMigrate)
-                {
-                    var hasMigrations = dbHandle.Database.GetMigrations().Any();
-                    if (hasMigrations)
-                    {
-                        await dbHandle.Database.MigrateAsync();
-                        CharLogger.Status("DB: migrations applied.");
-                    }
-                    else
-                    {
-                        await dbHandle.Database.EnsureCreatedAsync();
-                        CharLogger.Status("DB: schema created (EnsureCreated).");
-                    }
-                }
-
-                var canConnect = await dbHandle.Database.CanConnectAsync();
-                if (canConnect)
-                {
-                    CharLogger.Status("DB: connected.");
-                    return;
-                }
-
-                lastError = new InvalidOperationException("Database not reachable.");
-                CharLogger.Status($"DB: waiting for database ({attempt}/{maxAttempts})...");
-                await Task.Delay(delay);
+                canConnect = await dbHandle.Database.CanConnectAsync();
             }
-            catch (Exception ex) when (attempt < maxAttempts)
+            catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 lastError = ex;
-                CharLogger.Status($"DB: waiting for database ({attempt}/{maxAttempts})...");
-                await Task.Delay(delay);
+                canConnect = false;
             }
-            catch (Exception ex)
+
+            if (!canConnect)
             {
-                lastError = ex;
+                CharLogger.Status(
+                    $"DB: waiting for database ({attempt}/{maxAttempts})" +
+                    (lastError is null ? "..." : $" ({lastError.GetType().Name}: {lastError.Message})"));
+                if (attempt < maxAttempts)
+                {
+                    await Task.Delay(delay);
+                    continue;
+                }
                 break;
             }
+
+            if (autoMigrate)
+            {
+                try
+                {
+                    await dbHandle.Database.MigrateAsync();
+                    CharLogger.Status("DB: migrations applied.");
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    CharLogger.Error($"DB: migration failed ({ex.GetType().Name}: {ex.Message}).");
+                    throw;
+                }
+            }
+
+            CharLogger.Status("DB: connected.");
+            return;
         }
 
         CharLogger.Error("DB: unable to connect.");

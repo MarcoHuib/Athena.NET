@@ -12,8 +12,10 @@ public sealed record WarpDefinition(
     ushort DestinationY,
     bool HasWarpActor,
     string SourceFile,
-    int SourceLine)
+    int SourceLine,
+    IReadOnlyList<WorldActionDefinition>? Actions = null)
 {
+    public IReadOnlyList<WorldActionDefinition> OrderedActions => Actions ?? [new WarpAction(DestinationMap, DestinationX, DestinationY)];
     public bool Matches(string mapName, ushort x, ushort y)
     {
         return string.Equals(SourceMap, mapName, StringComparison.OrdinalIgnoreCase) &&

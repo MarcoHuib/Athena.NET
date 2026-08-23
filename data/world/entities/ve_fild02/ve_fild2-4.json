@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:ve_fild02:ve_fild2-4",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "ve_fild2-4",
+    "Map": "ve_fild02",
+    "X": 31,
+    "Y": 263,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "ve_fild02",
+      "X": 31,
+      "Y": 263,
+      "RadiusX": 1,
+      "RadiusY": 1,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "ve_fild01",
+          "X": 361,
+          "Y": 267
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/re/warps/fields/veins_fild.txt",
+    "Line": 24
+  }
+}

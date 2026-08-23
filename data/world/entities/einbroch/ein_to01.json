@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:einbroch:ein_to01",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "ein_to01",
+    "Map": "einbroch",
+    "X": 214,
+    "Y": 263,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "einbroch",
+      "X": 214,
+      "Y": 263,
+      "RadiusX": 1,
+      "RadiusY": 1,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "einbroch",
+          "X": 233,
+          "Y": 315
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/warps/cities/einbroch.txt",
+    "Line": 31
+  }
+}

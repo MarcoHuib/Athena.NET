@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:hu_in01:hugel60",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "hugel60",
+    "Map": "hu_in01",
+    "X": 24,
+    "Y": 361,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "hu_in01",
+      "X": 24,
+      "Y": 361,
+      "RadiusX": 1,
+      "RadiusY": 1,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "hugel",
+          "X": 82,
+          "Y": 230
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/warps/cities/hugel.txt",
+    "Line": 109
+  }
+}

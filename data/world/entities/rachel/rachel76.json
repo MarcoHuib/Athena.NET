@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:rachel:rachel76",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "rachel76",
+    "Map": "rachel",
+    "X": 130,
+    "Y": 21,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "rachel",
+      "X": 130,
+      "Y": 21,
+      "RadiusX": 1,
+      "RadiusY": 1,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "ve_fild02",
+          "X": 195,
+          "Y": 377
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/re/warps/cities/rachel.txt",
+    "Line": 111
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:rgsr_in:rekenber_to_lhz",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "rekenber_to_lhz",
+    "Map": "rgsr_in",
+    "X": 127,
+    "Y": 32,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "rgsr_in",
+      "X": 127,
+      "Y": 32,
+      "RadiusX": 1,
+      "RadiusY": 1,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "lighthalzen",
+          "X": 53,
+          "Y": 275
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/re/warps/cities/lighthalzen.txt",
+    "Line": 10
+  }
+}

@@ -7,7 +7,8 @@ public sealed record WarpActor(
     ushort X,
     ushort Y,
     byte RadiusX,
-    byte RadiusY)
+    byte RadiusY,
+    ushort SpriteClass = 45)
 {
     public const ushort ClassId = 45;
     public const byte ObjectType = 6;

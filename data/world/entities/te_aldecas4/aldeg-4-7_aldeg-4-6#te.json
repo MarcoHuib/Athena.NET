@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:te_aldecas4:aldeg-4-7_aldeg-4-6#te",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "aldeg-4-7_aldeg-4-6#te",
+    "Map": "te_aldecas4",
+    "X": 49,
+    "Y": 53,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "te_aldecas4",
+      "X": 49,
+      "Y": 53,
+      "RadiusX": 1,
+      "RadiusY": 1,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "te_aldecas4",
+          "X": 196,
+          "Y": 82
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/re/warps/guildcastles.txt",
+    "Line": 278
+  }
+}

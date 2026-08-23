@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:gefenia01:gefeniawarp003",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "gefeniawarp003",
+    "Map": "gefenia01",
+    "X": 220,
+    "Y": 256,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "gefenia01",
+      "X": 220,
+      "Y": 256,
+      "RadiusX": 1,
+      "RadiusY": 1,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "gefenia02",
+          "X": 240,
+          "Y": 23
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/warps/fields/gefenia.txt",
+    "Line": 18
+  }
+}

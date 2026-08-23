@@ -15,6 +15,7 @@ public sealed class WarpActorTests
         var actor = Assert.Single(actors);
         Assert.True(actor.ActorId >= 110_000_000);
         Assert.Equal((ushort)45, WarpActor.ClassId);
+        Assert.Equal((ushort)45, actor.SpriteClass);
         Assert.Equal((byte)6, WarpActor.ObjectType);
         Assert.Equal((ushort)27, actor.X);
         Assert.Equal((ushort)30, actor.Y);

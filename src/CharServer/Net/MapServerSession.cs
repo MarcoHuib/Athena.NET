@@ -16,6 +16,8 @@ public sealed class MapServerSession : IDisposable, ISession
         [PacketConstants.MapLogin] = 60,
         [PacketConstants.MapAuthRequest] = 20,
         [PacketConstants.MapSavePosition] = 30,
+        [PacketConstants.MapQuestStateRequest] = MapQuestStateProtocol.RequestLength,
+        [PacketConstants.MapSavePointRequest] = MapSavePointProtocol.RequestLength,
     };
 
     private readonly TcpClient _client;
@@ -96,6 +98,12 @@ public sealed class MapServerSession : IDisposable, ISession
                 break;
             case PacketConstants.MapSavePosition:
                 await HandleSavePositionAsync(packet, cancellationToken);
+                break;
+            case PacketConstants.MapQuestStateRequest:
+                await HandleQuestStateRequestAsync(packet, cancellationToken);
+                break;
+            case PacketConstants.MapSavePointRequest:
+                await HandleSavePointAsync(packet, cancellationToken);
                 break;
             default:
                 CharLogger.Warning($"Unknown map server packet 0x{packetType:X4}, disconnecting.");
@@ -231,6 +239,102 @@ public sealed class MapServerSession : IDisposable, ISession
         await db.SaveChangesAsync(cancellationToken);
     }
 
+    private async Task HandleSavePointAsync(byte[] packet, CancellationToken cancellationToken)
+    {
+        if (!MapSavePointProtocol.TryParseRequest(packet, out var request)) return;
+        var accountId = request.AccountId; var charId = request.CharId; var mapName = request.Map; var x = request.X; var y = request.Y;
+        var success = false;
+        try
+        {
+            if (_authenticated && IsPositionSaveAuthorized(_authenticated, _ownedCharacters, accountId, charId) && !string.IsNullOrWhiteSpace(mapName) && mapName.Length <= 11)
+            {
+                await using var db = _dbFactory();
+                var character = db is null ? null : await db.Characters.FirstOrDefaultAsync(candidate => candidate.AccountId == accountId && candidate.CharId == charId && candidate.DeleteDate == 0, cancellationToken);
+                if (character is not null)
+                {
+                    character.SaveMap = mapName; character.SaveX = x; character.SaveY = y;
+                    await db!.SaveChangesAsync(cancellationToken); success = true;
+                    CharLogger.Info($"SavePoint persistence succeeded charId={charId} map='{mapName}' x={x} y={y}.");
+                }
+            }
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            CharLogger.Warning($"SavePoint persistence failed charId={charId}: {exception.GetType().Name}: {exception.Message}");
+        }
+        await WriteAsync(MapSavePointProtocol.BuildResponse(charId, success), cancellationToken);
+    }
+
+    private async Task HandleQuestStateRequestAsync(byte[] packet, CancellationToken cancellationToken)
+    {
+        if (!MapQuestStateProtocol.TryParseRequest(packet, out var request))
+        {
+            CharLogger.Warning($"Rejected malformed quest persistence request session={SessionId} length={packet.Length}.");
+            return;
+        }
+
+        CharLogger.Info(
+            $"Quest persistence request accountId={request.AccountId} charId={request.CharId} " +
+            $"questId={request.QuestId} desiredState={request.Operation}.");
+        byte state = 0;
+        var success = false;
+        if (!IsQuestStateRequestAuthorized(
+                _authenticated, _ownedCharacters, request.AccountId, request.CharId, request.QuestId, request.Operation))
+        {
+            CharLogger.Warning(
+                $"Quest persistence rejected reason=unauthorized-or-invalid accountId={request.AccountId} " +
+                $"charId={request.CharId} questId={request.QuestId}.");
+        }
+        else
+        {
+            try
+            {
+                await using var db = _dbFactory();
+                if (db is null)
+                {
+                    CharLogger.Warning("Quest persistence rejected reason=database-unavailable.");
+                }
+                else
+                {
+                    var quest = await db.Quests.FirstOrDefaultAsync(
+                        q => q.CharId == request.CharId && q.QuestId == request.QuestId, cancellationToken);
+                    if (request.Operation is 1 or 2)
+                    {
+                        if (quest is null)
+                        {
+                            quest = new() { CharId = request.CharId, QuestId = request.QuestId };
+                            db.Quests.Add(quest);
+                        }
+                        quest.State = request.Operation.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                        await db.SaveChangesAsync(cancellationToken);
+                    }
+                    success = quest is null ||
+                        (byte.TryParse(quest.State, System.Globalization.NumberStyles.None,
+                            System.Globalization.CultureInfo.InvariantCulture, out state) && state <= 2);
+                    if (success)
+                    {
+                        CharLogger.Info(
+                            $"Quest persistence succeeded charId={request.CharId} questId={request.QuestId} state={state}.");
+                    }
+                    else
+                    {
+                        state = 0;
+                        CharLogger.Warning(
+                            $"Quest persistence rejected reason=invalid-stored-state charId={request.CharId} questId={request.QuestId}.");
+                    }
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                CharLogger.Warning(
+                    $"Quest persistence rejected reason=database-error charId={request.CharId} " +
+                    $"questId={request.QuestId} error={ex.GetType().Name}.");
+            }
+        }
+
+        await WriteAsync(MapQuestStateProtocol.BuildResponse(request.CharId, request.QuestId, state, success), cancellationToken);
+    }
+
     internal static bool IsPositionSaveAuthorized(
         bool authenticated,
         IReadOnlySet<(uint AccountId, uint CharId)> ownedCharacters,
@@ -238,6 +342,17 @@ public sealed class MapServerSession : IDisposable, ISession
         uint charId)
     {
         return authenticated && ownedCharacters.Contains((accountId, charId));
+    }
+
+    internal static bool IsQuestStateRequestAuthorized(
+        bool authenticated,
+        IReadOnlySet<(uint AccountId, uint CharId)> ownedCharacters,
+        uint accountId,
+        uint charId,
+        uint questId,
+        byte operation)
+    {
+        return authenticated && questId > 0 && operation <= 2 && ownedCharacters.Contains((accountId, charId));
     }
 
     private Task SendLoginAckAsync(byte result, CancellationToken cancellationToken)

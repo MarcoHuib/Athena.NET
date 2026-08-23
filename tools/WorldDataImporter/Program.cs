@@ -1,271 +1,105 @@
-using System.Globalization;
 using System.Text.Json;
 
-if (args.Length < 3)
+return await WorldDataImporterCli.RunAsync(args);
+
+internal static class WorldDataImporterCli
 {
-    Console.Error.WriteLine("Usage: WorldDataImporter <output.json> <source-folder> <source-folder> [...]");
-    return 2;
+    public static async Task<int> RunAsync(string[] args)
+    {
+        if (args.Length == 0) { PrintUsage(); return 2; }
+        try
+        {
+            return args[0] switch
+            {
+                "audit" => await AuditAsync(args[1..]),
+                "convert" => await ConvertAsync(args[1..]),
+                "capabilities" => await CapabilitiesAsync(args[1..]),
+                _ => throw new ArgumentException($"Unknown command '{args[0]}'."),
+            };
+        }
+        catch (ArgumentException exception) { Console.Error.WriteLine(exception.Message); PrintUsage(); return 2; }
+    }
+
+    private static async Task<int> AuditAsync(string[] args)
+    {
+        var options = CliOptions.Parse(args);
+        var roots = options.All("source-root");
+        if (roots.Count == 0) throw new ArgumentException("audit requires --source-root.");
+        var report = ContentAuditor.Audit(roots);
+        await DeterministicJson.WriteFileAsync(options.Required("output"), report);
+        Console.WriteLine($"Audited {report.FilesAnalyzed} files and {report.TopLevel.Total} top-level declarations.");
+        foreach (var item in report.TopLevel.Categories) Console.WriteLine($"  {item.Category,-24} {item.Count,8}");
+        Console.WriteLine($"Embedded labels: OnTouch={report.EmbeddedBehavior.OnTouch}, OnTouch_={report.EmbeddedBehavior.OnTouchVariant}, OnInit={report.EmbeddedBehavior.OnInit}, timers/events={report.EmbeddedBehavior.TimerOrEvent}.");
+        return 0;
+    }
+
+    private static async Task<int> ConvertAsync(string[] args)
+    {
+        var options = CliOptions.Parse(args);
+        var roots = options.All("source-root");
+        if (roots.Count == 0) throw new ArgumentException("convert requires --source-root.");
+        var filter = new ConversionFilter(options.Optional("source-file"), options.Optional("map"), options.Optional("name"), options.Optional("kind"));
+        var allCompatible = string.Equals(options.Optional("all-compatible"), "true", StringComparison.OrdinalIgnoreCase);
+        if (filter.IsEmpty && !allCompatible) throw new ArgumentException("convert requires a filter, or the explicit --all-compatible true safety switch.");
+        if (allCompatible && options.Optional("report") is null) throw new ArgumentException("--all-compatible true requires --report so skipped content is never silent.");
+        var result = WorldEntityConverter.Convert(roots, filter);
+        var selected = allCompatible ? result.Entities.Where(IsRuntimeExecutable).ToArray() : result.Entities.ToArray();
+        var duplicateIds = selected.GroupBy(entity => entity.Id, StringComparer.OrdinalIgnoreCase).Where(group => group.Count() > 1).Select(group => group.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var writeEntities = selected.Where(entity => !duplicateIds.Contains(entity.Id)).ToArray();
+        foreach (var entity in writeEntities)
+        {
+            var directory = Path.Combine(options.Required("output"), entity.Actor?.Map ?? entity.Triggers[0].Map);
+            await DeterministicJson.WriteFileAsync(Path.Combine(directory, DeterministicId.FileName(entity.Id) + ".json"), entity);
+        }
+        var skipped = result.Entities.Count - selected.Length;
+        if (options.Optional("report") is { } reportPath)
+            await DeterministicJson.WriteFileAsync(reportPath, new CompatibilityConversionReport(writeEntities.Length, skipped, duplicateIds.Order(StringComparer.Ordinal).ToArray(), result.Unsupported));
+        Console.WriteLine($"Converted {writeEntities.Length} executable entities; parsed but not executable: {skipped}; unsupported findings: {result.Unsupported.Count}; duplicate IDs skipped: {duplicateIds.Count}.");
+        return allCompatible || (result.Unsupported.Count == 0 && duplicateIds.Count == 0) ? 0 : 1;
+    }
+
+    private static bool IsRuntimeExecutable(WorldEntityDefinition entity) =>
+        entity.Triggers.Any(trigger => trigger.Actions.Any(action => action is WarpAction)) ||
+        (entity.Scripts?.Any(script => script.RuntimeExecutable && script.Instructions is { Count: > 0 }) ?? false);
+
+    private static async Task<int> CapabilitiesAsync(string[] args)
+    {
+        var options = CliOptions.Parse(args); var roots = options.All("source-root");
+        if (roots.Count == 0) throw new ArgumentException("capabilities requires --source-root.");
+        var report = CapabilityReporter.Scan(roots);
+        await DeterministicJson.WriteFileAsync(options.Required("output"), report);
+        Console.WriteLine($"Scanned {report.Files} files: NPC definitions={report.NpcDefinitions}, duplicates={report.Duplicates}, scripts={report.Scripts}.");
+        foreach (var command in report.Commands.Take(20)) Console.WriteLine($"  {command.Command,-24} {command.Count,8} {command.Status}");
+        return 0;
+    }
+
+    private static void PrintUsage()
+    {
+        Console.Error.WriteLine("WorldDataImporter audit --source-root <folder> [--source-root <folder>] --output <report.json>");
+        Console.Error.WriteLine("WorldDataImporter convert --source-root <folder> --output <entities-folder> [--source-file <path>] [--map <map>] [--name <name>] [--kind warp]");
+        Console.Error.WriteLine("WorldDataImporter convert --source-root <folder> --all-compatible true --output <entities-folder> --report <report.json>");
+        Console.Error.WriteLine("WorldDataImporter capabilities --source-root <folder> [--source-root <folder>] --output <report.json>");
+    }
 }
 
-var outputPath = Path.GetFullPath(args[0]);
-var sourceFolders = args.Skip(1).Select(Path.GetFullPath).ToArray();
-var result = WarpImporter.Import(sourceFolders);
-Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
-var options = new JsonSerializerOptions { WriteIndented = true };
-await File.WriteAllTextAsync(outputPath, JsonSerializer.Serialize(result, options) + Environment.NewLine);
-Console.WriteLine(
-    $"Imported static warps: {result.Summary.StaticWarps}; resolved duplicates: {result.Summary.ResolvedDuplicates}; " +
-    $"dynamic/scripted: {result.Summary.DynamicWarps}; unsupported/malformed: {result.Summary.Unsupported}.");
-return result.Summary.Unsupported == 0 ? 0 : 1;
+internal sealed record CompatibilityConversionReport(int Converted, int ParsedButNotExecutable, IReadOnlyList<string> DuplicateIds, IReadOnlyList<UnsupportedConversion> Unsupported);
 
-internal static class WarpImporter
+internal sealed class CliOptions
 {
-    public static GeneratedWorldData Import(IEnumerable<string> sourceFolders)
+    private readonly Dictionary<string, List<string>> _values = new(StringComparer.Ordinal);
+    public static CliOptions Parse(string[] args)
     {
-        var folders = sourceFolders.OrderBy(path => path, StringComparer.Ordinal).ToArray();
-        var files = folders
-            .SelectMany(folder => Directory.EnumerateFiles(folder, "*.txt", SearchOption.AllDirectories))
-            .Distinct(StringComparer.Ordinal)
-            .OrderBy(path => path, StringComparer.Ordinal)
-            .ToArray();
-        var staticWarps = new List<GeneratedWarp>();
-        var dynamicWarps = new List<ClassifiedWarp>();
-        var unsupported = new List<ClassifiedWarp>();
-        var templates = new Dictionary<string, GeneratedWarp>(StringComparer.Ordinal);
-        var duplicateCandidates = new List<ParsedLine>();
-
-        foreach (var file in files)
+        var result = new CliOptions();
+        for (var index = 0; index < args.Length; index += 2)
         {
-            var relativeFile = MakeRelative(folders, file);
-            var lineNumber = 0;
-            foreach (var rawLine in File.ReadLines(file))
-            {
-                lineNumber++;
-                var line = rawLine.TrimStart('\uFEFF').Trim();
-                if (line.Length == 0 || line.StartsWith("//", StringComparison.Ordinal))
-                {
-                    continue;
-                }
-
-                var parsed = new ParsedLine(relativeFile, lineNumber, line, line.Split('\t'));
-                if (parsed.Columns.Length >= 4 && parsed.Columns[1].Trim() == "warp")
-                {
-                    if (TryParseStatic(parsed, out var warp))
-                    {
-                        staticWarps.Add(warp);
-                        templates[warp.Name] = warp;
-                    }
-                    else
-                    {
-                        unsupported.Add(new ClassifiedWarp(relativeFile, lineNumber, "MalformedStaticWarp", line, null, null, null, null, null));
-                    }
-
-                    continue;
-                }
-
-                if (parsed.Columns.Length >= 2 && parsed.Columns[1].Trim().StartsWith("duplicate(", StringComparison.Ordinal))
-                {
-                    duplicateCandidates.Add(parsed);
-                    continue;
-                }
-
-                if (parsed.Columns.Length >= 4 &&
-                    parsed.Columns[1].Trim() == "script" &&
-                    parsed.Columns[3].Contains("WARPNPC", StringComparison.Ordinal))
-                {
-                    dynamicWarps.Add(ParseDynamicVisual(parsed, "ScriptedWarpNpc"));
-                }
-            }
+            if (!args[index].StartsWith("--", StringComparison.Ordinal) || index + 1 >= args.Length) throw new ArgumentException($"Invalid option near '{args[index]}'.");
+            var key = args[index][2..];
+            if (!result._values.TryGetValue(key, out var values)) result._values[key] = values = [];
+            values.Add(args[index + 1]);
         }
-
-        var resolvedDuplicates = 0;
-        foreach (var parsed in duplicateCandidates)
-        {
-            if (TryResolveDuplicate(parsed, templates, out var duplicate))
-            {
-                staticWarps.Add(duplicate);
-                templates[duplicate.Name] = duplicate;
-                resolvedDuplicates++;
-            }
-            else if (parsed.Line.Contains("WARPNPC", StringComparison.Ordinal))
-            {
-                dynamicWarps.Add(ParseDynamicVisual(parsed, "DynamicWarpDuplicate"));
-            }
-        }
-
-        var ordered = staticWarps
-            .OrderBy(warp => warp.SourceMap, StringComparer.Ordinal)
-            .ThenBy(warp => warp.CenterX)
-            .ThenBy(warp => warp.CenterY)
-            .ThenBy(warp => warp.Name, StringComparer.Ordinal)
-            .ToArray();
-        return new GeneratedWorldData(
-            1,
-            "rAthena",
-            "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
-            folders.Select(folder => Path.GetRelativePath(Environment.CurrentDirectory, folder)).ToArray(),
-            files.Length,
-            ordered,
-            dynamicWarps.OrderBy(item => item.File, StringComparer.Ordinal).ThenBy(item => item.Line).ToArray(),
-            unsupported.OrderBy(item => item.File, StringComparer.Ordinal).ThenBy(item => item.Line).ToArray(),
-            new ImportSummary(ordered.Length, resolvedDuplicates, dynamicWarps.Count, unsupported.Count));
+        return result;
     }
-
-    private static bool TryParseStatic(ParsedLine line, out GeneratedWarp warp)
-    {
-        warp = default!;
-        if (line.Columns.Length < 4 ||
-            !TryParseSource(line.Columns[0], out var map, out var x, out var y) ||
-            !TryParseDestination(line.Columns[3], out var radiusX, out var radiusY, out var destinationMap, out var destinationX, out var destinationY))
-        {
-            return false;
-        }
-
-        warp = new GeneratedWarp(
-            line.Columns[2].Trim(), map, x, y, radiusX, radiusY,
-            destinationMap, destinationX, destinationY, true,
-            line.File, line.LineNumber);
-        return true;
-    }
-
-    private static bool TryResolveDuplicate(
-        ParsedLine line,
-        IReadOnlyDictionary<string, GeneratedWarp> templates,
-        out GeneratedWarp warp)
-    {
-        warp = default!;
-        var action = line.Columns[1].Trim();
-        var close = action.IndexOf(')');
-        if (close <= "duplicate(".Length || line.Columns.Length < 3 ||
-            !TryParseSource(line.Columns[0], out var map, out var x, out var y))
-        {
-            return false;
-        }
-
-        var templateName = action["duplicate(".Length..close];
-        if (!templates.TryGetValue(templateName, out var template))
-        {
-            return false;
-        }
-
-        warp = template with
-        {
-            Name = line.Columns[2].Trim(),
-            SourceMap = map,
-            CenterX = x,
-            CenterY = y,
-            SourceFile = line.File,
-            SourceLine = line.LineNumber,
-        };
-        return true;
-    }
-
-    private static ClassifiedWarp ParseDynamicVisual(ParsedLine line, string classification)
-    {
-        if (line.Columns.Length >= 4 &&
-            TryParseSource(line.Columns[0], out var map, out var x, out var y))
-        {
-            var visual = line.Columns[3].Split(',').Select(field => field.Trim()).ToArray();
-            if (visual.Length >= 3 && visual[0] == "WARPNPC" &&
-                ushort.TryParse(visual[1], NumberStyles.None, CultureInfo.InvariantCulture, out var radiusX) &&
-                ushort.TryParse(visual[2].TrimEnd('{'), NumberStyles.None, CultureInfo.InvariantCulture, out var radiusY))
-            {
-                return new ClassifiedWarp(
-                    line.File,
-                    line.LineNumber,
-                    classification,
-                    line.Line,
-                    line.Columns[2].Trim(),
-                    map,
-                    x,
-                    y,
-                    new WarpRadius(radiusX, radiusY));
-            }
-        }
-
-        return new ClassifiedWarp(line.File, line.LineNumber, classification, line.Line, null, null, null, null, null);
-    }
-
-    private static bool TryParseSource(string value, out string map, out ushort x, out ushort y)
-    {
-        map = string.Empty;
-        x = y = 0;
-        var fields = value.Split(',').Select(field => field.Trim()).ToArray();
-        return fields.Length >= 3 &&
-               (map = fields[0]).Length > 0 &&
-               ushort.TryParse(fields[1], NumberStyles.None, CultureInfo.InvariantCulture, out x) &&
-               ushort.TryParse(fields[2], NumberStyles.None, CultureInfo.InvariantCulture, out y);
-    }
-
-    private static bool TryParseDestination(
-        string value,
-        out ushort radiusX,
-        out ushort radiusY,
-        out string map,
-        out ushort x,
-        out ushort y)
-    {
-        radiusX = radiusY = x = y = 0;
-        map = string.Empty;
-        var fields = value.Split(',').Select(field => field.Trim()).ToArray();
-        return fields.Length == 5 &&
-               ushort.TryParse(fields[0], NumberStyles.None, CultureInfo.InvariantCulture, out radiusX) &&
-               ushort.TryParse(fields[1], NumberStyles.None, CultureInfo.InvariantCulture, out radiusY) &&
-               (map = fields[2]).Length > 0 &&
-               ushort.TryParse(fields[3], NumberStyles.None, CultureInfo.InvariantCulture, out x) &&
-               ushort.TryParse(fields[4], NumberStyles.None, CultureInfo.InvariantCulture, out y);
-    }
-
-    private static string MakeRelative(IEnumerable<string> roots, string file)
-    {
-        foreach (var root in roots)
-        {
-            if (file.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.Ordinal))
-            {
-                return Path.GetRelativePath(Environment.CurrentDirectory, file);
-            }
-        }
-
-        return file;
-    }
-
-    private sealed record ParsedLine(string File, int LineNumber, string Line, string[] Columns);
+    public IReadOnlyList<string> All(string key) => _values.TryGetValue(key, out var values) ? values : [];
+    public string Required(string key) => Optional(key) ?? throw new ArgumentException($"Missing --{key}.");
+    public string? Optional(string key) => _values.TryGetValue(key, out var values) ? values[^1] : null;
 }
-
-internal sealed record GeneratedWorldData(
-    int SchemaVersion,
-    string SourceRepository,
-    string SourceCommit,
-    string[] SourceFolders,
-    int FilesAnalyzed,
-    GeneratedWarp[] StaticWarps,
-    ClassifiedWarp[] DynamicWarps,
-    ClassifiedWarp[] Unsupported,
-    ImportSummary Summary);
-
-internal sealed record GeneratedWarp(
-    string Name,
-    string SourceMap,
-    ushort CenterX,
-    ushort CenterY,
-    ushort RadiusX,
-    ushort RadiusY,
-    string DestinationMap,
-    ushort DestinationX,
-    ushort DestinationY,
-    bool HasWarpActor,
-    string SourceFile,
-    int SourceLine);
-
-internal sealed record ClassifiedWarp(
-    string File,
-    int Line,
-    string Classification,
-    string Definition,
-    string? Name,
-    string? SourceMap,
-    ushort? CenterX,
-    ushort? CenterY,
-    WarpRadius? Radius);
-internal sealed record WarpRadius(ushort X, ushort Y);
-internal sealed record ImportSummary(int StaticWarps, int ResolvedDuplicates, int DynamicWarps, int Unsupported);

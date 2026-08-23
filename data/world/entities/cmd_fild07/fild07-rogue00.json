@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:cmd_fild07:fild07-rogue00",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "fild07-rogue00",
+    "Map": "cmd_fild07",
+    "X": 193,
+    "Y": 117,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "cmd_fild07",
+      "X": 193,
+      "Y": 117,
+      "RadiusX": 1,
+      "RadiusY": 1,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "in_rogue",
+          "X": 379,
+          "Y": 46
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/warps/other/jobquests.txt",
+    "Line": 114
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:lhz_in02:lhz_store1-2",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "lhz_store1-2",
+    "Map": "lhz_in02",
+    "X": 21,
+    "Y": 191,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "lhz_in02",
+      "X": 21,
+      "Y": 191,
+      "RadiusX": 1,
+      "RadiusY": 1,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "lighthalzen",
+          "X": 202,
+          "Y": 160
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/warps/cities/lighthalzen.txt",
+    "Line": 70
+  }
+}

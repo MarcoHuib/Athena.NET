@@ -31,7 +31,7 @@ public sealed class MapTcpServer
         BoundPort = ((IPEndPoint)_listener.LocalEndpoint).Port;
         MapLogger.Status($"Map server listening on {_configStore.Current.BindIp}:{BoundPort}...");
         MapLogger.Status(
-            $"WORLD: loaded {WorldMapRegistry.Tutorial.MapCount} maps, {WorldMapRegistry.Tutorial.StaticWarpCount} static warps, {WorldMapRegistry.Tutorial.DynamicWarpActorCount} dynamic/scripted warp actors.");
+            $"WORLD: loaded {WorldMapRegistry.Tutorial.EntityCount} world entities over {WorldMapRegistry.Tutorial.MapCount} maps, {WorldMapRegistry.Tutorial.StaticWarpCount} active warps, {WorldMapRegistry.Tutorial.DynamicWarpActorCount} legacy dynamic/scripted warp actors.");
 
         try
         {

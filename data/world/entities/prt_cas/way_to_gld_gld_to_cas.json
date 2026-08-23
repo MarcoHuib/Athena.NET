@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:prt_cas:way_to_gld_gld_to_cas",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "way_to_gld_gld_to_cas",
+    "Map": "prt_cas",
+    "X": 82,
+    "Y": 175,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "prt_cas",
+      "X": 82,
+      "Y": 175,
+      "RadiusX": 1,
+      "RadiusY": 1,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "prt_gld",
+          "X": 159,
+          "Y": 30
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/re/warps/cities/prontera.txt",
+    "Line": 147
+  }
+}

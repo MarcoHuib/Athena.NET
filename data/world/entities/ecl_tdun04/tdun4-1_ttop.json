@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:ecl_tdun04:tdun4-1_ttop",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "tdun4-1_ttop",
+    "Map": "ecl_tdun04",
+    "X": 34,
+    "Y": 17,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "ecl_tdun04",
+      "X": 34,
+      "Y": 17,
+      "RadiusX": 1,
+      "RadiusY": 1,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "ecl_fild01",
+          "X": 183,
+          "Y": 73
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/re/warps/dungeons/ecl_dun.txt",
+    "Line": 25
+  }
+}

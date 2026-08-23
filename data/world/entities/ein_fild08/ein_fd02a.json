@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:ein_fild08:ein_fd02a",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "ein_fd02a",
+    "Map": "ein_fild08",
+    "X": 164,
+    "Y": 380,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "ein_fild08",
+      "X": 164,
+      "Y": 380,
+      "RadiusX": 1,
+      "RadiusY": 1,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "einbroch",
+          "X": 150,
+          "Y": 28
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/warps/cities/einbroch.txt",
+    "Line": 102
+  }
+}

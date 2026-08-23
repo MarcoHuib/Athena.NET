@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:bif_fild02:biffild_fild01-1",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "biffild_fild01-1",
+    "Map": "bif_fild02",
+    "X": 292,
+    "Y": 351,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "bif_fild02",
+      "X": 292,
+      "Y": 351,
+      "RadiusX": 1,
+      "RadiusY": 1,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "ecl_fild01",
+          "X": 205,
+          "Y": 76
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/re/warps/cities/eclage.txt",
+    "Line": 20
+  }
+}

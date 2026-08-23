@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:lhz_cube:cubew07-1",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "cubew07-1",
+    "Map": "lhz_cube",
+    "X": 18,
+    "Y": 136,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "lhz_cube",
+      "X": 18,
+      "Y": 136,
+      "RadiusX": 2,
+      "RadiusY": 2,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "lhz_cube",
+          "X": 10,
+          "Y": 74
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/warps/dungeons/lhz_dun.txt",
+    "Line": 168
+  }
+}

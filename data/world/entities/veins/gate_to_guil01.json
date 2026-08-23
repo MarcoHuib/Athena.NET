@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:veins:gate_to_guil01",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "#gate_to_guil01",
+    "Map": "veins",
+    "X": 257,
+    "Y": 256,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "veins",
+      "X": 257,
+      "Y": 256,
+      "RadiusX": 1,
+      "RadiusY": 1,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "job3_guil01",
+          "X": 9,
+          "Y": 93
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/re/warps/other/jobquests.txt",
+    "Line": 32
+  }
+}

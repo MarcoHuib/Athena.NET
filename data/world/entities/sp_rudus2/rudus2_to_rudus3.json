@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:sp_rudus2:rudus2_to_rudus3",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "rudus2_to_rudus3",
+    "Map": "sp_rudus2",
+    "X": 359,
+    "Y": 206,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "sp_rudus2",
+      "X": 359,
+      "Y": 206,
+      "RadiusX": 1,
+      "RadiusY": 1,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "sp_rudus3",
+          "X": 366,
+          "Y": 207
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/re/warps/dungeons/sp_rudus.txt",
+    "Line": 10
+  }
+}

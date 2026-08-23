@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:prt_cas_q:qroom_wigner_out_qroom_wigner_in",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "qroom_wigner_out_qroom_wigner_in",
+    "Map": "prt_cas_q",
+    "X": 74,
+    "Y": 21,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "prt_cas_q",
+      "X": 74,
+      "Y": 21,
+      "RadiusX": 1,
+      "RadiusY": 1,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "prt_cas_q",
+          "X": 149,
+          "Y": 119
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/re/warps/cities/prontera.txt",
+    "Line": 126
+  }
+}

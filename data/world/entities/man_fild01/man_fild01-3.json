@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:man_fild01:man_fild01-3",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "man_fild01-3",
+    "Map": "man_fild01",
+    "X": 103,
+    "Y": 55,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "man_fild01",
+      "X": 103,
+      "Y": 55,
+      "RadiusX": 1,
+      "RadiusY": 1,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "man_fild03",
+          "X": 84,
+          "Y": 366
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/warps/fields/man_fild.txt",
+    "Line": 18
+  }
+}

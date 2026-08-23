@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:slabw01:out_slbw",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "#out_slbw",
+    "Map": "slabw01",
+    "X": 10,
+    "Y": 88,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "slabw01",
+      "X": 10,
+      "Y": 88,
+      "RadiusX": 1,
+      "RadiusY": 1,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "que_swat",
+          "X": 155,
+          "Y": 58
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/re/warps/dungeons/slabw01.txt",
+    "Line": 8
+  }
+}

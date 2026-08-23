@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:tha_t04:warpthana3b",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "WarpThana3b",
+    "Map": "tha_t04",
+    "X": 60,
+    "Y": 137,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "tha_t04",
+      "X": 60,
+      "Y": 137,
+      "RadiusX": 1,
+      "RadiusY": 1,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "tha_t03",
+          "X": 59,
+          "Y": 135
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/warps/dungeons/tha_t.txt",
+    "Line": 31
+  }
+}

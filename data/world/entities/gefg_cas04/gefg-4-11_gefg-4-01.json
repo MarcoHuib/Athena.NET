@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:gefg_cas04:gefg-4-11_gefg-4-01",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "gefg-4-11_gefg-4-01",
+    "Map": "gefg_cas04",
+    "X": 18,
+    "Y": 82,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "gefg_cas04",
+      "X": 18,
+      "Y": 82,
+      "RadiusX": 1,
+      "RadiusY": 1,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "gefg_cas04",
+          "X": 34,
+          "Y": 215
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/warps/guildcastles.txt",
+    "Line": 197
+  }
+}

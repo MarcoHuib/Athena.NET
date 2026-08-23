@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:thana_step:warpthana6c",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "WarpThana6c",
+    "Map": "thana_step",
+    "X": 173,
+    "Y": 372,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "thana_step",
+      "X": 173,
+      "Y": 372,
+      "RadiusX": 1,
+      "RadiusY": 1,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "tha_t07",
+          "X": 30,
+          "Y": 166
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/warps/dungeons/tha_t.txt",
+    "Line": 41
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:gld_dun03_2:gdun03a_prtg#abyss",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "gdun03a_prtg#abyss",
+    "Map": "gld_dun03_2",
+    "X": 238,
+    "Y": 274,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "gld_dun03_2",
+      "X": 238,
+      "Y": 274,
+      "RadiusX": 1,
+      "RadiusY": 1,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "prt_gld",
+          "X": 252,
+          "Y": 247
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/re/warps/guildcastles.txt",
+    "Line": 27
+  }
+}

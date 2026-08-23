@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:prt_fild06:prtf003",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "prtf003",
+    "Map": "prt_fild06",
+    "X": 23,
+    "Y": 193,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "prt_fild06",
+      "X": 23,
+      "Y": 193,
+      "RadiusX": 2,
+      "RadiusY": 3,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "prontera",
+          "X": 285,
+          "Y": 203
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/re/warps/fields/prontera_fild.txt",
+    "Line": 56
+  }
+}

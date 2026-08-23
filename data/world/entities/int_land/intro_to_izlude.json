@@ -1,0 +1,178 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:int_land:intro_to_izlude",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "#intro_to_izlude",
+    "Map": "int_land",
+    "X": 49,
+    "Y": 57,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [],
+  "Scripts": [
+    {
+      "Trigger": "OnTouch",
+      "Map": "int_land",
+      "X": 49,
+      "Y": 57,
+      "RadiusX": 2,
+      "RadiusY": 2,
+      "SourceParsed": true,
+      "RuntimeExecutable": true,
+      "RequiredCapabilities": [
+        "Conditional",
+        "QuestState",
+        "Dialogue",
+        "DialogueNext",
+        "Selection",
+        "CompleteQuest",
+        "Close",
+        "VariableAssignment",
+        "NpcIdentity",
+        "StringReplace",
+        "Warp",
+        "SavePoint"
+      ],
+      "NormalizedSource": "OnTouch:\n\tif (isbegin_quest(21008) == 1) {\n\t\tmes \u0022^4d4dffOnce you leave this island there is no way back.\u0022;\n\t\tmes \u0022Are you sure you want to go directly to Izlude?^000000\u0022;\n\t\tnext;\n\t\tmes \u0022^4d4dffIf you do, the quest will be deleted from your Quest Log.^000000\u0022;\n\t\tnext;\n\t\tif (select(\u0022Do not go to Izlude yet\u0022, \u0022Sail to Izlude!\u0022) == 1) {\n\t\t\tmes \u0022[Sailor]\u0022;\n\t\t\tmes \u0022You want to stay here longer?\u0022;\n\t\t\tmes \u0022Good, then I\u0027ll wait until you\u0027re ready~\u0022;\n\t\t\tclose;\n\t\t}\n\t\tcompletequest 21008;\n\t}\n\tmes \u0022[Sailor]\u0022;\n\tmes \u0022Let\u0027s head towards Izlude!\u0022;\n\tclose2;\n\tif (isbegin_quest(21001) == 1)\n\t\tcompletequest 21001;\n\t.@map$ = \u0022izlude\u0022 \u002B replacestr( strnpcinfo(2), \u0022intro_to_izlude\u0022, \u0022\u0022 );\n\twarp .@map$,196,209;\n\tsavepoint .@map$,128,142,1,1;\n\tend;\n}",
+      "Instructions": [
+        {
+          "Type": "IfQuestState",
+          "QuestId": 21008,
+          "Expected": "Active",
+          "Then": [
+            {
+              "Type": "Message",
+              "Text": "^4d4dffOnce you leave this island there is no way back."
+            },
+            {
+              "Type": "Message",
+              "Text": "Are you sure you want to go directly to Izlude?^000000"
+            },
+            {
+              "Type": "Next"
+            },
+            {
+              "Type": "Message",
+              "Text": "^4d4dffIf you do, the quest will be deleted from your Quest Log.^000000"
+            },
+            {
+              "Type": "Next"
+            },
+            {
+              "Type": "Select",
+              "Options": [
+                {
+                  "Text": "Do not go to Izlude yet",
+                  "Instructions": [
+                    {
+                      "Type": "Message",
+                      "Text": "[Sailor]"
+                    },
+                    {
+                      "Type": "Message",
+                      "Text": "You want to stay here longer?"
+                    },
+                    {
+                      "Type": "Message",
+                      "Text": "Good, then I\u0027ll wait until you\u0027re ready~"
+                    },
+                    {
+                      "Type": "Close"
+                    }
+                  ]
+                },
+                {
+                  "Text": "Sail to Izlude!",
+                  "Instructions": []
+                }
+              ]
+            },
+            {
+              "Type": "CompleteQuest",
+              "QuestId": 21008
+            }
+          ],
+          "Else": []
+        },
+        {
+          "Type": "Message",
+          "Text": "[Sailor]"
+        },
+        {
+          "Type": "Message",
+          "Text": "Let\u0027s head towards Izlude!"
+        },
+        {
+          "Type": "Close2"
+        },
+        {
+          "Type": "IfQuestState",
+          "QuestId": 21001,
+          "Expected": "Active",
+          "Then": [
+            {
+              "Type": "CompleteQuest",
+              "QuestId": 21001
+            }
+          ],
+          "Else": []
+        },
+        {
+          "Type": "Assign",
+          "Variable": ".@map$",
+          "Value": {
+            "Type": "Concat",
+            "Left": {
+              "Type": "String",
+              "Value": "izlude"
+            },
+            "Right": {
+              "Type": "ReplaceString",
+              "Value": {
+                "Type": "StrNpcInfo",
+                "InfoType": 2
+              },
+              "Search": {
+                "Type": "String",
+                "Value": "intro_to_izlude"
+              },
+              "Replacement": {
+                "Type": "String",
+                "Value": ""
+              }
+            }
+          }
+        },
+        {
+          "Type": "Warp",
+          "Map": {
+            "Type": "Variable",
+            "Name": ".@map$"
+          },
+          "X": 196,
+          "Y": 209
+        },
+        {
+          "Type": "SavePoint",
+          "Map": {
+            "Type": "Variable",
+            "Name": ".@map$"
+          },
+          "X": 128,
+          "Y": 142,
+          "RadiusX": 1,
+          "RadiusY": 1
+        }
+      ],
+      "BaseNpcName": "#intro_to_izlude"
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/re/warps/cities/izlude.txt",
+    "Line": 83
+  }
+}

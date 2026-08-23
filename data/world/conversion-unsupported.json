@@ -1,0 +1,1341 @@
+{
+  "Converted": 3647,
+  "ParsedButNotExecutable": 49,
+  "DuplicateIds": [
+    "warp:aldebaran:alde-a_aldeg01"
+  ],
+  "Unsupported": [
+    {
+      "Name": "nemi",
+      "File": "legacy/rathena/npc/re/warps/cities/einbech.txt",
+      "Line": 13,
+      "Reason": "Unsupported script construct \u0027if\u0027: if (terra_gloria_main \u003C 14) {"
+    },
+    {
+      "Name": "#ep162_warp01",
+      "File": "legacy/rathena/npc/re/warps/cities/einbroch.txt",
+      "Line": 13,
+      "Reason": "Unsupported script construct \u0027if\u0027: if (terra_gloria_main == 18 || terra_gloria_main == 22) {"
+    },
+    {
+      "Name": "#ep162_warp01",
+      "File": "legacy/rathena/npc/re/warps/cities/einbroch.txt",
+      "Line": 14,
+      "Reason": "Unsupported script construct \u0027cutin\u0027: cutin \u0022ep16_tes01.bmp\u0022,0;"
+    },
+    {
+      "Name": "lib_q_to_pprt",
+      "File": "legacy/rathena/npc/re/warps/cities/prontera.txt",
+      "Line": 14,
+      "Reason": "Unsupported script construct \u0027if\u0027: if (ep16_royal \u003C 21) {"
+    },
+    {
+      "Name": "way_to_qroom_L_qroom_L_to_way",
+      "File": "legacy/rathena/npc/re/warps/cities/prontera.txt",
+      "Line": 26,
+      "Reason": "Unsupported script construct \u0027if\u0027: if (ep16_royal == 0) {"
+    },
+    {
+      "Name": "way_to_qroom_L_qroom_L_to_way",
+      "File": "legacy/rathena/npc/re/warps/cities/prontera.txt",
+      "Line": 27,
+      "Reason": "Unsupported script construct \u0027npctalk\u0027: npctalk \u0022That way is a royal villa for VIPs. Outsiders cannot access the place.\u0022, \u0022Royal Guardian Knight#02\u0022, bc_self;"
+    },
+    {
+      "Name": "way_to_qroom_L_qroom_L_to_way",
+      "File": "legacy/rathena/npc/re/warps/cities/prontera.txt",
+      "Line": 28,
+      "Reason": "Unsupported script construct \u0027setpcblock\u0027: setpcblock PCBLOCK_NPC, true;"
+    },
+    {
+      "Name": "way_to_qroom_L_qroom_L_to_way",
+      "File": "legacy/rathena/npc/re/warps/cities/prontera.txt",
+      "Line": 29,
+      "Reason": "Unsupported script construct \u0027sleep2\u0027: sleep2 3000;"
+    },
+    {
+      "Name": "way_to_qroom_L_qroom_L_to_way",
+      "File": "legacy/rathena/npc/re/warps/cities/prontera.txt",
+      "Line": 30,
+      "Reason": "Unsupported script construct \u0027setpcblock\u0027: setpcblock PCBLOCK_NPC, false;"
+    },
+    {
+      "Name": "way_to_qroom_L_qroom_L_to_way",
+      "File": "legacy/rathena/npc/re/warps/cities/prontera.txt",
+      "Line": 31,
+      "Reason": "Unsupported script construct \u0027npctalk\u0027: npctalk \u0022If you are invited, a severnt should be there to greet you. Please be guided officially.\u0022, \u0022Royal Guardian Knight#02\u0022, bc_self;"
+    },
+    {
+      "Name": "way_to_qroom_R_qroom_R_to_way",
+      "File": "legacy/rathena/npc/re/warps/cities/prontera.txt",
+      "Line": 41,
+      "Reason": "Unsupported script construct \u0027if\u0027: if (ep16_royal == 0) {"
+    },
+    {
+      "Name": "way_to_qroom_R_qroom_R_to_way",
+      "File": "legacy/rathena/npc/re/warps/cities/prontera.txt",
+      "Line": 42,
+      "Reason": "Unsupported script construct \u0027npctalk\u0027: npctalk \u0022That way is a royal villa for VIPs. Outsiders cannot access the place.\u0022, \u0022Royal Guardian Knight#03\u0022, bc_self;"
+    },
+    {
+      "Name": "way_to_qroom_R_qroom_R_to_way",
+      "File": "legacy/rathena/npc/re/warps/cities/prontera.txt",
+      "Line": 43,
+      "Reason": "Unsupported script construct \u0027setpcblock\u0027: setpcblock PCBLOCK_NPC, true;"
+    },
+    {
+      "Name": "way_to_qroom_R_qroom_R_to_way",
+      "File": "legacy/rathena/npc/re/warps/cities/prontera.txt",
+      "Line": 44,
+      "Reason": "Unsupported script construct \u0027sleep2\u0027: sleep2 3000;"
+    },
+    {
+      "Name": "way_to_qroom_R_qroom_R_to_way",
+      "File": "legacy/rathena/npc/re/warps/cities/prontera.txt",
+      "Line": 45,
+      "Reason": "Unsupported script construct \u0027setpcblock\u0027: setpcblock PCBLOCK_NPC, false;"
+    },
+    {
+      "Name": "way_to_qroom_R_qroom_R_to_way",
+      "File": "legacy/rathena/npc/re/warps/cities/prontera.txt",
+      "Line": 46,
+      "Reason": "Unsupported script construct \u0027npctalk\u0027: npctalk \u0022If you are invited, a severnt should be there to greet you. Please be guided officially.\u0022, \u0022Royal Guardian Knight#03\u0022, bc_self;"
+    },
+    {
+      "Name": "qroom_heine_in_qroom_heine_out",
+      "File": "legacy/rathena/npc/re/warps/cities/prontera.txt",
+      "Line": 56,
+      "Reason": "Unsupported script construct \u0027if\u0027: if (ep16_royal \u003E 7 \u0026\u0026 ep16_royal \u003C 16) {"
+    },
+    {
+      "Name": "qroom_nerius_in_qroom_nerius_out",
+      "File": "legacy/rathena/npc/re/warps/cities/prontera.txt",
+      "Line": 67,
+      "Reason": "Unsupported script construct \u0027if\u0027: if (ep16_royal \u003E 2 \u0026\u0026 ep16_royal \u003C 15 \u0026\u0026 ep16_royal != 7) {"
+    },
+    {
+      "Name": "lib_to_prt_prison",
+      "File": "legacy/rathena/npc/re/warps/cities/prontera.txt",
+      "Line": 81,
+      "Reason": "Malformed WARPNPC script"
+    },
+    {
+      "Name": "prt_cas_to_prt_pri00",
+      "File": "legacy/rathena/npc/re/warps/cities/prontera.txt",
+      "Line": 95,
+      "Reason": "Malformed WARPNPC script"
+    },
+    {
+      "Name": "#wami2",
+      "File": "legacy/rathena/npc/re/warps/dungeons/amicitia.txt",
+      "Line": 12,
+      "Reason": "Unsupported script construct \u0027if\u0027: if (BaseLevel \u003C 230) {"
+    },
+    {
+      "Name": "enter_ein_dun03",
+      "File": "legacy/rathena/npc/re/warps/dungeons/ein_dun.txt",
+      "Line": 10,
+      "Reason": "Unsupported script construct \u0027if\u0027: if (BaseLevel \u003C 180) {"
+    },
+    {
+      "Name": "enter_ein_dun03",
+      "File": "legacy/rathena/npc/re/warps/dungeons/ein_dun.txt",
+      "Line": 11,
+      "Reason": "Unsupported script construct \u0027unittalk\u0027: unittalk getcharid(3), \u0022\u0022 \u002B strcharinfo(0) \u002B \u0022 : I think the next area needs a bit more training...\u0022, bc_self;"
+    },
+    {
+      "Name": "mag02a_mag03a",
+      "File": "legacy/rathena/npc/re/warps/dungeons/mag_dun.txt",
+      "Line": 15,
+      "Reason": "Unsupported script construct \u0027if\u0027: if (BaseLevel \u003C 175) {"
+    },
+    {
+      "Name": "mag02a_mag03a",
+      "File": "legacy/rathena/npc/re/warps/dungeons/mag_dun.txt",
+      "Line": 16,
+      "Reason": "Unsupported script construct \u0027npctalk\u0027: npctalk \u0022Republic Guard: A dangerous place for adventurers. You must be at least level 175 to enter.\u0022, \u0022Republic Guard#mag03\u0022, bc_self;"
+    },
+    {
+      "Name": "nifla_nifdun01a",
+      "File": "legacy/rathena/npc/re/warps/dungeons/nif_dun.txt",
+      "Line": 11,
+      "Reason": "Unsupported script construct \u0027npctalk\u0027: npctalk \u0022Angry Gatekeeper: How are you adventurer? Go in? Do you want to go in? Kick!\u0022, \u0022Angry Gatekeeper#lv200\u0022, bc_self;"
+    },
+    {
+      "Name": "nifla_nifdun01a",
+      "File": "legacy/rathena/npc/re/warps/dungeons/nif_dun.txt",
+      "Line": 12,
+      "Reason": "Unsupported script construct \u0027npctalk\u0027: npctalk \u0022Funny Gatekeeper\u0027s Friend: Awesome!\u0022, \u0022Funny Gatekeeper\u0027s Friend#lv20\u0022, bc_self;"
+    },
+    {
+      "Name": "nifdun01a_nifdun02a",
+      "File": "legacy/rathena/npc/re/warps/dungeons/nif_dun.txt",
+      "Line": 24,
+      "Reason": "Unsupported script construct \u0027if\u0027: if (BaseLevel \u003C 240) {"
+    },
+    {
+      "Name": "nifdun01a_nifdun02a",
+      "File": "legacy/rathena/npc/re/warps/dungeons/nif_dun.txt",
+      "Line": 25,
+      "Reason": "Unsupported script construct \u0027npctalk\u0027: npctalk \u0022Helpful Gatekeeper: Hey, look at how you look! How can you come all the way here!\u0022, \u0022Helpful Gatekeeper#240\u0022, bc_self;"
+    },
+    {
+      "Name": "nifdun01a_nifdun02a",
+      "File": "legacy/rathena/npc/re/warps/dungeons/nif_dun.txt",
+      "Line": 26,
+      "Reason": "Unsupported script construct \u0027npctalk\u0027: npctalk \u0022Silent Gatekeeper: ...means lack of training.\u0022, \u0022Silent Gatekeeper#240\u0022, bc_self;"
+    },
+    {
+      "Name": "aldeg-4-15_aldeg-4-#te",
+      "File": "legacy/rathena/npc/re/warps/guildcastles.txt",
+      "Line": 290,
+      "Reason": "Unsupported script construct \u0027.@aldeg4\u0027: .@aldeg4 = rand(1,5);"
+    },
+    {
+      "Name": "aldeg-4-15_aldeg-4-#te",
+      "File": "legacy/rathena/npc/re/warps/guildcastles.txt",
+      "Line": 291,
+      "Reason": "Unsupported script construct \u0027if\u0027: if (.@aldeg4 == 1)"
+    },
+    {
+      "Name": "aldeg-4-15_aldeg-4-#te",
+      "File": "legacy/rathena/npc/re/warps/guildcastles.txt",
+      "Line": 293,
+      "Reason": "Unsupported script construct \u0027else\u0027: else if (.@aldeg4 == 2)"
+    },
+    {
+      "Name": "aldeg-4-15_aldeg-4-#te",
+      "File": "legacy/rathena/npc/re/warps/guildcastles.txt",
+      "Line": 295,
+      "Reason": "Unsupported script construct \u0027else\u0027: else if (.@aldeg4 == 3)"
+    },
+    {
+      "Name": "aldeg-4-15_aldeg-4-#te",
+      "File": "legacy/rathena/npc/re/warps/guildcastles.txt",
+      "Line": 297,
+      "Reason": "Unsupported script construct \u0027else\u0027: else if (.@aldeg4 == 4)"
+    },
+    {
+      "Name": "aldeg-4-15_aldeg-4-#te",
+      "File": "legacy/rathena/npc/re/warps/guildcastles.txt",
+      "Line": 299,
+      "Reason": "Unsupported script construct \u0027else\u0027: else"
+    },
+    {
+      "Name": "tra_fild01_out1",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 115,
+      "Reason": "Unsupported script construct \u0027switch\u0027: switch( atoi( charat(strnpcinfo(1), 9) ) ) {"
+    },
+    {
+      "Name": "tra_fild01_out1",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 116,
+      "Reason": "Unsupported script construct \u0027case\u0027: case 1:"
+    },
+    {
+      "Name": "tra_fild01_out1",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 117,
+      "Reason": "Unsupported script construct \u0027.@menu$[0]\u0027: .@menu$[0] = \u0022\u0022;"
+    },
+    {
+      "Name": "tra_fild01_out1",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 118,
+      "Reason": "Unsupported script construct \u0027.@menu$[1]\u0027: .@menu$[1] = \u0022\uFFFD\uFFFDEnter 1/10 Training Ground\u0022;"
+    },
+    {
+      "Name": "tra_fild01_out1",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 119,
+      "Reason": "Unsupported script construct \u0027.@menu$[2]\u0027: .@menu$[2] = \u0022\uFFFD\uFFFDEnter 1/100 Training Ground\u0022;"
+    },
+    {
+      "Name": "tra_fild01_out1",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 120,
+      "Reason": "Unsupported script construct \u0027break\u0027: break;"
+    },
+    {
+      "Name": "tra_fild01_out1",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 121,
+      "Reason": "Unsupported script construct \u0027case\u0027: case 2:"
+    },
+    {
+      "Name": "tra_fild01_out1",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 122,
+      "Reason": "Unsupported script construct \u0027.@menu$[0]\u0027: .@menu$[0] = \u0022\uFFFD\uFFFDEnter Basic Training Grounds\u0022;"
+    },
+    {
+      "Name": "tra_fild01_out1",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 123,
+      "Reason": "Unsupported script construct \u0027.@menu$[1]\u0027: .@menu$[1] = \u0022\u0022;"
+    },
+    {
+      "Name": "tra_fild01_out1",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 124,
+      "Reason": "Unsupported script construct \u0027.@menu$[2]\u0027: .@menu$[2] = \u0022\uFFFD\uFFFDEnter 1/100 Training Grounds\u0022;"
+    },
+    {
+      "Name": "tra_fild01_out1",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 125,
+      "Reason": "Unsupported script construct \u0027break\u0027: break;"
+    },
+    {
+      "Name": "tra_fild01_out1",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 126,
+      "Reason": "Unsupported script construct \u0027case\u0027: case 3:"
+    },
+    {
+      "Name": "tra_fild01_out1",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 127,
+      "Reason": "Unsupported script construct \u0027.@menu$[0]\u0027: .@menu$[0] = \u0022\uFFFD\uFFFDEnter Basic Training Grounds\u0022;"
+    },
+    {
+      "Name": "tra_fild01_out1",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 128,
+      "Reason": "Unsupported script construct \u0027.@menu$[1]\u0027: .@menu$[1] = \u0022\uFFFD\uFFFDEnter 1/10 Training Grounds\u0022;"
+    },
+    {
+      "Name": "tra_fild01_out1",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 129,
+      "Reason": "Unsupported script construct \u0027.@menu$[2]\u0027: .@menu$[2] = \u0022\u0022;"
+    },
+    {
+      "Name": "tra_fild01_out1",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 130,
+      "Reason": "Unsupported script construct \u0027break\u0027: break;"
+    },
+    {
+      "Name": "tra_fild01_out2",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 115,
+      "Reason": "Unsupported script construct \u0027switch\u0027: switch( atoi( charat(strnpcinfo(1), 9) ) ) {"
+    },
+    {
+      "Name": "tra_fild01_out2",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 116,
+      "Reason": "Unsupported script construct \u0027case\u0027: case 1:"
+    },
+    {
+      "Name": "tra_fild01_out2",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 117,
+      "Reason": "Unsupported script construct \u0027.@menu$[0]\u0027: .@menu$[0] = \u0022\u0022;"
+    },
+    {
+      "Name": "tra_fild01_out2",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 118,
+      "Reason": "Unsupported script construct \u0027.@menu$[1]\u0027: .@menu$[1] = \u0022\uFFFD\uFFFDEnter 1/10 Training Ground\u0022;"
+    },
+    {
+      "Name": "tra_fild01_out2",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 119,
+      "Reason": "Unsupported script construct \u0027.@menu$[2]\u0027: .@menu$[2] = \u0022\uFFFD\uFFFDEnter 1/100 Training Ground\u0022;"
+    },
+    {
+      "Name": "tra_fild01_out2",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 120,
+      "Reason": "Unsupported script construct \u0027break\u0027: break;"
+    },
+    {
+      "Name": "tra_fild01_out2",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 121,
+      "Reason": "Unsupported script construct \u0027case\u0027: case 2:"
+    },
+    {
+      "Name": "tra_fild01_out2",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 122,
+      "Reason": "Unsupported script construct \u0027.@menu$[0]\u0027: .@menu$[0] = \u0022\uFFFD\uFFFDEnter Basic Training Grounds\u0022;"
+    },
+    {
+      "Name": "tra_fild01_out2",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 123,
+      "Reason": "Unsupported script construct \u0027.@menu$[1]\u0027: .@menu$[1] = \u0022\u0022;"
+    },
+    {
+      "Name": "tra_fild01_out2",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 124,
+      "Reason": "Unsupported script construct \u0027.@menu$[2]\u0027: .@menu$[2] = \u0022\uFFFD\uFFFDEnter 1/100 Training Grounds\u0022;"
+    },
+    {
+      "Name": "tra_fild01_out2",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 125,
+      "Reason": "Unsupported script construct \u0027break\u0027: break;"
+    },
+    {
+      "Name": "tra_fild01_out2",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 126,
+      "Reason": "Unsupported script construct \u0027case\u0027: case 3:"
+    },
+    {
+      "Name": "tra_fild01_out2",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 127,
+      "Reason": "Unsupported script construct \u0027.@menu$[0]\u0027: .@menu$[0] = \u0022\uFFFD\uFFFDEnter Basic Training Grounds\u0022;"
+    },
+    {
+      "Name": "tra_fild01_out2",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 128,
+      "Reason": "Unsupported script construct \u0027.@menu$[1]\u0027: .@menu$[1] = \u0022\uFFFD\uFFFDEnter 1/10 Training Grounds\u0022;"
+    },
+    {
+      "Name": "tra_fild01_out2",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 129,
+      "Reason": "Unsupported script construct \u0027.@menu$[2]\u0027: .@menu$[2] = \u0022\u0022;"
+    },
+    {
+      "Name": "tra_fild01_out2",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 130,
+      "Reason": "Unsupported script construct \u0027break\u0027: break;"
+    },
+    {
+      "Name": "tra_fild02_out1",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 115,
+      "Reason": "Unsupported script construct \u0027switch\u0027: switch( atoi( charat(strnpcinfo(1), 9) ) ) {"
+    },
+    {
+      "Name": "tra_fild02_out1",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 116,
+      "Reason": "Unsupported script construct \u0027case\u0027: case 1:"
+    },
+    {
+      "Name": "tra_fild02_out1",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 117,
+      "Reason": "Unsupported script construct \u0027.@menu$[0]\u0027: .@menu$[0] = \u0022\u0022;"
+    },
+    {
+      "Name": "tra_fild02_out1",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 118,
+      "Reason": "Unsupported script construct \u0027.@menu$[1]\u0027: .@menu$[1] = \u0022\uFFFD\uFFFDEnter 1/10 Training Ground\u0022;"
+    },
+    {
+      "Name": "tra_fild02_out1",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 119,
+      "Reason": "Unsupported script construct \u0027.@menu$[2]\u0027: .@menu$[2] = \u0022\uFFFD\uFFFDEnter 1/100 Training Ground\u0022;"
+    },
+    {
+      "Name": "tra_fild02_out1",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 120,
+      "Reason": "Unsupported script construct \u0027break\u0027: break;"
+    },
+    {
+      "Name": "tra_fild02_out1",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 121,
+      "Reason": "Unsupported script construct \u0027case\u0027: case 2:"
+    },
+    {
+      "Name": "tra_fild02_out1",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 122,
+      "Reason": "Unsupported script construct \u0027.@menu$[0]\u0027: .@menu$[0] = \u0022\uFFFD\uFFFDEnter Basic Training Grounds\u0022;"
+    },
+    {
+      "Name": "tra_fild02_out1",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 123,
+      "Reason": "Unsupported script construct \u0027.@menu$[1]\u0027: .@menu$[1] = \u0022\u0022;"
+    },
+    {
+      "Name": "tra_fild02_out1",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 124,
+      "Reason": "Unsupported script construct \u0027.@menu$[2]\u0027: .@menu$[2] = \u0022\uFFFD\uFFFDEnter 1/100 Training Grounds\u0022;"
+    },
+    {
+      "Name": "tra_fild02_out1",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 125,
+      "Reason": "Unsupported script construct \u0027break\u0027: break;"
+    },
+    {
+      "Name": "tra_fild02_out1",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 126,
+      "Reason": "Unsupported script construct \u0027case\u0027: case 3:"
+    },
+    {
+      "Name": "tra_fild02_out1",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 127,
+      "Reason": "Unsupported script construct \u0027.@menu$[0]\u0027: .@menu$[0] = \u0022\uFFFD\uFFFDEnter Basic Training Grounds\u0022;"
+    },
+    {
+      "Name": "tra_fild02_out1",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 128,
+      "Reason": "Unsupported script construct \u0027.@menu$[1]\u0027: .@menu$[1] = \u0022\uFFFD\uFFFDEnter 1/10 Training Grounds\u0022;"
+    },
+    {
+      "Name": "tra_fild02_out1",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 129,
+      "Reason": "Unsupported script construct \u0027.@menu$[2]\u0027: .@menu$[2] = \u0022\u0022;"
+    },
+    {
+      "Name": "tra_fild02_out1",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 130,
+      "Reason": "Unsupported script construct \u0027break\u0027: break;"
+    },
+    {
+      "Name": "tra_fild02_out2",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 115,
+      "Reason": "Unsupported script construct \u0027switch\u0027: switch( atoi( charat(strnpcinfo(1), 9) ) ) {"
+    },
+    {
+      "Name": "tra_fild02_out2",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 116,
+      "Reason": "Unsupported script construct \u0027case\u0027: case 1:"
+    },
+    {
+      "Name": "tra_fild02_out2",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 117,
+      "Reason": "Unsupported script construct \u0027.@menu$[0]\u0027: .@menu$[0] = \u0022\u0022;"
+    },
+    {
+      "Name": "tra_fild02_out2",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 118,
+      "Reason": "Unsupported script construct \u0027.@menu$[1]\u0027: .@menu$[1] = \u0022\uFFFD\uFFFDEnter 1/10 Training Ground\u0022;"
+    },
+    {
+      "Name": "tra_fild02_out2",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 119,
+      "Reason": "Unsupported script construct \u0027.@menu$[2]\u0027: .@menu$[2] = \u0022\uFFFD\uFFFDEnter 1/100 Training Ground\u0022;"
+    },
+    {
+      "Name": "tra_fild02_out2",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 120,
+      "Reason": "Unsupported script construct \u0027break\u0027: break;"
+    },
+    {
+      "Name": "tra_fild02_out2",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 121,
+      "Reason": "Unsupported script construct \u0027case\u0027: case 2:"
+    },
+    {
+      "Name": "tra_fild02_out2",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 122,
+      "Reason": "Unsupported script construct \u0027.@menu$[0]\u0027: .@menu$[0] = \u0022\uFFFD\uFFFDEnter Basic Training Grounds\u0022;"
+    },
+    {
+      "Name": "tra_fild02_out2",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 123,
+      "Reason": "Unsupported script construct \u0027.@menu$[1]\u0027: .@menu$[1] = \u0022\u0022;"
+    },
+    {
+      "Name": "tra_fild02_out2",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 124,
+      "Reason": "Unsupported script construct \u0027.@menu$[2]\u0027: .@menu$[2] = \u0022\uFFFD\uFFFDEnter 1/100 Training Grounds\u0022;"
+    },
+    {
+      "Name": "tra_fild02_out2",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 125,
+      "Reason": "Unsupported script construct \u0027break\u0027: break;"
+    },
+    {
+      "Name": "tra_fild02_out2",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 126,
+      "Reason": "Unsupported script construct \u0027case\u0027: case 3:"
+    },
+    {
+      "Name": "tra_fild02_out2",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 127,
+      "Reason": "Unsupported script construct \u0027.@menu$[0]\u0027: .@menu$[0] = \u0022\uFFFD\uFFFDEnter Basic Training Grounds\u0022;"
+    },
+    {
+      "Name": "tra_fild02_out2",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 128,
+      "Reason": "Unsupported script construct \u0027.@menu$[1]\u0027: .@menu$[1] = \u0022\uFFFD\uFFFDEnter 1/10 Training Grounds\u0022;"
+    },
+    {
+      "Name": "tra_fild02_out2",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 129,
+      "Reason": "Unsupported script construct \u0027.@menu$[2]\u0027: .@menu$[2] = \u0022\u0022;"
+    },
+    {
+      "Name": "tra_fild02_out2",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 130,
+      "Reason": "Unsupported script construct \u0027break\u0027: break;"
+    },
+    {
+      "Name": "tra_fild03_out1",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 115,
+      "Reason": "Unsupported script construct \u0027switch\u0027: switch( atoi( charat(strnpcinfo(1), 9) ) ) {"
+    },
+    {
+      "Name": "tra_fild03_out1",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 116,
+      "Reason": "Unsupported script construct \u0027case\u0027: case 1:"
+    },
+    {
+      "Name": "tra_fild03_out1",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 117,
+      "Reason": "Unsupported script construct \u0027.@menu$[0]\u0027: .@menu$[0] = \u0022\u0022;"
+    },
+    {
+      "Name": "tra_fild03_out1",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 118,
+      "Reason": "Unsupported script construct \u0027.@menu$[1]\u0027: .@menu$[1] = \u0022\uFFFD\uFFFDEnter 1/10 Training Ground\u0022;"
+    },
+    {
+      "Name": "tra_fild03_out1",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 119,
+      "Reason": "Unsupported script construct \u0027.@menu$[2]\u0027: .@menu$[2] = \u0022\uFFFD\uFFFDEnter 1/100 Training Ground\u0022;"
+    },
+    {
+      "Name": "tra_fild03_out1",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 120,
+      "Reason": "Unsupported script construct \u0027break\u0027: break;"
+    },
+    {
+      "Name": "tra_fild03_out1",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 121,
+      "Reason": "Unsupported script construct \u0027case\u0027: case 2:"
+    },
+    {
+      "Name": "tra_fild03_out1",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 122,
+      "Reason": "Unsupported script construct \u0027.@menu$[0]\u0027: .@menu$[0] = \u0022\uFFFD\uFFFDEnter Basic Training Grounds\u0022;"
+    },
+    {
+      "Name": "tra_fild03_out1",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 123,
+      "Reason": "Unsupported script construct \u0027.@menu$[1]\u0027: .@menu$[1] = \u0022\u0022;"
+    },
+    {
+      "Name": "tra_fild03_out1",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 124,
+      "Reason": "Unsupported script construct \u0027.@menu$[2]\u0027: .@menu$[2] = \u0022\uFFFD\uFFFDEnter 1/100 Training Grounds\u0022;"
+    },
+    {
+      "Name": "tra_fild03_out1",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 125,
+      "Reason": "Unsupported script construct \u0027break\u0027: break;"
+    },
+    {
+      "Name": "tra_fild03_out1",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 126,
+      "Reason": "Unsupported script construct \u0027case\u0027: case 3:"
+    },
+    {
+      "Name": "tra_fild03_out1",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 127,
+      "Reason": "Unsupported script construct \u0027.@menu$[0]\u0027: .@menu$[0] = \u0022\uFFFD\uFFFDEnter Basic Training Grounds\u0022;"
+    },
+    {
+      "Name": "tra_fild03_out1",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 128,
+      "Reason": "Unsupported script construct \u0027.@menu$[1]\u0027: .@menu$[1] = \u0022\uFFFD\uFFFDEnter 1/10 Training Grounds\u0022;"
+    },
+    {
+      "Name": "tra_fild03_out1",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 129,
+      "Reason": "Unsupported script construct \u0027.@menu$[2]\u0027: .@menu$[2] = \u0022\u0022;"
+    },
+    {
+      "Name": "tra_fild03_out1",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 130,
+      "Reason": "Unsupported script construct \u0027break\u0027: break;"
+    },
+    {
+      "Name": "tra_fild03_out2",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 115,
+      "Reason": "Unsupported script construct \u0027switch\u0027: switch( atoi( charat(strnpcinfo(1), 9) ) ) {"
+    },
+    {
+      "Name": "tra_fild03_out2",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 116,
+      "Reason": "Unsupported script construct \u0027case\u0027: case 1:"
+    },
+    {
+      "Name": "tra_fild03_out2",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 117,
+      "Reason": "Unsupported script construct \u0027.@menu$[0]\u0027: .@menu$[0] = \u0022\u0022;"
+    },
+    {
+      "Name": "tra_fild03_out2",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 118,
+      "Reason": "Unsupported script construct \u0027.@menu$[1]\u0027: .@menu$[1] = \u0022\uFFFD\uFFFDEnter 1/10 Training Ground\u0022;"
+    },
+    {
+      "Name": "tra_fild03_out2",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 119,
+      "Reason": "Unsupported script construct \u0027.@menu$[2]\u0027: .@menu$[2] = \u0022\uFFFD\uFFFDEnter 1/100 Training Ground\u0022;"
+    },
+    {
+      "Name": "tra_fild03_out2",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 120,
+      "Reason": "Unsupported script construct \u0027break\u0027: break;"
+    },
+    {
+      "Name": "tra_fild03_out2",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 121,
+      "Reason": "Unsupported script construct \u0027case\u0027: case 2:"
+    },
+    {
+      "Name": "tra_fild03_out2",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 122,
+      "Reason": "Unsupported script construct \u0027.@menu$[0]\u0027: .@menu$[0] = \u0022\uFFFD\uFFFDEnter Basic Training Grounds\u0022;"
+    },
+    {
+      "Name": "tra_fild03_out2",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 123,
+      "Reason": "Unsupported script construct \u0027.@menu$[1]\u0027: .@menu$[1] = \u0022\u0022;"
+    },
+    {
+      "Name": "tra_fild03_out2",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 124,
+      "Reason": "Unsupported script construct \u0027.@menu$[2]\u0027: .@menu$[2] = \u0022\uFFFD\uFFFDEnter 1/100 Training Grounds\u0022;"
+    },
+    {
+      "Name": "tra_fild03_out2",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 125,
+      "Reason": "Unsupported script construct \u0027break\u0027: break;"
+    },
+    {
+      "Name": "tra_fild03_out2",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 126,
+      "Reason": "Unsupported script construct \u0027case\u0027: case 3:"
+    },
+    {
+      "Name": "tra_fild03_out2",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 127,
+      "Reason": "Unsupported script construct \u0027.@menu$[0]\u0027: .@menu$[0] = \u0022\uFFFD\uFFFDEnter Basic Training Grounds\u0022;"
+    },
+    {
+      "Name": "tra_fild03_out2",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 128,
+      "Reason": "Unsupported script construct \u0027.@menu$[1]\u0027: .@menu$[1] = \u0022\uFFFD\uFFFDEnter 1/10 Training Grounds\u0022;"
+    },
+    {
+      "Name": "tra_fild03_out2",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 129,
+      "Reason": "Unsupported script construct \u0027.@menu$[2]\u0027: .@menu$[2] = \u0022\u0022;"
+    },
+    {
+      "Name": "tra_fild03_out2",
+      "File": "legacy/rathena/npc/re/warps/other/TrainingZone123.txt",
+      "Line": 130,
+      "Reason": "Unsupported script construct \u0027break\u0027: break;"
+    },
+    {
+      "Name": "#172wh01",
+      "File": "legacy/rathena/npc/re/warps/other/ba_2whs.txt",
+      "Line": 20,
+      "Reason": "Unsupported script construct \u0027if\u0027: if (ep17_2_chirp == 6) {"
+    },
+    {
+      "Name": "#172wh01",
+      "File": "legacy/rathena/npc/re/warps/other/ba_2whs.txt",
+      "Line": 21,
+      "Reason": "Unsupported script construct \u0027unittalk\u0027: unittalk getcharid(3), \u0022\u0022 \u002B strcharinfo(0) \u002B \u0022 : There is a sound in this area. The locked door was opened with an emergency key.\u0022, bc_self;"
+    },
+    {
+      "Name": "#172wh01",
+      "File": "legacy/rathena/npc/re/warps/other/ba_2whs.txt",
+      "Line": 22,
+      "Reason": "Unsupported script construct \u0027sleep2\u0027: sleep2 1000;"
+    },
+    {
+      "Name": "#ba2whs02_to_ba2whslab-1",
+      "File": "legacy/rathena/npc/re/warps/other/ba_2whs.txt",
+      "Line": 20,
+      "Reason": "Unsupported script construct \u0027if\u0027: if (ep17_2_chirp == 6) {"
+    },
+    {
+      "Name": "#ba2whs02_to_ba2whslab-1",
+      "File": "legacy/rathena/npc/re/warps/other/ba_2whs.txt",
+      "Line": 21,
+      "Reason": "Unsupported script construct \u0027unittalk\u0027: unittalk getcharid(3), \u0022\u0022 \u002B strcharinfo(0) \u002B \u0022 : There is a sound in this area. The locked door was opened with an emergency key.\u0022, bc_self;"
+    },
+    {
+      "Name": "#ba2whs02_to_ba2whslab-1",
+      "File": "legacy/rathena/npc/re/warps/other/ba_2whs.txt",
+      "Line": 22,
+      "Reason": "Unsupported script construct \u0027sleep2\u0027: sleep2 1000;"
+    },
+    {
+      "Name": "#ep172_lab1_out",
+      "File": "legacy/rathena/npc/re/warps/other/ba_maison.txt",
+      "Line": 10,
+      "Reason": "Unsupported script construct \u0027if\u0027: if (ep17_2_main \u003C 7) {"
+    },
+    {
+      "Name": "#ep172_proom2_out",
+      "File": "legacy/rathena/npc/re/warps/other/ba_maison.txt",
+      "Line": 65,
+      "Reason": "Unsupported script construct \u0027if\u0027: if (ep17_2_main \u003C 32)"
+    },
+    {
+      "Name": "#ep172_proom2_out",
+      "File": "legacy/rathena/npc/re/warps/other/ba_maison.txt",
+      "Line": 67,
+      "Reason": "Unsupported script construct \u0027else\u0027: else"
+    },
+    {
+      "Name": "#ep173_lost_in",
+      "File": "legacy/rathena/npc/re/warps/other/ba_maison.txt",
+      "Line": 102,
+      "Reason": "Malformed WARPNPC script"
+    },
+    {
+      "Name": "#ep172_pw1_to_lab",
+      "File": "legacy/rathena/npc/re/warps/other/ba_pw.txt",
+      "Line": 12,
+      "Reason": "Unsupported script construct \u0027if\u0027: if (ep17_2_main \u003C 6) {"
+    },
+    {
+      "Name": "#ep172_pw2_to_pw1",
+      "File": "legacy/rathena/npc/re/warps/other/ba_pw.txt",
+      "Line": 25,
+      "Reason": "Unsupported script construct \u0027if\u0027: if (ep17_2_main \u003C 4) {"
+    },
+    {
+      "Name": "#ep172_cor_to_pw2",
+      "File": "legacy/rathena/npc/re/warps/other/ba_pw.txt",
+      "Line": 38,
+      "Reason": "Unsupported script construct \u0027if\u0027: if (ep17_2_main \u003C 2) {"
+    },
+    {
+      "Name": "#ep172_cor_to_pw2",
+      "File": "legacy/rathena/npc/re/warps/other/ba_pw.txt",
+      "Line": 39,
+      "Reason": "Unsupported script construct \u0027npctalk\u0027: npctalk \u0022Rookie : Oh? I haven\u0027t opened it yet! Hold on for a while, we\u0027re doing our best to open it!\u0022, \u0022Rookie#rm171_2\u0022, bc_self;"
+    },
+    {
+      "Name": "#m103",
+      "File": "legacy/rathena/npc/re/warps/other/un_myst.txt",
+      "Line": 17,
+      "Reason": "Unsupported script construct \u0027.@r\u0027: .@r = rand(1,100);"
+    },
+    {
+      "Name": "#m103",
+      "File": "legacy/rathena/npc/re/warps/other/un_myst.txt",
+      "Line": 18,
+      "Reason": "Unsupported script construct \u0027if\u0027: if (.@r \u003C 40)"
+    },
+    {
+      "Name": "#m103",
+      "File": "legacy/rathena/npc/re/warps/other/un_myst.txt",
+      "Line": 20,
+      "Reason": "Unsupported script construct \u0027else\u0027: else if (.@r \u003E 80)"
+    },
+    {
+      "Name": "#m103",
+      "File": "legacy/rathena/npc/re/warps/other/un_myst.txt",
+      "Line": 22,
+      "Reason": "Unsupported script construct \u0027else\u0027: else"
+    },
+    {
+      "Name": "#m104",
+      "File": "legacy/rathena/npc/re/warps/other/un_myst.txt",
+      "Line": 17,
+      "Reason": "Unsupported script construct \u0027.@r\u0027: .@r = rand(1,100);"
+    },
+    {
+      "Name": "#m104",
+      "File": "legacy/rathena/npc/re/warps/other/un_myst.txt",
+      "Line": 18,
+      "Reason": "Unsupported script construct \u0027if\u0027: if (.@r \u003C 40)"
+    },
+    {
+      "Name": "#m104",
+      "File": "legacy/rathena/npc/re/warps/other/un_myst.txt",
+      "Line": 20,
+      "Reason": "Unsupported script construct \u0027else\u0027: else if (.@r \u003E 80)"
+    },
+    {
+      "Name": "#m104",
+      "File": "legacy/rathena/npc/re/warps/other/un_myst.txt",
+      "Line": 22,
+      "Reason": "Unsupported script construct \u0027else\u0027: else"
+    },
+    {
+      "Name": "#m201",
+      "File": "legacy/rathena/npc/re/warps/other/un_myst.txt",
+      "Line": 32,
+      "Reason": "Unsupported script construct \u0027.@r\u0027: .@r = rand(1,100);"
+    },
+    {
+      "Name": "#m201",
+      "File": "legacy/rathena/npc/re/warps/other/un_myst.txt",
+      "Line": 33,
+      "Reason": "Unsupported script construct \u0027if\u0027: if (.@r \u003C 40)"
+    },
+    {
+      "Name": "#m201",
+      "File": "legacy/rathena/npc/re/warps/other/un_myst.txt",
+      "Line": 35,
+      "Reason": "Unsupported script construct \u0027else\u0027: else if (.@r \u003E 80)"
+    },
+    {
+      "Name": "#m201",
+      "File": "legacy/rathena/npc/re/warps/other/un_myst.txt",
+      "Line": 37,
+      "Reason": "Unsupported script construct \u0027else\u0027: else"
+    },
+    {
+      "Name": "#m202",
+      "File": "legacy/rathena/npc/re/warps/other/un_myst.txt",
+      "Line": 32,
+      "Reason": "Unsupported script construct \u0027.@r\u0027: .@r = rand(1,100);"
+    },
+    {
+      "Name": "#m202",
+      "File": "legacy/rathena/npc/re/warps/other/un_myst.txt",
+      "Line": 33,
+      "Reason": "Unsupported script construct \u0027if\u0027: if (.@r \u003C 40)"
+    },
+    {
+      "Name": "#m202",
+      "File": "legacy/rathena/npc/re/warps/other/un_myst.txt",
+      "Line": 35,
+      "Reason": "Unsupported script construct \u0027else\u0027: else if (.@r \u003E 80)"
+    },
+    {
+      "Name": "#m202",
+      "File": "legacy/rathena/npc/re/warps/other/un_myst.txt",
+      "Line": 37,
+      "Reason": "Unsupported script construct \u0027else\u0027: else"
+    },
+    {
+      "Name": "#m203",
+      "File": "legacy/rathena/npc/re/warps/other/un_myst.txt",
+      "Line": 32,
+      "Reason": "Unsupported script construct \u0027.@r\u0027: .@r = rand(1,100);"
+    },
+    {
+      "Name": "#m203",
+      "File": "legacy/rathena/npc/re/warps/other/un_myst.txt",
+      "Line": 33,
+      "Reason": "Unsupported script construct \u0027if\u0027: if (.@r \u003C 40)"
+    },
+    {
+      "Name": "#m203",
+      "File": "legacy/rathena/npc/re/warps/other/un_myst.txt",
+      "Line": 35,
+      "Reason": "Unsupported script construct \u0027else\u0027: else if (.@r \u003E 80)"
+    },
+    {
+      "Name": "#m203",
+      "File": "legacy/rathena/npc/re/warps/other/un_myst.txt",
+      "Line": 37,
+      "Reason": "Unsupported script construct \u0027else\u0027: else"
+    },
+    {
+      "Name": "#m301",
+      "File": "legacy/rathena/npc/re/warps/other/un_myst.txt",
+      "Line": 48,
+      "Reason": "Unsupported script construct \u0027.@r\u0027: .@r = rand(1,100);"
+    },
+    {
+      "Name": "#m301",
+      "File": "legacy/rathena/npc/re/warps/other/un_myst.txt",
+      "Line": 49,
+      "Reason": "Unsupported script construct \u0027if\u0027: if (.@r \u003C 40)"
+    },
+    {
+      "Name": "#m301",
+      "File": "legacy/rathena/npc/re/warps/other/un_myst.txt",
+      "Line": 51,
+      "Reason": "Unsupported script construct \u0027else\u0027: else if (.@r \u003E 80)"
+    },
+    {
+      "Name": "#m301",
+      "File": "legacy/rathena/npc/re/warps/other/un_myst.txt",
+      "Line": 53,
+      "Reason": "Unsupported script construct \u0027else\u0027: else"
+    },
+    {
+      "Name": "#m302",
+      "File": "legacy/rathena/npc/re/warps/other/un_myst.txt",
+      "Line": 48,
+      "Reason": "Unsupported script construct \u0027.@r\u0027: .@r = rand(1,100);"
+    },
+    {
+      "Name": "#m302",
+      "File": "legacy/rathena/npc/re/warps/other/un_myst.txt",
+      "Line": 49,
+      "Reason": "Unsupported script construct \u0027if\u0027: if (.@r \u003C 40)"
+    },
+    {
+      "Name": "#m302",
+      "File": "legacy/rathena/npc/re/warps/other/un_myst.txt",
+      "Line": 51,
+      "Reason": "Unsupported script construct \u0027else\u0027: else if (.@r \u003E 80)"
+    },
+    {
+      "Name": "#m302",
+      "File": "legacy/rathena/npc/re/warps/other/un_myst.txt",
+      "Line": 53,
+      "Reason": "Unsupported script construct \u0027else\u0027: else"
+    },
+    {
+      "Name": "#m303",
+      "File": "legacy/rathena/npc/re/warps/other/un_myst.txt",
+      "Line": 48,
+      "Reason": "Unsupported script construct \u0027.@r\u0027: .@r = rand(1,100);"
+    },
+    {
+      "Name": "#m303",
+      "File": "legacy/rathena/npc/re/warps/other/un_myst.txt",
+      "Line": 49,
+      "Reason": "Unsupported script construct \u0027if\u0027: if (.@r \u003C 40)"
+    },
+    {
+      "Name": "#m303",
+      "File": "legacy/rathena/npc/re/warps/other/un_myst.txt",
+      "Line": 51,
+      "Reason": "Unsupported script construct \u0027else\u0027: else if (.@r \u003E 80)"
+    },
+    {
+      "Name": "#m303",
+      "File": "legacy/rathena/npc/re/warps/other/un_myst.txt",
+      "Line": 53,
+      "Reason": "Unsupported script construct \u0027else\u0027: else"
+    },
+    {
+      "Name": "#m304",
+      "File": "legacy/rathena/npc/re/warps/other/un_myst.txt",
+      "Line": 48,
+      "Reason": "Unsupported script construct \u0027.@r\u0027: .@r = rand(1,100);"
+    },
+    {
+      "Name": "#m304",
+      "File": "legacy/rathena/npc/re/warps/other/un_myst.txt",
+      "Line": 49,
+      "Reason": "Unsupported script construct \u0027if\u0027: if (.@r \u003C 40)"
+    },
+    {
+      "Name": "#m304",
+      "File": "legacy/rathena/npc/re/warps/other/un_myst.txt",
+      "Line": 51,
+      "Reason": "Unsupported script construct \u0027else\u0027: else if (.@r \u003E 80)"
+    },
+    {
+      "Name": "#m304",
+      "File": "legacy/rathena/npc/re/warps/other/un_myst.txt",
+      "Line": 53,
+      "Reason": "Unsupported script construct \u0027else\u0027: else"
+    },
+    {
+      "Name": "verus03_to_verus01",
+      "File": "legacy/rathena/npc/re/warps/other/verus.txt",
+      "Line": 22,
+      "Reason": "Unsupported script construct \u0027if\u0027: if (ep15_2_permit \u003C 1) {"
+    },
+    {
+      "Name": "verus03_to_verus02",
+      "File": "legacy/rathena/npc/re/warps/other/verus.txt",
+      "Line": 34,
+      "Reason": "Unsupported script construct \u0027if\u0027: if (ep15_2_permit \u003C 1) {"
+    },
+    {
+      "Name": "Machine Warehouse#J-0",
+      "File": "legacy/rathena/npc/re/warps/other/verus.txt",
+      "Line": 130,
+      "Reason": "Unsupported script construct \u0027callfunc\u0027: callfunc( \u0022F_time_limit_recorder\u0022, .@cooldown_status_day );"
+    },
+    {
+      "Name": "Machine Warehouse#J-0",
+      "File": "legacy/rathena/npc/re/warps/other/verus.txt",
+      "Line": 131,
+      "Reason": "Unsupported script construct \u0027if\u0027: if (.@cooldown_status_day[0] == 0 \u0026\u0026 .@cooldown_status_day[1] == 0 \u0026\u0026 .@cooldown_status_day[2] == 0 \u0026\u0026 .@cooldown_status_day[3] == 0 \u0026\u0026 .@cooldown_status_day[4] == 0) {"
+    },
+    {
+      "Name": "Machine Warehouse#J-0",
+      "File": "legacy/rathena/npc/re/warps/other/verus.txt",
+      "Line": 132,
+      "Reason": "Unsupported script construct \u0027emotion\u0027: emotion 24, getnpcid(0, \u0022Mechanician Mugeosi#EP15.2MR\u0022);"
+    },
+    {
+      "Name": "b_Monitoring room#L-1",
+      "File": "legacy/rathena/npc/re/warps/other/verus.txt",
+      "Line": 224,
+      "Reason": "Unsupported script construct \u0027callfunc\u0027: callfunc( \u0022F_time_limit_recorder\u0022, .@cooldown_status_day );"
+    },
+    {
+      "Name": "b_Monitoring room#L-1",
+      "File": "legacy/rathena/npc/re/warps/other/verus.txt",
+      "Line": 225,
+      "Reason": "Unsupported script construct \u0027if\u0027: if (.@cooldown_status_day[0] == 0 \u0026\u0026 .@cooldown_status_day[1] == 0 \u0026\u0026 .@cooldown_status_day[2] == 0 \u0026\u0026 .@cooldown_status_day[3] == 0 \u0026\u0026 .@cooldown_status_day[4] == 0) {"
+    },
+    {
+      "Name": "Monitoring room#A-0",
+      "File": "legacy/rathena/npc/re/warps/other/verus.txt",
+      "Line": 277,
+      "Reason": "Unsupported script construct \u0027callfunc\u0027: callfunc( \u0022F_time_limit_recorder\u0022, .@cooldown_status_day );"
+    },
+    {
+      "Name": "Monitoring room#A-0",
+      "File": "legacy/rathena/npc/re/warps/other/verus.txt",
+      "Line": 278,
+      "Reason": "Unsupported script construct \u0027if\u0027: if (.@cooldown_status_day[0] == 0 \u0026\u0026 .@cooldown_status_day[1] == 0 \u0026\u0026 .@cooldown_status_day[2] == 0 \u0026\u0026 .@cooldown_status_day[3] == 0 \u0026\u0026 .@cooldown_status_day[4] == 0) {"
+    },
+    {
+      "Name": "b_Monitoring room#L-2",
+      "File": "legacy/rathena/npc/re/warps/other/verus.txt",
+      "Line": 314,
+      "Reason": "Unsupported script construct \u0027callfunc\u0027: callfunc( \u0022F_time_limit_recorder\u0022, .@cooldown_status_day );"
+    },
+    {
+      "Name": "b_Monitoring room#L-2",
+      "File": "legacy/rathena/npc/re/warps/other/verus.txt",
+      "Line": 315,
+      "Reason": "Unsupported script construct \u0027if\u0027: if (.@cooldown_status_day[0] == 0 \u0026\u0026 .@cooldown_status_day[1] == 0 \u0026\u0026 .@cooldown_status_day[2] == 0 \u0026\u0026 .@cooldown_status_day[3] == 0 \u0026\u0026 .@cooldown_status_day[4] == 0) {"
+    },
+    {
+      "Name": "b_Monitoring room#L-2",
+      "File": "legacy/rathena/npc/re/warps/other/verus.txt",
+      "Line": 316,
+      "Reason": "Unsupported script construct \u0027emotion\u0027: emotion 19, getnpcid(0, \u0022Bunker Sayhu#EP15.2MR\u0022);"
+    },
+    {
+      "Name": "Farm#C-0",
+      "File": "legacy/rathena/npc/re/warps/other/verus.txt",
+      "Line": 392,
+      "Reason": "Unsupported script construct \u0027callfunc\u0027: callfunc( \u0022F_time_limit_recorder\u0022, .@cooldown_status_day );"
+    },
+    {
+      "Name": "Farm#C-0",
+      "File": "legacy/rathena/npc/re/warps/other/verus.txt",
+      "Line": 393,
+      "Reason": "Unsupported script construct \u0027if\u0027: if (.@cooldown_status_day[0] == 0 \u0026\u0026 .@cooldown_status_day[1] == 0 \u0026\u0026 .@cooldown_status_day[2] == 0 \u0026\u0026 .@cooldown_status_day[3] == 0 \u0026\u0026 .@cooldown_status_day[4] == 0) {"
+    },
+    {
+      "Name": "Farm#C-0",
+      "File": "legacy/rathena/npc/re/warps/other/verus.txt",
+      "Line": 394,
+      "Reason": "Unsupported script construct \u0027emotion\u0027: emotion 14, getnpcid(0, \u0022Bioengineer Ebrik#EP15.2MR\u0022);"
+    },
+    {
+      "Name": "C-0#Farm",
+      "File": "legacy/rathena/npc/re/warps/other/verus.txt",
+      "Line": 406,
+      "Reason": "Unsupported script construct \u0027callfunc\u0027: callfunc( \u0022F_time_limit_recorder\u0022, .@cooldown_status_day );"
+    },
+    {
+      "Name": "C-0#Farm",
+      "File": "legacy/rathena/npc/re/warps/other/verus.txt",
+      "Line": 407,
+      "Reason": "Unsupported script construct \u0027if\u0027: if ((isbegin_quest(5359) \u002B isbegin_quest(5360) \u002B isbegin_quest(5361) \u002B isbegin_quest(5362)) != 1) {"
+    },
+    {
+      "Name": "Cafeteria#G-1",
+      "File": "legacy/rathena/npc/re/warps/other/verus.txt",
+      "Line": 459,
+      "Reason": "Unsupported script construct \u0027callfunc\u0027: callfunc( \u0022F_time_limit_recorder\u0022, .@cooldown_status_day );"
+    },
+    {
+      "Name": "Cafeteria#G-1",
+      "File": "legacy/rathena/npc/re/warps/other/verus.txt",
+      "Line": 460,
+      "Reason": "Unsupported script construct \u0027if\u0027: if (.@cooldown_status_day[0] == 0 \u0026\u0026 .@cooldown_status_day[1] == 0 \u0026\u0026 .@cooldown_status_day[2] == 0 \u0026\u0026 .@cooldown_status_day[3] == 0 \u0026\u0026 .@cooldown_status_day[4] == 0) {"
+    },
+    {
+      "Name": "Cafeteria#G-1",
+      "File": "legacy/rathena/npc/re/warps/other/verus.txt",
+      "Line": 461,
+      "Reason": "Unsupported script construct \u0027emotion\u0027: emotion 6, getnpcid(0, \u0022Transportation Executive Ernon#EP15.2MR\u0022);"
+    },
+    {
+      "Name": "Clinic#G-1",
+      "File": "legacy/rathena/npc/re/warps/other/verus.txt",
+      "Line": 473,
+      "Reason": "Unsupported script construct \u0027callfunc\u0027: callfunc( \u0022F_time_limit_recorder\u0022, .@cooldown_status_day );"
+    },
+    {
+      "Name": "Clinic#G-1",
+      "File": "legacy/rathena/npc/re/warps/other/verus.txt",
+      "Line": 474,
+      "Reason": "Unsupported script construct \u0027if\u0027: if (.@cooldown_status_day[0] == 0 \u0026\u0026 .@cooldown_status_day[1] == 0 \u0026\u0026 .@cooldown_status_day[2] == 0 \u0026\u0026 .@cooldown_status_day[3] == 0 \u0026\u0026 .@cooldown_status_day[4] == 0) {"
+    },
+    {
+      "Name": "Clinic#G-1",
+      "File": "legacy/rathena/npc/re/warps/other/verus.txt",
+      "Line": 475,
+      "Reason": "Unsupported script construct \u0027emotion\u0027: emotion 6, getnpcid(0, \u0022Nurse Lapplad#EP15.2MR\u0022);"
+    },
+    {
+      "Name": "Clinic#H-0",
+      "File": "legacy/rathena/npc/re/warps/other/verus.txt",
+      "Line": 557,
+      "Reason": "Unsupported script construct \u0027callfunc\u0027: callfunc( \u0022F_time_limit_recorder\u0022, .@cooldown_status_day );"
+    },
+    {
+      "Name": "Clinic#H-0",
+      "File": "legacy/rathena/npc/re/warps/other/verus.txt",
+      "Line": 558,
+      "Reason": "Unsupported script construct \u0027if\u0027: if (.@cooldown_status_day[0] == 0 \u0026\u0026 .@cooldown_status_day[1] == 0 \u0026\u0026 .@cooldown_status_day[2] == 0 \u0026\u0026 .@cooldown_status_day[3] == 0 \u0026\u0026 .@cooldown_status_day[4] == 0) {"
+    },
+    {
+      "Name": "Clinic#H-0",
+      "File": "legacy/rathena/npc/re/warps/other/verus.txt",
+      "Line": 559,
+      "Reason": "Unsupported script construct \u0027emotion\u0027: emotion 6, getnpcid(0, \u0022Nurse Lapplad#EP15.2MR\u0022);"
+    },
+    {
+      "Name": "Clinic#G-2",
+      "File": "legacy/rathena/npc/re/warps/other/verus.txt",
+      "Line": 609,
+      "Reason": "Unsupported script construct \u0027callfunc\u0027: callfunc( \u0022F_time_limit_recorder\u0022, .@cooldown_status_day );"
+    },
+    {
+      "Name": "Clinic#G-2",
+      "File": "legacy/rathena/npc/re/warps/other/verus.txt",
+      "Line": 610,
+      "Reason": "Unsupported script construct \u0027if\u0027: if (.@cooldown_status_day[0] == 0 \u0026\u0026 .@cooldown_status_day[1] == 0 \u0026\u0026 .@cooldown_status_day[2] == 0 \u0026\u0026 .@cooldown_status_day[3] == 0 \u0026\u0026 .@cooldown_status_day[4] == 0) {"
+    },
+    {
+      "Name": "Clinic#G-2",
+      "File": "legacy/rathena/npc/re/warps/other/verus.txt",
+      "Line": 611,
+      "Reason": "Unsupported script construct \u0027emotion\u0027: emotion 6, getnpcid(0, \u0022Nurse Lapplad#EP15.2MR\u0022);"
+    },
+    {
+      "Name": "Cafeteria#G-2",
+      "File": "legacy/rathena/npc/re/warps/other/verus.txt",
+      "Line": 629,
+      "Reason": "Unsupported script construct \u0027callfunc\u0027: callfunc( \u0022F_time_limit_recorder\u0022, .@cooldown_status_day );"
+    },
+    {
+      "Name": "Cafeteria#G-2",
+      "File": "legacy/rathena/npc/re/warps/other/verus.txt",
+      "Line": 630,
+      "Reason": "Unsupported script construct \u0027if\u0027: if (.@cooldown_status_day[0] == 0 \u0026\u0026 .@cooldown_status_day[1] == 0 \u0026\u0026 .@cooldown_status_day[2] == 0 \u0026\u0026 .@cooldown_status_day[3] == 0 \u0026\u0026 .@cooldown_status_day[4] == 0) {"
+    },
+    {
+      "Name": "Cafeteria#G-2",
+      "File": "legacy/rathena/npc/re/warps/other/verus.txt",
+      "Line": 631,
+      "Reason": "Unsupported script construct \u0027emotion\u0027: emotion 6, getnpcid(0, \u0022Transportation Executive Ernon#EP15.2MR\u0022);"
+    },
+    {
+      "Name": "#babayagain",
+      "File": "legacy/rathena/npc/warps/dungeons/mosk_dun.txt",
+      "Line": 26,
+      "Reason": "Unsupported script construct \u0027if\u0027: if (mos_nowinter == 11) {"
+    },
+    {
+      "Name": "#babayagain",
+      "File": "legacy/rathena/npc/warps/dungeons/mosk_dun.txt",
+      "Line": 27,
+      "Reason": "Unsupported script construct \u0027donpcevent\u0027: donpcevent \u0022Soldier1#mos::OnEnable\u0022;"
+    },
+    {
+      "Name": "#babayagain",
+      "File": "legacy/rathena/npc/warps/dungeons/mosk_dun.txt",
+      "Line": 28,
+      "Reason": "Unsupported script construct \u0027donpcevent\u0027: donpcevent \u0022Soldier2#mos::OnEnable\u0022;"
+    },
+    {
+      "Name": "#babayagain",
+      "File": "legacy/rathena/npc/warps/dungeons/mosk_dun.txt",
+      "Line": 29,
+      "Reason": "Unsupported script construct \u0027donpcevent\u0027: donpcevent \u0022Soldier3#mos::OnEnable\u0022;"
+    },
+    {
+      "Name": "#babayagain",
+      "File": "legacy/rathena/npc/warps/dungeons/mosk_dun.txt",
+      "Line": 44,
+      "Reason": "Unsupported script construct \u0027donpcevent\u0027: donpcevent \u0022Soldier1#mos::OnInit\u0022;"
+    },
+    {
+      "Name": "#babayagain",
+      "File": "legacy/rathena/npc/warps/dungeons/mosk_dun.txt",
+      "Line": 45,
+      "Reason": "Unsupported script construct \u0027donpcevent\u0027: donpcevent \u0022Soldier2#mos::OnInit\u0022;"
+    },
+    {
+      "Name": "#babayagain",
+      "File": "legacy/rathena/npc/warps/dungeons/mosk_dun.txt",
+      "Line": 46,
+      "Reason": "Unsupported script construct \u0027donpcevent\u0027: donpcevent \u0022Soldier3#mos::OnInit\u0022;"
+    },
+    {
+      "Name": "#babayagain",
+      "File": "legacy/rathena/npc/warps/dungeons/mosk_dun.txt",
+      "Line": 47,
+      "Reason": "Unsupported script construct \u0027set\u0027: set mos_nowinter,12;"
+    }
+  ]
+}

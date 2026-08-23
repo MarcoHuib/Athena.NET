@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:gef_fild10:gef019",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "gef019",
+    "Map": "gef_fild10",
+    "X": 138,
+    "Y": 284,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "gef_fild10",
+      "X": 138,
+      "Y": 284,
+      "RadiusX": 1,
+      "RadiusY": 1,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "in_orcs01",
+          "X": 29,
+          "Y": 114
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/re/warps/fields/geffen_fild.txt",
+    "Line": 57
+  }
+}

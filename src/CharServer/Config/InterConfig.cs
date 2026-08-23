@@ -8,5 +8,6 @@ public sealed class InterConfig
     public string InventoryTable { get; init; } = "inventory";
     public string SkillTable { get; init; } = "skill";
     public string HotkeyTable { get; init; } = "hotkey";
+    public string QuestTable { get; init; } = "quest";
     public int StartStatusPoints { get; init; } = 48;
 }

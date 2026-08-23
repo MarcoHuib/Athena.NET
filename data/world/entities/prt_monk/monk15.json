@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:prt_monk:monk15",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "monk15",
+    "Map": "prt_monk",
+    "X": 192,
+    "Y": 172,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "prt_monk",
+      "X": 192,
+      "Y": 172,
+      "RadiusX": 1,
+      "RadiusY": 1,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "monk_test",
+          "X": 329,
+          "Y": 50
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/warps/other/jobquests.txt",
+    "Line": 82
+  }
+}

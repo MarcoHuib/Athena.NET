@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:ordeal_3-1:ord31-11",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "ord31-11",
+    "Map": "ordeal_3-1",
+    "X": 168,
+    "Y": 168,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "ordeal_3-1",
+      "X": 168,
+      "Y": 168,
+      "RadiusX": 1,
+      "RadiusY": 1,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "ordeal_3-1",
+          "X": 189,
+          "Y": 189
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/warps/pvp.txt",
+    "Line": 126
+  }
+}

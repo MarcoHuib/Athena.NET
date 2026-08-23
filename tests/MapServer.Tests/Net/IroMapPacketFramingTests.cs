@@ -104,6 +104,40 @@ public sealed class IroMapPacketFramingTests
         Assert.Equal(actorInfo, second);
     }
 
+    [Fact]
+    public async Task ReadNextPacketAsync_FramesCaptured0361BeforeCoalescedNpcInteraction()
+    {
+        var changeDirection = new byte[] { 0x61, 0x03, 0x01, 0x00, 0x01, 0xaf };
+        var interaction = new byte[] { 0x90, 0x00, 0x1b, 0x1f, 0x00, 0x00, 0x01, 0xb3 };
+        await using var stream = new MemoryStream([.. changeDirection, .. interaction]);
+
+        var first = await MapClientSession.ReadNextPacketAsync(stream, CancellationToken.None);
+        var second = await MapClientSession.ReadNextPacketAsync(stream, CancellationToken.None);
+
+        Assert.Equal(changeDirection, first);
+        Assert.Equal(interaction, second);
+    }
+
+    [Fact]
+    public async Task ReadNextPacketAsync_ReassemblesCaptured0361AcrossFragments()
+    {
+        var changeDirection = new byte[] { 0x61, 0x03, 0x02, 0x00, 0x01, 0x69 };
+        await using var stream = new ChunkedReadStream(changeDirection, 1, 2, 1, 2);
+
+        Assert.Equal(changeDirection, await MapClientSession.ReadNextPacketAsync(stream, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task ReadNextPacketAsync_PreservesOpaqueSelectionByteBeforeNextPacket()
+    {
+        var selection = new byte[] { 0xb8, 0x00, 0x1b, 0x1f, 0x00, 0x00, 0x02, 0x59 };
+        var changeDirection = new byte[] { 0x61, 0x03, 0x01, 0x00, 0x01, 0xaf };
+        await using var stream = new MemoryStream([.. selection, .. changeDirection]);
+
+        Assert.Equal(selection, await MapClientSession.ReadNextPacketAsync(stream, CancellationToken.None));
+        Assert.Equal(changeDirection, await MapClientSession.ReadNextPacketAsync(stream, CancellationToken.None));
+    }
+
     private sealed class ChunkedReadStream : Stream
     {
         private readonly Queue<ReadOnlyMemory<byte>> _chunks;

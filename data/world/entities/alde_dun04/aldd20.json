@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:alde_dun04:aldd20",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "aldd20",
+    "Map": "alde_dun04",
+    "X": 208,
+    "Y": 58,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "alde_dun04",
+      "X": 208,
+      "Y": 58,
+      "RadiusX": 2,
+      "RadiusY": 2,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "alde_dun04",
+          "X": 268,
+          "Y": 74
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/warps/dungeons/alde_dun.txt",
+    "Line": 65
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:dicastes02:eldicastes0012",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "eldicastes0012",
+    "Map": "dicastes02",
+    "X": 120,
+    "Y": 77,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "dicastes02",
+      "X": 120,
+      "Y": 77,
+      "RadiusX": 1,
+      "RadiusY": 1,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "dicastes01",
+          "X": 197,
+          "Y": 351
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/re/warps/cities/dicastes.txt",
+    "Line": 30
+  }
+}

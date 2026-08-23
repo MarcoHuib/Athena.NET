@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:cmd_fild06:cmd_fild06-5",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "cmd_fild06-5",
+    "Map": "cmd_fild06",
+    "X": 151,
+    "Y": 27,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "cmd_fild06",
+      "X": 151,
+      "Y": 27,
+      "RadiusX": 1,
+      "RadiusY": 1,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "cmd_fild07",
+          "X": 147,
+          "Y": 370
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/re/warps/fields/com_fild.txt",
+    "Line": 35
+  }
+}

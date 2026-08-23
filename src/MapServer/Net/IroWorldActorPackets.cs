@@ -22,7 +22,7 @@ public static class IroWorldActorPackets
         packet[4] = WarpActor.ObjectType;
         BinaryPrimitives.WriteUInt32LittleEndian(packet.AsSpan(5), actor.ActorId);
         BinaryPrimitives.WriteUInt16LittleEndian(packet.AsSpan(13), 300);
-        BinaryPrimitives.WriteUInt16LittleEndian(packet.AsSpan(23), WarpActor.ClassId);
+        BinaryPrimitives.WriteUInt16LittleEndian(packet.AsSpan(23), actor.SpriteClass);
         WritePosition(packet.AsSpan(63, 3), actor.X, actor.Y, 0);
         packet[66] = actor.RadiusX;
         packet[67] = actor.RadiusY;

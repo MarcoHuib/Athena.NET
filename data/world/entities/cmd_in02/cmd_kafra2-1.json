@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:cmd_in02:cmd_kafra2-1",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "cmd_KAFRA2-1",
+    "Map": "cmd_in02",
+    "X": 208,
+    "Y": 206,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "cmd_in02",
+      "X": 208,
+      "Y": 206,
+      "RadiusX": 1,
+      "RadiusY": 1,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "cmd_in02",
+          "X": 97,
+          "Y": 211
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/warps/cities/comodo.txt",
+    "Line": 30
+  }
+}

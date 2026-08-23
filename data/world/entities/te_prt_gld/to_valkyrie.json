@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:te_prt_gld:to_valkyrie",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "to_valkyrie",
+    "Map": "te_prt_gld",
+    "X": 120,
+    "Y": 153,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "te_prt_gld",
+      "X": 120,
+      "Y": 153,
+      "RadiusX": 1,
+      "RadiusY": 1,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "prt_gld",
+          "X": 120,
+          "Y": 149
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/re/warps/guildcastles.txt",
+    "Line": 53
+  }
+}

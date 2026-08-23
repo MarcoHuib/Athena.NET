@@ -22,6 +22,27 @@ Generic kRO/rAthena client compatibility is not a goal. `legacy/rathena/` is ref
 - Keep account/password verification, bans, auth-node lifecycle, server registration, and session ownership robust even when those internal concepts are borrowed from rAthena.
 - Treat world-list contents/configuration as server policy, but serialize them in the verified iRO format.
 
+## Development service-account provisioning
+
+CharServer authenticates to LoginServer with `CharServer.UserId` and
+`CharServer.Password` from `solutionfiles/secrets/secret.json`. LoginDb stores this
+infrastructure identity in the normal `login` table with `sex='S'` and a reserved
+`account_id` below 5. It is configuration-derived bootstrap data, not EF schema
+seed data. After creating or resetting `LoginDb`, provision it idempotently:
+
+```bash
+./scripts/seed-login-server-account.sh
+```
+
+The script reads configured credentials without printing them, reserves account ID
+1 by default, refreshes the configured password for an existing valid service row,
+and refuses to convert a player or non-reserved row into a server identity. Normal
+development player accounts remain explicit:
+
+```bash
+./scripts/create-player-account.sh <username> <password> M
+```
+
 ## Useful legacy reference areas
 Both repositories live under `legacy/` and should be treated as read-only reference material unless explicitly asked otherwise. For this server, use `legacy/rathena/` primarily for architecture/domain behavior and `legacy/openkore/` for packet naming or iRO/community protocol clues.
 

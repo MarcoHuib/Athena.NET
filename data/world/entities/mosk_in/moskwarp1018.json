@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:mosk_in:moskwarp1018",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "moskwarp1018",
+    "Map": "mosk_in",
+    "X": 288,
+    "Y": 116,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "mosk_in",
+      "X": 288,
+      "Y": 116,
+      "RadiusX": 1,
+      "RadiusY": 1,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "mosk_in",
+          "X": 222,
+          "Y": 126
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/warps/cities/moscovia.txt",
+    "Line": 40
+  }
+}

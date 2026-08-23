@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:mag_dun01:mag01-yunfild",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "mag01-yunfild",
+    "Map": "mag_dun01",
+    "X": 126,
+    "Y": 66,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "mag_dun01",
+      "X": 126,
+      "Y": 66,
+      "RadiusX": 1,
+      "RadiusY": 1,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "yuno_fild03",
+          "X": 34,
+          "Y": 139
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/warps/dungeons/mag_dun.txt",
+    "Line": 16
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:aldeba_in:ald16-1",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "ald16-1",
+    "Map": "aldeba_in",
+    "X": 83,
+    "Y": 224,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "aldeba_in",
+      "X": 83,
+      "Y": 224,
+      "RadiusX": 2,
+      "RadiusY": 2,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "aldeba_in",
+          "X": 83,
+          "Y": 188
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/warps/cities/aldebaran.txt",
+    "Line": 47
+  }
+}

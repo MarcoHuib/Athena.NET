@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:nguild_prt:nprtg103-1",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "nprtg103-1",
+    "Map": "nguild_prt",
+    "X": 196,
+    "Y": 119,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "nguild_prt",
+      "X": 196,
+      "Y": 119,
+      "RadiusX": 1,
+      "RadiusY": 1,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "nguild_prt",
+          "X": 40,
+          "Y": 54
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/warps/guildcastles.txt",
+    "Line": 510
+  }
+}
