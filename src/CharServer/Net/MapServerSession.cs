@@ -16,7 +16,7 @@ public sealed class MapServerSession : IDisposable, ISession
         [PacketConstants.MapLogin] = 60,
         [PacketConstants.MapAuthRequest] = 20,
         [PacketConstants.MapSavePosition] = 30,
-        [PacketConstants.MapQuestStateRequest] = 15,
+        [PacketConstants.MapQuestStateRequest] = MapQuestStateProtocol.RequestLength,
     };
 
     private readonly TcpClient _client;
@@ -237,39 +237,72 @@ public sealed class MapServerSession : IDisposable, ISession
 
     private async Task HandleQuestStateRequestAsync(byte[] packet, CancellationToken cancellationToken)
     {
-        var accountId = BinaryPrimitives.ReadUInt32LittleEndian(packet.AsSpan(2));
-        var charId = BinaryPrimitives.ReadUInt32LittleEndian(packet.AsSpan(6));
-        var questId = BinaryPrimitives.ReadUInt32LittleEndian(packet.AsSpan(10));
-        var operation = packet[14]; // 0=query, 1=active, 2=completed
-        byte state = 0; var success = false;
-        if (IsQuestStateRequestAuthorized(_authenticated, _ownedCharacters, accountId, charId, questId, operation))
+        if (!MapQuestStateProtocol.TryParseRequest(packet, out var request))
         {
-            await using var db = _dbFactory();
-            if (db is not null)
+            CharLogger.Warning($"Rejected malformed quest persistence request session={SessionId} length={packet.Length}.");
+            return;
+        }
+
+        CharLogger.Info(
+            $"Quest persistence request accountId={request.AccountId} charId={request.CharId} " +
+            $"questId={request.QuestId} desiredState={request.Operation}.");
+        byte state = 0;
+        var success = false;
+        if (!IsQuestStateRequestAuthorized(
+                _authenticated, _ownedCharacters, request.AccountId, request.CharId, request.QuestId, request.Operation))
+        {
+            CharLogger.Warning(
+                $"Quest persistence rejected reason=unauthorized-or-invalid accountId={request.AccountId} " +
+                $"charId={request.CharId} questId={request.QuestId}.");
+        }
+        else
+        {
+            try
             {
-                var quest = await db.Quests.FirstOrDefaultAsync(q => q.CharId == charId && q.QuestId == questId, cancellationToken);
-                if (operation is 1 or 2)
+                await using var db = _dbFactory();
+                if (db is null)
                 {
-                    if (quest is null) { quest = new() { CharId = charId, QuestId = questId }; db.Quests.Add(quest); }
-                    quest.State = operation.ToString(System.Globalization.CultureInfo.InvariantCulture);
-                    await db.SaveChangesAsync(cancellationToken);
+                    CharLogger.Warning("Quest persistence rejected reason=database-unavailable.");
                 }
-                success = quest is null ||
-                    (byte.TryParse(quest.State, System.Globalization.NumberStyles.None,
-                        System.Globalization.CultureInfo.InvariantCulture, out state) && state <= 2);
-                if (!success)
+                else
                 {
-                    state = 0;
-                    CharLogger.Warning($"Rejected invalid persisted quest state charId={charId} questId={questId}.");
+                    var quest = await db.Quests.FirstOrDefaultAsync(
+                        q => q.CharId == request.CharId && q.QuestId == request.QuestId, cancellationToken);
+                    if (request.Operation is 1 or 2)
+                    {
+                        if (quest is null)
+                        {
+                            quest = new() { CharId = request.CharId, QuestId = request.QuestId };
+                            db.Quests.Add(quest);
+                        }
+                        quest.State = request.Operation.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                        await db.SaveChangesAsync(cancellationToken);
+                    }
+                    success = quest is null ||
+                        (byte.TryParse(quest.State, System.Globalization.NumberStyles.None,
+                            System.Globalization.CultureInfo.InvariantCulture, out state) && state <= 2);
+                    if (success)
+                    {
+                        CharLogger.Info(
+                            $"Quest persistence succeeded charId={request.CharId} questId={request.QuestId} state={state}.");
+                    }
+                    else
+                    {
+                        state = 0;
+                        CharLogger.Warning(
+                            $"Quest persistence rejected reason=invalid-stored-state charId={request.CharId} questId={request.QuestId}.");
+                    }
                 }
             }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                CharLogger.Warning(
+                    $"Quest persistence rejected reason=database-error charId={request.CharId} " +
+                    $"questId={request.QuestId} error={ex.GetType().Name}.");
+            }
         }
-        var response = new byte[12];
-        BinaryPrimitives.WriteInt16LittleEndian(response, PacketConstants.MapQuestStateResponse);
-        BinaryPrimitives.WriteUInt32LittleEndian(response.AsSpan(2), charId);
-        BinaryPrimitives.WriteUInt32LittleEndian(response.AsSpan(6), questId);
-        response[10] = state; response[11] = success ? (byte)1 : (byte)0;
-        await WriteAsync(response, cancellationToken);
+
+        await WriteAsync(MapQuestStateProtocol.BuildResponse(request.CharId, request.QuestId, state, success), cancellationToken);
     }
 
     internal static bool IsPositionSaveAuthorized(

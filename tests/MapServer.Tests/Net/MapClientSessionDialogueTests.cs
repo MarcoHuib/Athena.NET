@@ -74,6 +74,35 @@ public sealed class MapClientSessionDialogueTests
         Assert.False(registry.TryGetInteraction(actor.ActorId, "test", out _, out _));
     }
 
+    [Fact]
+    public async Task QuestPersistenceFailure_ClosesDialogueWithoutSendingClientQuestState()
+    {
+        var entity = new WorldEntityDefinition(1, "npc:test:quest-failure", "Npc", new("Quest", "test", 10, 10, 0, 45), [],
+            [new("OnClick", "test", 10, 10, 0, 0, true, true, ["SetQuest"], "failure", [new SetQuestInstruction(21001)])],
+            new("test", "test", "fixture", 1));
+        var registry = new WorldMapRegistry([], [entity]);
+        var listener = new TcpListener(IPAddress.Loopback, 0); listener.Start();
+        using var client = new TcpClient();
+        var connect = client.ConnectAsync((IPEndPoint)listener.LocalEndpoint);
+        using var serverClient = await listener.AcceptTcpClientAsync(); await connect;
+        await using var stream = client.GetStream();
+        var connector = new CharServerConnector(new MapConfigStore(new MapConfig(), "unused.conf"));
+        using var session = new MapClientSession(1, serverClient, connector, true, "test", 10, 10, registry,
+            questPersistence: new FailingQuestPersistence(), accountId: 7, charId: 9);
+        var run = session.RunAsync(CancellationToken.None);
+
+        await stream.WriteAsync(new byte[] { 0x7d, 0x00, 0xaa });
+        var actorId = await ReadActorId(stream);
+        await stream.WriteAsync(BuildClientActorPacket(0x0090, actorId, 8));
+
+        var close = await ReadExact(stream, 6);
+        Assert.Equal((short)0x00b6, BinaryPrimitives.ReadInt16LittleEndian(close));
+        Assert.Null(session.ActiveScriptState);
+        Assert.Equal(0, client.Available);
+
+        client.Close(); await run.WaitAsync(TimeSpan.FromSeconds(5)); listener.Stop();
+    }
+
     private static byte[] BuildClientActorPacket(short type, uint actorId, int length)
     {
         var packet = new byte[length]; BinaryPrimitives.WriteInt16LittleEndian(packet, type); BinaryPrimitives.WriteUInt32LittleEndian(packet.AsSpan(2), actorId); packet[^1] = 0xaa; return packet;
@@ -106,5 +135,13 @@ public sealed class MapClientSessionDialogueTests
             => Task.FromResult<CharacterQuestStatus?>(_states.GetValueOrDefault((charId, questId), CharacterQuestStatus.Absent));
         public Task<bool> SetQuestStateAsync(uint accountId, uint charId, uint questId, CharacterQuestStatus state, CancellationToken cancellationToken)
         { _states[(charId, questId)] = state; return Task.FromResult(true); }
+    }
+
+    private sealed class FailingQuestPersistence : ICharacterQuestPersistence
+    {
+        public Task<CharacterQuestStatus?> GetQuestStateAsync(uint accountId, uint charId, uint questId, CancellationToken cancellationToken)
+            => Task.FromResult<CharacterQuestStatus?>(CharacterQuestStatus.Absent);
+        public Task<bool> SetQuestStateAsync(uint accountId, uint charId, uint questId, CharacterQuestStatus state, CancellationToken cancellationToken)
+            => Task.FromResult(false);
     }
 }

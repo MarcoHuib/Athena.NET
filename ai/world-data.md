@@ -83,8 +83,8 @@ dialogue/player-selection, and quest-completion semantics Athena does not implem
 
 Developer-only runtime fixtures live separately under `data/world/dev`. They are
 loaded through the same WorldRegistry and visibility indexes as converted content,
-but are not rAthena provenance. The single `int_land/Athena Test NPC` fixture exists
-only to stock-client-test Message/Next/Close and Select dialogue at `int_land (55,63)` and can be removed by deleting
+but are not rAthena provenance. The single `int_land04/Athena Test NPC` fixture exists
+only to stock-client-test dialogue and quest state at `int_land04 (55,63)` and can be removed by deleting
 its one file; it must never be treated as production world content.
 
 Quest state is character gameplay data, not WorldEntity data. WorldEntity scripts
@@ -94,6 +94,18 @@ CharServer contract. The developer fixture uses real client-known tutorial quest
 21001 because no safe developer quest-ID namespace exists; it exercises only the
 captured absent -> active -> completed lifecycle and should be used on development
 characters.
+
+The Athena MapServer-to-CharServer quest persistence contract is fixed and
+explicit. Request `0x2B29/15` contains `accountId:u32` at offset 2,
+`charId:u32` at 6, `questId:u32` at 10, and operation/state at 14 (`0` query,
+`1` active, `2` completed). Response `0x2B2A/12` contains `charId:u32` at 2,
+`questId:u32` at 6, resulting state at 10, and success at 11. The authenticated
+CharServer session must own the account/character pair. Database errors return a
+failure response without terminating that internal connection. With
+`--auto-migrate`, CharServer applies its EF Core migrations; EF owns the complete
+CharServer schema, including `quest`. Databases previously created by the removed
+`EnsureCreated` bootstrap have no migration history and require a one-time rebuild
+or an explicitly managed baseline before using the initial CharServer migration.
 
 Filters may select `--source-file`, `--map`, `--name`, and/or `--kind`. At least
 one is mandatory so an accidental unrestricted conversion cannot generate the

@@ -1,10 +1,10 @@
 {
   "SchemaVersion": 1,
-  "Id": "dev:int_land:athena_test_npc",
+  "Id": "dev:int_land04:athena_test_npc",
   "Kind": "DeveloperTestNpc",
   "Actor": {
     "Name": "Athena Test NPC",
-    "Map": "int_land",
+    "Map": "int_land04",
     "X": 55,
     "Y": 63,
     "Direction": 5,
@@ -14,7 +14,7 @@
   "Scripts": [
     {
       "Trigger": "OnClick",
-      "Map": "int_land",
+      "Map": "int_land04",
       "X": 55,
       "Y": 63,
       "RadiusX": 0,

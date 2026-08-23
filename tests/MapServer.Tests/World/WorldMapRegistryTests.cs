@@ -132,7 +132,7 @@ public sealed class WorldMapRegistryTests
             warp.OrderedActions,
             action => Assert.Equal(new SetSavePointAction("int_land03", 77, 101), action),
             action => Assert.Equal(new WarpAction("int_land03", 85, 107), action));
-        Assert.Equal(8, WorldMapRegistry.Tutorial.EntityCount);
+        Assert.Equal(9, WorldMapRegistry.Tutorial.EntityCount);
     }
 
     [Fact]
@@ -148,7 +148,20 @@ public sealed class WorldMapRegistryTests
             action => Assert.Equal(new SetSavePointAction("int_land", 77, 101), action),
             action => Assert.Equal(new WarpAction("int_land", 85, 107), action));
         Assert.Single(WorldMapRegistry.Tutorial.GetVisibleWarpActors("iz_int", 56, 15), actor => actor.Name == "#ship_out");
-        Assert.Equal(8, WorldMapRegistry.Tutorial.EntityCount);
+        Assert.Equal(9, WorldMapRegistry.Tutorial.EntityCount);
+    }
+
+    [Fact]
+    public void Tutorial_ShipOut04_ReplacesLegacyActorAndIsExecutable()
+    {
+        Assert.True(WorldMapRegistry.Tutorial.TryFindWarp("iz_int04", 56, 15, out var warp));
+        Assert.Collection(
+            warp.OrderedActions,
+            action => Assert.Equal(new SetSavePointAction("int_land04", 77, 101), action),
+            action => Assert.Equal(new WarpAction("int_land04", 85, 107), action));
+        Assert.Single(
+            WorldMapRegistry.Tutorial.GetVisibleWarpActors("iz_int04", 56, 15),
+            actor => actor.Name == "#ship_out04");
     }
 
     [Fact]
@@ -166,23 +179,23 @@ public sealed class WorldMapRegistryTests
         var script = Assert.Single(entity.Scripts);
         Assert.True(script.SourceParsed);
         Assert.False(script.RuntimeExecutable);
-        Assert.Equal(8, WorldMapRegistry.Tutorial.EntityCount);
-        Assert.Equal(123, WorldMapRegistry.Tutorial.DynamicWarpActorCount);
+        Assert.Equal(9, WorldMapRegistry.Tutorial.EntityCount);
+        Assert.Equal(122, WorldMapRegistry.Tutorial.DynamicWarpActorCount);
     }
 
     [Fact]
     public void DeveloperDialogueNpc_LoadsThroughNormalRegistryAndIsInteractable()
     {
-        var entity = WorldMapRegistry.Tutorial.EntitiesById["dev:int_land:athena_test_npc"];
+        var entity = WorldMapRegistry.Tutorial.EntitiesById["dev:int_land04:athena_test_npc"];
         Assert.Equal("DeveloperTestNpc", entity.Kind);
-        Assert.Equal(new WorldActorComponent("Athena Test NPC", "int_land", 55, 63, 5, 873), entity.Actor);
+        Assert.Equal(new WorldActorComponent("Athena Test NPC", "int_land04", 55, 63, 5, 873), entity.Actor);
         Assert.Empty(entity.Triggers);
 
         var actor = Assert.Single(
-            WorldMapRegistry.Tutorial.GetVisibleWarpActors("int_land", 50, 59),
+            WorldMapRegistry.Tutorial.GetVisibleWarpActors("int_land04", 50, 59),
             candidate => candidate.Name == "Athena Test NPC");
         Assert.Equal((ushort)873, actor.SpriteClass);
-        Assert.True(WorldMapRegistry.Tutorial.TryGetInteraction(actor.ActorId, "int_land", out var boundEntity, out var script));
+        Assert.True(WorldMapRegistry.Tutorial.TryGetInteraction(actor.ActorId, "int_land04", out var boundEntity, out var script));
         Assert.Same(entity, boundEntity);
         Assert.True(script.RuntimeExecutable);
         Assert.Collection(script.Instructions!,

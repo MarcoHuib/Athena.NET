@@ -408,7 +408,21 @@ public sealed class ClientSession : IDisposable
 
         if (!result.Success)
         {
-            LoginLogger.Warning($"Login failed (server={isServer}, code={result.ErrorCode}).");
+            if (isServer)
+            {
+                var reason = result.ServerAccountFailure switch
+                {
+                    ServerAccountFailure.NotFound => "server-account-not-found",
+                    ServerAccountFailure.InvalidCredential => "invalid-server-credential",
+                    ServerAccountFailure.NotAuthorized => "account-not-authorized-as-server",
+                    _ => "authentication-failed",
+                };
+                LoginLogger.Warning($"Char server login rejected reason={reason} code={result.ErrorCode}.");
+            }
+            else
+            {
+                LoginLogger.Warning($"Login failed (server=false, code={result.ErrorCode}).");
+            }
             if (isServer)
             {
                 await SendCharServerAckAsync(3, cancellationToken);
@@ -1203,7 +1217,18 @@ public sealed class ClientSession : IDisposable
             if (account == null)
             {
                 await LogLoginAsync(db, userId, remoteIp, 0, string.Empty, cancellationToken);
-                return AuthResult.Fail(0);
+                return AuthResult.Fail(0, serverAccountFailure: isServer ? ServerAccountFailure.NotFound : ServerAccountFailure.None);
+            }
+
+            if (isServer)
+            {
+                var serverAccountFailure = ServerAccountAuthentication.Classify(account, CheckPassword(request, account));
+                if (serverAccountFailure != ServerAccountFailure.None)
+                {
+                    var errorCode = serverAccountFailure == ServerAccountFailure.InvalidCredential ? 1u : 0u;
+                    await LogLoginAsync(db, userId, remoteIp, errorCode, string.Empty, cancellationToken);
+                    return AuthResult.Fail(errorCode, serverAccountFailure: serverAccountFailure);
+                }
             }
 
             if (!isServer && string.Equals(account.Sex, "S", StringComparison.OrdinalIgnoreCase))
@@ -1212,7 +1237,7 @@ public sealed class ClientSession : IDisposable
                 return AuthResult.Fail(0);
             }
 
-            if (!CheckPassword(request, account))
+            if (!isServer && !CheckPassword(request, account))
             {
                 await LogLoginAsync(db, userId, remoteIp, 1, string.Empty, cancellationToken);
                 return AuthResult.Fail(1);
@@ -2037,11 +2062,12 @@ public sealed class ClientSession : IDisposable
         byte Sex,
         int GroupId,
         string WebAuthToken,
-        uint Ip)
+        uint Ip,
+        ServerAccountFailure ServerAccountFailure)
     {
-        public static AuthResult Fail(uint error, string unblockTime = "")
+        public static AuthResult Fail(uint error, string unblockTime = "", ServerAccountFailure serverAccountFailure = ServerAccountFailure.None)
         {
-            return new AuthResult(false, error, unblockTime, 0, 0, 0, 0, 0, string.Empty, 0);
+            return new AuthResult(false, error, unblockTime, 0, 0, 0, 0, 0, string.Empty, 0, serverAccountFailure);
         }
 
         public static AuthResult FromAccount(LoginAccount account, int loginId1, int loginId2, string ip)
@@ -2049,7 +2075,7 @@ public sealed class ClientSession : IDisposable
             var sex = (byte)(account.Sex.Equals("F", StringComparison.OrdinalIgnoreCase) ? 0 :
                 account.Sex.Equals("M", StringComparison.OrdinalIgnoreCase) ? 1 : 2);
             var parsedIp = ParseIp(ip);
-            return new AuthResult(true, 0, string.Empty, account.AccountId, (uint)loginId1, (uint)loginId2, sex, account.GroupId, account.WebAuthToken ?? string.Empty, parsedIp);
+            return new AuthResult(true, 0, string.Empty, account.AccountId, (uint)loginId1, (uint)loginId2, sex, account.GroupId, account.WebAuthToken ?? string.Empty, parsedIp, ServerAccountFailure.None);
         }
     }
 

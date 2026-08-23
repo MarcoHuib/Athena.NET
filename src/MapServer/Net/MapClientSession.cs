@@ -432,20 +432,43 @@ public sealed class MapClientSession : IDisposable
                     _scriptExecutionSession = null;
                     break;
                 case SetQuestInstruction setQuest:
-                    if (!await SetQuestAsync(setQuest.QuestId, cancellationToken)) return;
+                    if (!await SetQuestAsync(setQuest.QuestId, cancellationToken))
+                    {
+                        await AbortScriptForPersistenceFailureAsync(execution, setQuest.QuestId, cancellationToken);
+                        return;
+                    }
                     break;
                 case CompleteQuestInstruction completeQuest:
-                    if (!await CompleteQuestAsync(completeQuest.QuestId, cancellationToken)) return;
+                    if (!await CompleteQuestAsync(completeQuest.QuestId, cancellationToken))
+                    {
+                        await AbortScriptForPersistenceFailureAsync(execution, completeQuest.QuestId, cancellationToken);
+                        return;
+                    }
                     break;
                 case IfQuestStateInstruction check:
                     if (!TutorialQuestCatalog.Contains(check.QuestId)) return;
                     var state = await _questPersistence.GetQuestStateAsync(_accountId, _charId, check.QuestId, cancellationToken);
-                    if (state is null) return;
+                    if (state is null)
+                    {
+                        await AbortScriptForPersistenceFailureAsync(execution, check.QuestId, cancellationToken);
+                        return;
+                    }
                     await SendScriptOutputAsync(execution.ResumeQuestState(execution.ActorId, state.Value), cancellationToken);
                     break;
             }
         }
         if (execution.State == ScriptExecutionState.Closed) _scriptExecutionSession = null;
+    }
+
+    private async Task AbortScriptForPersistenceFailureAsync(
+        ScriptExecutionSession execution,
+        uint questId,
+        CancellationToken cancellationToken)
+    {
+        MapLogger.Warning(
+            $"Quest persistence aborted script entity='{execution.EntityId}' charId={_charId} questId={questId}.");
+        await WriteAsync(IroNpcDialoguePackets.BuildClose(execution.ActorId), cancellationToken);
+        _scriptExecutionSession = null;
     }
 
     private async Task<bool> SetQuestAsync(uint questId, CancellationToken cancellationToken)

@@ -15,7 +15,7 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
     {
         [PacketConstants.MapLoginAck] = 3,
         [PacketConstants.MapAuthFail] = 19,
-        [PacketConstants.MapQuestStateResponse] = 12,
+        [PacketConstants.MapQuestStateResponse] = MapQuestStateProtocol.ResponseLength,
     };
 
     private readonly MapConfigStore _configStore;
@@ -98,12 +98,8 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
         var pending = new TaskCompletionSource<CharacterQuestStatus?>(TaskCreationOptions.RunContinuationsAsynchronously);
         if (!_pendingQuestStates.TryAdd(key, pending)) return null;
         using var registration = cancellationToken.Register(() => pending.TrySetCanceled(cancellationToken));
-        var packet = new byte[15];
-        BinaryPrimitives.WriteInt16LittleEndian(packet, PacketConstants.MapQuestStateRequest);
-        BinaryPrimitives.WriteUInt32LittleEndian(packet.AsSpan(2), accountId);
-        BinaryPrimitives.WriteUInt32LittleEndian(packet.AsSpan(6), charId);
-        BinaryPrimitives.WriteUInt32LittleEndian(packet.AsSpan(10), questId);
-        packet[14] = (byte)operation;
+        var packet = MapQuestStateProtocol.BuildRequest(accountId, charId, questId, operation);
+        MapLogger.Info($"Persisting quest charId={charId} questId={questId} state={operation}.");
         try { await connection.WriteAsync(packet, cancellationToken); return await pending.Task; }
         finally { _pendingQuestStates.TryRemove(key, out _); }
     }
@@ -165,6 +161,7 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
             await ListenAsync(stream, cancellationToken);
             _connection = null;
             FailPendingAuth();
+            FailPendingQuestStates();
 
             MapLogger.Warning("Char server connection closed. Reconnecting.");
             return false;
@@ -291,10 +288,11 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
 
     private bool HandleQuestStateResponse(byte[] packet)
     {
-        var charId = BinaryPrimitives.ReadUInt32LittleEndian(packet.AsSpan(2));
-        var questId = BinaryPrimitives.ReadUInt32LittleEndian(packet.AsSpan(6));
+        if (!MapQuestStateProtocol.TryParseResponse(packet, out var charId, out var questId, out var state)) return false;
         if (_pendingQuestStates.TryRemove((charId, questId), out var pending))
-            pending.TrySetResult(packet[11] == 1 && packet[10] <= 2 ? (CharacterQuestStatus)packet[10] : null);
+            pending.TrySetResult(state);
+        if (state is not null) MapLogger.Info($"Quest persistence succeeded charId={charId} questId={questId} state={state}.");
+        else MapLogger.Warning($"Quest persistence failed charId={charId} questId={questId}.");
         return true;
     }
 
@@ -368,6 +366,12 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
         }
 
         _pendingAuth.Clear();
+    }
+
+    private void FailPendingQuestStates()
+    {
+        foreach (var pending in _pendingQuestStates.Values) pending.TrySetResult(null);
+        _pendingQuestStates.Clear();
     }
 
     private static async Task<byte[]> ReadPacketAsync(NetworkStream stream, CancellationToken cancellationToken)
