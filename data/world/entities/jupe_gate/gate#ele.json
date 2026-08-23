@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:jupe_gate:gate#ele",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "gate#ele",
+    "Map": "jupe_gate",
+    "X": 49,
+    "Y": 55,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "jupe_gate",
+      "X": 49,
+      "Y": 55,
+      "RadiusX": 4,
+      "RadiusY": 2,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "jupe_ele_r",
+          "X": 49,
+          "Y": 30
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/warps/dungeons/juperos.txt",
+    "Line": 33
+  }
+}

@@ -17,6 +17,7 @@ public sealed class MapServerSession : IDisposable, ISession
         [PacketConstants.MapAuthRequest] = 20,
         [PacketConstants.MapSavePosition] = 30,
         [PacketConstants.MapQuestStateRequest] = MapQuestStateProtocol.RequestLength,
+        [PacketConstants.MapSavePointRequest] = MapSavePointProtocol.RequestLength,
     };
 
     private readonly TcpClient _client;
@@ -100,6 +101,9 @@ public sealed class MapServerSession : IDisposable, ISession
                 break;
             case PacketConstants.MapQuestStateRequest:
                 await HandleQuestStateRequestAsync(packet, cancellationToken);
+                break;
+            case PacketConstants.MapSavePointRequest:
+                await HandleSavePointAsync(packet, cancellationToken);
                 break;
             default:
                 CharLogger.Warning($"Unknown map server packet 0x{packetType:X4}, disconnecting.");
@@ -233,6 +237,32 @@ public sealed class MapServerSession : IDisposable, ISession
         character.LastX = x;
         character.LastY = y;
         await db.SaveChangesAsync(cancellationToken);
+    }
+
+    private async Task HandleSavePointAsync(byte[] packet, CancellationToken cancellationToken)
+    {
+        if (!MapSavePointProtocol.TryParseRequest(packet, out var request)) return;
+        var accountId = request.AccountId; var charId = request.CharId; var mapName = request.Map; var x = request.X; var y = request.Y;
+        var success = false;
+        try
+        {
+            if (_authenticated && IsPositionSaveAuthorized(_authenticated, _ownedCharacters, accountId, charId) && !string.IsNullOrWhiteSpace(mapName) && mapName.Length <= 11)
+            {
+                await using var db = _dbFactory();
+                var character = db is null ? null : await db.Characters.FirstOrDefaultAsync(candidate => candidate.AccountId == accountId && candidate.CharId == charId && candidate.DeleteDate == 0, cancellationToken);
+                if (character is not null)
+                {
+                    character.SaveMap = mapName; character.SaveX = x; character.SaveY = y;
+                    await db!.SaveChangesAsync(cancellationToken); success = true;
+                    CharLogger.Info($"SavePoint persistence succeeded charId={charId} map='{mapName}' x={x} y={y}.");
+                }
+            }
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            CharLogger.Warning($"SavePoint persistence failed charId={charId}: {exception.GetType().Name}: {exception.Message}");
+        }
+        await WriteAsync(MapSavePointProtocol.BuildResponse(charId, success), cancellationToken);
     }
 
     private async Task HandleQuestStateRequestAsync(byte[] packet, CancellationToken cancellationToken)

@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:ba_maison:ep172_in01_in",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "#ep172_in01_in",
+    "Map": "ba_maison",
+    "X": 197,
+    "Y": 279,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "ba_maison",
+      "X": 197,
+      "Y": 279,
+      "RadiusX": 1,
+      "RadiusY": 1,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "ba_in01",
+          "X": 271,
+          "Y": 269
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/re/warps/other/ba_maison.txt",
+    "Line": 54
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:ma_in01:mal_in_ws",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "mal_in_ws",
+    "Map": "ma_in01",
+    "X": 86,
+    "Y": 16,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "ma_in01",
+      "X": 86,
+      "Y": 16,
+      "RadiusX": 1,
+      "RadiusY": 1,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "malaya",
+          "X": 115,
+          "Y": 212
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/re/warps/cities/malaya.txt",
+    "Line": 19
+  }
+}

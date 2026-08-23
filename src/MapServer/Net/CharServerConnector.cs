@@ -16,12 +16,14 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
         [PacketConstants.MapLoginAck] = 3,
         [PacketConstants.MapAuthFail] = 19,
         [PacketConstants.MapQuestStateResponse] = MapQuestStateProtocol.ResponseLength,
+        [PacketConstants.MapSavePointResponse] = MapSavePointProtocol.ResponseLength,
     };
 
     private readonly MapConfigStore _configStore;
     private readonly TimeSpan _retryDelay = TimeSpan.FromSeconds(10);
     private readonly ConcurrentDictionary<uint, PendingAuthRequest> _pendingAuth = new();
     private readonly ConcurrentDictionary<(uint CharId, uint QuestId), TaskCompletionSource<CharacterQuestStatus?>> _pendingQuestStates = new();
+    private readonly ConcurrentDictionary<uint, TaskCompletionSource<bool>> _pendingSavePoints = new();
     private CharServerConnectionState? _connection;
 
     public CharServerConnector(MapConfigStore configStore)
@@ -82,6 +84,19 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
         BinaryPrimitives.WriteUInt16LittleEndian(packet.AsSpan(28), y);
         await connection.WriteAsync(packet, cancellationToken);
         return true;
+    }
+
+    public async Task<bool> SavePointAsync(uint accountId, uint charId, string mapName, ushort x, ushort y, CancellationToken cancellationToken)
+    {
+        var connection = _connection;
+        var mapBytes = Encoding.ASCII.GetBytes(mapName);
+        if (connection is null || mapBytes.Length is 0 or > 11) return false;
+        var pending = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (!_pendingSavePoints.TryAdd(charId, pending)) return false;
+        using var registration = cancellationToken.Register(() => pending.TrySetCanceled(cancellationToken));
+        var packet = MapSavePointProtocol.BuildRequest(accountId, charId, mapName, x, y);
+        try { await connection.WriteAsync(packet, cancellationToken); return await pending.Task; }
+        finally { _pendingSavePoints.TryRemove(charId, out _); }
     }
 
     public async Task<CharacterQuestStatus?> GetQuestStateAsync(uint accountId, uint charId, uint questId, CancellationToken cancellationToken)
@@ -162,6 +177,7 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
             _connection = null;
             FailPendingAuth();
             FailPendingQuestStates();
+            FailPendingSavePoints();
 
             MapLogger.Warning("Char server connection closed. Reconnecting.");
             return false;
@@ -225,6 +241,8 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
                 return HandleAuthFail(packet);
             case PacketConstants.MapQuestStateResponse:
                 return HandleQuestStateResponse(packet);
+            case PacketConstants.MapSavePointResponse:
+                return HandleSavePointResponse(packet);
             default:
                 MapLogger.Warning($"Unknown char server packet 0x{packetType:X4}, disconnecting.");
                 return false;
@@ -293,6 +311,13 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
             pending.TrySetResult(state);
         if (state is not null) MapLogger.Info($"Quest persistence succeeded charId={charId} questId={questId} state={state}.");
         else MapLogger.Warning($"Quest persistence failed charId={charId} questId={questId}.");
+        return true;
+    }
+
+    private bool HandleSavePointResponse(byte[] packet)
+    {
+        if (!MapSavePointProtocol.TryParseResponse(packet, out var charId, out var success)) return false;
+        if (_pendingSavePoints.TryRemove(charId, out var pending)) pending.TrySetResult(success);
         return true;
     }
 
@@ -372,6 +397,12 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
     {
         foreach (var pending in _pendingQuestStates.Values) pending.TrySetResult(null);
         _pendingQuestStates.Clear();
+    }
+
+    private void FailPendingSavePoints()
+    {
+        foreach (var pending in _pendingSavePoints.Values) pending.TrySetResult(false);
+        _pendingSavePoints.Clear();
     }
 
     private static async Task<byte[]> ReadPacketAsync(NetworkStream stream, CancellationToken cancellationToken)

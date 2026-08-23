@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:arug_cas02:arug203",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "arug203",
+    "Map": "arug_cas02",
+    "X": 393,
+    "Y": 324,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "arug_cas02",
+      "X": 393,
+      "Y": 324,
+      "RadiusX": 1,
+      "RadiusY": 1,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "arug_cas02",
+          "X": 139,
+          "Y": 31
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/warps/guildcastles.txt",
+    "Line": 433
+  }
+}

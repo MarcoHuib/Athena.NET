@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:pay_fild01:payf001",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "payf001",
+    "Map": "pay_fild01",
+    "X": 13,
+    "Y": 152,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "pay_fild01",
+      "X": 13,
+      "Y": 152,
+      "RadiusX": 2,
+      "RadiusY": 7,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "moc_fild03",
+          "X": 299,
+          "Y": 170
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/re/warps/fields/payon_fild.txt",
+    "Line": 18
+  }
+}

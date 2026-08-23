@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:payon_in03:payonwarp085",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "payonwarp085",
+    "Map": "payon_in03",
+    "X": 27,
+    "Y": 161,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "payon_in03",
+      "X": 27,
+      "Y": 161,
+      "RadiusX": 2,
+      "RadiusY": 2,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "payon_in03",
+          "X": 27,
+          "Y": 176
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/warps/cities/payon.txt",
+    "Line": 131
+  }
+}

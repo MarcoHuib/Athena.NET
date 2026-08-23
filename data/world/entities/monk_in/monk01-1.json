@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:monk_in:monk01-1",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "monk01-1",
+    "Map": "monk_in",
+    "X": 98,
+    "Y": 27,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "monk_in",
+      "X": 98,
+      "Y": 27,
+      "RadiusX": 5,
+      "RadiusY": 2,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "prt_monk",
+          "X": 245,
+          "Y": 104
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/re/warps/fields/prontera_fild.txt",
+    "Line": 125
+  }
+}

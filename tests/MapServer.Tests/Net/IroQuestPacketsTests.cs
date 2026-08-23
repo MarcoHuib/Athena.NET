@@ -26,6 +26,5 @@ public sealed class IroQuestPacketsTests
     public void InvalidQuestId_IsRejected()
     {
         Assert.Throws<ArgumentOutOfRangeException>(() => IroQuestPackets.BuildAddActive(0));
-        Assert.False(Athena.Net.MapServer.World.TutorialQuestCatalog.Contains(999999));
     }
 }

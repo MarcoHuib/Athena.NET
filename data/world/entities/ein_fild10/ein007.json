@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:ein_fild10:ein007",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "ein007",
+    "Map": "ein_fild10",
+    "X": 24,
+    "Y": 331,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "ein_fild10",
+      "X": 24,
+      "Y": 331,
+      "RadiusX": 1,
+      "RadiusY": 1,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "ein_fild09",
+          "X": 327,
+          "Y": 346
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/warps/fields/ein_fild.txt",
+    "Line": 33
+  }
+}

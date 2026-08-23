@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:dali:dg001",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "dg001",
+    "Map": "dali",
+    "X": 149,
+    "Y": 82,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "dali",
+      "X": 149,
+      "Y": 82,
+      "RadiusX": 2,
+      "RadiusY": 2,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "mid_camp",
+          "X": 210,
+          "Y": 289
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/re/warps/other/dimensional_gap.txt",
+    "Line": 61
+  }
+}

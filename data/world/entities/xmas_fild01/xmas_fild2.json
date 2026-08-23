@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:xmas_fild01:xmas_fild2",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "xmas_fild2",
+    "Map": "xmas_fild01",
+    "X": 84,
+    "Y": 48,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "xmas_fild01",
+      "X": 84,
+      "Y": 48,
+      "RadiusX": 10,
+      "RadiusY": 2,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "aldebaran",
+          "X": 140,
+          "Y": 234
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/warps/fields/lutie_fild.txt",
+    "Line": 18
+  }
+}

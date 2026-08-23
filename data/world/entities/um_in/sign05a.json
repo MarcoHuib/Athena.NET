@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:um_in:sign05a",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "sign05a",
+    "Map": "um_in",
+    "X": 89,
+    "Y": 9,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "um_in",
+      "X": 89,
+      "Y": 9,
+      "RadiusX": 1,
+      "RadiusY": 1,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "um_in",
+          "X": 33,
+          "Y": 16
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/re/warps/other/sign.txt",
+    "Line": 30
+  }
+}

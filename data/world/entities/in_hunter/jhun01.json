@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:in_hunter:jhun01",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "jhun01",
+    "Map": "in_hunter",
+    "X": 100,
+    "Y": 15,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "in_hunter",
+      "X": 100,
+      "Y": 15,
+      "RadiusX": 0,
+      "RadiusY": 0,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "pay_fild10",
+          "X": 143,
+          "Y": 250
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/warps/other/jobquests.txt",
+    "Line": 77
+  }
+}

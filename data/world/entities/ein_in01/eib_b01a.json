@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:ein_in01:eib_b01a",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "eib_b01a",
+    "Map": "ein_in01",
+    "X": 288,
+    "Y": 89,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "ein_in01",
+      "X": 288,
+      "Y": 89,
+      "RadiusX": 1,
+      "RadiusY": 1,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "einbech",
+          "X": 157,
+          "Y": 106
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/warps/cities/einbech.txt",
+    "Line": 36
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:kh_vila:kh_vila_05a",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "kh_vila_05a",
+    "Map": "kh_vila",
+    "X": 84,
+    "Y": 66,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "kh_vila",
+      "X": 84,
+      "Y": 66,
+      "RadiusX": 1,
+      "RadiusY": 1,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "kh_vila",
+          "X": 44,
+          "Y": 107
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/warps/other/kiel.txt",
+    "Line": 46
+  }
+}

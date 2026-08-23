@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:prt_in:prt15",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "prt15",
+    "Map": "prt_in",
+    "X": 217,
+    "Y": 163,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "prt_in",
+      "X": 217,
+      "Y": 163,
+      "RadiusX": 1,
+      "RadiusY": 3,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "prt_in",
+          "X": 236,
+          "Y": 163
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/warps/cities/prontera.txt",
+    "Line": 45
+  }
+}

@@ -1,6 +1,22 @@
 public sealed class WorldEntityConverterTests
 {
     [Fact]
+    public async Task AllCompatible_WritesOnlyExecutableEntitiesAndReportsSkippedSource()
+    {
+        using var fixture = new ImportFixture(
+            "map_a,10,20,0\twarp\t#ordinary\t1,1,map_b,30,40\n" +
+            "map_a,1,2,0\tscript\t#unsafe\tWARPNPC,1,1,{\nOnTouch:\n\tgetitem 501,1;\n}\n");
+        var output = Path.Combine(fixture.Directory, "output"); var report = Path.Combine(fixture.Directory, "report.json");
+
+        var exitCode = await WorldDataImporterCli.RunAsync(["convert", "--source-root", fixture.Directory, "--all-compatible", "true", "--output", output, "--report", report]);
+
+        Assert.Equal(0, exitCode);
+        Assert.Single(Directory.EnumerateFiles(output, "*.json", SearchOption.AllDirectories));
+        Assert.Contains("#unsafe", File.ReadAllText(report));
+        Assert.False(File.Exists(Path.Combine(output, "map_a", "unsafe.json")));
+    }
+
+    [Fact]
     public void DeclarativeWarp_BecomesVisibleActorOnTouchAndWarpAction()
     {
         using var fixture = new ImportFixture("map_a,10,20,0\twarp\t#ordinary\t1,2,map_b,30,40\n");
@@ -11,6 +27,14 @@ public sealed class WorldEntityConverterTests
         Assert.Equal("OnTouch", trigger.Type);
         var warp = Assert.IsType<WarpAction>(Assert.Single(trigger.Actions));
         Assert.Equal(("map_b", (ushort)30, (ushort)40), (warp.Map, warp.X, warp.Y));
+    }
+
+    [Fact]
+    public void DeclarativeWarp_AllowsRathenaTrailingBlockComment()
+    {
+        using var fixture = new ImportFixture("map_a,10,20,0\twarp\t#ordinary\t1,2,map_b,30,40\t/* destination note */\n");
+        var entity = Assert.Single(Convert(fixture).Entities);
+        Assert.Equal(new WarpAction("map_b", 30, 40), Assert.Single(entity.Triggers).Actions.Single());
     }
 
     [Fact]
@@ -44,7 +68,7 @@ public sealed class WorldEntityConverterTests
         var entity = Assert.Single(result.Entities);
         Assert.Empty(entity.Triggers);
         Assert.False(Assert.Single(entity.Scripts!).RuntimeExecutable);
-        Assert.Empty(result.Unsupported);
+        Assert.Single(result.Unsupported, unsupported => unsupported.Reason.Contains("Unsupported script construct", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -81,7 +105,7 @@ public sealed class WorldEntityConverterTests
     }
 
     [Fact]
-    public void IntroToIzlude_IsStructurallyPreservedAndNonExecutable()
+    public void IntroToIzlude_IsParsedIntoExecutableGenericInstructions()
     {
         using var fixture = new ImportFixture(IntroToIzludeScript);
 
@@ -98,7 +122,8 @@ public sealed class WorldEntityConverterTests
         Assert.Equal(("OnTouch", "int_land", (ushort)49, (ushort)57, (ushort)2, (ushort)2),
             (script.Trigger, script.Map, script.X, script.Y, script.RadiusX, script.RadiusY));
         Assert.True(script.SourceParsed);
-        Assert.False(script.RuntimeExecutable);
+        Assert.True(script.RuntimeExecutable);
+        Assert.NotNull(script.Instructions);
         Assert.Contains("QuestState", script.RequiredCapabilities);
         Assert.Contains("Dialogue", script.RequiredCapabilities);
         Assert.Contains("Selection", script.RequiredCapabilities);
@@ -107,16 +132,34 @@ public sealed class WorldEntityConverterTests
         Assert.Contains("SavePoint", script.RequiredCapabilities);
         Assert.Contains("warp .@map$,196,209;", script.NormalizedSource);
         Assert.Contains("savepoint .@map$,128,142,1,1;", script.NormalizedSource);
+        Assert.Contains(script.Instructions!, instruction => instruction is Close2Instruction);
+        Assert.Contains(script.Instructions!, instruction => instruction is AssignmentInstruction);
+        Assert.Contains(script.Instructions!, instruction => instruction is WarpInstruction);
+        Assert.Contains(script.Instructions!, instruction => instruction is SavePointInstruction);
 
         var repeated = Assert.Single(WorldEntityConverter.Convert(
             [fixture.Directory], new("source.txt", "int_land", "#intro_to_izlude", "warp")).Entities);
         Assert.Equal(DeterministicJson.Serialize(entity), DeterministicJson.Serialize(repeated));
     }
 
+    [Fact]
+    public void IntroToIzludeDuplicate_InheritsScriptButKeepsExecutingNpcContextDeterministically()
+    {
+        using var fixture = new ImportFixture(IntroToIzludeScript + "int_land04,49,57,0\tduplicate(#intro_to_izlude)\t#intro_to_izlude_d\tWARPNPC,2,2\n");
+        var filter = new ConversionFilter("source.txt", "int_land04", "#intro_to_izlude_d", "warp");
+        var first = Assert.Single(WorldEntityConverter.Convert([fixture.Directory], filter).Entities);
+        var second = Assert.Single(WorldEntityConverter.Convert([fixture.Directory], filter).Entities);
+
+        Assert.Equal("warp:int_land04:intro_to_izlude_d", first.Id);
+        Assert.Equal("#intro_to_izlude", Assert.Single(first.Scripts!).BaseNpcName);
+        Assert.Equal(new WorldActorComponent("#intro_to_izlude_d", "int_land04", 49, 57, 0, 45), first.Actor);
+        Assert.Equal(DeterministicJson.Serialize(first), DeterministicJson.Serialize(second));
+    }
+
     private static ConversionResult Convert(ImportFixture fixture, string? name = null) => WorldEntityConverter.Convert([fixture.Directory], new(null, null, name, "warp"));
     private static WarpAction Warp(ConversionResult result, string name) => Assert.IsType<WarpAction>(Assert.Single(result.Entities, entity => entity.Actor!.Name == name).Triggers[0].Actions[^1]);
     private const string ShipScript = "iz_int,56,15,0\tscript\t#ship_out\tWARPNPC,1,1,{\n\tend;\nOnTouch:\n\t.@num$ = replacestr( strnpcinfo(2), \"ship_out\", \"\" );\n\t.@map$ = \"int_land\" + .@num$;\n\tsavepoint .@map$,77,101;\n\twarp .@map$,85,107;\n\tend;\n}\n";
-    private const string IntroToIzludeScript = "int_land,49,57,0\tscript\t#intro_to_izlude\tWARPNPC,2,2,{\n\tend;\nOnTouch:\n\tif (isbegin_quest(21008) == 1) {\n\t\tmes \"Leave?\";\n\t\tif (select(\"Stay\", \"Sail\") == 1) close;\n\t\tcompletequest 21008;\n\t}\n\tif (isbegin_quest(21001) == 1) completequest 21001;\n\t.@map$ = \"izlude\" + replacestr( strnpcinfo(2), \"intro_to_izlude\", \"\" );\n\twarp .@map$,196,209;\n\tsavepoint .@map$,128,142,1,1;\n\tend;\n}\n";
+    private const string IntroToIzludeScript = "int_land,49,57,0\tscript\t#intro_to_izlude\tWARPNPC,2,2,{\n\tend;\nOnTouch:\n\tif (isbegin_quest(21008) == 1) {\n\t\tmes \"Leave?\";\n\t\tif (select(\"Stay\", \"Sail\") == 1) {\n\t\t\tclose;\n\t\t}\n\t\tcompletequest 21008;\n\t}\n\tclose2;\n\tif (isbegin_quest(21001) == 1)\n\t\tcompletequest 21001;\n\t.@map$ = \"izlude\" + replacestr( strnpcinfo(2), \"intro_to_izlude\", \"\" );\n\twarp .@map$,196,209;\n\tsavepoint .@map$,128,142,1,1;\n\tend;\n}\n";
 
     private sealed class ImportFixture : IDisposable
     {

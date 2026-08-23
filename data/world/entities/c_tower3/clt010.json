@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:c_tower3:clt010",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "clt010",
+    "Map": "c_tower3",
+    "X": 212,
+    "Y": 159,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "c_tower3",
+      "X": 212,
+      "Y": 159,
+      "RadiusX": 1,
+      "RadiusY": 1,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "alde_dun03",
+          "X": 276,
+          "Y": 53
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/warps/dungeons/c_tower.txt",
+    "Line": 46
+  }
+}

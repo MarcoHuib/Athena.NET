@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:prt_cas:guestroom_l2_in_guestroom_l2",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "guestroom_l2_in_guestroom_l2",
+    "Map": "prt_cas",
+    "X": 178,
+    "Y": 148,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "prt_cas",
+      "X": 178,
+      "Y": 148,
+      "RadiusX": 1,
+      "RadiusY": 1,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "prt_cas",
+          "X": 27,
+          "Y": 43
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/re/warps/cities/prontera.txt",
+    "Line": 137
+  }
+}

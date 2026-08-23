@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:mjolnir_02:mjol03",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "mjol03",
+    "Map": "mjolnir_02",
+    "X": 361,
+    "Y": 18,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "mjolnir_02",
+      "X": 361,
+      "Y": 18,
+      "RadiusX": 4,
+      "RadiusY": 2,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "mjolnir_06",
+          "X": 366,
+          "Y": 380
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/warps/fields/mtmjolnir.txt",
+    "Line": 22
+  }
+}

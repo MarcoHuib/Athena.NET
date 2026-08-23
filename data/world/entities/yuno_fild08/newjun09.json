@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:yuno_fild08:newjun09",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "newjun09",
+    "Map": "yuno_fild08",
+    "X": 20,
+    "Y": 278,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "yuno_fild08",
+      "X": 20,
+      "Y": 278,
+      "RadiusX": 1,
+      "RadiusY": 1,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "yuno_fild07",
+          "X": 352,
+          "Y": 291
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/re/warps/fields/yuno_fild.txt",
+    "Line": 49
+  }
+}

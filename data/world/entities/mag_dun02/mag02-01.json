@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:mag_dun02:mag02-01",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "mag02-01",
+    "Map": "mag_dun02",
+    "X": 47,
+    "Y": 28,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "mag_dun02",
+      "X": 47,
+      "Y": 28,
+      "RadiusX": 1,
+      "RadiusY": 1,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "mag_dun01",
+          "X": 242,
+          "Y": 239
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/warps/dungeons/mag_dun.txt",
+    "Line": 18
+  }
+}

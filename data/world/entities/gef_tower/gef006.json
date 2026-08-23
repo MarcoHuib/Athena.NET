@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:gef_tower:gef006",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "gef006",
+    "Map": "gef_tower",
+    "X": 52,
+    "Y": 181,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "gef_tower",
+      "X": 52,
+      "Y": 181,
+      "RadiusX": 4,
+      "RadiusY": 1,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "geffen",
+          "X": 120,
+          "Y": 110
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/warps/dungeons/gef_dun.txt",
+    "Line": 35
+  }
+}

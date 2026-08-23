@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:in_sphinx5:sphx08-5",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "sphx08-5",
+    "Map": "in_sphinx5",
+    "X": 183,
+    "Y": 188,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "in_sphinx5",
+      "X": 183,
+      "Y": 188,
+      "RadiusX": 1,
+      "RadiusY": 3,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "in_sphinx5",
+          "X": 18,
+          "Y": 10
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/warps/dungeons/in_sphinx.txt",
+    "Line": 35
+  }
+}

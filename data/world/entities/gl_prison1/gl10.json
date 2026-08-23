@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:gl_prison1:gl10",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "gl10",
+    "Map": "gl_prison1",
+    "X": 62,
+    "Y": 187,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "gl_prison1",
+      "X": 62,
+      "Y": 187,
+      "RadiusX": 1,
+      "RadiusY": 1,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "gl_sew01",
+          "X": 258,
+          "Y": 255
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/warps/fields/glastheim.txt",
+    "Line": 65
+  }
+}

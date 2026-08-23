@@ -65,4 +65,19 @@ public sealed class ScriptExecutionSessionTests
         Assert.Collection(session.ResumeQuestState(42, state),
             item => Assert.Equal(new MessageInstruction(expected), item), item => Assert.IsType<CloseInstruction>(item));
     }
+
+    [Fact]
+    public void Close2Continues_AndDuplicateContextDrivesMapExpression()
+    {
+        var map = new ConcatExpression(new StringLiteralExpression("izlude"), new ReplaceStringExpression(
+            new StrNpcInfoExpression(2), new StringLiteralExpression("intro_to_izlude"), new StringLiteralExpression("")));
+        var session = new ScriptExecutionSession("warp:int_land04:intro_to_izlude_d", 42, "#intro_to_izlude_d", "#intro_to_izlude", "int_land04",
+            [new Close2Instruction(), new AssignmentInstruction(".@map$", map), new WarpInstruction(new VariableExpression(".@map$"), 196, 209)]);
+
+        var output = session.Run();
+        Assert.Collection(output, item => Assert.IsType<Close2Instruction>(item), item => Assert.IsType<AssignmentInstruction>(item), item => Assert.IsType<WarpInstruction>(item));
+        session.Assign(".@map$", map);
+        Assert.Equal("izlude_d", session.Evaluate(new VariableExpression(".@map$")));
+        Assert.Equal(ScriptExecutionState.Closed, session.State);
+    }
 }

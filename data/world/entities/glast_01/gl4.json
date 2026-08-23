@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:glast_01:gl4",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "gl4",
+    "Map": "glast_01",
+    "X": 179,
+    "Y": 360,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "glast_01",
+      "X": 179,
+      "Y": 360,
+      "RadiusX": 1,
+      "RadiusY": 1,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "gl_in01",
+          "X": 80,
+          "Y": 174
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/warps/fields/glastheim.txt",
+    "Line": 81
+  }
+}

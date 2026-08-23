@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:izlude:iz04",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "iz04",
+    "Map": "izlude",
+    "X": 52,
+    "Y": 172,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "izlude",
+      "X": 52,
+      "Y": 172,
+      "RadiusX": 2,
+      "RadiusY": 2,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "izlude_in",
+          "X": 74,
+          "Y": 161
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/re/warps/cities/izlude.txt",
+    "Line": 27
+  }
+}

@@ -315,8 +315,15 @@ public sealed class MapClientSession : IDisposable
             request.TargetX,
             request.TargetY,
             out var intersection);
-        var movementTargetX = intersectsWarp ? intersection.X : request.TargetX;
-        var movementTargetY = intersectsWarp ? intersection.Y : request.TargetY;
+        ScriptTouchIntersection scriptIntersection = default;
+        var intersectsScript = _scriptExecutionSession is null && _worldMapRegistry.TryFindFirstScriptTouchEnterAlongRoute(
+            _mapName, fromX, fromY, request.TargetX, request.TargetY, out scriptIntersection);
+        if (intersectsWarp && intersectsScript && Distance(fromX, fromY, scriptIntersection.X, scriptIntersection.Y) < Distance(fromX, fromY, intersection.X, intersection.Y))
+            intersectsWarp = false;
+        else if (intersectsWarp)
+            intersectsScript = false;
+        var movementTargetX = intersectsWarp ? intersection.X : intersectsScript ? scriptIntersection.X : request.TargetX;
+        var movementTargetY = intersectsWarp ? intersection.Y : intersectsScript ? scriptIntersection.Y : request.TargetY;
 
         var response = IroMovementPackets.BuildResponse(
             unchecked((uint)Environment.TickCount),
@@ -338,10 +345,21 @@ public sealed class MapClientSession : IDisposable
                 $"[iRO MAP DEBUG] Movement path intersects warp map='{_mapName}' at=({intersection.X},{intersection.Y}) requestedTarget=({request.TargetX},{request.TargetY})");
             await SendSameServerWarpAsync(intersection.Warp, cancellationToken);
         }
+        else if (intersectsScript)
+        {
+            await SendVisibleWarpActorsAsync(cancellationToken);
+            MapLogger.Info($"[iRO MAP DEBUG] Movement entered script trigger entity='{scriptIntersection.Binding.Entity.Id}' map='{_mapName}' at=({scriptIntersection.X},{scriptIntersection.Y})");
+            await StartScriptAsync(scriptIntersection.Binding.Entity, scriptIntersection.Binding.Actor.ActorId, scriptIntersection.Binding.Script, "OnTouch", cancellationToken);
+        }
         else
         {
             await SendVisibleWarpActorsAsync(cancellationToken);
         }
+    }
+
+    private static long Distance(ushort x1, ushort y1, ushort x2, ushort y2)
+    {
+        var dx = (long)x2 - x1; var dy = (long)y2 - y1; return dx * dx + dy * dy;
     }
 
     private async Task SendSameServerWarpAsync(WarpDefinition warp, CancellationToken cancellationToken)
@@ -382,8 +400,14 @@ public sealed class MapClientSession : IDisposable
         }
 
         MapLogger.Info($"[iRO MAP DEBUG] NPC interaction actorId={actorId} entity='{entity.Id}'");
-        _scriptExecutionSession = new ScriptExecutionSession(entity.Id, actorId, script.Instructions);
-        MapLogger.Info($"[iRO MAP DEBUG] Script start entity='{entity.Id}' trigger=OnClick");
+        await StartScriptAsync(entity, actorId, script, "OnClick", cancellationToken);
+    }
+
+    private async Task StartScriptAsync(WorldEntityDefinition entity, uint actorId, ScriptBehaviorDefinition script, string trigger, CancellationToken cancellationToken)
+    {
+        if (_scriptExecutionSession is not null || entity.Actor is null || script.Instructions is not { Count: > 0 }) return;
+        _scriptExecutionSession = new ScriptExecutionSession(entity.Id, actorId, entity.Actor.Name, script.BaseNpcName, entity.Actor.Map, script.Instructions);
+        MapLogger.Info($"[iRO MAP DEBUG] Script start entity='{entity.Id}' trigger={trigger}");
         await SendScriptOutputAsync(_scriptExecutionSession.Run(), cancellationToken);
     }
 
@@ -431,6 +455,24 @@ public sealed class MapClientSession : IDisposable
                     MapLogger.Info($"[iRO MAP DEBUG] Script closed entity='{execution.EntityId}'");
                     _scriptExecutionSession = null;
                     break;
+                case Close2Instruction:
+                    await WriteAsync(IroNpcDialoguePackets.BuildClose(execution.ActorId), cancellationToken);
+                    MapLogger.Info($"[iRO MAP DEBUG] Script dialogue closed; execution continues entity='{execution.EntityId}'");
+                    break;
+                case AssignmentInstruction assignment:
+                    execution.Assign(assignment.Variable, assignment.Value);
+                    break;
+                case WarpInstruction warp:
+                    await ExecuteScriptWarpAsync(execution, warp, cancellationToken);
+                    break;
+                case SavePointInstruction savePoint:
+                    if (!await SavePointAsync(execution.Evaluate(savePoint.Map), savePoint.X, savePoint.Y, cancellationToken))
+                    {
+                        MapLogger.Warning($"SavePoint persistence aborted script entity='{execution.EntityId}' charId={_charId}.");
+                        _scriptExecutionSession = null;
+                        return;
+                    }
+                    break;
                 case SetQuestInstruction setQuest:
                     if (!await SetQuestAsync(setQuest.QuestId, cancellationToken))
                     {
@@ -446,7 +488,7 @@ public sealed class MapClientSession : IDisposable
                     }
                     break;
                 case IfQuestStateInstruction check:
-                    if (!TutorialQuestCatalog.Contains(check.QuestId)) return;
+                    if (check.QuestId == 0) return;
                     var state = await _questPersistence.GetQuestStateAsync(_accountId, _charId, check.QuestId, cancellationToken);
                     if (state is null)
                     {
@@ -473,7 +515,7 @@ public sealed class MapClientSession : IDisposable
 
     private async Task<bool> SetQuestAsync(uint questId, CancellationToken cancellationToken)
     {
-        if (!TutorialQuestCatalog.Contains(questId)) return false;
+        if (questId == 0) return false;
         var current = await _questPersistence.GetQuestStateAsync(_accountId, _charId, questId, cancellationToken);
         if (current is null) return false;
         var next = QuestStateRules.SetQuest(current.Value);
@@ -485,7 +527,7 @@ public sealed class MapClientSession : IDisposable
 
     private async Task<bool> CompleteQuestAsync(uint questId, CancellationToken cancellationToken)
     {
-        if (!TutorialQuestCatalog.Contains(questId)) return false;
+        if (questId == 0) return false;
         var current = await _questPersistence.GetQuestStateAsync(_accountId, _charId, questId, cancellationToken);
         if (current is null) return false;
         var next = QuestStateRules.CompleteQuest(current.Value);
@@ -493,6 +535,24 @@ public sealed class MapClientSession : IDisposable
         if (!await _questPersistence.SetQuestStateAsync(_accountId, _charId, questId, next, cancellationToken)) return false;
         await WriteAsync(IroQuestPackets.BuildRemove(questId), cancellationToken);
         return true;
+    }
+
+    private async Task ExecuteScriptWarpAsync(ScriptExecutionSession execution, WarpInstruction warp, CancellationToken cancellationToken)
+    {
+        var map = execution.Evaluate(warp.Map);
+        if (string.IsNullOrWhiteSpace(map)) throw new InvalidOperationException("Warp map expression evaluated to an empty value.");
+        MapLogger.Info($"[iRO MAP DEBUG] Script warp entity='{execution.EntityId}' map='{_mapName}' -> map='{map}' x={warp.X} y={warp.Y}");
+        _mapName = map; _x = warp.X; _y = warp.Y; _positionDirty = true; _visibleActorIds.Clear();
+        await WriteAsync(IroMapTransitionPackets.BuildSameServerMapChange(_mapName, _x, _y), cancellationToken);
+        await PersistPositionIfDirtyAsync(cancellationToken);
+    }
+
+    private async Task<bool> SavePointAsync(string map, ushort x, ushort y, CancellationToken cancellationToken)
+    {
+        var saved = await _positionPersistence.SavePointAsync(_accountId, _charId, map, x, y, cancellationToken);
+        if (saved) MapLogger.Info($"SavePoint persistence succeeded charId={_charId} map='{map}' x={x} y={y}.");
+        else MapLogger.Warning($"SavePoint persistence failed charId={_charId} map='{map}' x={x} y={y}.");
+        return saved;
     }
 
     private async Task SendVisibleWarpActorsAsync(CancellationToken cancellationToken)

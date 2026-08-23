@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:umbala:um_fild4-3",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "um_fild4-3",
+    "Map": "umbala",
+    "X": 130,
+    "Y": 79,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "umbala",
+      "X": 130,
+      "Y": 79,
+      "RadiusX": 1,
+      "RadiusY": 1,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "um_fild04",
+          "X": 215,
+          "Y": 336
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/warps/fields/umbala_fild.txt",
+    "Line": 31
+  }
+}

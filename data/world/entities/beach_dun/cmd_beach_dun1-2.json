@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:beach_dun:cmd_beach_dun1-2",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "cmd_beach_dun1-2",
+    "Map": "beach_dun",
+    "X": 276,
+    "Y": 67,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "beach_dun",
+      "X": 276,
+      "Y": 67,
+      "RadiusX": 1,
+      "RadiusY": 1,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "comodo",
+          "X": 31,
+          "Y": 215
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/warps/dungeons/beach_dun.txt",
+    "Line": 17
+  }
+}

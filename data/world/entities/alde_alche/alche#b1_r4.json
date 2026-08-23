@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:alde_alche:alche#b1_r4",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "alche#B1_r4",
+    "Map": "alde_alche",
+    "X": 133,
+    "Y": 77,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "alde_alche",
+      "X": 133,
+      "Y": 77,
+      "RadiusX": 1,
+      "RadiusY": 1,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "alde_alche",
+          "X": 162,
+          "Y": 107
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/warps/other/jobquests.txt",
+    "Line": 106
+  }
+}

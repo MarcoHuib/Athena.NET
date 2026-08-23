@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:iz_ac02_a:from_aco_toac02_a",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "#from_aco_toac02_a",
+    "Map": "iz_ac02_a",
+    "X": 124,
+    "Y": 168,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "iz_ac02_a",
+      "X": 124,
+      "Y": 168,
+      "RadiusX": 2,
+      "RadiusY": 2,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "iz_ac02_a",
+          "X": 218,
+          "Y": 108
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/re/warps/cities/izlude.txt",
+    "Line": 275
+  }
+}

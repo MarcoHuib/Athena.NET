@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:comodo:cmd_house2-1",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "cmd_house2-1",
+    "Map": "comodo",
+    "X": 192,
+    "Y": 294,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "comodo",
+      "X": 192,
+      "Y": 294,
+      "RadiusX": 1,
+      "RadiusY": 1,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "cmd_in01",
+          "X": 177,
+          "Y": 123
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/warps/cities/comodo.txt",
+    "Line": 22
+  }
+}

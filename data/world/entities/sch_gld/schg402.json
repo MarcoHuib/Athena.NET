@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:sch_gld:schg402",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "schg402",
+    "Map": "sch_gld",
+    "X": 137,
+    "Y": 98,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "sch_gld",
+      "X": 137,
+      "Y": 98,
+      "RadiusX": 1,
+      "RadiusY": 1,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "schg_cas04",
+          "X": 119,
+          "Y": 8
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/warps/guildcastles.txt",
+    "Line": 417
+  }
+}

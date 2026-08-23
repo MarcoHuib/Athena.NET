@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:abbey01:namelesswarp4003",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "namelesswarp4003",
+    "Map": "abbey01",
+    "X": 321,
+    "Y": 102,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "abbey01",
+      "X": 321,
+      "Y": 102,
+      "RadiusX": 1,
+      "RadiusY": 1,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "abbey02",
+          "X": 149,
+          "Y": 11
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/warps/dungeons/abbey.txt",
+    "Line": 19
+  }
+}

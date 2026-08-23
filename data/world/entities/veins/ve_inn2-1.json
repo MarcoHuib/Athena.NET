@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:veins:ve_inn2-1",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "ve_Inn2-1",
+    "Map": "veins",
+    "X": 128,
+    "Y": 270,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "veins",
+      "X": 128,
+      "Y": 270,
+      "RadiusX": 1,
+      "RadiusY": 1,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "ve_in",
+          "X": 201,
+          "Y": 211
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/warps/cities/veins.txt",
+    "Line": 27
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:abyss_03:abysslakedunwarp004",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "abysslakedunwarp004",
+    "Map": "abyss_03",
+    "X": 115,
+    "Y": 25,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "abyss_03",
+      "X": 115,
+      "Y": 25,
+      "RadiusX": 1,
+      "RadiusY": 1,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "abyss_02",
+          "X": 145,
+          "Y": 275
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/warps/dungeons/abyss.txt",
+    "Line": 19
+  }
+}

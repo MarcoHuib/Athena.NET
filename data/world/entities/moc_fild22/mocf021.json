@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:moc_fild22:mocf021",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "mocf021",
+    "Map": "moc_fild22",
+    "X": 32,
+    "Y": 196,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "moc_fild22",
+      "X": 32,
+      "Y": 196,
+      "RadiusX": 1,
+      "RadiusY": 1,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "moc_fild20",
+          "X": 349,
+          "Y": 179
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/re/warps/fields/morroc_fild.txt",
+    "Line": 120
+  }
+}

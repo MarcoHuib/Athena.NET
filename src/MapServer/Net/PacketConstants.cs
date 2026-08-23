@@ -15,6 +15,8 @@ public static class PacketConstants
     public const short MapSavePosition = 0x2b28;
     public const short MapQuestStateRequest = 0x2b29;
     public const short MapQuestStateResponse = 0x2b2a;
+    public const short MapSavePointRequest = 0x2b2b;
+    public const short MapSavePointResponse = 0x2b2c;
 
     public const short CzEnter = 0x72;
     public const short CzEnter2 = 0x436;

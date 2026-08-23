@@ -8,6 +8,7 @@ public sealed class WorldMapRegistry
     private readonly IReadOnlyList<WarpActor> _warpActors;
     private readonly IReadOnlyDictionary<string, WorldEntityDefinition> _entitiesById;
     private readonly IReadOnlyDictionary<uint, (WorldEntityDefinition Entity, ScriptBehaviorDefinition Script)> _interactionsByActorId;
+    private readonly IReadOnlyList<ScriptTouchBinding> _touchScripts;
     private readonly int _dynamicWarpActorCount;
 
     public WorldMapRegistry(IEnumerable<WarpDefinition> warps, IEnumerable<WarpActorDefinition>? dynamicWarpActors = null)
@@ -32,6 +33,13 @@ public sealed class WorldMapRegistry
             .Where(item => item.Entity is not null)
             .SelectMany(item => item.Entity!.Scripts.Where(script => script.RuntimeExecutable && string.Equals(script.Trigger, "OnClick", StringComparison.OrdinalIgnoreCase)).Select(script => (item.Actor.ActorId, item.Entity, Script: script)))
             .ToDictionary(item => item.ActorId, item => (item.Entity!, item.Script));
+        _touchScripts = _warpActors
+            .Select(actor => (Actor: actor, Entity: _entitiesById.Values.FirstOrDefault(entity => entity.Actor is not null && string.Equals(entity.Actor.Map, actor.MapName, StringComparison.OrdinalIgnoreCase) && string.Equals(entity.Actor.Name, actor.Name, StringComparison.OrdinalIgnoreCase))))
+            .Where(item => item.Entity is not null)
+            .SelectMany(item => item.Entity!.Scripts.Where(script => script.RuntimeExecutable && string.Equals(script.Trigger, "OnTouch", StringComparison.OrdinalIgnoreCase) && script.Instructions is { Count: > 0 })
+                .Select(script => new ScriptTouchBinding(item.Entity!, item.Actor, script)))
+            .OrderBy(item => item.Entity.Id, StringComparer.Ordinal)
+            .ToArray();
     }
 
     public static WorldMapRegistry Tutorial { get; } = LoadGenerated();
@@ -53,6 +61,23 @@ public sealed class WorldMapRegistry
     public bool TryFindFirstWarpAlongRoute(string mapName, ushort fromX, ushort fromY, ushort toX, ushort toY, out WarpIntersection intersection)
     {
         foreach (var (x, y) in GridLineTraversal.Enumerate(fromX, fromY, toX, toY)) if (TryFindWarp(mapName, x, y, out var warp)) { intersection = new(warp, x, y); return true; }
+        intersection = default; return false;
+    }
+    public bool TryFindFirstScriptTouchEnterAlongRoute(string mapName, ushort fromX, ushort fromY, ushort toX, ushort toY, out ScriptTouchIntersection intersection)
+    {
+        var candidates = _touchScripts.Where(binding => string.Equals(binding.Script.Map, mapName, StringComparison.OrdinalIgnoreCase)).ToArray();
+        var inside = candidates.ToDictionary(binding => binding.Entity.Id, binding => binding.Contains(fromX, fromY), StringComparer.OrdinalIgnoreCase);
+        var first = true;
+        foreach (var (x, y) in GridLineTraversal.Enumerate(fromX, fromY, toX, toY))
+        {
+            if (first) { first = false; continue; }
+            foreach (var binding in candidates)
+            {
+                var now = binding.Contains(x, y);
+                if (now && !inside[binding.Entity.Id]) { intersection = new(binding, x, y); return true; }
+                inside[binding.Entity.Id] = now;
+            }
+        }
         intersection = default; return false;
     }
 
@@ -92,7 +117,8 @@ public sealed class WorldMapRegistry
                 script.GetProperty("Trigger").GetString()!, script.GetProperty("Map").GetString()!, script.GetProperty("X").GetUInt16(), script.GetProperty("Y").GetUInt16(),
                 script.GetProperty("RadiusX").GetUInt16(), script.GetProperty("RadiusY").GetUInt16(), script.GetProperty("SourceParsed").GetBoolean(), script.GetProperty("RuntimeExecutable").GetBoolean(),
                 script.GetProperty("RequiredCapabilities").EnumerateArray().Select(value => value.GetString()!).ToArray(), script.GetProperty("NormalizedSource").GetString()!,
-                script.TryGetProperty("Instructions", out var instructions) ? instructions.EnumerateArray().Select(ParseInstruction).ToArray() : null)).ToArray()
+                script.TryGetProperty("Instructions", out var instructions) ? instructions.EnumerateArray().Select(ParseInstruction).ToArray() : null,
+                script.TryGetProperty("BaseNpcName", out var baseNpcName) ? baseNpcName.GetString() : null)).ToArray()
             : [];
         var source = root.GetProperty("Source");
         return new(root.GetProperty("SchemaVersion").GetInt32(), root.GetProperty("Id").GetString()!, root.GetProperty("Kind").GetString()!, actor, triggers, scripts, new(source.GetProperty("Repository").GetString()!, source.GetProperty("Commit").GetString()!, source.GetProperty("File").GetString()!, source.GetProperty("Line").GetInt32()));
@@ -108,13 +134,27 @@ public sealed class WorldMapRegistry
         "Message" => new MessageInstruction(instruction.GetProperty("Text").GetString()!),
         "Next" => new NextInstruction(),
         "Close" => new CloseInstruction(),
+        "Close2" => new Close2Instruction(),
         "Select" => new SelectInstruction(instruction.GetProperty("Options").EnumerateArray().Select(option => new SelectOptionDefinition(
             option.GetProperty("Text").GetString()!, option.GetProperty("Instructions").EnumerateArray().Select(ParseInstruction).ToArray())).ToArray()),
         "SetQuest" => new SetQuestInstruction(instruction.GetProperty("QuestId").GetUInt32()),
         "CompleteQuest" => new CompleteQuestInstruction(instruction.GetProperty("QuestId").GetUInt32()),
         "IfQuestState" => new IfQuestStateInstruction(instruction.GetProperty("QuestId").GetUInt32(), Enum.Parse<CharacterQuestStatus>(instruction.GetProperty("Expected").GetString()!, true),
             instruction.GetProperty("Then").EnumerateArray().Select(ParseInstruction).ToArray(), instruction.GetProperty("Else").EnumerateArray().Select(ParseInstruction).ToArray()),
+        "Assign" => new AssignmentInstruction(instruction.GetProperty("Variable").GetString()!, ParseExpression(instruction.GetProperty("Value"))),
+        "Warp" => new WarpInstruction(ParseExpression(instruction.GetProperty("Map")), instruction.GetProperty("X").GetUInt16(), instruction.GetProperty("Y").GetUInt16()),
+        "SavePoint" => new SavePointInstruction(ParseExpression(instruction.GetProperty("Map")), instruction.GetProperty("X").GetUInt16(), instruction.GetProperty("Y").GetUInt16(),
+            instruction.TryGetProperty("RadiusX", out var radiusX) ? radiusX.GetUInt16() : (ushort)0, instruction.TryGetProperty("RadiusY", out var radiusY) ? radiusY.GetUInt16() : (ushort)0),
         var type => throw new InvalidDataException($"Unsupported script instruction '{type}'."),
+    };
+    private static ScriptExpressionDefinition ParseExpression(JsonElement expression) => expression.GetProperty("Type").GetString() switch
+    {
+        "String" => new StringLiteralExpression(expression.GetProperty("Value").GetString()!),
+        "Variable" => new VariableExpression(expression.GetProperty("Name").GetString()!),
+        "Concat" => new ConcatExpression(ParseExpression(expression.GetProperty("Left")), ParseExpression(expression.GetProperty("Right"))),
+        "StrNpcInfo" => new StrNpcInfoExpression(expression.GetProperty("InfoType").GetInt32()),
+        "ReplaceString" => new ReplaceStringExpression(ParseExpression(expression.GetProperty("Value")), ParseExpression(expression.GetProperty("Search")), ParseExpression(expression.GetProperty("Replacement"))),
+        var type => throw new InvalidDataException($"Unsupported script expression '{type}'."),
     };
     private static IEnumerable<WarpDefinition> ToWarps(WorldEntityDefinition entity)
     {
@@ -140,4 +180,9 @@ public sealed class WorldMapRegistry
 }
 
 public readonly record struct WarpIntersection(WarpDefinition Warp, ushort X, ushort Y);
+public sealed record ScriptTouchBinding(WorldEntityDefinition Entity, WarpActor Actor, ScriptBehaviorDefinition Script)
+{
+    public bool Contains(ushort x, ushort y) => Math.Abs((int)x - Script.X) <= Script.RadiusX && Math.Abs((int)y - Script.Y) <= Script.RadiusY;
+}
+public readonly record struct ScriptTouchIntersection(ScriptTouchBinding Binding, ushort X, ushort Y);
 public sealed record WarpActorDefinition(string Name, string MapName, ushort X, ushort Y, byte RadiusX, byte RadiusY, ushort SpriteClass = WarpActor.ClassId);

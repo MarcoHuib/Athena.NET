@@ -14,7 +14,9 @@ marks it dirty after movement, and sends internal `0x2B28/30` to CharServer on a
 successful same-server warp and on session EOF/cancellation. CharServer accepts a
 save only from an authenticated MapServer connection that consumed the matching
 single-use `(accountId,charId)` auth node, then updates only `last_map/last_x/last_y`
-for the matching non-deleted row. Savepoint columns are deliberately unchanged.
+for the matching non-deleted row. Executable script `savepoint` uses the separate
+acknowledged internal `0x2B2B/30 -> 0x2B2C/7` contract and updates only
+`save_map/save_x/save_y`; a failed write is reported to the script runtime.
 
 There is no per-movement database write and no periodic checkpoint yet. A normal
 disconnect persists the latest dirty position; a sudden process crash can still
@@ -38,11 +40,17 @@ Triggers. The binding records trigger geometry, normalized source, required
 runtime capabilities, and explicit `SourceParsed`/`RuntimeExecutable` state.
 This lets Athena own the actor and source without registering unsafe behavior.
 
-The typed extension points are intentionally narrow in the current slice:
-`OnTouch`, `Warp`, and `SetSavePoint`. Class 45 actors preserve the verified
-`JT_WARPNPC` visual. `SetSavePoint` data is loaded and ordered, but MapServer
-execution is deferred until CharServer exposes a safe savepoint-persistence
-contract. It is not faked by updating the character's current position.
+Converted scripts use the existing dialogue/quest instruction model. The current
+generic source subset adds `OnTouch`, `close2`, runtime map expressions, `warp`,
+and acknowledged `savepoint`. Expressions cover local string variables,
+concatenation, `strnpcinfo(2)`, and `replacestr`. Duplicate entities reference the
+base NPC name while execution context retains the duplicate's own identity; this
+is what makes `strnpcinfo(2)` resolve the executing duplicate rather than its
+template. Class 45 actors preserve the verified `JT_WARPNPC` visual.
+
+Unsupported source is never discarded silently. It remains parsed/preserved with
+`RuntimeExecutable=false` and is emitted in converter diagnostics with source
+location. The capability scan is inventory/roadmap data, not converted content.
 
 `data/world/warps.json` remains a **temporary migration source**. WorldEntity
 definitions load first and win over a legacy entry with the same map and entity
@@ -78,8 +86,10 @@ map. The checked-in slice contains only the three tutorial entities for
 The stock iRO client has runtime-proven all six executable entities, including
 the ordered `#ship_out` actions and same-MapServer transition to `int_land`.
 The `int_land/#intro_to_izlude` actor and script are now WorldEntity-owned, but
-its preserved `OnTouch` binding remains non-executable: it requires quest-state,
-dialogue/player-selection, and quest-completion semantics Athena does not implement.
+that base-map binding remains the earlier preserved non-executable migration file.
+The narrowly generated `int_land04/#intro_to_izlude_d` duplicate is the first
+source-derived executable OnTouch script; it reuses the now proven dialogue,
+selection, and quest runtime rather than defining NPC-specific behavior.
 
 Developer-only runtime fixtures live separately under `data/world/dev`. They are
 loaded through the same WorldRegistry and visibility indexes as converted content,
@@ -110,6 +120,40 @@ or an explicitly managed baseline before using the initial CharServer migration.
 Filters may select `--source-file`, `--map`, `--name`, and/or `--kind`. At least
 one is mandatory so an accidental unrestricted conversion cannot generate the
 whole tree.
+
+Convert only the first executable duplicate-script integration entity:
+
+```bash
+dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- convert \
+  --source-root legacy/rathena/npc/warps \
+  --source-root legacy/rathena/npc/re/warps \
+  --source-file re/warps/cities/izlude.txt \
+  --map int_land04 --name '#intro_to_izlude_d' --kind warp \
+  --output data/world/entities
+```
+
+Create the command/capability roadmap without generating entities:
+
+```bash
+dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- capabilities \
+  --source-root legacy/rathena/npc \
+  --output data/world/conversion-capabilities.json
+```
+
+Bulk-convert only definitions that the current runtime can execute completely:
+
+```bash
+dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- convert \
+  --source-root legacy/rathena/npc/warps \
+  --source-root legacy/rathena/npc/re/warps \
+  --all-compatible true \
+  --output data/world/entities \
+  --report data/world/conversion-unsupported.json
+```
+
+The explicit switch and report are mandatory. Parsed scripts with any missing
+capability are omitted rather than partially generated. Conflicting deterministic
+IDs are also omitted and listed for manual source-precedence resolution.
 
 ## Legacy rAthena warp aggregate
 

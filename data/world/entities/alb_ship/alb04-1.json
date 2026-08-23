@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:alb_ship:alb04-1",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "alb04-1",
+    "Map": "alb_ship",
+    "X": 41,
+    "Y": 163,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "alb_ship",
+      "X": 41,
+      "Y": 163,
+      "RadiusX": 1,
+      "RadiusY": 3,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "alberta",
+          "X": 180,
+          "Y": 165
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/warps/cities/alberta.txt",
+    "Line": 28
+  }
+}

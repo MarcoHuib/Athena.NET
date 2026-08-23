@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:yggdrasil01:nwarp3",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "nwarp3",
+    "Map": "yggdrasil01",
+    "X": 271,
+    "Y": 51,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "yggdrasil01",
+      "X": 271,
+      "Y": 51,
+      "RadiusX": 1,
+      "RadiusY": 1,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "yggdrasil01",
+          "X": 26,
+          "Y": 196
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/re/warps/cities/yggdrasil.txt",
+    "Line": 26
+  }
+}

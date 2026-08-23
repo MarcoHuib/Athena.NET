@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:nguild_gef:ngefg104-1",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "ngefg104-1",
+    "Map": "nguild_gef",
+    "X": 33,
+    "Y": 51,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "nguild_gef",
+      "X": 33,
+      "Y": 51,
+      "RadiusX": 1,
+      "RadiusY": 1,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "nguild_gef",
+          "X": 35,
+          "Y": 185
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/warps/guildcastles.txt",
+    "Line": 478
+  }
+}

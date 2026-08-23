@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:geffen_in:gef01-1",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "gef01-1",
+    "Map": "geffen_in",
+    "X": 28,
+    "Y": 106,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "geffen_in",
+      "X": 28,
+      "Y": 106,
+      "RadiusX": 1,
+      "RadiusY": 3,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "geffen",
+          "X": 136,
+          "Y": 136
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/warps/cities/geffen.txt",
+    "Line": 49
+  }
+}

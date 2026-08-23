@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:moc_ruins:moc007",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "moc007",
+    "Map": "moc_ruins",
+    "X": 71,
+    "Y": 16,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "moc_ruins",
+      "X": 71,
+      "Y": 16,
+      "RadiusX": 8,
+      "RadiusY": 2,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "moc_fild19",
+          "X": 71,
+          "Y": 167
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/warps/cities/morroc.txt",
+    "Line": 76
+  }
+}

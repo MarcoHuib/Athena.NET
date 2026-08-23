@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:prt_q:prt_q_tp_lib_q",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "#prt_q_tp_lib_q",
+    "Map": "prt_q",
+    "X": 155,
+    "Y": 358,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "prt_q",
+      "X": 155,
+      "Y": 358,
+      "RadiusX": 1,
+      "RadiusY": 1,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "prt_lib_q",
+          "X": 89,
+          "Y": 43
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/re/warps/cities/prontera.txt",
+    "Line": 114
+  }
+}

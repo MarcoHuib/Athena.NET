@@ -33,14 +33,14 @@ internal static partial class WorldEntityConverter
             else if (declaration.Directive == "script" && IsWarpNpc(declaration))
             {
                 if (TryScripted(declaration, declaration, out var entity)) entities.Add(entity);
-                else if (TryPreserveScript(declaration, declaration, out entity)) entities.Add(entity);
+                else if (TryPreserveScript(declaration, declaration, out entity, unsupported)) entities.Add(entity);
                 else unsupported.Add(Unsupported(declaration, "Malformed WARPNPC script"));
             }
             else if (TryDuplicateName(declaration.Directive, out var templateName) && IsWarpNpc(declaration) && templates.TryGetValue(templateName, out var template))
             {
                 // Deliberately evaluate the template with the duplicate's own name.
                 if (TryScripted(declaration, template, out var entity)) entities.Add(entity);
-                else if (TryPreserveScript(declaration, template, out entity)) entities.Add(entity);
+                else if (TryPreserveScript(declaration, template, out entity, unsupported)) entities.Add(entity);
                 else unsupported.Add(Unsupported(declaration, "Malformed WARPNPC duplicate"));
             }
         }
@@ -50,7 +50,10 @@ internal static partial class WorldEntityConverter
     private static bool TryDeclarative(RathenaDeclaration source, out WorldEntityDefinition entity)
     {
         entity = default!;
-        var parts = source.Arguments.Split(',').Select(value => value.Trim()).ToArray();
+        var arguments = BlockCommentRegex().Replace(source.Arguments, "");
+        var lineComment = arguments.IndexOf("//", StringComparison.Ordinal);
+        if (lineComment >= 0) arguments = arguments[..lineComment];
+        var parts = arguments.Split(',').Select(value => value.Trim()).ToArray();
         if (parts.Length != 5 || !U16(parts[0], out var rx) || !U16(parts[1], out var ry) || !U16(parts[3], out var x) || !U16(parts[4], out var y)) return false;
         entity = Create(source, rx, ry, [new WarpAction(parts[2], x, y)]);
         return true;
@@ -73,7 +76,7 @@ internal static partial class WorldEntityConverter
             null,
             new("rAthena", Commit, source.Source.File, source.Source.Line));
 
-    private static bool TryPreserveScript(RathenaDeclaration instance, RathenaDeclaration template, out WorldEntityDefinition entity)
+    private static bool TryPreserveScript(RathenaDeclaration instance, RathenaDeclaration template, out WorldEntityDefinition entity, List<UnsupportedConversion> unsupported)
     {
         entity = default!;
         var visual = instance.Arguments.Split(',').Select(value => value.Trim().TrimEnd('{')).ToArray();
@@ -81,9 +84,13 @@ internal static partial class WorldEntityConverter
         var onTouch = template.ScriptBody.IndexOf("OnTouch:", StringComparison.Ordinal);
         if (onTouch < 0) return false;
         var normalized = string.Join('\n', template.ScriptBody[onTouch..].Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n').Select(line => line.TrimEnd())).Trim();
+        var parsed = RathenaScriptParser.ParseOnTouch(template.ScriptBody);
+        foreach (var issue in parsed.Issues)
+            unsupported.Add(new(instance.Name, template.Source.File, template.Source.Line + issue.RelativeLine, $"Unsupported script construct '{issue.Construct}': {issue.SourceText}"));
         entity = new(1, DeterministicId.For("warp", instance.Map, instance.Name), "Warp",
             new(instance.Name, instance.Map, instance.X, instance.Y, instance.Direction, 45), [],
-            [new("OnTouch", instance.Map, instance.X, instance.Y, rx, ry, true, false, ScriptCapabilities.Classify(normalized), normalized)],
+            [new("OnTouch", instance.Map, instance.X, instance.Y, rx, ry, true, parsed.Executable,
+                ScriptCapabilities.Classify(normalized), normalized, parsed.Instructions, template.Name)],
             new("rAthena", Commit, instance.Source.File, instance.Source.Line));
         return true;
     }
@@ -95,6 +102,7 @@ internal static partial class WorldEntityConverter
     }
     private static bool U16(string value, out ushort result) => ushort.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out result);
     private static UnsupportedConversion Unsupported(RathenaDeclaration value, string reason) => new(value.Name, value.Source.File, value.Source.Line, reason);
+    [GeneratedRegex("/\\*.*?\\*/")] private static partial Regex BlockCommentRegex();
 }
 
 internal static class ScriptCapabilities

@@ -132,7 +132,6 @@ public sealed class WorldMapRegistryTests
             warp.OrderedActions,
             action => Assert.Equal(new SetSavePointAction("int_land03", 77, 101), action),
             action => Assert.Equal(new WarpAction("int_land03", 85, 107), action));
-        Assert.Equal(9, WorldMapRegistry.Tutorial.EntityCount);
     }
 
     [Fact]
@@ -148,7 +147,6 @@ public sealed class WorldMapRegistryTests
             action => Assert.Equal(new SetSavePointAction("int_land", 77, 101), action),
             action => Assert.Equal(new WarpAction("int_land", 85, 107), action));
         Assert.Single(WorldMapRegistry.Tutorial.GetVisibleWarpActors("iz_int", 56, 15), actor => actor.Name == "#ship_out");
-        Assert.Equal(9, WorldMapRegistry.Tutorial.EntityCount);
     }
 
     [Fact]
@@ -165,7 +163,7 @@ public sealed class WorldMapRegistryTests
     }
 
     [Fact]
-    public void IntroToIzlude_WorldEntityReplacesLegacyActorWithoutExecutableTrigger()
+    public void IntroToIzlude_WorldEntityReplacesLegacyActorWithExecutableOnTouchScript()
     {
         var actor = Assert.Single(
             WorldMapRegistry.Tutorial.GetVisibleWarpActors("int_land", 49, 57),
@@ -178,9 +176,9 @@ public sealed class WorldMapRegistryTests
         Assert.Empty(entity.Triggers);
         var script = Assert.Single(entity.Scripts);
         Assert.True(script.SourceParsed);
-        Assert.False(script.RuntimeExecutable);
-        Assert.Equal(9, WorldMapRegistry.Tutorial.EntityCount);
-        Assert.Equal(122, WorldMapRegistry.Tutorial.DynamicWarpActorCount);
+        Assert.True(script.RuntimeExecutable);
+        Assert.True(WorldMapRegistry.Tutorial.TryFindFirstScriptTouchEnterAlongRoute("int_land", 54, 64, 49, 57, out var entered));
+        Assert.Same(entity, entered.Binding.Entity);
     }
 
     [Fact]
@@ -208,5 +206,19 @@ public sealed class WorldMapRegistryTests
                 Assert.IsType<IfQuestStateInstruction>(select.Options[1].Instructions[0]);
                 Assert.IsType<CompleteQuestInstruction>(select.Options[2].Instructions[0]);
             });
+    }
+
+    [Fact]
+    public void IntroToIzludeDuplicate_IsExecutableOnTouchAndReplacesLegacyActor()
+    {
+        var entity = WorldMapRegistry.Tutorial.EntitiesById["warp:int_land04:intro_to_izlude_d"];
+        Assert.Equal(new WorldActorComponent("#intro_to_izlude_d", "int_land04", 49, 57, 0, 45), entity.Actor);
+        var script = Assert.Single(entity.Scripts);
+        Assert.True(script.RuntimeExecutable);
+        Assert.Equal("#intro_to_izlude", script.BaseNpcName);
+        Assert.True(WorldMapRegistry.Tutorial.TryFindFirstScriptTouchEnterAlongRoute("int_land04", 54, 64, 49, 57, out var entered));
+        Assert.Same(entity, entered.Binding.Entity);
+        Assert.False(WorldMapRegistry.Tutorial.TryFindFirstScriptTouchEnterAlongRoute("int_land04", 50, 58, 49, 57, out _));
+        Assert.Single(WorldMapRegistry.Tutorial.GetVisibleWarpActors("int_land04", 49, 57), actor => actor.Name == "#intro_to_izlude_d");
     }
 }

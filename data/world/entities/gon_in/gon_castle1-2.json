@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:gon_in:gon_castle1-2",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "gon_castle1-2",
+    "Map": "gon_in",
+    "X": 47,
+    "Y": 24,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "gon_in",
+      "X": 47,
+      "Y": 24,
+      "RadiusX": 1,
+      "RadiusY": 1,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "gonryun",
+          "X": 112,
+          "Y": 131
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/warps/cities/gonryun.txt",
+    "Line": 29
+  }
+}

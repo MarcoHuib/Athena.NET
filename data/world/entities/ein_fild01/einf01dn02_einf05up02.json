@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:ein_fild01:einf01dn02_einf05up02",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "EinF01Dn02_EinF05Up02",
+    "Map": "ein_fild01",
+    "X": 234,
+    "Y": 34,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "ein_fild01",
+      "X": 234,
+      "Y": 34,
+      "RadiusX": 1,
+      "RadiusY": 1,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "ein_fild05",
+          "X": 172,
+          "Y": 366
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/re/warps/fields/hugel_fild.txt",
+    "Line": 52
+  }
+}

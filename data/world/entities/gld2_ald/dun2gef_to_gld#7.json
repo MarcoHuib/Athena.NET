@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:gld2_ald:dun2gef_to_gld#7",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "dun2gef_to_gld#7",
+    "Map": "gld2_ald",
+    "X": 77,
+    "Y": 58,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "gld2_ald",
+      "X": 77,
+      "Y": 58,
+      "RadiusX": 1,
+      "RadiusY": 1,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "alde_gld",
+          "X": 229,
+          "Y": 185
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/re/warps/guildcastles.txt",
+    "Line": 43
+  }
+}

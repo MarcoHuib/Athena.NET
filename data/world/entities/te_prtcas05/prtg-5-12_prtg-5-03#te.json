@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:te_prtcas05:prtg-5-12_prtg-5-03#te",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "prtg-5-12_prtg-5-03#te",
+    "Map": "te_prtcas05",
+    "X": 260,
+    "Y": 96,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "te_prtcas05",
+      "X": 260,
+      "Y": 96,
+      "RadiusX": 1,
+      "RadiusY": 1,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "te_prtcas05",
+          "X": 66,
+          "Y": 229
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/re/warps/guildcastles.txt",
+    "Line": 196
+  }
+}

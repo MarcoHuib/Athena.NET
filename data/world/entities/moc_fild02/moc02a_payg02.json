@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:moc_fild02:moc02a_payg02",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "moc02a_payg02",
+    "Map": "moc_fild02",
+    "X": 378,
+    "Y": 272,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "moc_fild02",
+      "X": 378,
+      "Y": 272,
+      "RadiusX": 1,
+      "RadiusY": 1,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "pay_gld",
+          "X": 20,
+          "Y": 276
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/warps/guildcastles.txt",
+    "Line": 228
+  }
+}

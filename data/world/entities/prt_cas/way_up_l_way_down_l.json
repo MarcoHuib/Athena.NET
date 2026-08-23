@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:prt_cas:way_up_l_way_down_l",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "way_up_L_way_down_L",
+    "Map": "prt_cas",
+    "X": 164,
+    "Y": 177,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "prt_cas",
+      "X": 164,
+      "Y": 177,
+      "RadiusX": 1,
+      "RadiusY": 1,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "prt_cas",
+          "X": 54,
+          "Y": 156
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/re/warps/cities/prontera.txt",
+    "Line": 143
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:rachel:rachel09",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "rachel09",
+    "Map": "rachel",
+    "X": 42,
+    "Y": 109,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "rachel",
+      "X": 42,
+      "Y": 109,
+      "RadiusX": 1,
+      "RadiusY": 1,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "ra_in01",
+          "X": 171,
+          "Y": 388
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/re/warps/cities/rachel.txt",
+    "Line": 32
+  }
+}

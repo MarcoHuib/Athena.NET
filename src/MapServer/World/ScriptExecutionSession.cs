@@ -8,17 +8,41 @@ public sealed class ScriptExecutionSession
     private int _instructionIndex;
     private SelectInstruction? _pendingSelection;
     private IfQuestStateInstruction? _pendingQuestCheck;
+    private readonly Dictionary<string, string> _variables = new(StringComparer.Ordinal);
 
     public ScriptExecutionSession(string entityId, uint actorId, IReadOnlyList<ScriptInstructionDefinition> instructions)
+        : this(entityId, actorId, entityId, null, string.Empty, instructions) { }
+
+    public ScriptExecutionSession(string entityId, uint actorId, string executingNpcName, string? baseNpcName, string mapName, IReadOnlyList<ScriptInstructionDefinition> instructions)
     {
         EntityId = entityId;
         ActorId = actorId;
+        ExecutingNpcName = executingNpcName;
+        BaseNpcName = baseNpcName;
+        MapName = mapName;
         _instructions = [.. instructions];
     }
 
     public string EntityId { get; }
     public uint ActorId { get; }
+    public string ExecutingNpcName { get; }
+    public string? BaseNpcName { get; }
+    public string MapName { get; }
     public ScriptExecutionState State { get; private set; } = ScriptExecutionState.Running;
+
+    public void Assign(string variable, ScriptExpressionDefinition value) => _variables[variable] = Evaluate(value);
+
+    public string Evaluate(ScriptExpressionDefinition expression) => expression switch
+    {
+        StringLiteralExpression literal => literal.Value,
+        VariableExpression variable when _variables.TryGetValue(variable.Name, out var value) => value,
+        VariableExpression variable => throw new InvalidOperationException($"Script variable '{variable.Name}' is not assigned."),
+        ConcatExpression concat => Evaluate(concat.Left) + Evaluate(concat.Right),
+        StrNpcInfoExpression { InfoType: 2 } => ExecutingNpcName.TrimStart('#'),
+        StrNpcInfoExpression info => throw new NotSupportedException($"strnpcinfo({info.InfoType}) is not executable."),
+        ReplaceStringExpression replace => Evaluate(replace.Value).Replace(Evaluate(replace.Search), Evaluate(replace.Replacement), StringComparison.Ordinal),
+        _ => throw new NotSupportedException($"Script expression '{expression.GetType().Name}' is not executable."),
+    };
 
     public IReadOnlyList<ScriptInstructionDefinition> Run()
     {

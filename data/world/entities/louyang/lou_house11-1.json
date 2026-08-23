@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:louyang:lou_house11-1",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "lou_house11-1",
+    "Map": "louyang",
+    "X": 130,
+    "Y": 63,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "louyang",
+      "X": 130,
+      "Y": 63,
+      "RadiusX": 1,
+      "RadiusY": 1,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "lou_in02",
+          "X": 72,
+          "Y": 31
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/warps/cities/louyang.txt",
+    "Line": 38
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:spl_in01:splendide12-4",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "splendide12-4",
+    "Map": "spl_in01",
+    "X": 276,
+    "Y": 336,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "spl_in01",
+      "X": 276,
+      "Y": 336,
+      "RadiusX": 1,
+      "RadiusY": 1,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "spl_in01",
+          "X": 190,
+          "Y": 322
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/warps/cities/splendide.txt",
+    "Line": 47
+  }
+}

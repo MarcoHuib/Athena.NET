@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:aldeg_cas05:aldeg-5-11_aldeg-5-12",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "aldeg-5-11_aldeg-5-12",
+    "Map": "aldeg_cas05",
+    "X": 13,
+    "Y": 175,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "aldeg_cas05",
+      "X": 13,
+      "Y": 175,
+      "RadiusX": 1,
+      "RadiusY": 1,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "aldeg_cas05",
+          "X": 162,
+          "Y": 194
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/warps/guildcastles.txt",
+    "Line": 394
+  }
+}

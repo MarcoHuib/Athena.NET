@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:un_bk_q:h-0#g-1",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "H-0#G-1",
+    "Map": "un_bk_q",
+    "X": 271,
+    "Y": 200,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "un_bk_q",
+      "X": 271,
+      "Y": 200,
+      "RadiusX": 1,
+      "RadiusY": 1,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "un_bk_q",
+          "X": 258,
+          "Y": 199
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/re/warps/other/verus.txt",
+    "Line": 514
+  }
+}

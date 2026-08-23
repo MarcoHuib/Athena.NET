@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:ba_in01:ep172_hall_out",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "#ep172_hall_out",
+    "Map": "ba_in01",
+    "X": 237,
+    "Y": 35,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "ba_in01",
+      "X": 237,
+      "Y": 35,
+      "RadiusX": 1,
+      "RadiusY": 1,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "ba_maison",
+          "X": 56,
+          "Y": 130
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/re/warps/other/ba_maison.txt",
+    "Line": 45
+  }
+}

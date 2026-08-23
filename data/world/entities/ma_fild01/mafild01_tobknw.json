@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:ma_fild01:mafild01_tobknw",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "mafild01_tobknw",
+    "Map": "ma_fild01",
+    "X": 288,
+    "Y": 52,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "ma_fild01",
+      "X": 288,
+      "Y": 52,
+      "RadiusX": 1,
+      "RadiusY": 1,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "ma_scene01",
+          "X": 142,
+          "Y": 78
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/re/warps/cities/malaya.txt",
+    "Line": 28
+  }
+}

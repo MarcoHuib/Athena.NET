@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:new_1-1:newwarp6001a",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "newwarp6001a",
+    "Map": "new_1-1",
+    "X": 148,
+    "Y": 112,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "new_1-1",
+      "X": 148,
+      "Y": 112,
+      "RadiusX": 2,
+      "RadiusY": 2,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "new_1-2",
+          "X": 100,
+          "Y": 9
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/warps/other/jobquests.txt",
+    "Line": 32
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:prt_church:prtch02",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "prtch02",
+    "Map": "prt_church",
+    "X": 31,
+    "Y": 19,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "prt_church",
+      "X": 31,
+      "Y": 19,
+      "RadiusX": 1,
+      "RadiusY": 2,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "prt_church",
+          "X": 94,
+          "Y": 81
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/warps/cities/prontera.txt",
+    "Line": 75
+  }
+}

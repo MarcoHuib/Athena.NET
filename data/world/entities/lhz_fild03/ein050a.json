@@ -1,0 +1,37 @@
+{
+  "SchemaVersion": 1,
+  "Id": "warp:lhz_fild03:ein050a",
+  "Kind": "Warp",
+  "Actor": {
+    "Name": "ein050a",
+    "Map": "lhz_fild03",
+    "X": 158,
+    "Y": 349,
+    "Direction": 0,
+    "Class": 45
+  },
+  "Triggers": [
+    {
+      "Type": "OnTouch",
+      "Map": "lhz_fild03",
+      "X": 158,
+      "Y": 349,
+      "RadiusX": 1,
+      "RadiusY": 1,
+      "Actions": [
+        {
+          "Type": "Warp",
+          "Map": "lhz_fild02",
+          "X": 164,
+          "Y": 39
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "rAthena",
+    "Commit": "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca",
+    "File": "legacy/rathena/npc/warps/fields/ein_fild.txt",
+    "Line": 51
+  }
+}
