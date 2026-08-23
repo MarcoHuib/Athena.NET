@@ -311,12 +311,24 @@ public sealed class MapClientSession : IDisposable
 
     private async Task SendSameServerWarpAsync(WarpDefinition warp, CancellationToken cancellationToken)
     {
-        MapLogger.Info(
-            $"[iRO MAP DEBUG] Warp triggered map='{_mapName}' at=({_x},{_y}) -> map='{warp.DestinationMap}' x={warp.DestinationX} y={warp.DestinationY}");
+        foreach (var action in warp.OrderedActions)
+        {
+            if (action is SetSavePointAction savePoint)
+            {
+                // The CharServer persistence contract currently owns only last position.
+                // Preserve ordering and data, but do not pretend savepoint persistence succeeded.
+                MapLogger.Info($"[iRO MAP DEBUG] SetSavePoint deferred map='{savePoint.Map}' x={savePoint.X} y={savePoint.Y}");
+                continue;
+            }
 
-        _mapName = warp.DestinationMap;
-        _x = warp.DestinationX;
-        _y = warp.DestinationY;
+            if (action is WarpAction warpAction)
+            {
+                MapLogger.Info($"[iRO MAP DEBUG] Warp triggered map='{_mapName}' at=({_x},{_y}) -> map='{warpAction.Map}' x={warpAction.X} y={warpAction.Y}");
+                _mapName = warpAction.Map;
+                _x = warpAction.X;
+                _y = warpAction.Y;
+            }
+        }
 
         var response = IroMapTransitionPackets.BuildSameServerMapChange(_mapName, _x, _y);
         MapLogger.Info(

@@ -20,7 +20,57 @@ There is no per-movement database write and no periodic checkpoint yet. A normal
 disconnect persists the latest dirty position; a sudden process crash can still
 lose movement since the last warp.
 
-## rAthena warp import
+## World-entity conversion pipeline
+
+Athena's developer-facing world-data pipeline is:
+
+`rAthena source -> source parser -> resolver/static evaluator -> Athena WorldEntity -> one JSON file per entity -> WorldRegistry -> derived runtime indexes`
+
+One file under `data/world/entities/<map>/<entity>.json` is the source of truth for
+one logical entity. Components that belong together stay together: an entity may
+contain an optional Actor plus multiple Triggers, and every Trigger owns its
+ordered Actions. An invisible trigger therefore needs no Actor. Runtime indexes
+(`EntitiesById`, map actors, and OnTouch route lookups) are derived in memory;
+there are no separately maintained actor/trigger/action files.
+
+The typed extension points are intentionally narrow in the current slice:
+`OnTouch`, `Warp`, and `SetSavePoint`. Class 45 actors preserve the verified
+`JT_WARPNPC` visual. `SetSavePoint` data is loaded and ordered, but MapServer
+execution is deferred until CharServer exposes a safe savepoint-persistence
+contract. It is not faked by updating the character's current position.
+
+`data/world/warps.json` remains a **temporary migration source**. WorldEntity
+definitions load first and win over a legacy entry with the same map and entity
+name, preventing duplicate actors/triggers. The legacy file will disappear only
+after deliberate category-by-category migration.
+
+### Importer commands
+
+Audit the checked-in NPC source tree (counts/classifications only):
+
+```bash
+dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- audit \
+  --source-root legacy/rathena/npc \
+  --output data/world/conversion-audit.json
+```
+
+Run the deliberately filtered tutorial conversion:
+
+```bash
+dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- convert \
+  --source-root legacy/rathena/npc/warps \
+  --source-root legacy/rathena/npc/re/warps \
+  --source-file re/warps/cities/izlude.txt \
+  --map iz_int03 \
+  --kind warp \
+  --output data/world/entities
+```
+
+Filters may select `--source-file`, `--map`, `--name`, and/or `--kind`. At least
+one is mandatory so an accidental unrestricted conversion cannot generate the
+whole tree.
+
+## Legacy rAthena warp aggregate
 
 Source repository commit:
 `6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca`.
@@ -30,7 +80,7 @@ Renewal input is the combination enabled by rAthena's warp configs:
 - `legacy/rathena/npc/warps` (81 files)
 - `legacy/rathena/npc/re/warps` (58 files)
 
-`tools/WorldDataImporter` parses tab-separated declarative `warp` records into
+The retained legacy `warps.json` parses tab-separated declarative `warp` records into
 unambiguous center/radius geometry. It supports comments, whitespace, same-map and
 cross-map destinations, zero/larger radii, and statically resolvable
 `duplicate(name)`. WARPNPC scripts and unresolved WARPNPC duplicates are reported

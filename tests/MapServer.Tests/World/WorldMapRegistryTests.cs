@@ -100,4 +100,38 @@ public sealed class WorldMapRegistryTests
         Assert.Same(earlier, intersection.Warp);
         Assert.Equal((ushort)3, intersection.X);
     }
+
+    [Fact]
+    public void EntityOverlay_WinsAndDoesNotDuplicateLegacyTriggerOrActor()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"athena-overlay-{Guid.NewGuid():N}");
+        var entities = Path.Combine(root, "entities", "test");
+        Directory.CreateDirectory(entities);
+        try
+        {
+            File.WriteAllText(Path.Combine(entities, "door.json"), """
+                {"SchemaVersion":1,"Id":"warp:test:door","Kind":"Warp","Actor":{"Name":"#door","Map":"test","X":5,"Y":5,"Direction":0,"Class":45},"Triggers":[{"Type":"OnTouch","Map":"test","X":5,"Y":5,"RadiusX":0,"RadiusY":0,"Actions":[{"Type":"Warp","Map":"new","X":9,"Y":9}]}],"Source":{"Repository":"test","Commit":"x","File":"test.txt","Line":1}}
+                """);
+            File.WriteAllText(Path.Combine(root, "warps.json"), """
+                {"StaticWarps":[{"Name":"#door","SourceMap":"test","CenterX":5,"CenterY":5,"RadiusX":0,"RadiusY":0,"DestinationMap":"old","DestinationX":1,"DestinationY":1,"HasWarpActor":true,"SourceFile":"old.txt","SourceLine":1}],"DynamicWarps":[]}
+                """);
+            var registry = WorldMapRegistry.Load(Path.Combine(root, "entities"), Path.Combine(root, "warps.json"));
+            Assert.True(registry.TryFindWarp("test", 5, 5, out var warp));
+            Assert.Equal("new", warp.DestinationMap);
+            Assert.Single(registry.GetVisibleWarpActors("test", 5, 5), actor => actor.Name == "#door");
+            Assert.Equal(1, registry.StaticWarpCount);
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public void Tutorial_ShipOut03_LoadsOrderedSavePointThenWarpActions()
+    {
+        Assert.True(WorldMapRegistry.Tutorial.TryFindWarp("iz_int03", 56, 15, out var warp));
+        Assert.Collection(
+            warp.OrderedActions,
+            action => Assert.Equal(new SetSavePointAction("int_land03", 77, 101), action),
+            action => Assert.Equal(new WarpAction("int_land03", 85, 107), action));
+        Assert.Equal(3, WorldMapRegistry.Tutorial.EntityCount);
+    }
 }
