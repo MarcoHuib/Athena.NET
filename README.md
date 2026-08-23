@@ -100,6 +100,7 @@ Local development can be run through .NET Aspire, which starts the Athena.NET se
 - [Migrations](docs/migrations.md)
 - [Checklists](docs/checklists.md)
 - [Helper scripts](docs/scripts.md)
+- [World-data importer](tools/WorldDataImporter/README.md)
 
 Developer and protocol research notes are maintained separately under `ai/` so the public project README can remain focused on the project itself.
 

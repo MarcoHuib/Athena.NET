@@ -1,11 +1,12 @@
 # Generated rAthena world data
 
-`entities/` is the new one-file-per-logical-entity source-of-truth. The current
-vertical slice contains only the three tutorial warps on `iz_int` and their
-`iz_int03` counterparts, plus the non-executable preserved script entity
-`int_land/#intro_to_izlude`. Do not run an unrestricted conversion; the CLI requires filters.
+`entities/` is the one-file-per-logical-entity generated source-of-truth. It now
+contains every warp/WARPNPC definition that the current converter and runtime can
+execute completely. Bulk conversion remains explicit and writes
+`conversion-unsupported.json` for everything it skips.
 
-See `ai/world-data.md` for the audit and filtered-conversion commands.
+See `tools/WorldDataImporter/README.md` for bulk conversion, filtered conversion,
+capability reporting, auditing, and verification commands.
 
 `warps.json` is deterministic normalized world data generated from the local
 rAthena reference checkout at commit
