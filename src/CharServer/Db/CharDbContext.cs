@@ -16,6 +16,7 @@ public sealed class CharDbContext : DbContext
     public DbSet<CharInventory> Inventory => Set<CharInventory>();
     public DbSet<CharSkill> Skills => Set<CharSkill>();
     public DbSet<CharHotkey> Hotkeys => Set<CharHotkey>();
+    public DbSet<CharQuest> Quests => Set<CharQuest>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -165,5 +166,16 @@ public sealed class CharDbContext : DbContext
         hotkeys.Property(h => h.Type).HasColumnName("type");
         hotkeys.Property(h => h.ItemSkillId).HasColumnName("itemskill_id");
         hotkeys.Property(h => h.SkillLevel).HasColumnName("skill_lvl");
+
+        var quests = modelBuilder.Entity<CharQuest>();
+        quests.ToTable(_tableNames.QuestTable);
+        quests.HasKey(q => new { q.CharId, q.QuestId });
+        quests.Property(q => q.CharId).HasColumnName("char_id");
+        quests.Property(q => q.QuestId).HasColumnName("quest_id");
+        quests.Property(q => q.State).HasColumnName("state").HasMaxLength(1);
+        quests.Property(q => q.Time).HasColumnName("time");
+        quests.Property(q => q.Count1).HasColumnName("count1");
+        quests.Property(q => q.Count2).HasColumnName("count2");
+        quests.Property(q => q.Count3).HasColumnName("count3");
     }
 }

@@ -1,0 +1,122 @@
+{
+  "SchemaVersion": 1,
+  "Id": "dev:int_land:athena_test_npc",
+  "Kind": "DeveloperTestNpc",
+  "Actor": {
+    "Name": "Athena Test NPC",
+    "Map": "int_land",
+    "X": 55,
+    "Y": 63,
+    "Direction": 5,
+    "Class": 873
+  },
+  "Triggers": [],
+  "Scripts": [
+    {
+      "Trigger": "OnClick",
+      "Map": "int_land",
+      "X": 55,
+      "Y": 63,
+      "RadiusX": 0,
+      "RadiusY": 0,
+      "SourceParsed": true,
+      "RuntimeExecutable": true,
+      "RequiredCapabilities": [
+        "Message",
+        "Select",
+        "SetQuest",
+        "CheckQuest",
+        "CompleteQuest",
+        "Close"
+      ],
+      "NormalizedSource": "Developer-only dialogue runtime verification fixture.",
+      "Instructions": [
+        {
+          "Type": "Message",
+          "Text": "Quest test."
+        },
+        {
+          "Type": "Select",
+          "Options": [
+            {
+              "Text": "Start test quest",
+              "Instructions": [
+                {
+                  "Type": "SetQuest",
+                  "QuestId": 21001
+                },
+                {
+                  "Type": "Message",
+                  "Text": "Quest started."
+                },
+                {
+                  "Type": "Close"
+                }
+              ]
+            },
+            {
+              "Text": "Check test quest",
+              "Instructions": [
+                {
+                  "Type": "IfQuestState",
+                  "QuestId": 21001,
+                  "Expected": "Active",
+                  "Then": [
+                    {
+                      "Type": "Message",
+                      "Text": "Quest is active."
+                    }
+                  ],
+                  "Else": [
+                    {
+                      "Type": "IfQuestState",
+                      "QuestId": 21001,
+                      "Expected": "Completed",
+                      "Then": [
+                        {
+                          "Type": "Message",
+                          "Text": "Quest is completed."
+                        }
+                      ],
+                      "Else": [
+                        {
+                          "Type": "Message",
+                          "Text": "Quest is absent."
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "Type": "Close"
+                }
+              ]
+            },
+            {
+              "Text": "Complete test quest",
+              "Instructions": [
+                {
+                  "Type": "CompleteQuest",
+                  "QuestId": 21001
+                },
+                {
+                  "Type": "Message",
+                  "Text": "Quest completed."
+                },
+                {
+                  "Type": "Close"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "Source": {
+    "Repository": "Athena.NET",
+    "Commit": "developer-test",
+    "File": "data/world/dev/int_land/athena_test_npc.json",
+    "Line": 1
+  }
+}

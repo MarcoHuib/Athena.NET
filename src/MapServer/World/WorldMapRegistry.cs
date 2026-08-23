@@ -7,12 +7,13 @@ public sealed class WorldMapRegistry
     private readonly IReadOnlyList<WarpDefinition> _warps;
     private readonly IReadOnlyList<WarpActor> _warpActors;
     private readonly IReadOnlyDictionary<string, WorldEntityDefinition> _entitiesById;
+    private readonly IReadOnlyDictionary<uint, (WorldEntityDefinition Entity, ScriptBehaviorDefinition Script)> _interactionsByActorId;
     private readonly int _dynamicWarpActorCount;
 
     public WorldMapRegistry(IEnumerable<WarpDefinition> warps, IEnumerable<WarpActorDefinition>? dynamicWarpActors = null)
         : this(warps, [], dynamicWarpActors) { }
 
-    private WorldMapRegistry(IEnumerable<WarpDefinition> warps, IEnumerable<WorldEntityDefinition> entities, IEnumerable<WarpActorDefinition>? dynamicWarpActors = null)
+    internal WorldMapRegistry(IEnumerable<WarpDefinition> warps, IEnumerable<WorldEntityDefinition> entities, IEnumerable<WarpActorDefinition>? dynamicWarpActors = null)
     {
         _warps = warps.ToArray();
         _entitiesById = entities.ToDictionary(entity => entity.Id, StringComparer.OrdinalIgnoreCase);
@@ -20,12 +21,17 @@ public sealed class WorldMapRegistry
         var dynamicActors = (dynamicWarpActors ?? []).ToArray();
         _dynamicWarpActorCount = dynamicActors.Length;
         var entityActorKeys = _entitiesById.Values.Where(entity => entity.Actor is not null).Select(entity => SemanticKey(entity.Actor!.Map, entity.Actor.Name)).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var entityActors = _entitiesById.Values.Where(entity => entity.Actor?.Class == 45).Select(ToActorDefinition).Where(actor => actor is not null).Select(actor => actor!);
+        var entityActors = _entitiesById.Values.Where(entity => entity.Actor is not null).Select(ToActorDefinition).Where(actor => actor is not null).Select(actor => actor!);
         _warpActors = _warps.Where(warp => warp.HasWarpActor && warp.RadiusX <= byte.MaxValue && warp.RadiusY <= byte.MaxValue && !entityActorKeys.Contains(SemanticKey(warp.SourceMap, warp.Name)))
             .Select(warp => new WarpActorDefinition(warp.Name, warp.SourceMap, warp.SourceX, warp.SourceY, (byte)warp.RadiusX, (byte)warp.RadiusY))
             .Concat(entityActors)
             .Concat(dynamicActors)
-            .Select(actor => new WarpActor(allocator.Allocate(), actor.Name.Length > 24 ? actor.Name[..24] : actor.Name, actor.MapName, actor.X, actor.Y, actor.RadiusX, actor.RadiusY)).ToArray();
+            .Select(actor => new WarpActor(allocator.Allocate(), actor.Name.Length > 24 ? actor.Name[..24] : actor.Name, actor.MapName, actor.X, actor.Y, actor.RadiusX, actor.RadiusY, actor.SpriteClass)).ToArray();
+        _interactionsByActorId = _warpActors
+            .Select(actor => (Actor: actor, Entity: _entitiesById.Values.FirstOrDefault(entity => entity.Actor is not null && string.Equals(entity.Actor.Map, actor.MapName, StringComparison.OrdinalIgnoreCase) && string.Equals(entity.Actor.Name, actor.Name, StringComparison.OrdinalIgnoreCase))))
+            .Where(item => item.Entity is not null)
+            .SelectMany(item => item.Entity!.Scripts.Where(script => script.RuntimeExecutable && string.Equals(script.Trigger, "OnClick", StringComparison.OrdinalIgnoreCase)).Select(script => (item.Actor.ActorId, item.Entity, Script: script)))
+            .ToDictionary(item => item.ActorId, item => (item.Entity!, item.Script));
     }
 
     public static WorldMapRegistry Tutorial { get; } = LoadGenerated();
@@ -35,6 +41,14 @@ public sealed class WorldMapRegistry
     public int DynamicWarpActorCount => _dynamicWarpActorCount;
     public IReadOnlyDictionary<string, WorldEntityDefinition> EntitiesById => _entitiesById;
     public IEnumerable<WarpActor> GetVisibleWarpActors(string mapName, ushort x, ushort y, ushort range = 14) => _warpActors.Where(actor => string.Equals(actor.MapName, mapName, StringComparison.OrdinalIgnoreCase) && Math.Abs((int)actor.X - x) <= range && Math.Abs((int)actor.Y - y) <= range);
+    public bool TryGetInteraction(uint actorId, string mapName, out WorldEntityDefinition entity, out ScriptBehaviorDefinition script)
+    {
+        if (_interactionsByActorId.TryGetValue(actorId, out var binding) && binding.Entity.Actor is not null && string.Equals(binding.Entity.Actor.Map, mapName, StringComparison.OrdinalIgnoreCase))
+        {
+            entity = binding.Entity; script = binding.Script; return true;
+        }
+        entity = null!; script = null!; return false;
+    }
     public bool TryFindWarp(string mapName, ushort x, ushort y, out WarpDefinition warp) { warp = _warps.FirstOrDefault(candidate => candidate.Matches(mapName, x, y))!; return warp is not null; }
     public bool TryFindFirstWarpAlongRoute(string mapName, ushort fromX, ushort fromY, ushort toX, ushort toY, out WarpIntersection intersection)
     {
@@ -44,7 +58,8 @@ public sealed class WorldMapRegistry
 
     internal static WorldMapRegistry Load(string entityRoot, string legacyWarpFile)
     {
-        var entities = Directory.Exists(entityRoot) ? Directory.EnumerateFiles(entityRoot, "*.json", SearchOption.AllDirectories).Order(StringComparer.Ordinal).Select(LoadEntity).ToArray() : [];
+        var roots = new[] { entityRoot, Path.Combine(Path.GetDirectoryName(entityRoot)!, "dev") };
+        var entities = roots.Where(Directory.Exists).SelectMany(root => Directory.EnumerateFiles(root, "*.json", SearchOption.AllDirectories)).Order(StringComparer.Ordinal).Select(LoadEntity).ToArray();
         var semanticKeys = entities.Where(entity => entity.Actor is not null).Select(entity => SemanticKey(entity.Actor!.Map, entity.Actor.Name)).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var warps = entities.SelectMany(ToWarps).ToList();
         var dynamicActors = new List<WarpActorDefinition>();
@@ -76,7 +91,8 @@ public sealed class WorldMapRegistry
             ? scriptsJson.EnumerateArray().Select(script => new ScriptBehaviorDefinition(
                 script.GetProperty("Trigger").GetString()!, script.GetProperty("Map").GetString()!, script.GetProperty("X").GetUInt16(), script.GetProperty("Y").GetUInt16(),
                 script.GetProperty("RadiusX").GetUInt16(), script.GetProperty("RadiusY").GetUInt16(), script.GetProperty("SourceParsed").GetBoolean(), script.GetProperty("RuntimeExecutable").GetBoolean(),
-                script.GetProperty("RequiredCapabilities").EnumerateArray().Select(value => value.GetString()!).ToArray(), script.GetProperty("NormalizedSource").GetString()!)).ToArray()
+                script.GetProperty("RequiredCapabilities").EnumerateArray().Select(value => value.GetString()!).ToArray(), script.GetProperty("NormalizedSource").GetString()!,
+                script.TryGetProperty("Instructions", out var instructions) ? instructions.EnumerateArray().Select(ParseInstruction).ToArray() : null)).ToArray()
             : [];
         var source = root.GetProperty("Source");
         return new(root.GetProperty("SchemaVersion").GetInt32(), root.GetProperty("Id").GetString()!, root.GetProperty("Kind").GetString()!, actor, triggers, scripts, new(source.GetProperty("Repository").GetString()!, source.GetProperty("Commit").GetString()!, source.GetProperty("File").GetString()!, source.GetProperty("Line").GetInt32()));
@@ -86,6 +102,19 @@ public sealed class WorldMapRegistry
         "Warp" => new WarpAction(action.GetProperty("Map").GetString()!, action.GetProperty("X").GetUInt16(), action.GetProperty("Y").GetUInt16()),
         "SetSavePoint" => new SetSavePointAction(action.GetProperty("Map").GetString()!, action.GetProperty("X").GetUInt16(), action.GetProperty("Y").GetUInt16()),
         var type => throw new InvalidDataException($"Unsupported world action '{type}'."),
+    };
+    private static ScriptInstructionDefinition ParseInstruction(JsonElement instruction) => instruction.GetProperty("Type").GetString() switch
+    {
+        "Message" => new MessageInstruction(instruction.GetProperty("Text").GetString()!),
+        "Next" => new NextInstruction(),
+        "Close" => new CloseInstruction(),
+        "Select" => new SelectInstruction(instruction.GetProperty("Options").EnumerateArray().Select(option => new SelectOptionDefinition(
+            option.GetProperty("Text").GetString()!, option.GetProperty("Instructions").EnumerateArray().Select(ParseInstruction).ToArray())).ToArray()),
+        "SetQuest" => new SetQuestInstruction(instruction.GetProperty("QuestId").GetUInt32()),
+        "CompleteQuest" => new CompleteQuestInstruction(instruction.GetProperty("QuestId").GetUInt32()),
+        "IfQuestState" => new IfQuestStateInstruction(instruction.GetProperty("QuestId").GetUInt32(), Enum.Parse<CharacterQuestStatus>(instruction.GetProperty("Expected").GetString()!, true),
+            instruction.GetProperty("Then").EnumerateArray().Select(ParseInstruction).ToArray(), instruction.GetProperty("Else").EnumerateArray().Select(ParseInstruction).ToArray()),
+        var type => throw new InvalidDataException($"Unsupported script instruction '{type}'."),
     };
     private static IEnumerable<WarpDefinition> ToWarps(WorldEntityDefinition entity)
     {
@@ -103,7 +132,7 @@ public sealed class WorldMapRegistry
         var radiusX = trigger?.RadiusX ?? script?.RadiusX ?? 0;
         var radiusY = trigger?.RadiusY ?? script?.RadiusY ?? 0;
         return radiusX <= byte.MaxValue && radiusY <= byte.MaxValue
-            ? new(actor.Name, actor.Map, actor.X, actor.Y, (byte)radiusX, (byte)radiusY)
+            ? new(actor.Name, actor.Map, actor.X, actor.Y, (byte)radiusX, (byte)radiusY, actor.Class)
             : null;
     }
     private static string SemanticKey(string map, string name) => $"{map}:{name}";
@@ -111,4 +140,4 @@ public sealed class WorldMapRegistry
 }
 
 public readonly record struct WarpIntersection(WarpDefinition Warp, ushort X, ushort Y);
-public sealed record WarpActorDefinition(string Name, string MapName, ushort X, ushort Y, byte RadiusX, byte RadiusY);
+public sealed record WarpActorDefinition(string Name, string MapName, ushort X, ushort Y, byte RadiusX, byte RadiusY, ushort SpriteClass = WarpActor.ClassId);

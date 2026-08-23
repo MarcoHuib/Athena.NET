@@ -28,6 +28,7 @@ public static class CharServerApp
             InventoryTable = interConfig.InventoryTable,
             SkillTable = interConfig.SkillTable,
             HotkeyTable = interConfig.HotkeyTable,
+            QuestTable = interConfig.QuestTable,
         };
         var dbFactory = Runtime.DbSetup.Configure(interConfig, secrets, tableNames, options.AutoMigrate);
 

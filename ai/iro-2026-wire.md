@@ -145,6 +145,74 @@ Capture `/Users/marco/Downloads/full-ragnarok-flow-with-walking.pcapng` proves:
 - Cross-server `0x0092` remains unimplemented pending real endpoint ownership,
   routing, persistence, and new single-use MapAuth ticket transfer.
 
+## Verified NPC dialogue evidence
+
+Capture `/Users/marco/Downloads/npc-interaction-heal-action.pcapng` (SHA-256
+`fe0f9b260f3ee9e45c89e12efcc83c3817874b7b6f1db696ee58815bc67de88f`) proves
+the following reassembled TCP dialogue on `192.168.178.55:63328` to
+`128.241.92.42:4506`:
+
+| Frame | Direction | Packet | Length | Proven meaning |
+|---:|:---:|:---:|---:|---|
+| 2971 | C->S | `0x0361` | 6 | Change direction before interaction; head direction at 2, padding at 3, body direction at 4, opaque iRO byte at 5. |
+| 2973 | C->S | `0x0090` | 8 | Interact with actor 7963 (Captain Carocc); actor ID is uint32 at offset 2. |
+| 2974, 2978 | S->C | `0x00B4` | dynamic | Reassembled dialogue messages for actor 7963; uint16 length at 2, actor ID at 4, NUL-terminated text at 8. |
+| 2978 | S->C | `0x00B5` | 6 | Next boundary for actor 7963. |
+| 3004 | C->S | `0x00B9` | 7 | Resume/next response for actor 7963. |
+| 3005, 3013 | S->C | `0x00B7` | 78 | Reassembled menu for actor 7963: uint16 length at 2, actor ID at 4, text at 8; colon-separated choices end with a trailing colon and NUL. |
+| 3122 | C->S | `0x00B8` | 8 | Actor 7963 selection value 2 at offset 6, followed by opaque byte `0x59`; the second branch follows. |
+| 4780 | C->S | `0x00B8` | 8 | Actor 7965 selection value 1 at offset 6, followed by opaque byte `0xF6`; the first branch follows. |
+| 4781, 4784 | S->C | `0x00B4`, `0x00B6` | dynamic, 6 | Sailor messages followed by dialogue close for actor 7965. |
+| 4800 | C->S | `0x0146` | 7 | Client close acknowledgement for actor 7965. |
+
+Client `0x0090`, `0x00B9`, `0x00B8`, and `0x0146` each contain one trailing byte
+beyond the pinned rAthena layout. Its meaning remains unknown and Athena treats it
+as opaque. The observed Captain sequence is four messages, a next boundary, a
+client next response, then a menu. Multiple logical packets share TCP segments and
+the first message spans frames, so implementations must use packet lengths after
+TCP reassembly rather than TCP frame boundaries.
+
+The frame 3005/3013 menu contains two option strings separated by `:`, plus a
+final `:` immediately before the NUL terminator. Frame 3122's wire value 2 selects
+the second displayed option and produces the second-branch response in frames
+3123/3125. Together with frame 4780's value 1 and first-branch response, this
+proves one-based selection indexing for the captured flow.
+
+The captured Captain Carocc, Lumin, and Sailor names and exact dialogue text could
+not be correlated to declarations in the pinned `legacy/rathena/npc` tree. Their
+captured branches also include menus and gameplay/quest state. Athena therefore
+does not create a production WorldEntity from this capture. The first runtime slice
+implements the independently proven Message, Next suspension/resume, Close, and
+one-based menu selection transport using a test WorldEntity. Quest traffic, combat,
+and item acquisition in this capture remain future evidence without runtime support.
+
+Captain Carocc's captured `0x09FF/105` actor record uses object type 6, actor ID
+7963, class 873 at offset 23, and the same modern idle-unit layout as the proven
+class-45 WARPNPC records. Athena uses that captured normal-NPC class for its
+developer dialogue fixture, while allocating its own runtime actor ID.
+
+The pre-interaction sequence repeats at frames 3544/3547, 4049/4054, and
+4504/4506: client `0x0361/6`, then client `0x0090/8`. Pinned rAthena identifies
+the classic fields at offsets 2 and 4 as head direction and body direction; the
+capture is authoritative for the additional opaque sixth byte.
+
+### Verified tutorial quest state
+
+Frame 3186 contains the captured quest transition inside the Captain dialogue
+burst: `0x0B0C/155` adds quest 21001 with uint32 quest ID at offset 2 and active
+state `1` at offset 6; `0x02B4/6` then removes quest 21001 from the client log;
+another `0x0B0C/155` adds quest 21008 active. The add packet's remaining fields
+are zero for these two objective-free client-log entries. All three packets are
+sent immediately in the dialogue stream, not in a later batch. Quest 21008 is not
+completed in this capture. Frame 3651 independently contains an add for quest
+7471 and is outside this slice.
+
+Pinned rAthena identifies `0x0B0C` as the modern fixed-size quest-add packet and
+`0x02B4` as quest removal. Its completion path persists completed state server-side
+but sends `0x02B4`, so disappearance from the client log does not mean absence in
+Athena's character state. Quest titles/descriptions are not present in these wire
+packets; the stock client resolves them by quest ID.
+
 ## Verified tutorial portal actor evidence
 
 - Frame 163 contains `0x09FF/93` for `#room_out`: object type 6, dynamic actor ID

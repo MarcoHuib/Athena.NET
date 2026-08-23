@@ -132,7 +132,7 @@ public sealed class WorldMapRegistryTests
             warp.OrderedActions,
             action => Assert.Equal(new SetSavePointAction("int_land03", 77, 101), action),
             action => Assert.Equal(new WarpAction("int_land03", 85, 107), action));
-        Assert.Equal(7, WorldMapRegistry.Tutorial.EntityCount);
+        Assert.Equal(8, WorldMapRegistry.Tutorial.EntityCount);
     }
 
     [Fact]
@@ -148,7 +148,7 @@ public sealed class WorldMapRegistryTests
             action => Assert.Equal(new SetSavePointAction("int_land", 77, 101), action),
             action => Assert.Equal(new WarpAction("int_land", 85, 107), action));
         Assert.Single(WorldMapRegistry.Tutorial.GetVisibleWarpActors("iz_int", 56, 15), actor => actor.Name == "#ship_out");
-        Assert.Equal(7, WorldMapRegistry.Tutorial.EntityCount);
+        Assert.Equal(8, WorldMapRegistry.Tutorial.EntityCount);
     }
 
     [Fact]
@@ -166,7 +166,34 @@ public sealed class WorldMapRegistryTests
         var script = Assert.Single(entity.Scripts);
         Assert.True(script.SourceParsed);
         Assert.False(script.RuntimeExecutable);
-        Assert.Equal(7, WorldMapRegistry.Tutorial.EntityCount);
+        Assert.Equal(8, WorldMapRegistry.Tutorial.EntityCount);
         Assert.Equal(123, WorldMapRegistry.Tutorial.DynamicWarpActorCount);
+    }
+
+    [Fact]
+    public void DeveloperDialogueNpc_LoadsThroughNormalRegistryAndIsInteractable()
+    {
+        var entity = WorldMapRegistry.Tutorial.EntitiesById["dev:int_land:athena_test_npc"];
+        Assert.Equal("DeveloperTestNpc", entity.Kind);
+        Assert.Equal(new WorldActorComponent("Athena Test NPC", "int_land", 55, 63, 5, 873), entity.Actor);
+        Assert.Empty(entity.Triggers);
+
+        var actor = Assert.Single(
+            WorldMapRegistry.Tutorial.GetVisibleWarpActors("int_land", 50, 59),
+            candidate => candidate.Name == "Athena Test NPC");
+        Assert.Equal((ushort)873, actor.SpriteClass);
+        Assert.True(WorldMapRegistry.Tutorial.TryGetInteraction(actor.ActorId, "int_land", out var boundEntity, out var script));
+        Assert.Same(entity, boundEntity);
+        Assert.True(script.RuntimeExecutable);
+        Assert.Collection(script.Instructions!,
+            instruction => Assert.Equal(new MessageInstruction("Quest test."), instruction),
+            instruction =>
+            {
+                var select = Assert.IsType<SelectInstruction>(instruction);
+                Assert.Equal(["Start test quest", "Check test quest", "Complete test quest"], select.Options.Select(option => option.Text));
+                Assert.IsType<SetQuestInstruction>(select.Options[0].Instructions[0]);
+                Assert.IsType<IfQuestStateInstruction>(select.Options[1].Instructions[0]);
+                Assert.IsType<CompleteQuestInstruction>(select.Options[2].Instructions[0]);
+            });
     }
 }

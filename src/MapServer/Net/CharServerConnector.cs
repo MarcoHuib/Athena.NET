@@ -5,20 +5,23 @@ using System.Net.Sockets;
 using System.Text;
 using Athena.Net.MapServer.Config;
 using Athena.Net.MapServer.Logging;
+using Athena.Net.MapServer.World;
 
 namespace Athena.Net.MapServer.Net;
 
-public sealed class CharServerConnector : ICharacterPositionPersistence
+public sealed class CharServerConnector : ICharacterPositionPersistence, ICharacterQuestPersistence
 {
     private static readonly Dictionary<short, int> PacketLengths = new()
     {
         [PacketConstants.MapLoginAck] = 3,
         [PacketConstants.MapAuthFail] = 19,
+        [PacketConstants.MapQuestStateResponse] = 12,
     };
 
     private readonly MapConfigStore _configStore;
     private readonly TimeSpan _retryDelay = TimeSpan.FromSeconds(10);
     private readonly ConcurrentDictionary<uint, PendingAuthRequest> _pendingAuth = new();
+    private readonly ConcurrentDictionary<(uint CharId, uint QuestId), TaskCompletionSource<CharacterQuestStatus?>> _pendingQuestStates = new();
     private CharServerConnectionState? _connection;
 
     public CharServerConnector(MapConfigStore configStore)
@@ -79,6 +82,30 @@ public sealed class CharServerConnector : ICharacterPositionPersistence
         BinaryPrimitives.WriteUInt16LittleEndian(packet.AsSpan(28), y);
         await connection.WriteAsync(packet, cancellationToken);
         return true;
+    }
+
+    public async Task<CharacterQuestStatus?> GetQuestStateAsync(uint accountId, uint charId, uint questId, CancellationToken cancellationToken)
+        => await SendQuestStateRequestAsync(accountId, charId, questId, CharacterQuestStatus.Absent, cancellationToken);
+
+    public async Task<bool> SetQuestStateAsync(uint accountId, uint charId, uint questId, CharacterQuestStatus state, CancellationToken cancellationToken)
+        => await SendQuestStateRequestAsync(accountId, charId, questId, state, cancellationToken) is not null;
+
+    private async Task<CharacterQuestStatus?> SendQuestStateRequestAsync(uint accountId, uint charId, uint questId, CharacterQuestStatus operation, CancellationToken cancellationToken)
+    {
+        var connection = _connection;
+        if (connection is null || questId == 0) return null;
+        var key = (charId, questId);
+        var pending = new TaskCompletionSource<CharacterQuestStatus?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (!_pendingQuestStates.TryAdd(key, pending)) return null;
+        using var registration = cancellationToken.Register(() => pending.TrySetCanceled(cancellationToken));
+        var packet = new byte[15];
+        BinaryPrimitives.WriteInt16LittleEndian(packet, PacketConstants.MapQuestStateRequest);
+        BinaryPrimitives.WriteUInt32LittleEndian(packet.AsSpan(2), accountId);
+        BinaryPrimitives.WriteUInt32LittleEndian(packet.AsSpan(6), charId);
+        BinaryPrimitives.WriteUInt32LittleEndian(packet.AsSpan(10), questId);
+        packet[14] = (byte)operation;
+        try { await connection.WriteAsync(packet, cancellationToken); return await pending.Task; }
+        finally { _pendingQuestStates.TryRemove(key, out _); }
     }
 
     private bool TrySendAuthRequest(MapClientSession session, uint accountId, uint charId, uint loginId1, byte sex, IPAddress clientIp, bool validateSex)
@@ -199,6 +226,8 @@ public sealed class CharServerConnector : ICharacterPositionPersistence
                 return HandleAuthOk(packet);
             case PacketConstants.MapAuthFail:
                 return HandleAuthFail(packet);
+            case PacketConstants.MapQuestStateResponse:
+                return HandleQuestStateResponse(packet);
             default:
                 MapLogger.Warning($"Unknown char server packet 0x{packetType:X4}, disconnecting.");
                 return false;
@@ -257,6 +286,15 @@ public sealed class CharServerConnector : ICharacterPositionPersistence
             pending.Session.HandleAuthFail();
         }
 
+        return true;
+    }
+
+    private bool HandleQuestStateResponse(byte[] packet)
+    {
+        var charId = BinaryPrimitives.ReadUInt32LittleEndian(packet.AsSpan(2));
+        var questId = BinaryPrimitives.ReadUInt32LittleEndian(packet.AsSpan(6));
+        if (_pendingQuestStates.TryRemove((charId, questId), out var pending))
+            pending.TrySetResult(packet[11] == 1 && packet[10] <= 2 ? (CharacterQuestStatus)packet[10] : null);
         return true;
     }
 

@@ -56,4 +56,29 @@ public sealed class CharacterPositionPersistenceTests
             expected,
             MapServerSession.IsPositionSaveAuthorized(authenticated, owned, accountId, charId));
     }
+
+    [Theory]
+    [InlineData(false, 10, 20, 21001, 0, false)]
+    [InlineData(true, 11, 20, 21001, 0, false)]
+    [InlineData(true, 10, 21, 21001, 0, false)]
+    [InlineData(true, 10, 20, 0, 0, false)]
+    [InlineData(true, 10, 20, 21001, 3, false)]
+    [InlineData(true, 10, 20, 21001, 0, true)]
+    [InlineData(true, 10, 20, 21001, 2, true)]
+    public void QuestAuthorization_RequiresAuthenticatedOwningMapServerSessionAndValidRequest(
+        bool authenticated,
+        uint accountId,
+        uint charId,
+        uint questId,
+        byte operation,
+        bool expected)
+    {
+        IReadOnlySet<(uint AccountId, uint CharId)> owned =
+            new HashSet<(uint AccountId, uint CharId)> { (10, 20) };
+
+        Assert.Equal(
+            expected,
+            MapServerSession.IsQuestStateRequestAuthorized(
+                authenticated, owned, accountId, charId, questId, operation));
+    }
 }

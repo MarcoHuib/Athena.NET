@@ -16,6 +16,7 @@ public sealed class MapServerSession : IDisposable, ISession
         [PacketConstants.MapLogin] = 60,
         [PacketConstants.MapAuthRequest] = 20,
         [PacketConstants.MapSavePosition] = 30,
+        [PacketConstants.MapQuestStateRequest] = 15,
     };
 
     private readonly TcpClient _client;
@@ -96,6 +97,9 @@ public sealed class MapServerSession : IDisposable, ISession
                 break;
             case PacketConstants.MapSavePosition:
                 await HandleSavePositionAsync(packet, cancellationToken);
+                break;
+            case PacketConstants.MapQuestStateRequest:
+                await HandleQuestStateRequestAsync(packet, cancellationToken);
                 break;
             default:
                 CharLogger.Warning($"Unknown map server packet 0x{packetType:X4}, disconnecting.");
@@ -231,6 +235,43 @@ public sealed class MapServerSession : IDisposable, ISession
         await db.SaveChangesAsync(cancellationToken);
     }
 
+    private async Task HandleQuestStateRequestAsync(byte[] packet, CancellationToken cancellationToken)
+    {
+        var accountId = BinaryPrimitives.ReadUInt32LittleEndian(packet.AsSpan(2));
+        var charId = BinaryPrimitives.ReadUInt32LittleEndian(packet.AsSpan(6));
+        var questId = BinaryPrimitives.ReadUInt32LittleEndian(packet.AsSpan(10));
+        var operation = packet[14]; // 0=query, 1=active, 2=completed
+        byte state = 0; var success = false;
+        if (IsQuestStateRequestAuthorized(_authenticated, _ownedCharacters, accountId, charId, questId, operation))
+        {
+            await using var db = _dbFactory();
+            if (db is not null)
+            {
+                var quest = await db.Quests.FirstOrDefaultAsync(q => q.CharId == charId && q.QuestId == questId, cancellationToken);
+                if (operation is 1 or 2)
+                {
+                    if (quest is null) { quest = new() { CharId = charId, QuestId = questId }; db.Quests.Add(quest); }
+                    quest.State = operation.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                    await db.SaveChangesAsync(cancellationToken);
+                }
+                success = quest is null ||
+                    (byte.TryParse(quest.State, System.Globalization.NumberStyles.None,
+                        System.Globalization.CultureInfo.InvariantCulture, out state) && state <= 2);
+                if (!success)
+                {
+                    state = 0;
+                    CharLogger.Warning($"Rejected invalid persisted quest state charId={charId} questId={questId}.");
+                }
+            }
+        }
+        var response = new byte[12];
+        BinaryPrimitives.WriteInt16LittleEndian(response, PacketConstants.MapQuestStateResponse);
+        BinaryPrimitives.WriteUInt32LittleEndian(response.AsSpan(2), charId);
+        BinaryPrimitives.WriteUInt32LittleEndian(response.AsSpan(6), questId);
+        response[10] = state; response[11] = success ? (byte)1 : (byte)0;
+        await WriteAsync(response, cancellationToken);
+    }
+
     internal static bool IsPositionSaveAuthorized(
         bool authenticated,
         IReadOnlySet<(uint AccountId, uint CharId)> ownedCharacters,
@@ -238,6 +279,17 @@ public sealed class MapServerSession : IDisposable, ISession
         uint charId)
     {
         return authenticated && ownedCharacters.Contains((accountId, charId));
+    }
+
+    internal static bool IsQuestStateRequestAuthorized(
+        bool authenticated,
+        IReadOnlySet<(uint AccountId, uint CharId)> ownedCharacters,
+        uint accountId,
+        uint charId,
+        uint questId,
+        byte operation)
+    {
+        return authenticated && questId > 0 && operation <= 2 && ownedCharacters.Contains((accountId, charId));
     }
 
     private Task SendLoginAckAsync(byte result, CancellationToken cancellationToken)

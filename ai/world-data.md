@@ -81,6 +81,20 @@ The `int_land/#intro_to_izlude` actor and script are now WorldEntity-owned, but
 its preserved `OnTouch` binding remains non-executable: it requires quest-state,
 dialogue/player-selection, and quest-completion semantics Athena does not implement.
 
+Developer-only runtime fixtures live separately under `data/world/dev`. They are
+loaded through the same WorldRegistry and visibility indexes as converted content,
+but are not rAthena provenance. The single `int_land/Athena Test NPC` fixture exists
+only to stock-client-test Message/Next/Close and Select dialogue at `int_land (55,63)` and can be removed by deleting
+its one file; it must never be treated as production world content.
+
+Quest state is character gameplay data, not WorldEntity data. WorldEntity scripts
+may contain typed quest instructions, but active/completed rows persist in the
+character database's existing `quest` table through an authenticated MapServer to
+CharServer contract. The developer fixture uses real client-known tutorial quest
+21001 because no safe developer quest-ID namespace exists; it exercises only the
+captured absent -> active -> completed lifecycle and should be used on development
+characters.
+
 Filters may select `--source-file`, `--map`, `--name`, and/or `--kind`. At least
 one is mandatory so an accidental unrestricted conversion cannot generate the
 whole tree.

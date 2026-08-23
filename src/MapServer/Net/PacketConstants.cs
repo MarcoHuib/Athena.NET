@@ -13,6 +13,8 @@ public static class PacketConstants
     public const short MapAuthOk = 0x2afd;
     public const short MapAuthFail = 0x2b27;
     public const short MapSavePosition = 0x2b28;
+    public const short MapQuestStateRequest = 0x2b29;
+    public const short MapQuestStateResponse = 0x2b2a;
 
     public const short CzEnter = 0x72;
     public const short CzEnter2 = 0x436;
@@ -29,11 +31,25 @@ public static class PacketConstants
     public const int IroCzRequestMoveLength = 6;
     public const short IroCzActorInfoRequest = 0x0368;
     public const int IroCzActorInfoRequestLength = 7;
+    public const short IroCzChangeDirection = 0x0361;
+    public const int IroCzChangeDirectionLength = 6;
+    public const short IroCzNpcInteraction = 0x0090;
+    public const int IroCzNpcInteractionLength = 8;
+    public const short IroCzNpcNext = 0x00b9;
+    public const int IroCzNpcNextLength = 7;
+    public const short IroCzNpcClose = 0x0146;
+    public const int IroCzNpcCloseLength = 7;
+    public const short IroCzNpcSelection = 0x00b8;
+    public const int IroCzNpcSelectionLength = 8;
 
     public const short ZcAcceptEnter = 0x2eb;
     public const short ZcNotifyPlayerMove = 0x0087;
     public const short ZcNpcAckMapMove = 0x0091;
     public const short ZcNotifyStandEntry = 0x09ff;
+    public const short ZcNpcMessage = 0x00b4;
+    public const short ZcNpcNext = 0x00b5;
+    public const short ZcNpcClose = 0x00b6;
+    public const short ZcNpcMenu = 0x00b7;
     public const short ZcRefuseEnter = 0x74;
     public const short ZcNotifyActorInit = 0x0b1b;
     public const short ZcPingLive = 0x0b1d;
