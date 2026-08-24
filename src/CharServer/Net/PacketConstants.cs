@@ -30,6 +30,10 @@ public static class PacketConstants
     public const short MapQuestStateResponse = 0x2b2a;
     public const short MapSavePointRequest = 0x2b2b;
     public const short MapSavePointResponse = 0x2b2c;
+    public const short MapGameplayStateGetRequest = 0x2b2d;
+    public const short MapGameplayStateGetResponse = 0x2b2e;
+    public const short MapGameplayStateUpdateRequest = 0x2b2f;
+    public const short MapGameplayStateUpdateResponse = 0x2b30;
 
     public const short ChReqConnect = 0x65;
     public const short ChSelectChar = 0x66;

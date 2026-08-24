@@ -4,6 +4,7 @@ using Athena.Net.CharServer.Db;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -11,9 +12,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace CharServer.Migrations
 {
     [DbContext(typeof(CharDbContext))]
-    partial class CharDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260824094320_AddCharacterGameplayStateVersion")]
+    partial class AddCharacterGameplayStateVersion
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder

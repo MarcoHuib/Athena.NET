@@ -71,5 +71,13 @@ After successful MapServer entry:
 - rename/delete/slot-move flows as exercised by iRO
 - party/guild/storage/mail and other inter-server systems required by actual iRO gameplay
 
+## Character gameplay-state contract
+
+An authenticated MapServer can read and transactionally replace the persistent
+gameplay-state subset of a character owned by that connection. CharServer validates
+the consumed MapAuth ownership tuple and an optimistic `gameplay_state_version`,
+then saves a multi-field mutation atomically. EXP, healing, status, and combat rules
+are intentionally not part of this persistence slice.
+
 ## Definition of done
 A supported stock iRO client can enter CharServer, view characters, create/delete/manage them as implemented, select a character, and transition to Athena.NET MapServer without client modification.

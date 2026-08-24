@@ -35,6 +35,7 @@ public sealed class MapClientSession : IDisposable, INpcScriptHost
     private readonly CharServerConnector _charConnector;
     private readonly ICharacterPositionPersistence _positionPersistence;
     private readonly ICharacterQuestPersistence _questPersistence;
+    private readonly ICharacterGameplayStatePersistence _gameplayStatePersistence;
     private readonly WorldMapRegistry _worldMapRegistry;
     private readonly SemaphoreSlim _writeLock = new(1, 1);
     private readonly CancellationTokenSource _sessionCancellation = new();
@@ -57,6 +58,7 @@ public sealed class MapClientSession : IDisposable, INpcScriptHost
     private bool _authenticated;
     private bool _positionDirty;
     private int _disposed;
+    private CharacterGameplayStateSession? _gameplayState;
 
     public MapClientSession(int sessionId, TcpClient client, CharServerConnector charConnector)
         : this(sessionId, client, charConnector, WorldMapRegistry.Tutorial)
@@ -69,7 +71,8 @@ public sealed class MapClientSession : IDisposable, INpcScriptHost
         CharServerConnector charConnector,
         WorldMapRegistry worldMapRegistry,
         ICharacterPositionPersistence? positionPersistence = null,
-        ICharacterQuestPersistence? questPersistence = null)
+        ICharacterQuestPersistence? questPersistence = null,
+        ICharacterGameplayStatePersistence? gameplayStatePersistence = null)
     {
         SessionId = sessionId;
         _client = client;
@@ -77,6 +80,7 @@ public sealed class MapClientSession : IDisposable, INpcScriptHost
         _charConnector = charConnector;
         _positionPersistence = positionPersistence ?? charConnector;
         _questPersistence = questPersistence ?? charConnector;
+        _gameplayStatePersistence = gameplayStatePersistence ?? charConnector;
         _worldMapRegistry = worldMapRegistry;
     }
 
@@ -92,14 +96,16 @@ public sealed class MapClientSession : IDisposable, INpcScriptHost
         ICharacterPositionPersistence? positionPersistence = null,
         ICharacterQuestPersistence? questPersistence = null,
         uint accountId = 0,
-        uint charId = 0)
+        uint charId = 0,
+        ICharacterGameplayStatePersistence? gameplayStatePersistence = null)
         : this(
             sessionId,
             client,
             charConnector,
             worldMapRegistry ?? WorldMapRegistry.Tutorial,
             positionPersistence,
-            questPersistence)
+            questPersistence,
+            gameplayStatePersistence)
     {
         _iroAuthRequested = iroAuthenticated;
         _authRequested = iroAuthenticated;
@@ -118,6 +124,7 @@ public sealed class MapClientSession : IDisposable, INpcScriptHost
     internal ushort CurrentY => _y;
     internal ScriptExecutionState? ActiveScriptState => _scriptExecutionSession?.State;
     internal string? ActiveGeneratedScriptEntityId => _generatedScriptEntityId;
+    internal CharacterGameplayStateSession? GameplayState => _gameplayState;
 
     public async Task RunAsync(CancellationToken cancellationToken)
     {
@@ -162,16 +169,44 @@ public sealed class MapClientSession : IDisposable, INpcScriptHost
             _mapName = authOk.MapName;
             _x = authOk.X;
             _y = authOk.Y;
-            _authenticated = true;
-            _positionDirty = false;
-            MapLogger.Info(
-                $"[iRO MAP DEBUG] 0x0C1F MapAuthNode authentication succeeded accountId={authOk.AccountId} charId={authOk.CharId} sessionMatch=true");
-            _ = SendIroInitialBootstrapAsync(authOk, CancellationToken.None);
+            _ = CompleteIroAuthenticationSafelyAsync(authOk);
             return;
         }
 
         _ = SendAcceptEnterAsync(authOk, CancellationToken.None);
         _ = SendNotifyActorInitAsync(CancellationToken.None);
+    }
+
+    internal async Task CompleteIroAuthenticationAsync(MapAuthOkData authOk)
+    {
+        var state = await _gameplayStatePersistence.GetAsync(authOk.AccountId, authOk.CharId, _sessionCancellation.Token);
+        if (state is null)
+        {
+            MapLogger.Warning($"[iRO MAP DEBUG] Character gameplay state load failed accountId={authOk.AccountId} charId={authOk.CharId}.");
+            HandleAuthFail(); return;
+        }
+        _gameplayState = new CharacterGameplayStateSession(authOk.AccountId, state, _gameplayStatePersistence);
+        _authenticated = true; _positionDirty = false;
+        MapLogger.Info($"[iRO MAP DEBUG] 0x0C1F MapAuthNode authentication succeeded accountId={authOk.AccountId} charId={authOk.CharId} sessionMatch=true gameplayStateVersion={state.Version}");
+        await SendIroInitialBootstrapAsync(authOk, _sessionCancellation.Token);
+    }
+
+    private async Task CompleteIroAuthenticationSafelyAsync(MapAuthOkData authOk)
+    {
+        try
+        {
+            await CompleteIroAuthenticationAsync(authOk);
+        }
+        catch (OperationCanceledException) when (_sessionCancellation.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            MapLogger.Warning(
+                $"[iRO MAP DEBUG] Character gameplay state initialization failed " +
+                $"accountId={authOk.AccountId} charId={authOk.CharId} error={ex.GetType().Name}.");
+            HandleAuthFail();
+        }
     }
 
     public void HandleAuthFail()

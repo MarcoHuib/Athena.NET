@@ -9,7 +9,7 @@ using Athena.Net.MapServer.World;
 
 namespace Athena.Net.MapServer.Net;
 
-public sealed class CharServerConnector : ICharacterPositionPersistence, ICharacterQuestPersistence
+public sealed class CharServerConnector : ICharacterPositionPersistence, ICharacterQuestPersistence, ICharacterGameplayStatePersistence
 {
     private static readonly Dictionary<short, int> PacketLengths = new()
     {
@@ -17,6 +17,8 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
         [PacketConstants.MapAuthFail] = 19,
         [PacketConstants.MapQuestStateResponse] = MapQuestStateProtocol.ResponseLength,
         [PacketConstants.MapSavePointResponse] = MapSavePointProtocol.ResponseLength,
+        [PacketConstants.MapGameplayStateGetResponse] = MapCharacterGameplayStateProtocol.ResponseLength,
+        [PacketConstants.MapGameplayStateUpdateResponse] = MapCharacterGameplayStateProtocol.ResponseLength,
     };
 
     private readonly MapConfigStore _configStore;
@@ -24,6 +26,8 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
     private readonly ConcurrentDictionary<uint, PendingAuthRequest> _pendingAuth = new();
     private readonly ConcurrentDictionary<(uint CharId, uint QuestId), TaskCompletionSource<CharacterQuestStatus?>> _pendingQuestStates = new();
     private readonly ConcurrentDictionary<uint, TaskCompletionSource<bool>> _pendingSavePoints = new();
+    private readonly ConcurrentDictionary<uint, TaskCompletionSource<CharacterGameplayState?>> _pendingGameplayReads = new();
+    private readonly ConcurrentDictionary<uint, TaskCompletionSource<CharacterGameplayState?>> _pendingGameplayUpdates = new();
     private CharServerConnectionState? _connection;
 
     public CharServerConnector(MapConfigStore configStore)
@@ -105,6 +109,26 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
     public async Task<bool> SetQuestStateAsync(uint accountId, uint charId, uint questId, CharacterQuestStatus state, CancellationToken cancellationToken)
         => await SendQuestStateRequestAsync(accountId, charId, questId, state, cancellationToken) is not null;
 
+    public async Task<CharacterGameplayState?> GetAsync(uint accountId, uint characterId, CancellationToken cancellationToken)
+    {
+        var connection=_connection; if(connection is null)return null;
+        var pending=new TaskCompletionSource<CharacterGameplayState?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        if(!_pendingGameplayReads.TryAdd(characterId,pending))return null;
+        using var registration=cancellationToken.Register(()=>pending.TrySetCanceled(cancellationToken));
+        try { await connection.WriteAsync(MapCharacterGameplayStateProtocol.BuildGetRequest(accountId,characterId),cancellationToken); return await pending.Task; }
+        finally { _pendingGameplayReads.TryRemove(characterId,out _); }
+    }
+
+    public async Task<CharacterGameplayState?> UpdateAsync(uint accountId, CharacterGameplayState expected, CharacterGameplayState updated, CancellationToken cancellationToken)
+    {
+        var connection=_connection; if(connection is null)return null;
+        var pending=new TaskCompletionSource<CharacterGameplayState?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        if(!_pendingGameplayUpdates.TryAdd(expected.CharacterId,pending))return null;
+        using var registration=cancellationToken.Register(()=>pending.TrySetCanceled(cancellationToken));
+        try { await connection.WriteAsync(MapCharacterGameplayStateProtocol.BuildUpdateRequest(accountId,expected,updated),cancellationToken); return await pending.Task; }
+        finally { _pendingGameplayUpdates.TryRemove(expected.CharacterId,out _); }
+    }
+
     private async Task<CharacterQuestStatus?> SendQuestStateRequestAsync(uint accountId, uint charId, uint questId, CharacterQuestStatus operation, CancellationToken cancellationToken)
     {
         var connection = _connection;
@@ -178,6 +202,7 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
             FailPendingAuth();
             FailPendingQuestStates();
             FailPendingSavePoints();
+            FailPendingGameplayStates();
 
             MapLogger.Warning("Char server connection closed. Reconnecting.");
             return false;
@@ -243,6 +268,10 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
                 return HandleQuestStateResponse(packet);
             case PacketConstants.MapSavePointResponse:
                 return HandleSavePointResponse(packet);
+            case PacketConstants.MapGameplayStateGetResponse:
+                return HandleGameplayStateResponse(packet, packetType, _pendingGameplayReads);
+            case PacketConstants.MapGameplayStateUpdateResponse:
+                return HandleGameplayStateResponse(packet, packetType, _pendingGameplayUpdates);
             default:
                 MapLogger.Warning($"Unknown char server packet 0x{packetType:X4}, disconnecting.");
                 return false;
@@ -318,6 +347,13 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
     {
         if (!MapSavePointProtocol.TryParseResponse(packet, out var charId, out var success)) return false;
         if (_pendingSavePoints.TryRemove(charId, out var pending)) pending.TrySetResult(success);
+        return true;
+    }
+
+    private static bool HandleGameplayStateResponse(byte[] packet, short type, ConcurrentDictionary<uint, TaskCompletionSource<CharacterGameplayState?>> pendingRequests)
+    {
+        if(!MapCharacterGameplayStateProtocol.TryParseResponse(packet,type,out _,out var charId,out var state))return false;
+        if(pendingRequests.TryRemove(charId,out var pending))pending.TrySetResult(state);
         return true;
     }
 
@@ -403,6 +439,13 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
     {
         foreach (var pending in _pendingSavePoints.Values) pending.TrySetResult(false);
         _pendingSavePoints.Clear();
+    }
+
+    private void FailPendingGameplayStates()
+    {
+        foreach(var pending in _pendingGameplayReads.Values) pending.TrySetResult(null);
+        foreach(var pending in _pendingGameplayUpdates.Values) pending.TrySetResult(null);
+        _pendingGameplayReads.Clear(); _pendingGameplayUpdates.Clear();
     }
 
     private static async Task<byte[]> ReadPacketAsync(NetworkStream stream, CancellationToken cancellationToken)

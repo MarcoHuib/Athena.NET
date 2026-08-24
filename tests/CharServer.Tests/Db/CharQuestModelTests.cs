@@ -30,4 +30,23 @@ public sealed class CharQuestModelTests
         Assert.Contains(db.Database.GetMigrations(), migration => migration.EndsWith("_InitialCharSchema", StringComparison.Ordinal));
         Assert.False(db.Database.HasPendingModelChanges());
     }
+
+    [Fact]
+    public void CharacterGameplayStateVersion_IsMappedAsConcurrencyToken()
+    {
+        var options = new DbContextOptionsBuilder<CharDbContext>()
+            .UseSqlServer("Server=localhost;Database=model-only;User ID=test;Password=test;TrustServerCertificate=true")
+            .Options;
+        using var db = new CharDbContext(options, new CharDbTableNames());
+
+        var property = db.Model.FindEntityType(typeof(CharCharacter))!
+            .FindProperty(nameof(CharCharacter.GameplayStateVersion))!;
+
+        Assert.Equal("gameplay_state_version", property.GetColumnName());
+        Assert.True(property.IsConcurrencyToken);
+        Assert.Contains(
+            db.Database.GetMigrations(),
+            migration => migration.EndsWith("_AddCharacterGameplayStateVersion", StringComparison.Ordinal));
+        Assert.False(db.Database.HasPendingModelChanges());
+    }
 }

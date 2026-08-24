@@ -30,6 +30,7 @@ public sealed class CharDbContext : DbContext
         character.HasIndex(c => c.Online);
 
         character.Property(c => c.CharId).HasColumnName("char_id").ValueGeneratedOnAdd();
+        character.Property(c => c.GameplayStateVersion).HasColumnName("gameplay_state_version").IsConcurrencyToken();
         character.Property(c => c.AccountId).HasColumnName("account_id");
         character.Property(c => c.CharNum).HasColumnName("char_num");
         character.Property(c => c.Name).HasColumnName("name").HasMaxLength(30);

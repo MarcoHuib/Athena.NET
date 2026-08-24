@@ -47,6 +47,24 @@ memory and sends authenticated position/savepoint requests to CharServer after
 warps, savepoint commands, and normal disconnect handling. Generated scripts do
 not access EF Core or MSSQL directly.
 
+## Authoritative character gameplay state
+
+After MapAuth succeeds, MapServer performs a separate authenticated gameplay-state
+read before sending the iRO bootstrap. `CharacterGameplayStateSession` is the one
+state owner for the active session. Its immutable snapshot contains levels,
+experience, HP/SP and their stored maxima, stat/skill points, and the six persistent
+base stats. Temporary statuses and script locals are deliberately excluded.
+
+CharServer remains the durable owner. Updates carry the expected and proposed
+complete snapshot; CharServer checks authenticated character ownership and the
+`gameplay_state_version` concurrency token, then commits all changed columns in one
+EF transaction. MapServer replaces its local snapshot only after that commit is
+acknowledged with the incremented authoritative version.
+
+HP/SP and MaxHP/MaxSP already existed as relational `char` fields and remain stored.
+The maxima are transported unchanged until a pinned-data derived-stat engine exists;
+this slice does not invent recalculation formulas.
+
 ## Regeneration
 
 Generate the current minimal static warps:
