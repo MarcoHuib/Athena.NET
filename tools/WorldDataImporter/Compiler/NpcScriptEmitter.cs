@@ -71,6 +71,19 @@ internal static class NpcScriptEmitter
                 output.Append(indent).Append("if ("); EmitExpression(output, conditional.Condition); output.AppendLine(")"); EmitEmbedded(output, conditional.Then, depth);
                 if (conditional.Else is not null) { output.Append(indent).AppendLine("else"); EmitEmbedded(output, conditional.Else, depth); }
                 break;
+            case LoweredSwitch selection:
+                output.Append(indent).Append("switch ("); EmitExpression(output, selection.Expression); output.AppendLine(")");
+                output.Append(indent).AppendLine("{");
+                foreach (var item in selection.Cases)
+                {
+                    output.Append(indent).Append("    ").Append(item.Value is null ? "default" : "case ");
+                    if (item.Value is not null) EmitExpression(output, item.Value);
+                    output.AppendLine(":");
+                    foreach (var child in item.Statements) EmitStatement(output, child, depth + 2);
+                    output.Append(indent).AppendLine("        break;");
+                }
+                output.Append(indent).AppendLine("}");
+                break;
             case LoweredAssignment assignment:
                 output.Append(indent).Append(Local(assignment.Variable)).Append(" = "); EmitExpression(output, assignment.Value); output.AppendLine(";"); break;
             case LoweredCommand command:
@@ -102,6 +115,11 @@ internal static class NpcScriptEmitter
             case "cloakonnpcself": output.Append(indent).AppendLine("await context.SetNpcCloakAsync(null, true, cancellationToken);"); break;
             case "cloakoffnpcself": output.Append(indent).Append("await context.SetNpcCloakAsync("); EmitExpression(output, command.Arguments[0]); output.AppendLine(", false, cancellationToken);"); break;
             case "navigateto": output.Append(indent).Append("await context.NavigateToAsync("); EmitExpression(output, command.Arguments[0]); output.Append(", (ushort)"); EmitExpression(output, command.Arguments[1]); output.Append(", (ushort)"); EmitExpression(output, command.Arguments[2]); output.AppendLine(", cancellationToken);"); break;
+            case "specialeffect2": output.Append(indent).Append("await context.SpecialEffectAsync("); EmitExpression(output, command.Arguments[0]); output.AppendLine(", cancellationToken);"); break;
+            case "heal": output.Append(indent).Append("await context.HealAsync("); EmitExpression(output, command.Arguments[0]); output.Append(", "); EmitExpression(output, command.Arguments[1]); output.AppendLine(", cancellationToken);"); break;
+            case "skilleffect": output.Append(indent).Append("await context.SkillEffectAsync("); EmitExpression(output, command.Arguments[0]); output.Append(", "); EmitExpression(output, command.Arguments[1]); output.AppendLine(", cancellationToken);"); break;
+            case "sc_start": output.Append(indent).Append("await context.StartStatusAsync("); EmitArguments(output, command.Arguments); output.AppendLine(", cancellationToken);"); break;
+            case "getexp": output.Append(indent).Append("await context.GrantExperienceAsync("); EmitArguments(output, command.Arguments); output.AppendLine(", cancellationToken);"); break;
             case "end": break;
             case "select": throw new InvalidOperationException("select is emitted as an expression.");
         }
@@ -133,6 +151,7 @@ internal static class NpcScriptEmitter
                 else { output.Append('('); EmitExpression(output, binary.Left); output.Append(' ').Append(Operator(binary.Operator)).Append(' '); EmitExpression(output, binary.Right); output.Append(')'); }
                 break;
             case LoweredCall call: EmitCall(output, call); break;
+            case LoweredIdentifier identifier: output.Append("RathenaConstants.").Append(identifier.Name); break;
         }
     }
 
@@ -143,13 +162,13 @@ internal static class NpcScriptEmitter
             case "select": output.Append("await context.SelectAsync(["); EmitArguments(output, call.Arguments); output.Append("], cancellationToken)"); break;
             case "strnpcinfo": output.Append("context.StrNpcInfo("); EmitArguments(output, call.Arguments); output.Append(')'); break;
             case "replacestr": output.Append("ScriptContext.ReplaceString("); EmitArguments(output, call.Arguments); output.Append(')'); break;
-            case "isbegin_quest": throw new InvalidOperationException("isbegin_quest must be used in a supported comparison.");
+            case "isbegin_quest": output.Append("(int)await context.GetQuestStateAsync(new QuestId("); EmitExpression(output, call.Arguments[0]); output.Append("), cancellationToken)"); break;
         }
     }
     private static void EmitArguments(StringBuilder output, IReadOnlyList<LoweredScriptExpression> arguments) { for (var index = 0; index < arguments.Count; index++) { if (index > 0) output.Append(", "); EmitExpression(output, arguments[index]); } }
     private static string Operator(TokenKind kind) => kind switch { TokenKind.Equal => "==", TokenKind.NotEqual => "!=", TokenKind.Plus => "+", TokenKind.Less => "<", TokenKind.LessEqual => "<=", TokenKind.Greater => ">", TokenKind.GreaterEqual => ">=", _ => throw new NotSupportedException(kind.ToString()) };
     private static string QuestState(object value) => Convert.ToInt64(value, CultureInfo.InvariantCulture) switch { 0 => "CharacterQuestStatus.Absent", 1 => "CharacterQuestStatus.Active", 2 => "CharacterQuestStatus.Completed", var state => throw new NotSupportedException($"Quest state {state}") };
-    private static IEnumerable<string> FindLocals(IEnumerable<LoweredScriptStatement> statements) => statements.SelectMany(statement => statement switch { LoweredAssignment assignment => [assignment.Variable], LoweredBlock block => FindLocals(block.Statements), LoweredIf conditional => FindLocals(conditional.Else is null ? [conditional.Then] : [conditional.Then, conditional.Else]), _ => [] }).Distinct(StringComparer.Ordinal);
+    private static IEnumerable<string> FindLocals(IEnumerable<LoweredScriptStatement> statements) => statements.SelectMany(statement => statement switch { LoweredAssignment assignment => [assignment.Variable], LoweredBlock block => FindLocals(block.Statements), LoweredIf conditional => FindLocals(conditional.Else is null ? [conditional.Then] : [conditional.Then, conditional.Else]), LoweredSwitch selection => FindLocals(selection.Cases.SelectMany(item => item.Statements)), _ => [] }).Distinct(StringComparer.Ordinal);
     private static string Local(string name) => "local_" + new string(name.TrimStart('.', '@').TrimEnd('$').Select(character => char.IsLetterOrDigit(character) ? character : '_').ToArray());
     private static string Escape(string value) => value.Replace("\\", "\\\\", StringComparison.Ordinal).Replace("\"", "\\\"", StringComparison.Ordinal).Replace("\r", "\\r", StringComparison.Ordinal).Replace("\n", "\\n", StringComparison.Ordinal);
 

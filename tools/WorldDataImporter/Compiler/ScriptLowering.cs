@@ -6,6 +6,8 @@ internal sealed record LoweredNpcScript(string EventName, IReadOnlyList<LoweredS
 internal abstract record LoweredScriptStatement(SourceSpan Span);
 internal sealed record LoweredBlock(IReadOnlyList<LoweredScriptStatement> Statements, SourceSpan Span) : LoweredScriptStatement(Span);
 internal sealed record LoweredIf(LoweredScriptExpression Condition, LoweredScriptStatement Then, LoweredScriptStatement? Else, SourceSpan Span) : LoweredScriptStatement(Span);
+internal sealed record LoweredSwitch(LoweredScriptExpression Expression, IReadOnlyList<LoweredSwitchCase> Cases, SourceSpan Span) : LoweredScriptStatement(Span);
+internal sealed record LoweredSwitchCase(LoweredScriptExpression? Value, IReadOnlyList<LoweredScriptStatement> Statements, SourceSpan Span);
 internal sealed record LoweredAssignment(string Variable, LoweredScriptExpression Value, SourceSpan Span) : LoweredScriptStatement(Span);
 internal sealed record LoweredCommand(string Name, IReadOnlyList<LoweredScriptExpression> Arguments, bool Terminates, SourceSpan Span) : LoweredScriptStatement(Span);
 internal abstract record LoweredScriptExpression(SourceSpan Span);
@@ -13,6 +15,7 @@ internal sealed record LoweredLiteral(object Value, SourceSpan Span) : LoweredSc
 internal sealed record LoweredVariable(string Name, RathenaVariableScope Scope, bool IsString, SourceSpan Span) : LoweredScriptExpression(Span);
 internal sealed record LoweredBinary(LoweredScriptExpression Left, TokenKind Operator, LoweredScriptExpression Right, SourceSpan Span) : LoweredScriptExpression(Span);
 internal sealed record LoweredCall(string Name, IReadOnlyList<LoweredScriptExpression> Arguments, SourceSpan Span) : LoweredScriptExpression(Span);
+internal sealed record LoweredIdentifier(string Name, SourceSpan Span) : LoweredScriptExpression(Span);
 
 internal sealed record ScriptLoweringResult(LoweredNpcScript? Script, IReadOnlyList<CompilerDiagnostic> Diagnostics)
 {
@@ -23,7 +26,7 @@ internal static class RathenaScriptLowerer
 {
     private static readonly HashSet<string> Commands = new(StringComparer.OrdinalIgnoreCase)
     {
-        "mes", "next", "select", "close", "close2", "setquest", "completequest", "warp", "savepoint", "cutin", "npctalk", "cloakonnpcself", "cloakoffnpcself", "navigateto", "end"
+        "mes", "next", "select", "close", "close2", "setquest", "completequest", "warp", "savepoint", "cutin", "npctalk", "cloakonnpcself", "cloakoffnpcself", "navigateto", "specialeffect2", "heal", "skilleffect", "sc_start", "getexp", "end"
     };
     private static readonly HashSet<string> Functions = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -54,6 +57,9 @@ internal static class RathenaScriptLowerer
         EmptyStatementSyntax => null,
         BlockStatementSyntax block => new LoweredBlock(block.Statements.Select(statement => LowerStatement(statement, diagnostics)).OfType<LoweredScriptStatement>().ToArray(), block.Span),
         IfStatementSyntax conditional => new LoweredIf(LowerExpression(conditional.Condition, diagnostics), LowerStatement(conditional.Then, diagnostics)!, conditional.Else is null ? null : LowerStatement(conditional.Else, diagnostics), conditional.Span),
+        SwitchStatementSyntax selection => new LoweredSwitch(LowerExpression(selection.Expression, diagnostics), selection.Clauses.Select(clause =>
+            new LoweredSwitchCase(clause.Value is null ? null : LowerExpression(clause.Value, diagnostics), clause.Statements.Select(statement => LowerStatement(statement, diagnostics)).OfType<LoweredScriptStatement>().Where(statement => statement is not LoweredBreak).ToArray(), clause.Span)).ToArray(), selection.Span),
+        BreakStatementSyntax statement => new LoweredBreak(statement.Span),
         ExpressionStatementSyntax { Expression: AssignmentExpressionSyntax { Target: VariableExpressionSyntax variable, Operator: TokenKind.Assign } assignment }
             when variable.Scope == RathenaVariableScope.Local => new LoweredAssignment(variable.Name, LowerExpression(assignment.Value, diagnostics), assignment.Span),
         ExpressionStatementSyntax { Expression: CallExpressionSyntax { Target: IdentifierExpressionSyntax identifier } call }
@@ -77,6 +83,7 @@ internal static class RathenaScriptLowerer
         CallExpressionSyntax { Target: IdentifierExpressionSyntax identifier } call when Functions.Contains(identifier.Name) => new LoweredCall(identifier.Name.ToLowerInvariant(), call.Arguments.Select(argument => LowerExpression(argument, diagnostics)).ToArray(), call.Span),
         IdentifierExpressionSyntax identifier when identifier.Name.Equals("bc_self", StringComparison.OrdinalIgnoreCase) => new LoweredLiteral(3L, identifier.Span),
         IdentifierExpressionSyntax identifier when identifier.Name.Equals("nav_none", StringComparison.OrdinalIgnoreCase) => new LoweredLiteral(0L, identifier.Span),
+        IdentifierExpressionSyntax identifier => new LoweredIdentifier(identifier.Name, identifier.Span),
         _ => UnsupportedExpression(syntax, diagnostics),
     };
 
@@ -86,3 +93,4 @@ internal static class RathenaScriptLowerer
         return new LoweredLiteral(0L, expression.Span);
     }
 }
+internal sealed record LoweredBreak(SourceSpan Span) : LoweredScriptStatement(Span);
