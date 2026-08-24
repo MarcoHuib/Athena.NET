@@ -30,6 +30,11 @@ public static class InterConfigLoader
         var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var line in ReadConfigLines(path, visited))
         {
+            if (path == null || path.Contains(".."))
+            {
+                throw new ArgumentException("Invalid file path");
+            }
+            
             if (line.Length == 0)
             {
                 continue;

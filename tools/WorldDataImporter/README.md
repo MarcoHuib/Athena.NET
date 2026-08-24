@@ -1,19 +1,78 @@
 # WorldDataImporter
 
-`WorldDataImporter` converts the pinned rAthena source under `legacy/rathena/npc`
-into Athena.NET `WorldEntity` JSON. Run commands from the repository root.
+`WorldDataImporter` is the compatibility CLI for the emerging Athena world
+compiler. Its pipeline is source loading -> hand-written lexer -> recursive-
+descent syntax tree -> semantic analysis -> lowering -> deterministic C#. The
+MapServer consumes compiled generated C#. JSON output remains useful for compiler
+diagnostics or offline inspection, but is not runtime world data.
 
-## Convert everything currently compatible
+## Generate strongly typed C# (first vertical slice)
 
-This is the normal command for regenerating all warp and WARPNPC definitions that
-the current Athena runtime can execute completely:
+The first generated definition slice is declarative warp/WARPNPC data. Generation
+is intentionally filter-scoped during migration:
+
+```bash
+dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- compile \
+  --source-root legacy/rathena/npc/re/warps \
+  --source-file izlude.txt \
+  --name '#room_out' --name '#room_in' \
+  --name '#room_out03' --name '#room_in03' --kind warp \
+  --output src/MapServer/Generated/World/Izlude/RequiredWarps.cs
+```
+
+Output is ordinary deterministic C# with compact record-struct definitions and
+`WorldBuildInfo` provenance (pinned rAthena commit, compiler version, world hash).
+It does not use runtime Roslyn scripting or define a new runtime instruction VM.
+
+## Generate executable NPC C# (migration slice)
+
+`compile-script` runs the selected rAthena declaration through the tokenizer,
+AST, semantic analysis, executable lowering, and deterministic C# emitter. The
+current checked generated slice is reproduced with:
+
+```bash
+dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- compile-script \
+  --source-root legacy/rathena/npc/re/warps \
+  --source-file cities/izlude.txt \
+  --map int_land04 --name '#intro_to_izlude_d' --kind warp \
+  --output src/MapServer/Generated/World/Izlude/IntroToIzlude.g.cs
+```
+
+The generated class is compiled normally by the MapServer project. An explicit
+generated registry supplies its actor/event definition and factory without
+reflection. Generated scripts call the controlled `ScriptContext`; MapServer
+continues to own client packets, continuations, map state, and authenticated
+CharServer persistence.
+
+Current generated executable coverage includes these real rAthena entities:
+`warp:int_land04:intro_to_izlude_d` (`OnTouch`) and
+`npc:iz_int:wounded swordsman#intro_npc02_iz_int` (`OnClick`). The ordinary NPC
+definition carries its pinned position, direction, class 688, and initial cloak
+option; its generated async behavior starts quest 21001 and emits the verified
+iRO cutin packet through `ScriptContext`. Compiler report JSON remains diagnostic
+output and is not runtime content.
+
+The active `iz_int03/#ship_out03` exit is also generated executable `OnTouch`;
+it derives `int_land03` from duplicate identity, persists the pinned savepoint,
+and performs the existing same-server transfer through `ScriptContext`.
+
+| Runtime entity | Generated equivalent | Runtime consumer | Parity test | Safe to remove JSON |
+|---|---|---|---|---|
+| `int_land04/#intro_to_izlude_d` | `IntroToIzlude.g.cs` | Generated registry + `ScriptContext` | generated stock-iRO session integration | Yes; removed |
+| `iz_int/Wounded Swordsman#intro_npc02_iz_int` | `WoundedSwordsman.cs` | Generated registry + `ScriptContext` | visible actor/click/dialogue/quest integration | Yes; no runtime JSON existed |
+| `iz_int` and `iz_int03` room door pairs | `RequiredWarps.cs` | compiled `WorldMapRegistry` | generated minimal-warp/manual-login tests | Yes; aggregate removed |
+
+## Offline JSON conversion
+
+The converter can still emit JSON for offline diagnostics. Its output is not
+copied or loaded by MapServer:
 
 ```bash
 dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- convert \
   --source-root legacy/rathena/npc/warps \
   --source-root legacy/rathena/npc/re/warps \
   --all-compatible true \
-  --output data/world/entities \
+  --output /tmp/athena-world-entities \
   --report data/world/conversion-unsupported.json
 ```
 
@@ -39,7 +98,7 @@ dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- convert
   --map int_land04 \
   --name '#intro_to_izlude_d' \
   --kind warp \
-  --output data/world/entities
+  --output /tmp/athena-world-entities
 ```
 
 ## Capability report
@@ -52,8 +111,9 @@ dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- capabil
   --output data/world/conversion-capabilities.json
 ```
 
-The report counts commands and marks current capabilities as supported or
-unsupported. It is the roadmap for extending the existing parser/runtime.
+The report is derived from syntax and semantic analysis. It distinguishes parsed
+constructs from fully runtime-supported commands, includes source locations and
+blocking reasons, and does not classify labels or language keywords as commands.
 
 ## Top-level content audit
 
@@ -64,6 +124,18 @@ dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- audit \
 ```
 
 The audit only produces counts and classifications; it does not convert content.
+
+## Novice progression data
+
+```bash
+dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- compile-progression \
+  --rathena-root legacy/rathena \
+  --output src/MapServer/Generated/Progression/NoviceProgression.cs
+```
+
+This deliberately generates only the currently supported renewal Novice base/job
+EXP, HP/SP, stat-point, and relevant job-bonus tables. The pinned YAML remains the
+source of truth.
 
 ## Verification
 

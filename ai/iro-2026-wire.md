@@ -147,6 +147,8 @@ Capture `/Users/marco/Downloads/full-ragnarok-flow-with-walking.pcapng` proves:
 
 ## Verified NPC dialogue evidence
 
+Capture `/Users/marco/Downloads/npc-interaction-npc's_v2.pcapng` additionally proves the tutorial presentation packets used by the current generated slice: `0x08E2/27` carries navigation type/flags, a 16-byte map, coordinates and monster ID; `hideWindow=1` still renders the ground arrows. NPC overhead speech is variable-length `0x008D` with length at offset 2, actor ID at 4 and NUL-terminated text at 8. The Wounded actor transition uses `0x0229/15`, with actor ID at 2 and the 32-bit option/effect state at 10. Athena serializes these from generated world/script state and does not replay capture payloads.
+
 Capture `/Users/marco/Downloads/npc-interaction-heal-action.pcapng` (SHA-256
 `fe0f9b260f3ee9e45c89e12efcc83c3817874b7b6f1db696ee58815bc67de88f`) proves
 the following reassembled TCP dialogue on `192.168.178.55:63328` to
@@ -237,6 +239,14 @@ packets; the stock client resolves them by quest ID.
   actors and the upstream NPC idle-unit state.
 - WARPNPC actors are sent after `0x007D`, matching initial and post-`0x0091`
   capture timing. Actor IDs are allocated by Athena and never copied from capture.
+
+## Verified NPC cutin evidence
+
+The official `npc-interaction-heal-action.pcapng` capture contains fixed 67-byte
+server packet `0x01B3`. Bytes 2..65 are the NUL-padded ASCII image filename and
+byte 66 is the position: `tutorial03.BMP` with position 4 is followed later by an
+empty filename with position 255 to clear the image. Athena uses this exact layout
+for generated rAthena `cutin`; it does not invent a packet.
 
 ## Explicitly disproven assumptions for this target
 Do not reintroduce these without newer verified iRO evidence:

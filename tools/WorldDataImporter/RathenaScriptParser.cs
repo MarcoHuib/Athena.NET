@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.RegularExpressions;
+using Athena.WorldCompiler.Rathena;
 
 internal sealed record ScriptParseIssue(string Construct, int RelativeLine, string SourceText);
 internal sealed record ScriptParseResult(IReadOnlyList<ScriptInstructionDefinition> Instructions, IReadOnlyList<string> Commands, IReadOnlyList<ScriptParseIssue> Issues)
@@ -14,6 +15,13 @@ internal static partial class RathenaScriptParser
         var lines = body.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n');
         var start = Array.FindIndex(lines, line => line.Trim().Equals("OnTouch:", StringComparison.Ordinal));
         if (start < 0) return new([], [], [new("OnTouch", 0, "missing OnTouch label")]);
+        // Syntax is owned by the compiler parser. The narrow DTO lowering below is
+        // temporary compatibility with ScriptExecutionSession during migration.
+        var syntaxEnd = lines.Length > start && lines[^1].Trim() == "}" ? lines.Length - 1 : lines.Length;
+        var syntax = new RathenaParser(string.Join('\n', lines[start..syntaxEnd]), "<script>", start + 1).ParseCompilationUnit();
+        var syntaxIssues = syntax.Diagnostics.Where(issue => issue.Severity == "Error")
+            .Select(issue => new ScriptParseIssue(issue.Construct ?? "syntax", issue.Span.Start.Line, issue.Message)).ToArray();
+        if (syntaxIssues.Length > 0) return new([], [], syntaxIssues);
         var parser = new Parser(lines, start + 1);
         var instructions = parser.ParseBlock(false);
         return new(instructions, parser.Commands.Order(StringComparer.Ordinal).ToArray(), parser.Issues);
@@ -38,6 +46,7 @@ internal static partial class RathenaScriptParser
                 if (line == "next;") { Commands.Add("next"); result.Add(new NextInstruction()); continue; }
                 if (line == "close;") { Commands.Add("close"); result.Add(new CloseInstruction()); continue; }
                 if (line == "close2;") { Commands.Add("close2"); result.Add(new Close2Instruction()); continue; }
+                if (TrySetQuest(line, out var setQuestId)) { Commands.Add("setquest"); result.Add(new SetQuestInstruction(setQuestId)); continue; }
                 if (TryCompleteQuest(line, out var questId)) { Commands.Add("completequest"); result.Add(new CompleteQuestInstruction(questId)); continue; }
                 if (TryAssignment(line, out var variable, out var expression)) { Commands.Add("assignment"); result.Add(new AssignmentInstruction(variable, expression)); continue; }
                 if (TryTransfer(line, "warp", out expression, out var x, out var y, out _, out _)) { Commands.Add("warp"); result.Add(new WarpInstruction(expression, x, y)); continue; }
@@ -77,6 +86,7 @@ internal static partial class RathenaScriptParser
 
     private static bool TryMessage(string line, out string text) { var match = MessageRegex().Match(line); text = match.Success ? Unescape(match.Groups[1].Value) : ""; return match.Success; }
     private static bool TryCompleteQuest(string line, out uint questId) { var match = CompleteQuestRegex().Match(line); return uint.TryParse(match.Groups[1].Value, NumberStyles.None, CultureInfo.InvariantCulture, out questId); }
+    private static bool TrySetQuest(string line, out uint questId) { var match = SetQuestRegex().Match(line); return uint.TryParse(match.Groups[1].Value, NumberStyles.None, CultureInfo.InvariantCulture, out questId); }
     private static bool TryAssignment(string line, out string variable, out ScriptExpressionDefinition expression)
     {
         expression = default!;
@@ -121,6 +131,7 @@ internal static partial class RathenaScriptParser
 
     [GeneratedRegex("^mes\\s+\"(.*)\"\\s*;$")] private static partial Regex MessageRegex();
     [GeneratedRegex("^completequest\\s+(\\d+)\\s*;$")] private static partial Regex CompleteQuestRegex();
+    [GeneratedRegex("^setquest\\s+(\\d+)\\s*;$")] private static partial Regex SetQuestRegex();
     [GeneratedRegex("^(\\.@[A-Za-z0-9_]+\\$?)\\s*=\\s*(.+);$")] private static partial Regex AssignmentRegex();
     [GeneratedRegex("^if\\s*\\(\\s*isbegin_quest\\((\\d+)\\)\\s*==\\s*([012])\\s*\\)\\s*(\\{)?$")] private static partial Regex QuestIfRegex();
     [GeneratedRegex("^if\\s*\\(\\s*select\\((.*)\\)\\s*==\\s*1\\s*\\)\\s*\\{$")] private static partial Regex SelectIfRegex();

@@ -123,6 +123,11 @@ namespace CharServer.Migrations
                         .HasColumnType("tinyint")
                         .HasColumnName("font");
 
+                    b.Property<decimal>("GameplayStateVersion")
+                        .IsConcurrencyToken()
+                        .HasColumnType("decimal(20,0)")
+                        .HasColumnName("gameplay_state_version");
+
                     b.Property<long>("GuildId")
                         .HasColumnType("bigint")
                         .HasColumnName("guild_id");

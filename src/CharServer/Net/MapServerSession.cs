@@ -18,6 +18,8 @@ public sealed class MapServerSession : IDisposable, ISession
         [PacketConstants.MapSavePosition] = 30,
         [PacketConstants.MapQuestStateRequest] = MapQuestStateProtocol.RequestLength,
         [PacketConstants.MapSavePointRequest] = MapSavePointProtocol.RequestLength,
+        [PacketConstants.MapGameplayStateGetRequest] = MapCharacterGameplayStateProtocol.GetRequestLength,
+        [PacketConstants.MapGameplayStateUpdateRequest] = MapCharacterGameplayStateProtocol.UpdateRequestLength,
     };
 
     private readonly TcpClient _client;
@@ -104,6 +106,12 @@ public sealed class MapServerSession : IDisposable, ISession
                 break;
             case PacketConstants.MapSavePointRequest:
                 await HandleSavePointAsync(packet, cancellationToken);
+                break;
+            case PacketConstants.MapGameplayStateGetRequest:
+                await HandleGameplayStateGetAsync(packet, cancellationToken);
+                break;
+            case PacketConstants.MapGameplayStateUpdateRequest:
+                await HandleGameplayStateUpdateAsync(packet, cancellationToken);
                 break;
             default:
                 CharLogger.Warning($"Unknown map server packet 0x{packetType:X4}, disconnecting.");
@@ -335,6 +343,101 @@ public sealed class MapServerSession : IDisposable, ISession
         await WriteAsync(MapQuestStateProtocol.BuildResponse(request.CharId, request.QuestId, state, success), cancellationToken);
     }
 
+    private async Task HandleGameplayStateGetAsync(byte[] packet, CancellationToken cancellationToken)
+    {
+        if (!MapCharacterGameplayStateProtocol.TryParseGet(packet, out var accountId, out var charId)) return;
+        CharacterGameplayStateDto? state = null; byte result = 1;
+        if (IsGameplayStateRequestAuthorized(_authenticated, _ownedCharacters, accountId, charId))
+        {
+            try
+            {
+                await using var db = _dbFactory();
+                var character = db is null
+                    ? null
+                    : await db.Characters.AsNoTracking().SingleOrDefaultAsync(
+                        c => c.AccountId == accountId && c.CharId == charId && c.DeleteDate == 0,
+                        cancellationToken);
+                if (character is not null) { state = CharacterGameplayStateDto.From(character); result = 0; }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                CharLogger.Warning(
+                    $"Character gameplay state read rejected reason=database-error charId={charId} " +
+                    $"error={ex.GetType().Name}.");
+            }
+        }
+        await WriteAsync(MapCharacterGameplayStateProtocol.BuildResponse(PacketConstants.MapGameplayStateGetResponse, result, charId, state), cancellationToken);
+    }
+
+    private async Task HandleGameplayStateUpdateAsync(byte[] packet, CancellationToken cancellationToken)
+    {
+        if (!MapCharacterGameplayStateProtocol.TryParseUpdate(packet, out var accountId, out var expected, out var updated)) return;
+        CharacterGameplayStateDto? state = null; byte result = 1;
+        if (IsValidGameplayStateUpdate(expected, updated) &&
+            IsGameplayStateRequestAuthorized(_authenticated, _ownedCharacters, accountId, expected.CharacterId))
+        {
+            try
+            {
+                await using var db = _dbFactory();
+                if (db is not null)
+                {
+                    var strategy = db.Database.CreateExecutionStrategy();
+                    await strategy.ExecuteAsync(async () =>
+                    {
+                        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+                        var character = await db.Characters.SingleOrDefaultAsync(
+                            c => c.AccountId == accountId && c.CharId == expected.CharacterId && c.DeleteDate == 0,
+                            cancellationToken);
+                        if (character is null || !TryApplyGameplayState(character, expected, updated))
+                        {
+                            result = 2;
+                            await transaction.RollbackAsync(cancellationToken);
+                            return;
+                        }
+
+                        await db.SaveChangesAsync(cancellationToken);
+                        await transaction.CommitAsync(cancellationToken);
+                        state = CharacterGameplayStateDto.From(character);
+                        result = 0;
+                    });
+                }
+            }
+            catch (DbUpdateConcurrencyException)
+            {
+                result = 2;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                CharLogger.Warning(
+                    $"Character gameplay state update rejected reason=database-error charId={expected.CharacterId} " +
+                    $"error={ex.GetType().Name}.");
+            }
+        }
+        await WriteAsync(MapCharacterGameplayStateProtocol.BuildResponse(PacketConstants.MapGameplayStateUpdateResponse, result, expected.CharacterId, state), cancellationToken);
+    }
+
+    internal static bool IsValidGameplayStateUpdate(CharacterGameplayStateDto expected, CharacterGameplayStateDto updated)
+        => expected.CharacterId == updated.CharacterId &&
+           expected.CharacterId != 0 &&
+           expected.JobClass == updated.JobClass &&
+           updated.BaseLevel > 0 &&
+           updated.JobLevel > 0 &&
+           updated.MaxHp > 0 &&
+           updated.MaxSp > 0 &&
+           updated.CurrentHp <= updated.MaxHp &&
+           updated.CurrentSp <= updated.MaxSp &&
+           expected.Version < ulong.MaxValue;
+
+    internal static bool TryApplyGameplayState(Athena.Net.CharServer.Db.Entities.CharCharacter character, CharacterGameplayStateDto expected, CharacterGameplayStateDto updated)
+    {
+        if(character.CharId!=expected.CharacterId||updated.CharacterId!=expected.CharacterId||character.GameplayStateVersion!=expected.Version)return false;
+        character.BaseLevel=updated.BaseLevel; character.JobLevel=updated.JobLevel; character.BaseExp=updated.BaseExperience; character.JobExp=updated.JobExperience;
+        character.Hp=updated.CurrentHp; character.Sp=updated.CurrentSp; character.MaxHp=updated.MaxHp; character.MaxSp=updated.MaxSp;
+        character.StatusPoint=updated.StatPoints; character.SkillPoint=updated.SkillPoints; character.Str=updated.Strength; character.Agi=updated.Agility;
+        character.Vit=updated.Vitality; character.Int=updated.Intelligence; character.Dex=updated.Dexterity; character.Luk=updated.Luck; character.GameplayStateVersion++;
+        return true;
+    }
+
     internal static bool IsPositionSaveAuthorized(
         bool authenticated,
         IReadOnlySet<(uint AccountId, uint CharId)> ownedCharacters,
@@ -343,6 +446,9 @@ public sealed class MapServerSession : IDisposable, ISession
     {
         return authenticated && ownedCharacters.Contains((accountId, charId));
     }
+
+    internal static bool IsGameplayStateRequestAuthorized(bool authenticated, IReadOnlySet<(uint AccountId,uint CharId)> ownedCharacters, uint accountId, uint charId)
+        => authenticated && charId != 0 && ownedCharacters.Contains((accountId,charId));
 
     internal static bool IsQuestStateRequestAuthorized(
         bool authenticated,

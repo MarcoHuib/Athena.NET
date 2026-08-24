@@ -5,6 +5,38 @@ namespace Athena.Net.MapServer.Net;
 
 public static class IroNpcDialoguePackets
 {
+    public static byte[] BuildNpcTalk(uint actorId, string text)
+    {
+        var encoded = Encoding.UTF8.GetBytes(text);
+        var packet = new byte[8 + encoded.Length + 1];
+        BinaryPrimitives.WriteUInt16LittleEndian(packet, 0x008d);
+        BinaryPrimitives.WriteUInt16LittleEndian(packet.AsSpan(2), checked((ushort)packet.Length));
+        BinaryPrimitives.WriteUInt32LittleEndian(packet.AsSpan(4), actorId);
+        encoded.CopyTo(packet.AsSpan(8));
+        return packet;
+    }
+
+    public static byte[] BuildNpcOption(uint actorId, uint effectState)
+    {
+        var packet = new byte[15];
+        BinaryPrimitives.WriteUInt16LittleEndian(packet, 0x0229);
+        BinaryPrimitives.WriteUInt32LittleEndian(packet.AsSpan(2), actorId);
+        BinaryPrimitives.WriteUInt32LittleEndian(packet.AsSpan(10), effectState);
+        return packet;
+    }
+
+    public static byte[] BuildNavigateTo(string map, ushort x, ushort y)
+    {
+        var packet = new byte[27];
+        BinaryPrimitives.WriteUInt16LittleEndian(packet, 0x08e2);
+        packet[2] = 0; // coordinate destination
+        packet[3] = 0; // NAV_NONE
+        packet[4] = 1; // keep the navigation window hidden; ground arrows remain visible
+        Encoding.ASCII.GetBytes(map.AsSpan(), packet.AsSpan(5, Math.Min(16, map.Length)));
+        BinaryPrimitives.WriteUInt16LittleEndian(packet.AsSpan(21), x);
+        BinaryPrimitives.WriteUInt16LittleEndian(packet.AsSpan(23), y);
+        return packet;
+    }
     public static bool TryParseInteraction(ReadOnlySpan<byte> packet, out uint actorId)
         => TryParseActorPacket(packet, PacketConstants.IroCzNpcInteraction, PacketConstants.IroCzNpcInteractionLength, out actorId);
     public static bool TryParseNext(ReadOnlySpan<byte> packet, out uint actorId)
@@ -32,6 +64,18 @@ public static class IroNpcDialoguePackets
 
     public static byte[] BuildNext(uint actorId) => BuildServerActorPacket(PacketConstants.ZcNpcNext, actorId);
     public static byte[] BuildClose(uint actorId) => BuildServerActorPacket(PacketConstants.ZcNpcClose, actorId);
+    public static byte[] BuildCutin(string image, byte position)
+    {
+        if (image.Any(character => character > 0x7f)) throw new ArgumentException("Captured cutin encoding is ASCII-only.", nameof(image));
+        var wireName = image.Length == 0 || image.EndsWith(".BMP", StringComparison.OrdinalIgnoreCase) ? image : image + ".BMP";
+        var encoded = Encoding.ASCII.GetBytes(wireName);
+        if (encoded.Length >= 64) throw new ArgumentException("Cutin image exceeds the 63-byte iRO field.", nameof(image));
+        var packet = new byte[67];
+        BinaryPrimitives.WriteInt16LittleEndian(packet, PacketConstants.ZcShowImage);
+        encoded.CopyTo(packet.AsSpan(2, 64));
+        packet[66] = position;
+        return packet;
+    }
     public static byte[] BuildMenu(uint actorId, IReadOnlyList<string> options)
     {
         if (options.Count == 0 || options.Any(option => option.Length == 0 || option.Contains(':') || option.Any(character => character > 0x7f))) throw new ArgumentException("Captured menus require non-empty ASCII options without colons.", nameof(options));

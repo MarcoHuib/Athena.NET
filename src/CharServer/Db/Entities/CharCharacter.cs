@@ -2,6 +2,7 @@ namespace Athena.Net.CharServer.Db.Entities;
 
 public sealed class CharCharacter
 {
+    public ulong GameplayStateVersion { get; set; }
     public uint CharId { get; set; }
     public uint AccountId { get; set; }
     public byte CharNum { get; set; }

@@ -1,219 +1,111 @@
 # Athena.NET world data
 
-## Character position persistence
+## Runtime architecture
 
-CharServer owns `CharDbContext` and persistent character rows. In schema order,
-the location columns are `last_map`, `last_x`, `last_y`, `last_instanceid`, then
-`save_map`, `save_x`, `save_y`. Thus a row projection such as
-`iz_int 18 26 0 iz_int 18 26` contains current/login location first and savepoint
-second. Character creation initializes both groups from `start_point`.
+MapServer's default world is compiled C#. It does not scan `data/world`, load
+WorldEntity JSON, or overlay a legacy warp aggregate.
 
-Character selection now resolves `LastMap/LastX/LastY`; only when `LastMap` is
-empty does it use `SaveMap/SaveX/SaveY`. MapServer keeps current state in memory,
-marks it dirty after movement, and sends internal `0x2B28/30` to CharServer on a
-successful same-server warp and on session EOF/cancellation. CharServer accepts a
-save only from an authenticated MapServer connection that consumed the matching
-single-use `(accountId,charId)` auth node, then updates only `last_map/last_x/last_y`
-for the matching non-deleted row. Executable script `savepoint` uses the separate
-acknowledged internal `0x2B2B/30 -> 0x2B2C/7` contract and updates only
-`save_map/save_x/save_y`; a failed write is reported to the script runtime.
+Current pipeline:
 
-There is no per-movement database write and no periodic checkpoint yet. A normal
-disconnect persists the latest dirty position; a sudden process crash can still
-lose movement since the last warp.
+`pinned rAthena -> lexer/parser/semantics/lowering -> deterministic C# -> normal dotnet build -> WorldMapRegistry -> MapClientSession`
 
-## World-entity conversion pipeline
+The intentionally supported runtime slice is:
 
-Athena's developer-facing world-data pipeline is:
+- `iz_int/#room_out` and `#room_in`, pinned `izlude.txt:57,63`;
+- active instance variants `iz_int03/#room_out03` and `#room_in03`, pinned
+  `izlude.txt:60,66`;
+- `iz_int03/#ship_out03`, pinned duplicate at `izlude.txt:80`, generated
+  executable `OnTouch` with savepoint and transfer to `int_land03`;
+- `int_land04/#intro_to_izlude_d`, generated executable `OnTouch`;
+- `iz_int/Wounded Swordsman#intro_npc02_iz_int`, generated executable `OnClick`.
 
-`rAthena source -> source parser -> resolver/static evaluator -> Athena WorldEntity -> one JSON file per entity -> WorldRegistry -> derived runtime indexes`
+`GeneratedScriptRegistry` owns explicit script factories and entity metadata.
+Generated and custom scripts share `INpcScript`, `ScriptContext`, world entities,
+and actor contracts. Duplicate custom registrations fail unless replacement is
+explicitly requested.
 
-One file under `data/world/entities/<map>/<entity>.json` is the source of truth for
-one logical entity. Components that belong together stay together: an entity may
-contain an optional Actor plus multiple Triggers, and every Trigger owns its
-ordered Actions. An invisible trigger therefore needs no Actor. Runtime indexes
-(`EntitiesById`, map actors, and OnTouch route lookups) are derived in memory;
-there are no separately maintained actor/trigger/action files.
+The former `data/world/entities`, `data/world/dev`, and `data/world/warps.json`
+runtime datasets are removed. JSON files remaining under `data/world` are compiler
+reports only. Pinned `legacy/rathena` is authoritative and remains available for
+progressive regeneration.
 
-An entity may preserve a parsed script binding separately from executable
-Triggers. The binding records trigger geometry, normalized source, required
-runtime capabilities, and explicit `SourceParsed`/`RuntimeExecutable` state.
-This lets Athena own the actor and source without registering unsafe behavior.
+## Generated gameplay execution
 
-Converted scripts use the existing dialogue/quest instruction model. The current
-generic source subset adds `OnTouch`, `close2`, runtime map expressions, `warp`,
-and acknowledged `savepoint`. Expressions cover local string variables,
-concatenation, `strnpcinfo(2)`, and `replacestr`. Duplicate entities reference the
-base NPC name while execution context retains the duplicate's own identity; this
-is what makes `strnpcinfo(2)` resolve the executing duplicate rather than its
-template. Class 45 actors preserve the verified `JT_WARPNPC` visual.
+Generated scripts use existing MapClientSession dialogue continuations, iRO packet
+serializers, and authenticated CharServer persistence. They never instantiate
+`ScriptExecutionSession`. That interpreter remains only for explicitly constructed
+legacy unit/integration fixtures while migration cleanup continues.
 
-Unsupported source is never discarded silently. It remains parsed/preserved with
-`RuntimeExecutable=false` and is emitted in converter diagnostics with source
-location. The capability scan is inventory/roadmap data, not converted content.
+The generated Wounded Swordsman resolves `4_TOWER_02` from pinned `npc.hpp`, emits
+direction and cloak option state, executes the real dialogue, starts quest 21001,
+and uses the capture-verified cutin packet through `ScriptContext`.
 
-`data/world/warps.json` remains a **temporary migration source**. WorldEntity
-definitions load first and win over a legacy entry with the same map and entity
-name, preventing duplicate actors/triggers. The legacy file will disappear only
-after deliberate category-by-category migration.
+## Character position and savepoint persistence
 
-### Importer commands
+CharServer owns persistent character rows. MapServer keeps current position in
+memory and sends authenticated position/savepoint requests to CharServer after
+warps, savepoint commands, and normal disconnect handling. Generated scripts do
+not access EF Core or MSSQL directly.
 
-Audit the checked-in NPC source tree (counts/classifications only):
+## Authoritative character gameplay state
 
-```bash
-dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- audit \
-  --source-root legacy/rathena/npc \
-  --output data/world/conversion-audit.json
-```
+After MapAuth succeeds, MapServer performs a separate authenticated gameplay-state
+read before sending the iRO bootstrap. `CharacterGameplayStateSession` is the one
+state owner for the active session. Its immutable snapshot contains levels,
+experience, HP/SP and their stored maxima, stat/skill points, and the six persistent
+base stats. Temporary statuses and script locals are deliberately excluded.
 
-Run the deliberately filtered tutorial conversion:
+CharServer remains the durable owner. Updates carry the expected and proposed
+complete snapshot; CharServer checks authenticated character ownership and the
+`gameplay_state_version` concurrency token, then commits all changed columns in one
+EF transaction. MapServer replaces its local snapshot only after that commit is
+acknowledged with the incremented authoritative version.
 
-```bash
-dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- convert \
-  --source-root legacy/rathena/npc/warps \
-  --source-root legacy/rathena/npc/re/warps \
-  --source-file re/warps/cities/izlude.txt \
-  --map iz_int03 \
-  --kind warp \
-  --output data/world/entities
-```
+HP/SP and MaxHP/MaxSP already existed as relational `char` fields and remain stored.
+Outside the generated Novice progression slice the maxima are transported unchanged;
+unsupported jobs do not receive invented recalculation formulas.
 
-Use `--map iz_int` with the same filters for the runtime-tested base tutorial
-map. The checked-in slice contains only the three tutorial entities for
-`iz_int` and the same three for `iz_int03`.
+## Novice progression
 
-The stock iRO client has runtime-proven all six executable entities, including
-the ordered `#ship_out` actions and same-MapServer transition to `int_land`.
-The `int_land/#intro_to_izlude` actor and script are now WorldEntity-owned, but
-that base-map binding remains the earlier preserved non-executable migration file.
-The narrowly generated `int_land04/#intro_to_izlude_d` duplicate is the first
-source-derived executable OnTouch script; it reuses the now proven dialogue,
-selection, and quest runtime rather than defining NPC-specific behavior.
+`compile-progression` reads pinned renewal `job_exp.yml`, `job_basepoints.yml`,
+`job_stats.yml`, and `statpoint.yml` and emits deterministic strongly typed C#.
+The generated table currently covers job class 0 (Novice), base levels 1-99 and
+job levels 1-10. EXP entries are per-current-level costs, not cumulative totals.
 
-Developer-only runtime fixtures live separately under `data/world/dev`. They are
-loaded through the same WorldRegistry and visibility indexes as converted content,
-but are not rAthena provenance. The single `int_land04/Athena Test NPC` fixture exists
-only to stock-client-test dialogue and quest state at `int_land04 (55,63)` and can be removed by deleting
-its one file; it must never be treated as production world content.
+`CharacterProgressionService` applies base and job EXP independently, loops over
+all crossed thresholds, awards the difference between cumulative stat-point rows,
+and awards one skill point per job level. One complete resulting gameplay snapshot
+is persisted through the versioned CharServer transaction before MapServer publishes
+it or sends client parameter updates. A failed/stale write sends no success updates.
 
-Quest state is character gameplay data, not WorldEntity data. WorldEntity scripts
-may contain typed quest instructions, but active/completed rows persist in the
-character database's existing `quest` table through an authenticated MapServer to
-CharServer contract. The developer fixture uses real client-known tutorial quest
-21001 because no safe developer quest-ID namespace exists; it exercises only the
-captured absent -> active -> completed lifecycle and should be used on development
-characters.
+Base-level recalculation uses the pinned Novice HP/SP base tables, persistent VIT/INT,
+and generated Novice job bonuses. A base level fully restores recalculated HP/SP as
+in `pc_checkbaselevelup`; job-only recalculation preserves current HP/SP within the
+new maxima. Equipment/status modifiers remain outside this Novice-only slice.
 
-The Athena MapServer-to-CharServer quest persistence contract is fixed and
-explicit. Request `0x2B29/15` contains `accountId:u32` at offset 2,
-`charId:u32` at 6, `questId:u32` at 10, and operation/state at 14 (`0` query,
-`1` active, `2` completed). Response `0x2B2A/12` contains `charId:u32` at 2,
-`questId:u32` at 6, resulting state at 10, and success at 11. The authenticated
-CharServer session must own the account/character pair. Database errors return a
-failure response without terminating that internal connection. With
-`--auto-migrate`, CharServer applies its EF Core migrations; EF owns the complete
-CharServer schema, including `quest`. Databases previously created by the removed
-`EnsureCreated` bootstrap have no migration history and require a one-time rebuild
-or an explicitly managed baseline before using the initial CharServer migration.
+## Regeneration
 
-Filters may select `--source-file`, `--map`, `--name`, and/or `--kind`. At least
-one is mandatory so an accidental unrestricted conversion cannot generate the
-whole tree.
-
-Convert only the first executable duplicate-script integration entity:
+Generate the current minimal static warps:
 
 ```bash
-dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- convert \
-  --source-root legacy/rathena/npc/warps \
-  --source-root legacy/rathena/npc/re/warps \
-  --source-file re/warps/cities/izlude.txt \
-  --map int_land04 --name '#intro_to_izlude_d' --kind warp \
-  --output data/world/entities
+dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- compile \
+  --source-root legacy/rathena/npc/re/warps/cities \
+  --source-file izlude.txt \
+  --name '#room_out' --name '#room_in' \
+  --name '#room_out03' --name '#room_in03' --kind warp \
+  --output src/MapServer/Generated/World/Izlude/RequiredWarps.cs
 ```
 
-Create the command/capability roadmap without generating entities:
-
-```bash
-dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- capabilities \
-  --source-root legacy/rathena/npc \
-  --output data/world/conversion-capabilities.json
-```
-
-Bulk-convert only definitions that the current runtime can execute completely:
-
-```bash
-dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- convert \
-  --source-root legacy/rathena/npc/warps \
-  --source-root legacy/rathena/npc/re/warps \
-  --all-compatible true \
-  --output data/world/entities \
-  --report data/world/conversion-unsupported.json
-```
-
-The explicit switch and report are mandatory. Parsed scripts with any missing
-capability are omitted rather than partially generated. Conflicting deterministic
-IDs are also omitted and listed for manual source-precedence resolution.
-
-## Legacy rAthena warp aggregate
-
-Source repository commit:
-`6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca`.
-
-Renewal input is the combination enabled by rAthena's warp configs:
-
-- `legacy/rathena/npc/warps` (81 files)
-- `legacy/rathena/npc/re/warps` (58 files)
-
-The retained legacy `warps.json` parses tab-separated declarative `warp` records into
-unambiguous center/radius geometry. It supports comments, whitespace, same-map and
-cross-map destinations, zero/larger radii, and statically resolvable
-`duplicate(name)`. WARPNPC scripts and unresolved WARPNPC duplicates are reported
-as dynamic/scripted. Their static visual name/map/center/radius is retained, but
-no destination or execution is inferred.
-
-Current deterministic output `data/world/warps.json` reports:
-
-```text
-files:                         139
-static warps:                 3585
-resolved static duplicates:      0
-dynamic/scripted WARPNPC:       126
-unsupported/malformed:            0
-maps with static warps:          576
-```
-
-Regeneration command and GPL-3.0 provenance are in `data/world/README.md`.
-MapServer copies the generated file to its output and loads it at startup; there
-is no runtime dependency on the legacy checkout and no hand-coded tutorial list.
-
-## Static and scripted warp actors
-
-Every declarative `warp` has rAthena class `JT_WARPNPC`; dynamic WARPNPC scripts
-also retain visual-only actor geometry. `WorldMapRegistry` creates stable logical
-`WarpActor` instances from that same imported state. A thread-safe allocator uses
-rAthena's separate NPC domain beginning at `110000000`, avoiding normal low
-character IDs without copying official capture IDs.
-
-On each stock-iRO `0x007D/3`, MapServer clears the current visibility cycle and
-sends visible warp actors within the rAthena-compatible 14-cell square range.
-Movement can add actors newly entering range, without duplicate spawn in the same
-cycle. Same-map `0x0091` causes another `0x007D`, which begins the destination
-visibility cycle. Explicit despawn is not synthesized because map reload resets
-the client world in the captured flow.
-
-The actor packet is capture-proven `0x09FF`: a fixed 84-byte modern idle-unit
-prefix plus actor name. Dynamic values come from Athena actor state; NPC defaults
-and constants match three official WARPNPC records and upstream layout. `0x0368`
-actor-info response remains unimplemented because the capture did not require it
-for portal visibility.
+Compiler audit/capability reports may still scan the complete pinned NPC tree;
+their breadth does not imply runtime support.
 
 ## Still missing
 
-- periodic/debounced position checkpoints and crash recovery;
-- generic NPC/script execution;
-- dynamic scripted warp destinations;
-- actor despawn/view-range exit handling;
-- actor-info response semantics;
-- collision/GAT pathfinding;
-- cross-MapServer `0x0092` routing and auth transfer.
+The minimal `iz_int03` slice now also includes compiler-generated navigation targets, both Wounded Swordsman actor states/scripts, and actor-only definitions for the pinned `int_land03` Captain Carocc and Lumin duplicates. Captain/Lumin are visible, but their scripts deliberately remain unregistered until real healing, EXP, status-effect, inventory, and related semantics exist; no no-op gameplay commands are used.
+
+- Remaining rAthena NPCs, warps, shops, monsters, items, and scripts.
+- Poring spawn/combat/death and quest kill-progress synchronization.
+- Broader event/state-machine lowering and persistent rAthena variable scopes.
+
+Expand the runtime only through tested vertical slices; do not restore bulk JSON
+runtime data as a shortcut.

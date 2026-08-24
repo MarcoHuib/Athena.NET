@@ -514,20 +514,18 @@ matching non-deleted row. `save_map/save_x/save_y` remain respawn/savepoint stat
 Normal movement is in-memory and dirty; no per-tile write or timed checkpoint is
 performed.
 
-The former hard-coded tutorial list is replaced by `data/world/warps.json`,
-generated deterministically from 139 files in the common and Renewal rAthena warp
-folders at commit `6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca`.
-It contains 3585 static warps across 576 maps, plus 126 classified dynamic/scripted
-WARPNPC visuals, zero resolved static duplicates in this source snapshot, and zero
-malformed/unsupported static records. Dynamic scripts retain visual geometry but
-never receive a guessed destination.
+The runtime no longer reads `data/world/warps.json` or entity JSON. The default
+compiled world intentionally contains the pinned room transitions for `iz_int`
+and the actively used `iz_int03` instance plus the two generated executable
+entities used by the gameplay slice. The complete pinned rAthena tree remains available to
+regenerate additional definitions as their runtime capabilities are implemented.
 
 Static and visual-only WARPNPC definitions now produce stable `WarpActor` state.
 Actor IDs come from a thread-safe rAthena NPC domain beginning at 110000000, not
 captured IDs. On `0x007D`, the server emits visible actors in a 14-cell square via
 structured `0x09FF`; movement emits newly in-range actors once per visibility
-cycle. This makes `#room_out`, then `#room_in`, and later visual-only `#ship_out`
-available from the same imported definitions that drive their geometry.
+cycle. This makes the two currently supported room actors available from the
+same compiled definitions that drive their geometry.
 
 ## Hypotheses / unknown
 - Semantics and validation requirements for `0x0C1F` bytes `0x0E..0x3E8`,

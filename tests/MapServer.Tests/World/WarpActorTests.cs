@@ -35,15 +35,4 @@ public sealed class WarpActorTests
         Assert.All(ids, id => Assert.True(id >= 110_000_000));
     }
 
-    [Fact]
-    public void DynamicScriptedWarp_CanProvideVisualWithoutStaticDestination()
-    {
-        var actor = Assert.Single(
-            WorldMapRegistry.Tutorial.GetVisibleWarpActors("iz_int03", 58, 28),
-            candidate => candidate.Name == "#ship_out03");
-
-        Assert.Equal((ushort)56, actor.X);
-        Assert.Equal((ushort)15, actor.Y);
-        Assert.Equal((ushort)45, WarpActor.ClassId);
-    }
 }

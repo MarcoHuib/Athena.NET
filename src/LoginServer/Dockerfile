@@ -10,4 +10,6 @@ FROM ${DOTNET_SDK_IMAGE} AS runtime
 WORKDIR /app
 COPY --from=build /app/out/ ./
 RUN mkdir -p /app/conf
+RUN chown -R 1000:1000 /app
+USER 1000
 ENTRYPOINT ["dotnet", "LoginServer.dll"]

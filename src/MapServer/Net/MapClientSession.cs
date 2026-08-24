@@ -3,10 +3,11 @@ using System.Net;
 using System.Net.Sockets;
 using Athena.Net.MapServer.Logging;
 using Athena.Net.MapServer.World;
+using Athena.Net.MapServer.World.GeneratedScripts;
 
 namespace Athena.Net.MapServer.Net;
 
-public sealed class MapClientSession : IDisposable
+public sealed class MapClientSession : IDisposable, INpcScriptHost
 {
     private static readonly Dictionary<short, int> PacketLengths = new()
     {
@@ -34,11 +35,17 @@ public sealed class MapClientSession : IDisposable
     private readonly CharServerConnector _charConnector;
     private readonly ICharacterPositionPersistence _positionPersistence;
     private readonly ICharacterQuestPersistence _questPersistence;
+    private readonly ICharacterGameplayStatePersistence _gameplayStatePersistence;
     private readonly WorldMapRegistry _worldMapRegistry;
     private readonly SemaphoreSlim _writeLock = new(1, 1);
     private readonly CancellationTokenSource _sessionCancellation = new();
     private readonly HashSet<uint> _visibleActorIds = new();
     private ScriptExecutionSession? _scriptExecutionSession;
+    private Task? _generatedScriptTask;
+    private string? _generatedScriptEntityId;
+    private uint _generatedScriptActorId;
+    private GeneratedContinuation? _generatedContinuation;
+    private TaskCompletionSource _generatedSuspended = NewSignal();
     private uint _accountId;
     private uint _charId;
     private uint _loginId1;
@@ -51,6 +58,7 @@ public sealed class MapClientSession : IDisposable
     private bool _authenticated;
     private bool _positionDirty;
     private int _disposed;
+    private CharacterGameplayStateSession? _gameplayState;
 
     public MapClientSession(int sessionId, TcpClient client, CharServerConnector charConnector)
         : this(sessionId, client, charConnector, WorldMapRegistry.Tutorial)
@@ -63,7 +71,8 @@ public sealed class MapClientSession : IDisposable
         CharServerConnector charConnector,
         WorldMapRegistry worldMapRegistry,
         ICharacterPositionPersistence? positionPersistence = null,
-        ICharacterQuestPersistence? questPersistence = null)
+        ICharacterQuestPersistence? questPersistence = null,
+        ICharacterGameplayStatePersistence? gameplayStatePersistence = null)
     {
         SessionId = sessionId;
         _client = client;
@@ -71,6 +80,7 @@ public sealed class MapClientSession : IDisposable
         _charConnector = charConnector;
         _positionPersistence = positionPersistence ?? charConnector;
         _questPersistence = questPersistence ?? charConnector;
+        _gameplayStatePersistence = gameplayStatePersistence ?? charConnector;
         _worldMapRegistry = worldMapRegistry;
     }
 
@@ -86,14 +96,16 @@ public sealed class MapClientSession : IDisposable
         ICharacterPositionPersistence? positionPersistence = null,
         ICharacterQuestPersistence? questPersistence = null,
         uint accountId = 0,
-        uint charId = 0)
+        uint charId = 0,
+        ICharacterGameplayStatePersistence? gameplayStatePersistence = null)
         : this(
             sessionId,
             client,
             charConnector,
             worldMapRegistry ?? WorldMapRegistry.Tutorial,
             positionPersistence,
-            questPersistence)
+            questPersistence,
+            gameplayStatePersistence)
     {
         _iroAuthRequested = iroAuthenticated;
         _authRequested = iroAuthenticated;
@@ -111,6 +123,8 @@ public sealed class MapClientSession : IDisposable
     internal ushort CurrentX => _x;
     internal ushort CurrentY => _y;
     internal ScriptExecutionState? ActiveScriptState => _scriptExecutionSession?.State;
+    internal string? ActiveGeneratedScriptEntityId => _generatedScriptEntityId;
+    internal CharacterGameplayStateSession? GameplayState => _gameplayState;
 
     public async Task RunAsync(CancellationToken cancellationToken)
     {
@@ -155,16 +169,44 @@ public sealed class MapClientSession : IDisposable
             _mapName = authOk.MapName;
             _x = authOk.X;
             _y = authOk.Y;
-            _authenticated = true;
-            _positionDirty = false;
-            MapLogger.Info(
-                $"[iRO MAP DEBUG] 0x0C1F MapAuthNode authentication succeeded accountId={authOk.AccountId} charId={authOk.CharId} sessionMatch=true");
-            _ = SendIroInitialBootstrapAsync(authOk, CancellationToken.None);
+            _ = CompleteIroAuthenticationSafelyAsync(authOk);
             return;
         }
 
         _ = SendAcceptEnterAsync(authOk, CancellationToken.None);
         _ = SendNotifyActorInitAsync(CancellationToken.None);
+    }
+
+    internal async Task CompleteIroAuthenticationAsync(MapAuthOkData authOk)
+    {
+        var state = await _gameplayStatePersistence.GetAsync(authOk.AccountId, authOk.CharId, _sessionCancellation.Token);
+        if (state is null)
+        {
+            MapLogger.Warning($"[iRO MAP DEBUG] Character gameplay state load failed accountId={authOk.AccountId} charId={authOk.CharId}.");
+            HandleAuthFail(); return;
+        }
+        _gameplayState = new CharacterGameplayStateSession(authOk.AccountId, state, _gameplayStatePersistence);
+        _authenticated = true; _positionDirty = false;
+        MapLogger.Info($"[iRO MAP DEBUG] 0x0C1F MapAuthNode authentication succeeded accountId={authOk.AccountId} charId={authOk.CharId} sessionMatch=true gameplayStateVersion={state.Version}");
+        await SendIroInitialBootstrapAsync(authOk, _sessionCancellation.Token);
+    }
+
+    private async Task CompleteIroAuthenticationSafelyAsync(MapAuthOkData authOk)
+    {
+        try
+        {
+            await CompleteIroAuthenticationAsync(authOk);
+        }
+        catch (OperationCanceledException) when (_sessionCancellation.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            MapLogger.Warning(
+                $"[iRO MAP DEBUG] Character gameplay state initialization failed " +
+                $"accountId={authOk.AccountId} charId={authOk.CharId} error={ex.GetType().Name}.");
+            HandleAuthFail();
+        }
     }
 
     public void HandleAuthFail()
@@ -185,6 +227,7 @@ public sealed class MapClientSession : IDisposable
         }
 
         _sessionCancellation.Cancel();
+        _generatedContinuation?.Completion.TrySetCanceled();
         _stream.Dispose();
         _writeLock.Dispose();
         _sessionCancellation.Dispose();
@@ -205,6 +248,8 @@ public sealed class MapClientSession : IDisposable
                         $"[iRO MAP DEBUG] Received stock iRO map-loaded packet=0x{packetType:X4} len={packet.Length}");
                     _visibleActorIds.Clear();
                     await SendVisibleWarpActorsAsync(cancellationToken);
+                    foreach (var navigation in _worldMapRegistry.GetNavigationAt(_mapName, _x, _y))
+                        await WriteAsync(IroNpcDialoguePackets.BuildNavigateTo(navigation.DestinationMap, navigation.DestinationX, navigation.DestinationY), cancellationToken);
                     break;
                 }
 
@@ -234,6 +279,12 @@ public sealed class MapClientSession : IDisposable
             case PacketConstants.IroCzActorInfoRequest when _iroAuthRequested:
                 MapLogger.Info(
                     $"[iRO MAP DEBUG] Received stock iRO actor-info request packet=0x{packetType:X4} len={packet.Length}");
+                var requestedActorId = BinaryPrimitives.ReadUInt32LittleEndian(packet.AsSpan(2));
+                if (_visibleActorIds.Contains(requestedActorId) && _worldMapRegistry.TryGetActorName(requestedActorId, _mapName, out var actorName))
+                {
+                    MapLogger.Info($"[iRO MAP DEBUG] Sending 0x0ADF NPC name actorId={requestedActorId} name='{actorName}'");
+                    await WriteAsync(IroWorldActorPackets.BuildNpcName(requestedActorId, actorName), cancellationToken);
+                }
                 break;
             case PacketConstants.IroCzChangeDirection when _iroAuthRequested:
                 if (IroChangeDirectionPacket.TryParse(packet, out var direction))
@@ -248,8 +299,15 @@ public sealed class MapClientSession : IDisposable
                 await HandleNpcNextAsync(packet, cancellationToken);
                 break;
             case PacketConstants.IroCzNpcClose when _iroAuthRequested:
-                if (IroNpcDialoguePackets.TryParseClose(packet, out var closeActorId) && _scriptExecutionSession?.ActorId == closeActorId)
-                    _scriptExecutionSession = null;
+                if (IroNpcDialoguePackets.TryParseClose(packet, out var closeActorId))
+                {
+                    if (_scriptExecutionSession?.ActorId == closeActorId) _scriptExecutionSession = null;
+                    if (_generatedScriptActorId == closeActorId)
+                    {
+                        if (!await TryResumeGeneratedScriptAsync(closeActorId, GeneratedContinuationKind.Close2, 0, cancellationToken))
+                            _generatedContinuation?.Completion.TrySetCanceled();
+                    }
+                }
                 break;
             case PacketConstants.IroCzNpcSelection when _iroAuthRequested:
                 await HandleNpcSelectionAsync(packet, cancellationToken);
@@ -316,7 +374,7 @@ public sealed class MapClientSession : IDisposable
             request.TargetY,
             out var intersection);
         ScriptTouchIntersection scriptIntersection = default;
-        var intersectsScript = _scriptExecutionSession is null && _worldMapRegistry.TryFindFirstScriptTouchEnterAlongRoute(
+        var intersectsScript = !HasActiveScript && _worldMapRegistry.TryFindFirstScriptTouchEnterAlongRoute(
             _mapName, fromX, fromY, request.TargetX, request.TargetY, out scriptIntersection);
         if (intersectsWarp && intersectsScript && Distance(fromX, fromY, scriptIntersection.X, scriptIntersection.Y) < Distance(fromX, fromY, intersection.X, intersection.Y))
             intersectsWarp = false;
@@ -393,7 +451,7 @@ public sealed class MapClientSession : IDisposable
 
     private async Task HandleNpcInteractionAsync(byte[] packet, CancellationToken cancellationToken)
     {
-        if (!IroNpcDialoguePackets.TryParseInteraction(packet, out var actorId) || _scriptExecutionSession is not null || !_visibleActorIds.Contains(actorId) || !_worldMapRegistry.TryGetInteraction(actorId, _mapName, out var entity, out var script) || script.Instructions is not { Count: > 0 })
+        if (!IroNpcDialoguePackets.TryParseInteraction(packet, out var actorId) || HasActiveScript || !_visibleActorIds.Contains(actorId) || !_worldMapRegistry.TryGetInteraction(actorId, _mapName, out var entity, out var script))
         {
             MapLogger.Info($"[iRO MAP DEBUG] NPC interaction rejected actorId={actorId}");
             return;
@@ -405,7 +463,13 @@ public sealed class MapClientSession : IDisposable
 
     private async Task StartScriptAsync(WorldEntityDefinition entity, uint actorId, ScriptBehaviorDefinition script, string trigger, CancellationToken cancellationToken)
     {
-        if (_scriptExecutionSession is not null || entity.Actor is null || script.Instructions is not { Count: > 0 }) return;
+        if (HasActiveScript || entity.Actor is null) return;
+        if (_worldMapRegistry.Scripts.TryCreate(entity.Id, trigger, out var generatedScript))
+        {
+            await StartGeneratedScriptAsync(entity, actorId, script, generatedScript, trigger, cancellationToken);
+            return;
+        }
+        if (script.Instructions is not { Count: > 0 }) return;
         _scriptExecutionSession = new ScriptExecutionSession(entity.Id, actorId, entity.Actor.Name, script.BaseNpcName, entity.Actor.Map, script.Instructions);
         MapLogger.Info($"[iRO MAP DEBUG] Script start entity='{entity.Id}' trigger={trigger}");
         await SendScriptOutputAsync(_scriptExecutionSession.Run(), cancellationToken);
@@ -413,6 +477,7 @@ public sealed class MapClientSession : IDisposable
 
     private async Task HandleNpcNextAsync(byte[] packet, CancellationToken cancellationToken)
     {
+        if (IroNpcDialoguePackets.TryParseNext(packet, out var generatedActorId) && await TryResumeGeneratedScriptAsync(generatedActorId, GeneratedContinuationKind.Next, 0, cancellationToken)) return;
         if (!IroNpcDialoguePackets.TryParseNext(packet, out var actorId) || _scriptExecutionSession is null) return;
         var output = _scriptExecutionSession.ResumeNext(actorId);
         if (output.Count == 0) return;
@@ -422,6 +487,8 @@ public sealed class MapClientSession : IDisposable
 
     private async Task HandleNpcSelectionAsync(byte[] packet, CancellationToken cancellationToken)
     {
+        if (IroNpcDialoguePackets.TryParseSelection(packet, out var generatedActorId, out var generatedWireIndex, out _) && generatedWireIndex > 0 &&
+            await TryResumeGeneratedScriptAsync(generatedActorId, GeneratedContinuationKind.Selection, generatedWireIndex, cancellationToken)) return;
         if (!IroNpcDialoguePackets.TryParseSelection(packet, out var actorId, out var wireIndex, out _) || _scriptExecutionSession is null || wireIndex == 0) return;
         var output = _scriptExecutionSession.ResumeSelection(actorId, wireIndex - 1);
         if (output.Count == 0) return;
@@ -555,6 +622,159 @@ public sealed class MapClientSession : IDisposable
         return saved;
     }
 
+    private bool HasActiveScript => _scriptExecutionSession is not null || _generatedScriptTask is not null;
+
+    private async Task StartGeneratedScriptAsync(
+        WorldEntityDefinition entity,
+        uint actorId,
+        ScriptBehaviorDefinition binding,
+        INpcScript script,
+        string trigger,
+        CancellationToken cancellationToken)
+    {
+        _generatedScriptEntityId = entity.Id;
+        _generatedScriptActorId = actorId;
+        _generatedSuspended = NewSignal();
+        var context = new ScriptContext(this, entity.Id, actorId, entity.Actor!.Name, binding.BaseNpcName);
+        _generatedScriptTask = ExecuteGeneratedScriptAsync(script, context, cancellationToken);
+        MapLogger.Info($"[iRO MAP DEBUG] Generated script start entity='{entity.Id}' trigger={trigger}");
+        await WaitForGeneratedBoundaryAsync(cancellationToken);
+    }
+
+    private async Task ExecuteGeneratedScriptAsync(INpcScript script, ScriptContext context, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await script.ExecuteAsync(context, cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested || _sessionCancellation.IsCancellationRequested)
+        {
+        }
+        catch (Exception exception)
+        {
+            MapLogger.Warning($"Generated script aborted entity='{context.EntityId}' error={exception.GetType().Name}: {exception.Message}");
+            await WriteAsync(IroNpcDialoguePackets.BuildClose(context.ActorId), CancellationToken.None);
+        }
+    }
+
+    private async Task<bool> TryResumeGeneratedScriptAsync(uint actorId, GeneratedContinuationKind kind, int value, CancellationToken cancellationToken)
+    {
+        var continuation = _generatedContinuation;
+        if (_generatedScriptTask is null || continuation is null || _generatedScriptActorId != actorId || continuation.Kind != kind) return false;
+        _generatedSuspended = NewSignal();
+        _generatedContinuation = null;
+        continuation.Completion.TrySetResult(value);
+        MapLogger.Info($"[iRO MAP DEBUG] Generated script resumed reason={kind} entity='{_generatedScriptEntityId}'");
+        await WaitForGeneratedBoundaryAsync(cancellationToken);
+        return true;
+    }
+
+    private async Task WaitForGeneratedBoundaryAsync(CancellationToken cancellationToken)
+    {
+        var scriptTask = _generatedScriptTask;
+        if (scriptTask is null) return;
+        await Task.WhenAny(scriptTask, _generatedSuspended.Task).WaitAsync(cancellationToken);
+        if (!scriptTask.IsCompleted) return;
+        await scriptTask;
+        MapLogger.Info($"[iRO MAP DEBUG] Generated script completed entity='{_generatedScriptEntityId}'");
+        _generatedScriptTask = null;
+        _generatedScriptEntityId = null;
+        _generatedScriptActorId = 0;
+        _generatedContinuation = null;
+    }
+
+    async Task INpcScriptHost.MesAsync(uint actorId, string text, CancellationToken cancellationToken) =>
+        await WriteAsync(IroNpcDialoguePackets.BuildMessage(actorId, text), cancellationToken);
+
+    async Task INpcScriptHost.NextAsync(uint actorId, CancellationToken cancellationToken)
+    {
+        var continuation = new GeneratedContinuation(GeneratedContinuationKind.Next, NewContinuation());
+        _generatedContinuation = continuation;
+        await WriteAsync(IroNpcDialoguePackets.BuildNext(actorId), cancellationToken);
+        _generatedSuspended.TrySetResult();
+        await continuation.Completion.Task.WaitAsync(cancellationToken);
+    }
+
+    async Task<int> INpcScriptHost.SelectAsync(uint actorId, IReadOnlyList<string> options, CancellationToken cancellationToken)
+    {
+        var continuation = new GeneratedContinuation(GeneratedContinuationKind.Selection, NewContinuation());
+        _generatedContinuation = continuation;
+        await WriteAsync(IroNpcDialoguePackets.BuildMenu(actorId, options), cancellationToken);
+        _generatedSuspended.TrySetResult();
+        return await continuation.Completion.Task.WaitAsync(cancellationToken);
+    }
+
+    Task INpcScriptHost.CloseAsync(uint actorId, CancellationToken cancellationToken) =>
+        WriteAsync(IroNpcDialoguePackets.BuildClose(actorId), cancellationToken);
+
+    async Task INpcScriptHost.Close2Async(uint actorId, CancellationToken cancellationToken)
+    {
+        var continuation = new GeneratedContinuation(GeneratedContinuationKind.Close2, NewContinuation());
+        _generatedContinuation = continuation;
+        await WriteAsync(IroNpcDialoguePackets.BuildClose(actorId), cancellationToken);
+        _generatedSuspended.TrySetResult();
+        await continuation.Completion.Task.WaitAsync(cancellationToken);
+    }
+
+    async Task<CharacterQuestStatus> INpcScriptHost.GetQuestStateAsync(QuestId questId, CancellationToken cancellationToken) =>
+        await _questPersistence.GetQuestStateAsync(_accountId, _charId, questId.Value, cancellationToken)
+            ?? throw new InvalidOperationException($"Quest state query failed for quest {questId.Value}.");
+
+    async Task INpcScriptHost.SetQuestAsync(QuestId questId, CancellationToken cancellationToken)
+    {
+        if (!await SetQuestAsync(questId.Value, cancellationToken)) throw new InvalidOperationException($"SetQuest persistence failed for quest {questId.Value}.");
+    }
+
+    async Task INpcScriptHost.CompleteQuestAsync(QuestId questId, CancellationToken cancellationToken)
+    {
+        if (!await CompleteQuestAsync(questId.Value, cancellationToken)) throw new InvalidOperationException($"CompleteQuest persistence failed for quest {questId.Value}.");
+    }
+
+    async Task INpcScriptHost.WarpAsync(string map, ushort x, ushort y, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(map)) throw new InvalidOperationException("Generated script warp map is empty.");
+        _mapName = map; _x = x; _y = y; _positionDirty = true; _visibleActorIds.Clear();
+        await WriteAsync(IroMapTransitionPackets.BuildSameServerMapChange(map, x, y), cancellationToken);
+        await PersistPositionIfDirtyAsync(cancellationToken);
+    }
+
+    async Task INpcScriptHost.SetSavePointAsync(string map, ushort x, ushort y, CancellationToken cancellationToken)
+    {
+        if (!await SavePointAsync(map, x, y, cancellationToken)) throw new InvalidOperationException($"SavePoint persistence failed for map '{map}'.");
+    }
+
+    Task INpcScriptHost.CutinAsync(string image, byte position, CancellationToken cancellationToken)
+    {
+        MapLogger.Info($"[iRO MAP DEBUG] Sending 0x01B3 cutin image='{image}' position={position} entity='{_generatedScriptEntityId}'");
+        return WriteAsync(IroNpcDialoguePackets.BuildCutin(image, position), cancellationToken);
+    }
+
+    Task INpcScriptHost.NpcTalkAsync(uint actorId, string text, CancellationToken cancellationToken) =>
+        WriteAsync(IroNpcDialoguePackets.BuildNpcTalk(actorId, text), cancellationToken);
+
+    Task INpcScriptHost.SetNpcCloakAsync(string entityIdOrName, bool cloaked, CancellationToken cancellationToken)
+    {
+        if (!_worldMapRegistry.TryGetActor(entityIdOrName, _mapName, out var actor))
+            throw new InvalidOperationException($"Generated script NPC target '{entityIdOrName}' was not found on map '{_mapName}'.");
+        return WriteAsync(IroNpcDialoguePackets.BuildNpcOption(actor.ActorId, cloaked ? 4u : 0u), cancellationToken);
+    }
+
+    Task INpcScriptHost.NavigateToAsync(string map, ushort x, ushort y, CancellationToken cancellationToken) =>
+        WriteAsync(IroNpcDialoguePackets.BuildNavigateTo(map, x, y), cancellationToken);
+
+    async Task INpcScriptHost.GrantExperienceAsync(long baseExperience, long jobExperience, CancellationToken cancellationToken)
+    {
+        var state = _gameplayState ?? throw new InvalidOperationException("Character gameplay state is not loaded.");
+        var result = await new CharacterProgressionService(state).AddExperienceAsync(baseExperience, jobExperience, cancellationToken)
+            ?? throw new InvalidOperationException("Character progression persistence failed.");
+        foreach (var packet in IroCharacterProgressionPackets.Build(result, baseExperience > 0, jobExperience > 0)) await WriteAsync(packet, cancellationToken);
+    }
+
+    private static TaskCompletionSource NewSignal() => new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private static TaskCompletionSource<int> NewContinuation() => new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private sealed record GeneratedContinuation(GeneratedContinuationKind Kind, TaskCompletionSource<int> Completion);
+    private enum GeneratedContinuationKind { Next, Selection, Close2 }
+
     private async Task SendVisibleWarpActorsAsync(CancellationToken cancellationToken)
     {
         foreach (var actor in _worldMapRegistry.GetVisibleWarpActors(_mapName, _x, _y))
@@ -564,7 +784,7 @@ public sealed class MapClientSession : IDisposable
                 continue;
             }
 
-            var packet = IroWorldActorPackets.BuildWarpActor(actor);
+            var packet = IroWorldActorPackets.BuildWorldActor(actor);
             MapLogger.Info(
                 $"[iRO MAP DEBUG] Sending NPC actor id={actor.ActorId} name='{actor.Name}' class={actor.SpriteClass} map='{actor.MapName}' x={actor.X} y={actor.Y}");
             await WriteAsync(packet, cancellationToken);
