@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Athena.Net.MapServer.World.GeneratedScripts;
 
 namespace Athena.Net.MapServer.World;
 
@@ -31,12 +32,14 @@ public sealed class WorldMapRegistry
         _interactionsByActorId = _warpActors
             .Select(actor => (Actor: actor, Entity: _entitiesById.Values.FirstOrDefault(entity => entity.Actor is not null && string.Equals(entity.Actor.Map, actor.MapName, StringComparison.OrdinalIgnoreCase) && string.Equals(entity.Actor.Name, actor.Name, StringComparison.OrdinalIgnoreCase))))
             .Where(item => item.Entity is not null)
-            .SelectMany(item => item.Entity!.Scripts.Where(script => script.RuntimeExecutable && string.Equals(script.Trigger, "OnClick", StringComparison.OrdinalIgnoreCase)).Select(script => (item.Actor.ActorId, item.Entity, Script: script)))
+            .SelectMany(item => item.Entity!.Scripts.Where(script => script.RuntimeExecutable && string.Equals(script.Trigger, "OnClick", StringComparison.OrdinalIgnoreCase) &&
+                (script.Instructions is { Count: > 0 } || GeneratedScriptRegistry.TryCreate(item.Entity.Id, script.Trigger, out _))).Select(script => (item.Actor.ActorId, item.Entity, Script: script)))
             .ToDictionary(item => item.ActorId, item => (item.Entity!, item.Script));
         _touchScripts = _warpActors
             .Select(actor => (Actor: actor, Entity: _entitiesById.Values.FirstOrDefault(entity => entity.Actor is not null && string.Equals(entity.Actor.Map, actor.MapName, StringComparison.OrdinalIgnoreCase) && string.Equals(entity.Actor.Name, actor.Name, StringComparison.OrdinalIgnoreCase))))
             .Where(item => item.Entity is not null)
-            .SelectMany(item => item.Entity!.Scripts.Where(script => script.RuntimeExecutable && string.Equals(script.Trigger, "OnTouch", StringComparison.OrdinalIgnoreCase) && script.Instructions is { Count: > 0 })
+            .SelectMany(item => item.Entity!.Scripts.Where(script => script.RuntimeExecutable && string.Equals(script.Trigger, "OnTouch", StringComparison.OrdinalIgnoreCase) &&
+                (script.Instructions is { Count: > 0 } || GeneratedScriptRegistry.TryCreate(item.Entity.Id, script.Trigger, out _)))
                 .Select(script => new ScriptTouchBinding(item.Entity!, item.Actor, script)))
             .OrderBy(item => item.Entity.Id, StringComparer.Ordinal)
             .ToArray();
@@ -84,7 +87,9 @@ public sealed class WorldMapRegistry
     internal static WorldMapRegistry Load(string entityRoot, string legacyWarpFile)
     {
         var roots = new[] { entityRoot, Path.Combine(Path.GetDirectoryName(entityRoot)!, "dev") };
-        var entities = roots.Where(Directory.Exists).SelectMany(root => Directory.EnumerateFiles(root, "*.json", SearchOption.AllDirectories)).Order(StringComparer.Ordinal).Select(LoadEntity).ToArray();
+        var jsonEntities = roots.Where(Directory.Exists).SelectMany(root => Directory.EnumerateFiles(root, "*.json", SearchOption.AllDirectories)).Order(StringComparer.Ordinal).Select(LoadEntity)
+            .Where(entity => !GeneratedScriptRegistry.ContainsEntity(entity.Id));
+        var entities = jsonEntities.Concat(GeneratedScriptRegistry.Entities).OrderBy(entity => entity.Id, StringComparer.Ordinal).ToArray();
         var semanticKeys = entities.Where(entity => entity.Actor is not null).Select(entity => SemanticKey(entity.Actor!.Map, entity.Actor.Name)).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var warps = entities.SelectMany(ToWarps).ToList();
         var dynamicActors = new List<WarpActorDefinition>();

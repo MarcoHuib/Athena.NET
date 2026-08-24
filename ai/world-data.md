@@ -28,6 +28,25 @@ Athena's developer-facing world-data pipeline is:
 
 `rAthena source -> source parser -> resolver/static evaluator -> Athena WorldEntity -> one JSON file per entity -> WorldRegistry -> derived runtime indexes`
 
+This is now the legacy fallback pipeline for unmigrated executable scripts. The
+generated execution pipeline is:
+
+`rAthena source -> lexer -> AST -> semantic analysis -> lowering -> deterministic .g.cs -> normal dotnet build -> GeneratedScriptRegistry -> ScriptContext -> MapClientSession`
+
+`int_land04/#intro_to_izlude_d` is the first real generated executable slice.
+Its generated `OnTouch` method awaits the existing next/selection coordination,
+uses the existing quest/savepoint persistence calls, and emits the existing iRO
+dialogue, quest, and map-transition packets. It never creates a
+`ScriptExecutionSession`. Its generated registry entry owns the actor geometry,
+event binding, source provenance, and factory, so
+`data/world/entities/int_land04/intro_to_izlude_d.json` has been removed.
+
+The base and `int_land01..03` intro scripts plus the developer quest NPC remain
+runtime JSON/`ScriptExecutionSession` consumers. Generated registrations override
+matching JSON IDs during migration, preventing two executable paths for the same
+entity. Compiler audit/capability/unsupported JSON files remain reports and are
+not runtime world representations.
+
 One file under `data/world/entities/<map>/<entity>.json` is the source of truth for
 one logical entity. Components that belong together stay together: an entity may
 contain an optional Actor plus multiple Triggers, and every Trigger owns its

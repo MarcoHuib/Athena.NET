@@ -1,5 +1,8 @@
 using System.Text.Json;
 using Athena.WorldCompiler.Generation;
+using Athena.WorldCompiler.Lowering;
+using Athena.WorldCompiler.Rathena;
+using Athena.WorldCompiler.Semantics;
 
 return await WorldDataImporterCli.RunAsync(args);
 
@@ -15,6 +18,7 @@ internal static class WorldDataImporterCli
                 "audit" => await AuditAsync(args[1..]),
                 "convert" => await ConvertAsync(args[1..]),
                 "compile" => await CompileAsync(args[1..]),
+                "compile-script" => await CompileScriptAsync(args[1..]),
                 "capabilities" => await CapabilitiesAsync(args[1..]),
                 _ => throw new ArgumentException($"Unknown command '{args[0]}'."),
             };
@@ -76,6 +80,44 @@ internal static class WorldDataImporterCli
         Console.WriteLine($"Generated {lowered.Warps.Count} strongly typed warp definitions into {output}."); return result.Unsupported.Count==0?0:1;
     }
 
+    private static async Task<int> CompileScriptAsync(string[] args)
+    {
+        var options = CliOptions.Parse(args); var roots = options.All("source-root");
+        if (roots.Count == 0) throw new ArgumentException("compile-script requires --source-root.");
+        var filter = new ConversionFilter(options.Optional("source-file"), options.Optional("map"), options.Optional("name"), options.Optional("kind"));
+        if (filter.IsEmpty) throw new ArgumentException("compile-script requires a narrow source/map/name/kind filter.");
+        var entity = AssertSingle(WorldEntityConverter.Convert(roots, filter).Entities, "generated script entity");
+        var binding = AssertSingle(entity.Scripts ?? [], "generated script binding");
+        var declarations = RathenaSourceParser.Parse(roots);
+        var templateName = binding.BaseNpcName ?? entity.Actor?.Name ?? throw new ArgumentException("Generated script entity has no actor.");
+        var template = declarations.FirstOrDefault(declaration => declaration.Directive == "script" && declaration.Name == templateName)
+            ?? throw new ArgumentException($"Script template '{templateName}' was not found.");
+        var source = template.ScriptBody.TrimEnd(); if (source.EndsWith('}')) source = source[..^1];
+        var syntax = new RathenaParser(source, template.Source.File, template.Source.Line + 1).ParseCompilationUnit();
+        var semantics = SemanticAnalyzer.Analyze(syntax);
+        if (semantics.Diagnostics.Any(diagnostic => diagnostic.Severity == "Error"))
+            throw new ArgumentException(string.Join(Environment.NewLine, semantics.Diagnostics.Where(diagnostic => diagnostic.Severity == "Error").Select(diagnostic => $"{diagnostic.Span.Start.File}:{diagnostic.Span.Start.Line}:{diagnostic.Span.Start.Column} {diagnostic.Code}: {diagnostic.Message}")));
+        var lowered = RathenaScriptLowerer.LowerEvent(syntax, binding.Trigger);
+        if (!lowered.Success) throw new ArgumentException(string.Join(Environment.NewLine, lowered.Diagnostics.Where(diagnostic => diagnostic.Severity == "Error").Select(diagnostic => $"{diagnostic.Span.Start.File}:{diagnostic.Span.Start.Line}:{diagnostic.Span.Start.Column} {diagnostic.Code}: {diagnostic.Message}")));
+        var actor = entity.Actor!; var className = ClassName(entity.Id, binding.Trigger);
+        var metadata = new GeneratedNpcMetadata("Athena.Net.MapServer.Generated.World.Izlude", className, entity.Id, entity.Kind, actor.Name, actor.Map, actor.X, actor.Y, actor.Direction, actor.Class,
+            binding.RadiusX, binding.RadiusY, binding.Trigger, binding.BaseNpcName, CanonicalSourceFile(template.Source.File), template.Source.Line + 3, template.Source.Line, "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca");
+        var generated = NpcScriptEmitter.Emit(lowered.Script!, metadata); var output = Path.GetFullPath(options.Required("output")); Directory.CreateDirectory(Path.GetDirectoryName(output)!); await File.WriteAllTextAsync(output, generated, new System.Text.UTF8Encoding(false));
+        Console.WriteLine($"Generated executable {binding.Trigger} script '{entity.Id}' into {output}."); return 0;
+    }
+
+    private static T AssertSingle<T>(IEnumerable<T> values, string description)
+    {
+        var array = values.ToArray(); return array.Length == 1 ? array[0] : throw new ArgumentException($"Expected one {description}, found {array.Length}.");
+    }
+
+    private static string ClassName(string entityId, string trigger) => string.Concat(entityId.Split([':', '_', '-', '#'], StringSplitOptions.RemoveEmptyEntries).Select(part => char.ToUpperInvariant(part[0]) + part[1..])) + trigger + "Script";
+    private static string CanonicalSourceFile(string path)
+    {
+        var normalized = path.Replace('\\', '/'); var legacy = normalized.IndexOf("legacy/rathena/", StringComparison.Ordinal);
+        return legacy >= 0 ? normalized[legacy..] : normalized;
+    }
+
     private static async Task<int> CapabilitiesAsync(string[] args)
     {
         var options = CliOptions.Parse(args); var roots = options.All("source-root");
@@ -94,6 +136,7 @@ internal static class WorldDataImporterCli
         Console.Error.WriteLine("WorldDataImporter convert --source-root <folder> --all-compatible true --output <entities-folder> --report <report.json>");
         Console.Error.WriteLine("WorldDataImporter capabilities --source-root <folder> [--source-root <folder>] --output <report.json>");
         Console.Error.WriteLine("WorldDataImporter compile --source-root <folder> --output <World.g.cs> [--source-file <path>] [--map <map>] [--name <name>] [--kind warp]");
+        Console.Error.WriteLine("WorldDataImporter compile-script --source-root <folder> --output <Npc.g.cs> --source-file <path> --map <map> --name <name> --kind warp");
     }
 }
 
