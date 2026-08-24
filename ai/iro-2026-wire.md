@@ -238,6 +238,14 @@ packets; the stock client resolves them by quest ID.
 - WARPNPC actors are sent after `0x007D`, matching initial and post-`0x0091`
   capture timing. Actor IDs are allocated by Athena and never copied from capture.
 
+## Verified NPC cutin evidence
+
+The official `npc-interaction-heal-action.pcapng` capture contains fixed 67-byte
+server packet `0x01B3`. Bytes 2..65 are the NUL-padded ASCII image filename and
+byte 66 is the position: `tutorial03.BMP` with position 4 is followed later by an
+empty filename with position 255 to clear the image. Athena uses this exact layout
+for generated rAthena `cutin`; it does not invent a packet.
+
 ## Explicitly disproven assumptions for this target
 Do not reintroduce these without newer verified iRO evidence:
 - Login success is `0x0AC4` with 160-byte world entries. **Disproven.**

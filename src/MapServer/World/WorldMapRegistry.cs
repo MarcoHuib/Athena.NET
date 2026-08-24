@@ -6,17 +6,19 @@ namespace Athena.Net.MapServer.World;
 public sealed class WorldMapRegistry
 {
     private readonly IReadOnlyList<WarpDefinition> _warps;
-    private readonly IReadOnlyList<WarpActor> _warpActors;
+    private readonly IReadOnlyList<WorldActor> _worldActors;
     private readonly IReadOnlyDictionary<string, WorldEntityDefinition> _entitiesById;
     private readonly IReadOnlyDictionary<uint, (WorldEntityDefinition Entity, ScriptBehaviorDefinition Script)> _interactionsByActorId;
     private readonly IReadOnlyList<ScriptTouchBinding> _touchScripts;
     private readonly int _dynamicWarpActorCount;
+    public NpcScriptRegistry Scripts { get; }
 
     public WorldMapRegistry(IEnumerable<WarpDefinition> warps, IEnumerable<WarpActorDefinition>? dynamicWarpActors = null)
         : this(warps, [], dynamicWarpActors) { }
 
-    internal WorldMapRegistry(IEnumerable<WarpDefinition> warps, IEnumerable<WorldEntityDefinition> entities, IEnumerable<WarpActorDefinition>? dynamicWarpActors = null)
+    internal WorldMapRegistry(IEnumerable<WarpDefinition> warps, IEnumerable<WorldEntityDefinition> entities, IEnumerable<WarpActorDefinition>? dynamicWarpActors = null, NpcScriptRegistry? scripts = null)
     {
+        Scripts = scripts ?? GeneratedScriptRegistry.Registry;
         _warps = warps.ToArray();
         _entitiesById = entities.ToDictionary(entity => entity.Id, StringComparer.OrdinalIgnoreCase);
         var allocator = new WorldActorIdAllocator();
@@ -24,22 +26,22 @@ public sealed class WorldMapRegistry
         _dynamicWarpActorCount = dynamicActors.Length;
         var entityActorKeys = _entitiesById.Values.Where(entity => entity.Actor is not null).Select(entity => SemanticKey(entity.Actor!.Map, entity.Actor.Name)).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var entityActors = _entitiesById.Values.Where(entity => entity.Actor is not null).Select(ToActorDefinition).Where(actor => actor is not null).Select(actor => actor!);
-        _warpActors = _warps.Where(warp => warp.HasWarpActor && warp.RadiusX <= byte.MaxValue && warp.RadiusY <= byte.MaxValue && !entityActorKeys.Contains(SemanticKey(warp.SourceMap, warp.Name)))
+        _worldActors = _warps.Where(warp => warp.HasWarpActor && warp.RadiusX <= byte.MaxValue && warp.RadiusY <= byte.MaxValue && !entityActorKeys.Contains(SemanticKey(warp.SourceMap, warp.Name)))
             .Select(warp => new WarpActorDefinition(warp.Name, warp.SourceMap, warp.SourceX, warp.SourceY, (byte)warp.RadiusX, (byte)warp.RadiusY))
             .Concat(entityActors)
             .Concat(dynamicActors)
-            .Select(actor => new WarpActor(allocator.Allocate(), actor.Name.Length > 24 ? actor.Name[..24] : actor.Name, actor.MapName, actor.X, actor.Y, actor.RadiusX, actor.RadiusY, actor.SpriteClass)).ToArray();
-        _interactionsByActorId = _warpActors
-            .Select(actor => (Actor: actor, Entity: _entitiesById.Values.FirstOrDefault(entity => entity.Actor is not null && string.Equals(entity.Actor.Map, actor.MapName, StringComparison.OrdinalIgnoreCase) && string.Equals(entity.Actor.Name, actor.Name, StringComparison.OrdinalIgnoreCase))))
+            .Select(actor => new WorldActor(allocator.Allocate(), actor.Name.Length > 24 ? actor.Name[..24] : actor.Name, actor.MapName, actor.X, actor.Y, actor.RadiusX, actor.RadiusY, actor.SpriteClass, actor.Direction, actor.EffectState, actor.EntityId)).ToArray();
+        _interactionsByActorId = _worldActors
+            .Select(actor => (Actor: actor, Entity: actor.EntityId is not null && _entitiesById.TryGetValue(actor.EntityId, out var entity) ? entity : null))
             .Where(item => item.Entity is not null)
             .SelectMany(item => item.Entity!.Scripts.Where(script => script.RuntimeExecutable && string.Equals(script.Trigger, "OnClick", StringComparison.OrdinalIgnoreCase) &&
-                (script.Instructions is { Count: > 0 } || GeneratedScriptRegistry.TryCreate(item.Entity.Id, script.Trigger, out _))).Select(script => (item.Actor.ActorId, item.Entity, Script: script)))
+                (script.Instructions is { Count: > 0 } || Scripts.TryCreate(item.Entity.Id, script.Trigger, out _))).Select(script => (item.Actor.ActorId, item.Entity, Script: script)))
             .ToDictionary(item => item.ActorId, item => (item.Entity!, item.Script));
-        _touchScripts = _warpActors
-            .Select(actor => (Actor: actor, Entity: _entitiesById.Values.FirstOrDefault(entity => entity.Actor is not null && string.Equals(entity.Actor.Map, actor.MapName, StringComparison.OrdinalIgnoreCase) && string.Equals(entity.Actor.Name, actor.Name, StringComparison.OrdinalIgnoreCase))))
+        _touchScripts = _worldActors
+            .Select(actor => (Actor: actor, Entity: actor.EntityId is not null && _entitiesById.TryGetValue(actor.EntityId, out var entity) ? entity : null))
             .Where(item => item.Entity is not null)
             .SelectMany(item => item.Entity!.Scripts.Where(script => script.RuntimeExecutable && string.Equals(script.Trigger, "OnTouch", StringComparison.OrdinalIgnoreCase) &&
-                (script.Instructions is { Count: > 0 } || GeneratedScriptRegistry.TryCreate(item.Entity.Id, script.Trigger, out _)))
+                (script.Instructions is { Count: > 0 } || Scripts.TryCreate(item.Entity.Id, script.Trigger, out _)))
                 .Select(script => new ScriptTouchBinding(item.Entity!, item.Actor, script)))
             .OrderBy(item => item.Entity.Id, StringComparer.Ordinal)
             .ToArray();
@@ -51,7 +53,7 @@ public sealed class WorldMapRegistry
     public int EntityCount => _entitiesById.Count;
     public int DynamicWarpActorCount => _dynamicWarpActorCount;
     public IReadOnlyDictionary<string, WorldEntityDefinition> EntitiesById => _entitiesById;
-    public IEnumerable<WarpActor> GetVisibleWarpActors(string mapName, ushort x, ushort y, ushort range = 14) => _warpActors.Where(actor => string.Equals(actor.MapName, mapName, StringComparison.OrdinalIgnoreCase) && Math.Abs((int)actor.X - x) <= range && Math.Abs((int)actor.Y - y) <= range);
+    public IEnumerable<WorldActor> GetVisibleWarpActors(string mapName, ushort x, ushort y, ushort range = 14) => _worldActors.Where(actor => string.Equals(actor.MapName, mapName, StringComparison.OrdinalIgnoreCase) && Math.Abs((int)actor.X - x) <= range && Math.Abs((int)actor.Y - y) <= range);
     public bool TryGetInteraction(uint actorId, string mapName, out WorldEntityDefinition entity, out ScriptBehaviorDefinition script)
     {
         if (_interactionsByActorId.TryGetValue(actorId, out var binding) && binding.Entity.Actor is not null && string.Equals(binding.Entity.Actor.Map, mapName, StringComparison.OrdinalIgnoreCase))
@@ -84,9 +86,9 @@ public sealed class WorldMapRegistry
         intersection = default; return false;
     }
 
-    internal static WorldMapRegistry Load(string entityRoot, string legacyWarpFile)
+    internal static WorldMapRegistry Load(string entityRoot, string legacyWarpFile, string? additionalEntityRoot = null)
     {
-        var roots = new[] { entityRoot, Path.Combine(Path.GetDirectoryName(entityRoot)!, "dev") };
+        var roots = new[] { entityRoot, additionalEntityRoot }.OfType<string>();
         var jsonEntities = roots.Where(Directory.Exists).SelectMany(root => Directory.EnumerateFiles(root, "*.json", SearchOption.AllDirectories)).Order(StringComparer.Ordinal).Select(LoadEntity)
             .Where(entity => !GeneratedScriptRegistry.ContainsEntity(entity.Id));
         var entities = jsonEntities.Concat(GeneratedScriptRegistry.Entities).OrderBy(entity => entity.Id, StringComparer.Ordinal).ToArray();
@@ -115,7 +117,7 @@ public sealed class WorldMapRegistry
     {
         using var document = JsonDocument.Parse(File.ReadAllText(path)); var root = document.RootElement;
         WorldActorComponent? actor = null;
-        if (root.TryGetProperty("Actor", out var actorJson)) actor = new(actorJson.GetProperty("Name").GetString()!, actorJson.GetProperty("Map").GetString()!, actorJson.GetProperty("X").GetUInt16(), actorJson.GetProperty("Y").GetUInt16(), actorJson.GetProperty("Direction").GetByte(), actorJson.GetProperty("Class").GetUInt16());
+        if (root.TryGetProperty("Actor", out var actorJson)) actor = new(actorJson.GetProperty("Name").GetString()!, actorJson.GetProperty("Map").GetString()!, actorJson.GetProperty("X").GetUInt16(), actorJson.GetProperty("Y").GetUInt16(), actorJson.GetProperty("Direction").GetByte(), actorJson.GetProperty("Class").GetUInt16(), actorJson.TryGetProperty("EffectState", out var effect) ? effect.GetUInt32() : 0);
         var triggers = root.GetProperty("Triggers").EnumerateArray().Select(trigger => new WorldTriggerDefinition(trigger.GetProperty("Type").GetString()!, trigger.GetProperty("Map").GetString()!, trigger.GetProperty("X").GetUInt16(), trigger.GetProperty("Y").GetUInt16(), trigger.GetProperty("RadiusX").GetUInt16(), trigger.GetProperty("RadiusY").GetUInt16(), trigger.GetProperty("Actions").EnumerateArray().Select(ParseAction).ToArray())).ToArray();
         var scripts = root.TryGetProperty("Scripts", out var scriptsJson)
             ? scriptsJson.EnumerateArray().Select(script => new ScriptBehaviorDefinition(
@@ -177,7 +179,7 @@ public sealed class WorldMapRegistry
         var radiusX = trigger?.RadiusX ?? script?.RadiusX ?? 0;
         var radiusY = trigger?.RadiusY ?? script?.RadiusY ?? 0;
         return radiusX <= byte.MaxValue && radiusY <= byte.MaxValue
-            ? new(actor.Name, actor.Map, actor.X, actor.Y, (byte)radiusX, (byte)radiusY, actor.Class)
+            ? new(actor.Name, actor.Map, actor.X, actor.Y, (byte)radiusX, (byte)radiusY, actor.Class, actor.Direction, actor.EffectState, entity.Id)
             : null;
     }
     private static string SemanticKey(string map, string name) => $"{map}:{name}";
@@ -185,9 +187,9 @@ public sealed class WorldMapRegistry
 }
 
 public readonly record struct WarpIntersection(WarpDefinition Warp, ushort X, ushort Y);
-public sealed record ScriptTouchBinding(WorldEntityDefinition Entity, WarpActor Actor, ScriptBehaviorDefinition Script)
+public sealed record ScriptTouchBinding(WorldEntityDefinition Entity, WorldActor Actor, ScriptBehaviorDefinition Script)
 {
     public bool Contains(ushort x, ushort y) => Math.Abs((int)x - Script.X) <= Script.RadiusX && Math.Abs((int)y - Script.Y) <= Script.RadiusY;
 }
 public readonly record struct ScriptTouchIntersection(ScriptTouchBinding Binding, ushort X, ushort Y);
-public sealed record WarpActorDefinition(string Name, string MapName, ushort X, ushort Y, byte RadiusX, byte RadiusY, ushort SpriteClass = WarpActor.ClassId);
+public sealed record WarpActorDefinition(string Name, string MapName, ushort X, ushort Y, byte RadiusX, byte RadiusY, ushort SpriteClass = WorldActor.ClassId, byte Direction = 0, uint EffectState = 0, string? EntityId = null);

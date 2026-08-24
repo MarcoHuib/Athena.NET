@@ -5,12 +5,12 @@ public readonly record struct QuestId(uint Value)
     public static implicit operator QuestId(uint value) => new(value);
 }
 
-public interface IGeneratedNpcScript
+public interface INpcScript
 {
     Task ExecuteAsync(ScriptContext context, CancellationToken cancellationToken);
 }
 
-public interface IGeneratedScriptHost
+public interface INpcScriptHost
 {
     Task MesAsync(uint actorId, string text, CancellationToken cancellationToken);
     Task NextAsync(uint actorId, CancellationToken cancellationToken);
@@ -21,13 +21,14 @@ public interface IGeneratedScriptHost
     Task CompleteQuestAsync(QuestId questId, CancellationToken cancellationToken);
     Task WarpAsync(string map, ushort x, ushort y, CancellationToken cancellationToken);
     Task SetSavePointAsync(string map, ushort x, ushort y, CancellationToken cancellationToken);
+    Task CutinAsync(string image, byte position, CancellationToken cancellationToken);
 }
 
 public sealed class ScriptContext
 {
-    private readonly IGeneratedScriptHost _host;
+    private readonly INpcScriptHost _host;
 
-    public ScriptContext(IGeneratedScriptHost host, string entityId, uint actorId, string executingNpcName, string? baseNpcName)
+    public ScriptContext(INpcScriptHost host, string entityId, uint actorId, string executingNpcName, string? baseNpcName)
     {
         _host = host;
         EntityId = entityId;
@@ -51,6 +52,7 @@ public sealed class ScriptContext
     public Task CompleteQuestAsync(QuestId questId, CancellationToken cancellationToken) => _host.CompleteQuestAsync(questId, cancellationToken);
     public Task WarpAsync(string map, ushort x, ushort y, CancellationToken cancellationToken) => _host.WarpAsync(map, x, y, cancellationToken);
     public Task SetSavePointAsync(string map, ushort x, ushort y, CancellationToken cancellationToken) => _host.SetSavePointAsync(map, x, y, cancellationToken);
+    public Task CutinAsync(string image, byte position, CancellationToken cancellationToken) => _host.CutinAsync(image, position, cancellationToken);
 
     public string StrNpcInfo(int type) => type == 2
         ? ExecutingNpcName.TrimStart('#')
@@ -63,4 +65,4 @@ public sealed class ScriptContext
 public sealed record GeneratedScriptRegistration(
     WorldEntityDefinition Entity,
     string Trigger,
-    Func<IGeneratedNpcScript> Factory);
+    Func<INpcScript> Factory);

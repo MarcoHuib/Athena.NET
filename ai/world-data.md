@@ -71,6 +71,15 @@ Unsupported source is never discarded silently. It remains parsed/preserved with
 `RuntimeExecutable=false` and is emitted in converter diagnostics with source
 location. The capability scan is inventory/roadmap data, not converted content.
 
+Two pinned entities now bypass the legacy instruction model and execute compiled
+C# through the shared NPC script contract: the `int_land04` Izlude departure warp
+(`OnTouch`) and the `iz_int` Wounded Swordsman quest-21001 starter (`OnClick`).
+The latter is the first generated ordinary actor; the compiler resolves its
+`4_TOWER_02` constant from pinned `npc.hpp` and emits direction and cloak option
+state. Generated and hand-written registrations use the same entity, script, and
+context types. Duplicate IDs fail unless custom registration requests an explicit
+override. Developer JSON is not part of default world loading.
+
 `data/world/warps.json` remains a **temporary migration source**. WorldEntity
 definitions load first and win over a legacy entry with the same map and entity
 name, preventing duplicate actors/triggers. The legacy file will disappear only

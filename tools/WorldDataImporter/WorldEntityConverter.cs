@@ -8,7 +8,8 @@ internal sealed record ConversionFilter(string? SourceFile, string? Map, string?
         (SourceFile is null || value.Source.File.EndsWith(SourceFile, StringComparison.OrdinalIgnoreCase)) &&
         (Map is null || string.Equals(value.Map, Map, StringComparison.OrdinalIgnoreCase)) &&
         (Name is null || string.Equals(value.Name, Name, StringComparison.Ordinal)) &&
-        (Kind is null || string.Equals(Kind, "warp", StringComparison.OrdinalIgnoreCase));
+        (Kind is null || string.Equals(Kind, "warp", StringComparison.OrdinalIgnoreCase) ||
+            (string.Equals(Kind, "npc", StringComparison.OrdinalIgnoreCase) && value.Directive == "script" && !value.Arguments.Contains("WARPNPC", StringComparison.Ordinal)));
 }
 internal sealed record UnsupportedConversion(string Name, string File, int Line, string Reason);
 internal sealed record ConversionResult(IReadOnlyList<WorldEntityDefinition> Entities, IReadOnlyList<UnsupportedConversion> Unsupported);
@@ -43,8 +44,24 @@ internal static partial class WorldEntityConverter
                 else if (TryPreserveScript(declaration, template, out entity, unsupported)) entities.Add(entity);
                 else unsupported.Add(Unsupported(declaration, "Malformed WARPNPC duplicate"));
             }
+            else if (declaration.Directive == "script" && TryOrdinaryScript(declaration, roots, out var ordinary)) entities.Add(ordinary);
         }
         return new(entities.OrderBy(item => item.Id, StringComparer.Ordinal).ToArray(), unsupported);
+    }
+
+    private static bool TryOrdinaryScript(RathenaDeclaration source, IEnumerable<string> roots, out WorldEntityDefinition entity)
+    {
+        entity = default!;
+        var visual = source.Arguments.Split(',').Select(value => value.Trim().TrimEnd('{')).Where(value => value.Length > 0).ToArray();
+        if (visual.Length == 0 || !NpcSpriteClassResolver.TryResolve(roots, visual[0], out var spriteClass)) return false;
+        var rx = visual.Length > 1 && U16(visual[1], out var parsedRx) ? parsedRx : (ushort)0;
+        var ry = visual.Length > 2 && U16(visual[2], out var parsedRy) ? parsedRy : (ushort)0;
+        var clickSource = source.ScriptBody.Split("OnTouch:", 2, StringSplitOptions.None)[0].Split("OnInit:", 2, StringSplitOptions.None)[0].Trim();
+        entity = new(1, DeterministicId.For("npc", source.Map, source.Name), "Npc",
+            new(source.Name, source.Map, source.X, source.Y, source.Direction, spriteClass, source.ScriptBody.Contains("cloakonnpc();", StringComparison.Ordinal) ? 4u : 0u), [],
+            [new("OnClick", source.Map, source.X, source.Y, rx, ry, true, true, ScriptCapabilities.Classify(clickSource), clickSource, null, null)],
+            new("rAthena", Commit, source.Source.File, source.Source.Line));
+        return true;
     }
 
     private static bool TryDeclarative(RathenaDeclaration source, out WorldEntityDefinition entity)
@@ -103,6 +120,35 @@ internal static partial class WorldEntityConverter
     private static bool U16(string value, out ushort result) => ushort.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out result);
     private static UnsupportedConversion Unsupported(RathenaDeclaration value, string reason) => new(value.Name, value.Source.File, value.Source.Line, reason);
     [GeneratedRegex("/\\*.*?\\*/")] private static partial Regex BlockCommentRegex();
+}
+
+internal static class NpcSpriteClassResolver
+{
+    public static bool TryResolve(IEnumerable<string> roots, string constant, out ushort value)
+    {
+        value = 0;
+        var root = roots.Select(Path.GetFullPath).Select(FindRathenaRoot).FirstOrDefault(path => path is not null);
+        var header = root is null ? null : Path.Combine(root, "src", "map", "npc.hpp");
+        if (header is null || !File.Exists(header)) return false;
+        var current = -1; var inside = false;
+        foreach (var raw in File.ReadLines(header))
+        {
+            var line = raw.Split("//", 2)[0].Trim().TrimEnd(',');
+            if (!inside) { if (line.StartsWith("enum e_job_types", StringComparison.Ordinal)) inside = true; continue; }
+            if (line == "{") continue;
+            if (line.StartsWith('}')) break;
+            if (line.Length == 0) continue;
+            var parts = line.Split('=', 2, StringSplitOptions.TrimEntries); current = parts.Length == 2 && int.TryParse(parts[1], out var assigned) ? assigned : current + 1;
+            if (parts[0] == "JT_" + constant) { value = checked((ushort)current); return true; }
+        }
+        return false;
+    }
+    private static string? FindRathenaRoot(string path)
+    {
+        for (var current = new DirectoryInfo(path); current is not null; current = current.Parent)
+            if (File.Exists(Path.Combine(current.FullName, "src", "map", "npc.hpp"))) return current.FullName;
+        return null;
+    }
 }
 
 internal static class ScriptCapabilities

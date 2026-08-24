@@ -8,7 +8,7 @@ public static class IroWorldActorPackets
 {
     private const int FixedLength = 84;
 
-    public static byte[] BuildWarpActor(WarpActor actor)
+    public static byte[] BuildWorldActor(WorldActor actor)
     {
         var name = Encoding.ASCII.GetBytes(actor.Name);
         if (name.Length > PacketConstants.NameLength)
@@ -19,11 +19,12 @@ public static class IroWorldActorPackets
         var packet = new byte[FixedLength + name.Length];
         BinaryPrimitives.WriteInt16LittleEndian(packet, PacketConstants.ZcNotifyStandEntry);
         BinaryPrimitives.WriteUInt16LittleEndian(packet.AsSpan(2), (ushort)packet.Length);
-        packet[4] = WarpActor.ObjectType;
+        packet[4] = WorldActor.ObjectType;
         BinaryPrimitives.WriteUInt32LittleEndian(packet.AsSpan(5), actor.ActorId);
         BinaryPrimitives.WriteUInt16LittleEndian(packet.AsSpan(13), 300);
+        BinaryPrimitives.WriteUInt32LittleEndian(packet.AsSpan(19), actor.EffectState);
         BinaryPrimitives.WriteUInt16LittleEndian(packet.AsSpan(23), actor.SpriteClass);
-        WritePosition(packet.AsSpan(63, 3), actor.X, actor.Y, 0);
+        WritePosition(packet.AsSpan(63, 3), actor.X, actor.Y, actor.Direction);
         packet[66] = actor.RadiusX;
         packet[67] = actor.RadiusY;
         BinaryPrimitives.WriteUInt32LittleEndian(packet.AsSpan(73), uint.MaxValue);
@@ -31,6 +32,8 @@ public static class IroWorldActorPackets
         name.CopyTo(packet.AsSpan(FixedLength));
         return packet;
     }
+
+    public static byte[] BuildWarpActor(WarpActor actor) => BuildWorldActor(actor);
 
     private static void WritePosition(Span<byte> buffer, ushort x, ushort y, byte direction)
     {

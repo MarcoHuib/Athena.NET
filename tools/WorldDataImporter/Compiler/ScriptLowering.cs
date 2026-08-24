@@ -23,7 +23,7 @@ internal static class RathenaScriptLowerer
 {
     private static readonly HashSet<string> Commands = new(StringComparer.OrdinalIgnoreCase)
     {
-        "mes", "next", "select", "close", "close2", "setquest", "completequest", "warp", "savepoint", "end"
+        "mes", "next", "select", "close", "close2", "setquest", "completequest", "warp", "savepoint", "cutin", "end"
     };
     private static readonly HashSet<string> Functions = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -33,15 +33,18 @@ internal static class RathenaScriptLowerer
     public static ScriptLoweringResult LowerEvent(CompilationUnitSyntax syntax, string eventName)
     {
         var diagnostics = new List<CompilerDiagnostic>(syntax.Diagnostics);
-        var labelIndex = syntax.Statements.ToList().FindIndex(statement => statement is LabelStatementSyntax label && label.Name.Equals(eventName, StringComparison.OrdinalIgnoreCase));
-        if (labelIndex < 0)
+        var all = syntax.Statements.ToList();
+        var labelIndex = all.FindIndex(statement => statement is LabelStatementSyntax label && label.Name.Equals(eventName, StringComparison.OrdinalIgnoreCase));
+        var startIndex = labelIndex + 1;
+        if (labelIndex < 0 && eventName.Equals("OnClick", StringComparison.OrdinalIgnoreCase)) startIndex = 0;
+        else if (labelIndex < 0)
         {
             diagnostics.Add(new("RAT4001", "Error", $"Event label '{eventName}' was not found.", syntax.Span, eventName));
             return new(null, diagnostics);
         }
 
         var statements = new List<LoweredScriptStatement>();
-        foreach (var statement in syntax.Statements.Skip(labelIndex + 1).TakeWhile(statement => statement is not LabelStatementSyntax { IsEvent: true }))
+        foreach (var statement in all.Skip(startIndex).TakeWhile(statement => statement is not LabelStatementSyntax { IsEvent: true }))
             if (LowerStatement(statement, diagnostics) is { } lowered) statements.Add(lowered);
         return new(new(eventName, statements, syntax.Span), diagnostics);
     }

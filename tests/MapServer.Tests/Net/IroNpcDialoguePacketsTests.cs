@@ -7,6 +7,16 @@ namespace Athena.Net.MapServer.Tests.Net;
 public sealed class IroNpcDialoguePacketsTests
 {
     [Fact]
+    public void BuildCutin_MatchesCaptureProven01b3Layout()
+    {
+        var packet = IroNpcDialoguePackets.BuildCutin("tutorial02", 4);
+        Assert.Equal(67, packet.Length);
+        Assert.Equal((short)0x01b3, BinaryPrimitives.ReadInt16LittleEndian(packet));
+        Assert.Equal("tutorial02.BMP", System.Text.Encoding.ASCII.GetString(packet.AsSpan(2, 64)).TrimEnd('\0'));
+        Assert.Equal((byte)4, packet[66]);
+    }
+
+    [Fact]
     public void CapturedChangeDirection_ParsesClassicFieldsAndOpaqueTrailingByte()
     {
         Assert.True(IroChangeDirectionPacket.TryParse([0x61, 0x03, 0x01, 0x00, 0x03, 0x7d], out var packet));

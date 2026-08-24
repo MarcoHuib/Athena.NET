@@ -121,6 +121,27 @@ public sealed class CompilerTests
         }
     }
 
+    [Fact]
+    public async Task RealWoundedSwordsmanOnClick_IsDeterministicAndMatchesCompiledSource()
+    {
+        var repository = FindRepositoryRoot();
+        var first = Path.Combine(Path.GetTempPath(), $"wounded-{Guid.NewGuid():N}.cs");
+        var second = Path.Combine(Path.GetTempPath(), $"wounded-{Guid.NewGuid():N}.cs");
+        try
+        {
+            string[] Arguments(string output) => ["compile-script", "--source-root", Path.Combine(repository, "legacy/rathena/npc/re/jobs/novice"), "--source-file", "academy.txt", "--map", "iz_int", "--name", "Wounded Swordsman#intro_npc02_iz_int", "--kind", "npc", "--output", output];
+            Assert.Equal(0, await WorldDataImporterCli.RunAsync(Arguments(first)));
+            Assert.Equal(0, await WorldDataImporterCli.RunAsync(Arguments(second)));
+            Assert.Equal(await File.ReadAllBytesAsync(first), await File.ReadAllBytesAsync(second));
+            Assert.Equal(await File.ReadAllBytesAsync(Path.Combine(repository, "src/MapServer/Generated/World/Izlude/WoundedSwordsman.cs")), await File.ReadAllBytesAsync(first));
+            var source = await File.ReadAllTextAsync(first);
+            Assert.Contains("OnClickScript", source);
+            Assert.Contains("context.CutinAsync(\"tutorial02\", (byte)4", source);
+            Assert.Contains("new WorldActorComponent(\"Wounded Swordsman#intro_npc02_iz_int\", \"iz_int\", 56, 32, 3, 688, 4)", source);
+        }
+        finally { File.Delete(first); File.Delete(second); }
+    }
+
     private static string FindRepositoryRoot()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);

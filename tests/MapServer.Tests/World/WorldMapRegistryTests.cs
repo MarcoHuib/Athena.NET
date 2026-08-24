@@ -1,9 +1,22 @@
 using Athena.Net.MapServer.World;
+using Athena.Net.MapServer.World.GeneratedScripts;
 
 namespace Athena.Net.MapServer.Tests.World;
 
 public sealed class WorldMapRegistryTests
 {
+    [Fact]
+    public void CustomScriptRegistration_RejectsDuplicateUnlessOverrideIsExplicit()
+    {
+        var generated = Assert.Single(GeneratedScriptRegistry.Entities, entity => entity.Id == "npc:iz_int:wounded swordsman#intro_npc02_iz_int");
+        var registration = new GeneratedScriptRegistration(generated, "OnClick", static () => new FixtureScript());
+        var builder = new NpcScriptRegistryBuilder().AddGenerated([registration]);
+        Assert.Throws<InvalidOperationException>(() => builder.AddCustom(registration));
+        var registry = builder.AddCustom(registration, explicitlyOverrideGenerated: true).Build();
+        Assert.True(registry.TryCreate(generated.Id, "OnClick", out var script));
+        Assert.IsType<FixtureScript>(script);
+    }
+
     [Theory]
     [InlineData("iz_int01")]
     [InlineData("iz_int02")]
@@ -182,30 +195,10 @@ public sealed class WorldMapRegistryTests
     }
 
     [Fact]
-    public void DeveloperDialogueNpc_LoadsThroughNormalRegistryAndIsInteractable()
+    public void DeveloperDialogueNpc_IsAbsentFromDefaultRegistry()
     {
-        var entity = WorldMapRegistry.Tutorial.EntitiesById["dev:int_land04:athena_test_npc"];
-        Assert.Equal("DeveloperTestNpc", entity.Kind);
-        Assert.Equal(new WorldActorComponent("Athena Test NPC", "int_land04", 55, 63, 5, 873), entity.Actor);
-        Assert.Empty(entity.Triggers);
-
-        var actor = Assert.Single(
-            WorldMapRegistry.Tutorial.GetVisibleWarpActors("int_land04", 50, 59),
-            candidate => candidate.Name == "Athena Test NPC");
-        Assert.Equal((ushort)873, actor.SpriteClass);
-        Assert.True(WorldMapRegistry.Tutorial.TryGetInteraction(actor.ActorId, "int_land04", out var boundEntity, out var script));
-        Assert.Same(entity, boundEntity);
-        Assert.True(script.RuntimeExecutable);
-        Assert.Collection(script.Instructions!,
-            instruction => Assert.Equal(new MessageInstruction("Quest test."), instruction),
-            instruction =>
-            {
-                var select = Assert.IsType<SelectInstruction>(instruction);
-                Assert.Equal(["Start test quest", "Check test quest", "Complete test quest"], select.Options.Select(option => option.Text));
-                Assert.IsType<SetQuestInstruction>(select.Options[0].Instructions[0]);
-                Assert.IsType<IfQuestStateInstruction>(select.Options[1].Instructions[0]);
-                Assert.IsType<CompleteQuestInstruction>(select.Options[2].Instructions[0]);
-            });
+        Assert.DoesNotContain("dev:int_land04:athena_test_npc", WorldMapRegistry.Tutorial.EntitiesById.Keys);
+        Assert.DoesNotContain(WorldMapRegistry.Tutorial.GetVisibleWarpActors("int_land04", 50, 59), actor => actor.Name == "Athena Test NPC");
     }
 
     [Fact]
@@ -221,4 +214,9 @@ public sealed class WorldMapRegistryTests
         Assert.False(WorldMapRegistry.Tutorial.TryFindFirstScriptTouchEnterAlongRoute("int_land04", 50, 58, 49, 57, out _));
         Assert.Single(WorldMapRegistry.Tutorial.GetVisibleWarpActors("int_land04", 49, 57), actor => actor.Name == "#intro_to_izlude_d");
     }
+}
+
+file sealed class FixtureScript : INpcScript
+{
+    public Task ExecuteAsync(ScriptContext context, CancellationToken cancellationToken) => Task.CompletedTask;
 }

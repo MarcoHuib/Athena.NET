@@ -32,6 +32,18 @@ public static class IroNpcDialoguePackets
 
     public static byte[] BuildNext(uint actorId) => BuildServerActorPacket(PacketConstants.ZcNpcNext, actorId);
     public static byte[] BuildClose(uint actorId) => BuildServerActorPacket(PacketConstants.ZcNpcClose, actorId);
+    public static byte[] BuildCutin(string image, byte position)
+    {
+        if (image.Any(character => character > 0x7f)) throw new ArgumentException("Captured cutin encoding is ASCII-only.", nameof(image));
+        var wireName = image.Length == 0 || image.EndsWith(".BMP", StringComparison.OrdinalIgnoreCase) ? image : image + ".BMP";
+        var encoded = Encoding.ASCII.GetBytes(wireName);
+        if (encoded.Length >= 64) throw new ArgumentException("Cutin image exceeds the 63-byte iRO field.", nameof(image));
+        var packet = new byte[67];
+        BinaryPrimitives.WriteInt16LittleEndian(packet, PacketConstants.ZcShowImage);
+        encoded.CopyTo(packet.AsSpan(2, 64));
+        packet[66] = position;
+        return packet;
+    }
     public static byte[] BuildMenu(uint actorId, IReadOnlyList<string> options)
     {
         if (options.Count == 0 || options.Any(option => option.Length == 0 || option.Contains(':') || option.Any(character => character > 0x7f))) throw new ArgumentException("Captured menus require non-empty ASCII options without colons.", nameof(options));

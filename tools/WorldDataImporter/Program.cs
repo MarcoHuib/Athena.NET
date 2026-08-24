@@ -101,7 +101,7 @@ internal static class WorldDataImporterCli
         if (!lowered.Success) throw new ArgumentException(string.Join(Environment.NewLine, lowered.Diagnostics.Where(diagnostic => diagnostic.Severity == "Error").Select(diagnostic => $"{diagnostic.Span.Start.File}:{diagnostic.Span.Start.Line}:{diagnostic.Span.Start.Column} {diagnostic.Code}: {diagnostic.Message}")));
         var actor = entity.Actor!; var className = ClassName(entity.Id, binding.Trigger);
         var metadata = new GeneratedNpcMetadata("Athena.Net.MapServer.Generated.World.Izlude", className, entity.Id, entity.Kind, actor.Name, actor.Map, actor.X, actor.Y, actor.Direction, actor.Class,
-            binding.RadiusX, binding.RadiusY, binding.Trigger, binding.BaseNpcName, CanonicalSourceFile(template.Source.File), template.Source.Line + 3, template.Source.Line, "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca");
+            binding.RadiusX, binding.RadiusY, binding.Trigger, binding.BaseNpcName, CanonicalSourceFile(template.Source.File), template.Source.Line + 1, template.Source.Line, "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca", actor.EffectState);
         var generated = NpcScriptEmitter.Emit(lowered.Script!, metadata); var output = Path.GetFullPath(options.Required("output")); Directory.CreateDirectory(Path.GetDirectoryName(output)!); await File.WriteAllTextAsync(output, generated, new System.Text.UTF8Encoding(false));
         Console.WriteLine($"Generated executable {binding.Trigger} script '{entity.Id}' into {output}."); return 0;
     }
@@ -111,7 +111,7 @@ internal static class WorldDataImporterCli
         var array = values.ToArray(); return array.Length == 1 ? array[0] : throw new ArgumentException($"Expected one {description}, found {array.Length}.");
     }
 
-    private static string ClassName(string entityId, string trigger) => string.Concat(entityId.Split([':', '_', '-', '#'], StringSplitOptions.RemoveEmptyEntries).Select(part => char.ToUpperInvariant(part[0]) + part[1..])) + trigger + "Script";
+    private static string ClassName(string entityId, string trigger) => string.Concat(entityId.Split([':', '_', '-', '#', ' '], StringSplitOptions.RemoveEmptyEntries).Select(part => char.ToUpperInvariant(part[0]) + part[1..])) + trigger + "Script";
     private static string CanonicalSourceFile(string path)
     {
         var normalized = path.Replace('\\', '/'); var legacy = normalized.IndexOf("legacy/rathena/", StringComparison.Ordinal);
