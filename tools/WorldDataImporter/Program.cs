@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Athena.WorldCompiler.Generation;
 
 return await WorldDataImporterCli.RunAsync(args);
 
@@ -13,6 +14,7 @@ internal static class WorldDataImporterCli
             {
                 "audit" => await AuditAsync(args[1..]),
                 "convert" => await ConvertAsync(args[1..]),
+                "compile" => await CompileAsync(args[1..]),
                 "capabilities" => await CapabilitiesAsync(args[1..]),
                 _ => throw new ArgumentException($"Unknown command '{args[0]}'."),
             };
@@ -62,6 +64,18 @@ internal static class WorldDataImporterCli
         entity.Triggers.Any(trigger => trigger.Actions.Any(action => action is WarpAction)) ||
         (entity.Scripts?.Any(script => script.RuntimeExecutable && script.Instructions is { Count: > 0 }) ?? false);
 
+    private static async Task<int> CompileAsync(string[] args)
+    {
+        var options=CliOptions.Parse(args); var roots=options.All("source-root");
+        if(roots.Count==0) throw new ArgumentException("compile requires --source-root.");
+        var filter=new ConversionFilter(options.Optional("source-file"),options.Optional("map"),options.Optional("name"),options.Optional("kind"));
+        if(filter.IsEmpty) throw new ArgumentException("compile requires a narrow source/map/name/kind filter in this migration slice.");
+        var result=WorldEntityConverter.Convert(roots,filter); var lowered=WorldLowerer.Lower(result.Entities);
+        var source=CSharpWorldEmitter.Emit(lowered,"6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca");
+        var output=Path.GetFullPath(options.Required("output")); Directory.CreateDirectory(Path.GetDirectoryName(output)!); await File.WriteAllTextAsync(output,source,new System.Text.UTF8Encoding(false));
+        Console.WriteLine($"Generated {lowered.Warps.Count} strongly typed warp definitions into {output}."); return result.Unsupported.Count==0?0:1;
+    }
+
     private static async Task<int> CapabilitiesAsync(string[] args)
     {
         var options = CliOptions.Parse(args); var roots = options.All("source-root");
@@ -79,6 +93,7 @@ internal static class WorldDataImporterCli
         Console.Error.WriteLine("WorldDataImporter convert --source-root <folder> --output <entities-folder> [--source-file <path>] [--map <map>] [--name <name>] [--kind warp]");
         Console.Error.WriteLine("WorldDataImporter convert --source-root <folder> --all-compatible true --output <entities-folder> --report <report.json>");
         Console.Error.WriteLine("WorldDataImporter capabilities --source-root <folder> [--source-root <folder>] --output <report.json>");
+        Console.Error.WriteLine("WorldDataImporter compile --source-root <folder> --output <World.g.cs> [--source-file <path>] [--map <map>] [--name <name>] [--kind warp]");
     }
 }
 

@@ -11,6 +11,7 @@ internal sealed record ScriptBehaviorDefinition(string Trigger, string Map, usho
 [JsonDerivedType(typeof(Close2Instruction), "Close2")]
 [JsonDerivedType(typeof(SelectInstruction), "Select")]
 [JsonDerivedType(typeof(CompleteQuestInstruction), "CompleteQuest")]
+[JsonDerivedType(typeof(SetQuestInstruction), "SetQuest")]
 [JsonDerivedType(typeof(IfQuestStateInstruction), "IfQuestState")]
 [JsonDerivedType(typeof(AssignmentInstruction), "Assign")]
 [JsonDerivedType(typeof(WarpInstruction), "Warp")]
@@ -23,6 +24,7 @@ internal sealed record Close2Instruction : ScriptInstructionDefinition;
 internal sealed record SelectInstruction(IReadOnlyList<SelectOptionDefinition> Options) : ScriptInstructionDefinition;
 internal sealed record SelectOptionDefinition(string Text, IReadOnlyList<ScriptInstructionDefinition> Instructions);
 internal sealed record CompleteQuestInstruction(uint QuestId) : ScriptInstructionDefinition;
+internal sealed record SetQuestInstruction(uint QuestId) : ScriptInstructionDefinition;
 internal sealed record IfQuestStateInstruction(uint QuestId, string Expected, IReadOnlyList<ScriptInstructionDefinition> Then, IReadOnlyList<ScriptInstructionDefinition> Else) : ScriptInstructionDefinition;
 internal sealed record AssignmentInstruction(string Variable, ScriptExpressionDefinition Value) : ScriptInstructionDefinition;
 internal sealed record WarpInstruction(ScriptExpressionDefinition Map, ushort X, ushort Y) : ScriptInstructionDefinition;

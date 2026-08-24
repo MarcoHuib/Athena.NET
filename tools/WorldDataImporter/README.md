@@ -1,7 +1,26 @@
 # WorldDataImporter
 
-`WorldDataImporter` converts the pinned rAthena source under `legacy/rathena/npc`
-into Athena.NET `WorldEntity` JSON. Run commands from the repository root.
+`WorldDataImporter` is the compatibility CLI for the emerging Athena world
+compiler. Its pipeline is source loading -> hand-written lexer -> recursive-
+descent syntax tree -> semantic analysis -> lowering -> deterministic C#. The
+JSON `WorldEntity` interpreter remains temporarily available while runtime parity
+is migrated vertically.
+
+## Generate strongly typed C# (first vertical slice)
+
+The first generated definition slice is declarative warp/WARPNPC data. Generation
+is intentionally filter-scoped during migration:
+
+```bash
+dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- compile \
+  --source-root legacy/rathena/npc/re/warps \
+  --source-file cities/izlude.txt --map iz_int --kind warp \
+  --output /tmp/Generated/Maps/Izlude.Warps.g.cs
+```
+
+Output is ordinary deterministic C# with compact record-struct definitions and
+`WorldBuildInfo` provenance (pinned rAthena commit, compiler version, world hash).
+It does not use runtime Roslyn scripting or define a new runtime instruction VM.
 
 ## Convert everything currently compatible
 
@@ -52,8 +71,9 @@ dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- capabil
   --output data/world/conversion-capabilities.json
 ```
 
-The report counts commands and marks current capabilities as supported or
-unsupported. It is the roadmap for extending the existing parser/runtime.
+The report is derived from syntax and semantic analysis. It distinguishes parsed
+constructs from fully runtime-supported commands, includes source locations and
+blocking reasons, and does not classify labels or language keywords as commands.
 
 ## Top-level content audit
 
