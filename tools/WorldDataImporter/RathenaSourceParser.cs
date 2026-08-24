@@ -54,6 +54,9 @@ internal static class RathenaSourceParser
     private static int Count(string value, char character) => value.Count(item => item == character);
     private static string MakeRelative(IEnumerable<string> roots, string file)
     {
+        var normalized = file.Replace('\\', '/');
+        var pinned = normalized.IndexOf("legacy/rathena/", StringComparison.Ordinal);
+        if (pinned >= 0) return normalized[pinned..];
         foreach (var root in roots)
             if (file.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.Ordinal)) return Path.GetRelativePath(Environment.CurrentDirectory, file);
         return file;

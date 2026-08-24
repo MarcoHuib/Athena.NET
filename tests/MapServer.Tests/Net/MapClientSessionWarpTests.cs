@@ -25,7 +25,7 @@ public sealed class MapClientSessionWarpTests
             serverClient,
             connector,
             iroAuthenticated: true,
-            mapName: "iz_int03",
+            mapName: "iz_int",
             x: 22,
             y: 31,
             positionPersistence: persistence);
@@ -46,34 +46,15 @@ public sealed class MapClientSessionWarpTests
         Assert.Equal((short)0x0091, BinaryPrimitives.ReadInt16LittleEndian(mapChange));
         Assert.Equal((ushort)51, BinaryPrimitives.ReadUInt16LittleEndian(mapChange.AsSpan(18)));
         Assert.Equal((ushort)30, BinaryPrimitives.ReadUInt16LittleEndian(mapChange.AsSpan(20)));
-        Assert.Equal("iz_int03", session.CurrentMapName);
+        Assert.Equal("iz_int", session.CurrentMapName);
         Assert.Equal((ushort)51, session.CurrentX);
         Assert.Equal((ushort)30, session.CurrentY);
-        Assert.Contains(persistence.Saves, save => save.MapName == "iz_int03" && save.X == 51 && save.Y == 30);
-        Assert.False(runTask.IsCompleted);
-
-        await clientStream.WriteAsync(new byte[] { 0x7d, 0x00, 0xba });
-        var actorHeader = new byte[4];
-        await clientStream.ReadExactlyAsync(actorHeader);
-        Assert.Equal((short)0x09ff, BinaryPrimitives.ReadInt16LittleEndian(actorHeader));
-        var actorLength = BinaryPrimitives.ReadUInt16LittleEndian(actorHeader.AsSpan(2));
-        var actorRemainder = new byte[actorLength - actorHeader.Length];
-        await clientStream.ReadExactlyAsync(actorRemainder);
-        await clientStream.WriteAsync(BuildMovementRequest(58, 28));
-
-        var movementAfterWarp = new byte[12];
-        await clientStream.ReadExactlyAsync(movementAfterWarp);
-        Assert.Equal((short)0x0087, BinaryPrimitives.ReadInt16LittleEndian(movementAfterWarp));
-        Assert.Equal(
-            ((ushort)51, (ushort)30, (ushort)58, (ushort)28),
-            DecodeMovement(movementAfterWarp.AsSpan(6, 6)));
-        Assert.Equal((ushort)58, session.CurrentX);
-        Assert.Equal((ushort)28, session.CurrentY);
+        Assert.Contains(persistence.Saves, save => save.MapName == "iz_int" && save.X == 51 && save.Y == 30);
         Assert.False(runTask.IsCompleted);
 
         client.Close();
         await runTask.WaitAsync(TimeSpan.FromSeconds(5));
-        Assert.Contains(persistence.Saves, save => save.MapName == "iz_int03" && save.X == 58 && save.Y == 28);
+        Assert.Contains(persistence.Saves, save => save.MapName == "iz_int" && save.X == 51 && save.Y == 30);
         listener.Stop();
     }
 

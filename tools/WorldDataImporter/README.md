@@ -3,8 +3,8 @@
 `WorldDataImporter` is the compatibility CLI for the emerging Athena world
 compiler. Its pipeline is source loading -> hand-written lexer -> recursive-
 descent syntax tree -> semantic analysis -> lowering -> deterministic C#. The
-JSON `WorldEntity` interpreter remains temporarily available while runtime parity
-is migrated vertically.
+MapServer consumes compiled generated C#. JSON output remains useful for compiler
+diagnostics or offline inspection, but is not runtime world data.
 
 ## Generate strongly typed C# (first vertical slice)
 
@@ -14,8 +14,9 @@ is intentionally filter-scoped during migration:
 ```bash
 dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- compile \
   --source-root legacy/rathena/npc/re/warps \
-  --source-file cities/izlude.txt --map iz_int --kind warp \
-  --output /tmp/Generated/Maps/Izlude.Warps.g.cs
+  --source-file izlude.txt --map iz_int \
+  --name '#room_out' --name '#room_in' --kind warp \
+  --output src/MapServer/Generated/World/Izlude/RequiredWarps.cs
 ```
 
 Output is ordinary deterministic C# with compact record-struct definitions and
@@ -47,31 +48,26 @@ Current generated executable coverage is two real rAthena entities:
 `npc:iz_int:wounded swordsman#intro_npc02_iz_int` (`OnClick`). The ordinary NPC
 definition carries its pinned position, direction, class 688, and initial cloak
 option; its generated async behavior starts quest 21001 and emits the verified
-iRO cutin packet through `ScriptContext`. Other executable JSON entities still
-use the legacy `ScriptExecutionSession` fallback. Compiler report JSON remains
-diagnostic output and is not part of this removal.
+iRO cutin packet through `ScriptContext`. Compiler report JSON remains diagnostic
+output and is not runtime content.
 
 | Runtime entity | Generated equivalent | Runtime consumer | Parity test | Safe to remove JSON |
 |---|---|---|---|---|
 | `int_land04/#intro_to_izlude_d` | `IntroToIzlude.g.cs` | Generated registry + `ScriptContext` | generated stock-iRO session integration | Yes; removed |
 | `iz_int/Wounded Swordsman#intro_npc02_iz_int` | `WoundedSwordsman.cs` | Generated registry + `ScriptContext` | visible actor/click/dialogue/quest integration | Yes; no runtime JSON existed |
-| `int_land/#intro_to_izlude` | None | JSON + `ScriptExecutionSession` | legacy registry/session tests | No |
-| `int_land01/#intro_to_izlude_a` | None | JSON + `ScriptExecutionSession` | legacy registry/session tests | No |
-| `int_land02/#intro_to_izlude_b` | None | JSON + `ScriptExecutionSession` | legacy registry/session tests | No |
-| `int_land03/#intro_to_izlude_c` | None | JSON + `ScriptExecutionSession` | legacy registry/session tests | No |
-| `int_land04/Athena Test NPC` | None | explicit developer fixture only | isolated legacy tests | Not loaded by default |
+| `iz_int/#room_out`, `#room_in` | `RequiredWarps.cs` | compiled `WorldMapRegistry` | generated minimal-warp tests | Yes; aggregate removed |
 
-## Convert everything currently compatible
+## Offline JSON conversion
 
-This is the normal command for regenerating all warp and WARPNPC definitions that
-the current Athena runtime can execute completely:
+The converter can still emit JSON for offline diagnostics. Its output is not
+copied or loaded by MapServer:
 
 ```bash
 dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- convert \
   --source-root legacy/rathena/npc/warps \
   --source-root legacy/rathena/npc/re/warps \
   --all-compatible true \
-  --output data/world/entities \
+  --output /tmp/athena-world-entities \
   --report data/world/conversion-unsupported.json
 ```
 
@@ -97,7 +93,7 @@ dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- convert
   --map int_land04 \
   --name '#intro_to_izlude_d' \
   --kind warp \
-  --output data/world/entities
+  --output /tmp/athena-world-entities
 ```
 
 ## Capability report

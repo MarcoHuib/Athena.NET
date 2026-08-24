@@ -74,10 +74,14 @@ internal static class WorldDataImporterCli
         if(roots.Count==0) throw new ArgumentException("compile requires --source-root.");
         var filter=new ConversionFilter(options.Optional("source-file"),options.Optional("map"),options.Optional("name"),options.Optional("kind"));
         if(filter.IsEmpty) throw new ArgumentException("compile requires a narrow source/map/name/kind filter in this migration slice.");
-        var result=WorldEntityConverter.Convert(roots,filter); var lowered=WorldLowerer.Lower(result.Entities);
+        var names = options.All("name");
+        var results = names.Count <= 1
+            ? [WorldEntityConverter.Convert(roots, filter)]
+            : names.Select(name => WorldEntityConverter.Convert(roots, filter with { Name = name })).ToArray();
+        var lowered=WorldLowerer.Lower(results.SelectMany(result => result.Entities));
         var source=CSharpWorldEmitter.Emit(lowered,"6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca");
         var output=Path.GetFullPath(options.Required("output")); Directory.CreateDirectory(Path.GetDirectoryName(output)!); await File.WriteAllTextAsync(output,source,new System.Text.UTF8Encoding(false));
-        Console.WriteLine($"Generated {lowered.Warps.Count} strongly typed warp definitions into {output}."); return result.Unsupported.Count==0?0:1;
+        Console.WriteLine($"Generated {lowered.Warps.Count} strongly typed warp definitions into {output}."); return results.All(result => result.Unsupported.Count == 0)?0:1;
     }
 
     private static async Task<int> CompileScriptAsync(string[] args)

@@ -46,9 +46,9 @@ public sealed class CompilerTests
     [Fact]
     public void GeneratedWarpCSharp_IsDeterministicAndCarriesProvenance()
     {
-        var world=new LoweredWorld([new(new("warp:a:x"),"#x",new("a"),1,2,1,1,new("b"),3,4)]);
+        var world=new LoweredWorld([new(new("warp:a:x"),"#x",new("a"),1,2,1,1,new("b"),3,4,true,"npc/test.txt",1)]);
         var first=CSharpWorldEmitter.Emit(world,"abc"); var second=CSharpWorldEmitter.Emit(world,"abc");
-        Assert.Equal(first,second); Assert.Contains("WorldBuildInfo",first); Assert.Contains("RathenaCommit = \"abc\"",first); Assert.Contains("readonly record struct WarpData",first);
+        Assert.Equal(first,second); Assert.Contains("WorldBuildInfo",first); Assert.Contains("RathenaCommit = \"abc\"",first); Assert.Contains("WarpDefinition[] All",first);
     }
 
     [Fact]
@@ -138,6 +138,23 @@ public sealed class CompilerTests
             Assert.Contains("OnClickScript", source);
             Assert.Contains("context.CutinAsync(\"tutorial02\", (byte)4", source);
             Assert.Contains("new WorldActorComponent(\"Wounded Swordsman#intro_npc02_iz_int\", \"iz_int\", 56, 32, 3, 688, 4)", source);
+        }
+        finally { File.Delete(first); File.Delete(second); }
+    }
+
+    [Fact]
+    public async Task MinimalIzIntWarps_AreDeterministicAndMatchCompiledSource()
+    {
+        var repository = FindRepositoryRoot();
+        var first = Path.Combine(Path.GetTempPath(), $"required-warps-{Guid.NewGuid():N}.cs");
+        var second = Path.Combine(Path.GetTempPath(), $"required-warps-{Guid.NewGuid():N}.cs");
+        try
+        {
+            string[] Arguments(string output) => ["compile", "--source-root", Path.Combine(repository, "legacy/rathena/npc/re/warps/cities"), "--source-file", "izlude.txt", "--map", "iz_int", "--name", "#room_out", "--name", "#room_in", "--kind", "warp", "--output", output];
+            Assert.Equal(0, await WorldDataImporterCli.RunAsync(Arguments(first)));
+            Assert.Equal(0, await WorldDataImporterCli.RunAsync(Arguments(second)));
+            Assert.Equal(await File.ReadAllBytesAsync(first), await File.ReadAllBytesAsync(second));
+            Assert.Equal(await File.ReadAllBytesAsync(Path.Combine(repository, "src/MapServer/Generated/World/Izlude/RequiredWarps.cs")), await File.ReadAllBytesAsync(first));
         }
         finally { File.Delete(first); File.Delete(second); }
     }
