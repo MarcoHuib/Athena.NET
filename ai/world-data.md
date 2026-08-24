@@ -11,8 +11,11 @@ Current pipeline:
 
 The intentionally supported runtime slice is:
 
-- `iz_int/#room_out`, pinned `izlude.txt:57`, generated in `RequiredWarps.cs`;
-- `iz_int/#room_in`, pinned `izlude.txt:63`, generated in `RequiredWarps.cs`;
+- `iz_int/#room_out` and `#room_in`, pinned `izlude.txt:57,63`;
+- active instance variants `iz_int03/#room_out03` and `#room_in03`, pinned
+  `izlude.txt:60,66`;
+- `iz_int03/#ship_out03`, pinned duplicate at `izlude.txt:80`, generated
+  executable `OnTouch` with savepoint and transfer to `int_land03`;
 - `int_land04/#intro_to_izlude_d`, generated executable `OnTouch`;
 - `iz_int/Wounded Swordsman#intro_npc02_iz_int`, generated executable `OnClick`.
 
@@ -51,8 +54,9 @@ Generate the current minimal static warps:
 ```bash
 dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- compile \
   --source-root legacy/rathena/npc/re/warps/cities \
-  --source-file izlude.txt --map iz_int \
-  --name '#room_out' --name '#room_in' --kind warp \
+  --source-file izlude.txt \
+  --name '#room_out' --name '#room_in' \
+  --name '#room_out03' --name '#room_in03' --kind warp \
   --output src/MapServer/Generated/World/Izlude/RequiredWarps.cs
 ```
 
@@ -60,6 +64,8 @@ Compiler audit/capability reports may still scan the complete pinned NPC tree;
 their breadth does not imply runtime support.
 
 ## Still missing
+
+The minimal `iz_int03` slice now also includes compiler-generated navigation targets, both Wounded Swordsman actor states/scripts, and actor-only definitions for the pinned `int_land03` Captain Carocc and Lumin duplicates. Captain/Lumin are visible, but their scripts deliberately remain unregistered until real healing, EXP, status-effect, inventory, and related semantics exist; no no-op gameplay commands are used.
 
 - Remaining rAthena NPCs, warps, shops, monsters, items, and scripts.
 - Poring spawn/combat/death and quest kill-progress synchronization.

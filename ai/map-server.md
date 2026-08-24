@@ -515,9 +515,9 @@ Normal movement is in-memory and dirty; no per-tile write or timed checkpoint is
 performed.
 
 The runtime no longer reads `data/world/warps.json` or entity JSON. The default
-compiled world intentionally contains the pinned `iz_int/#room_out` and
-`iz_int/#room_in` transitions plus the two generated executable entities used by
-the active gameplay slice. The complete pinned rAthena tree remains available to
+compiled world intentionally contains the pinned room transitions for `iz_int`
+and the actively used `iz_int03` instance plus the two generated executable
+entities used by the gameplay slice. The complete pinned rAthena tree remains available to
 regenerate additional definitions as their runtime capabilities are implemented.
 
 Static and visual-only WARPNPC definitions now produce stable `WarpActor` state.

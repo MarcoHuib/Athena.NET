@@ -65,6 +65,8 @@ public sealed class GeneratedWoundedSwordsmanIntegrationTests
         Assert.Equal("^4d4dffQuestinfo Shortcut is Alt + U^000000\0", Message(await ReadDynamic(stream)));
         Assert.Equal("You can check your quest status there anytime.\0", Message(await ReadDynamic(stream)));
         Assert.Equal((short)0x00b6, BinaryPrimitives.ReadInt16LittleEndian(await ReadExact(stream, 6)));
+        Assert.Equal(entityId, session.ActiveGeneratedScriptEntityId);
+        await stream.WriteAsync(ActorPacket(0x0146, actor.ActorId, 7));
         var clear = await ReadExact(stream, 67); Assert.Equal((byte)255, clear[66]);
         Assert.Equal(CharacterQuestStatus.Active, persistence.State);
         Assert.Null(session.ActiveScriptState);

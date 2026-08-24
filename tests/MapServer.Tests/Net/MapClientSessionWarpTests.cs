@@ -25,7 +25,7 @@ public sealed class MapClientSessionWarpTests
             serverClient,
             connector,
             iroAuthenticated: true,
-            mapName: "iz_int",
+            mapName: "iz_int03",
             x: 22,
             y: 31,
             positionPersistence: persistence);
@@ -46,15 +46,15 @@ public sealed class MapClientSessionWarpTests
         Assert.Equal((short)0x0091, BinaryPrimitives.ReadInt16LittleEndian(mapChange));
         Assert.Equal((ushort)51, BinaryPrimitives.ReadUInt16LittleEndian(mapChange.AsSpan(18)));
         Assert.Equal((ushort)30, BinaryPrimitives.ReadUInt16LittleEndian(mapChange.AsSpan(20)));
-        Assert.Equal("iz_int", session.CurrentMapName);
+        Assert.Equal("iz_int03", session.CurrentMapName);
         Assert.Equal((ushort)51, session.CurrentX);
         Assert.Equal((ushort)30, session.CurrentY);
-        Assert.Contains(persistence.Saves, save => save.MapName == "iz_int" && save.X == 51 && save.Y == 30);
+        Assert.Contains(persistence.Saves, save => save.MapName == "iz_int03" && save.X == 51 && save.Y == 30);
         Assert.False(runTask.IsCompleted);
 
         client.Close();
         await runTask.WaitAsync(TimeSpan.FromSeconds(5));
-        Assert.Contains(persistence.Saves, save => save.MapName == "iz_int" && save.X == 51 && save.Y == 30);
+        Assert.Contains(persistence.Saves, save => save.MapName == "iz_int03" && save.X == 51 && save.Y == 30);
         listener.Stop();
     }
 

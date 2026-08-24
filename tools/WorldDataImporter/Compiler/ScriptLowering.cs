@@ -23,7 +23,7 @@ internal static class RathenaScriptLowerer
 {
     private static readonly HashSet<string> Commands = new(StringComparer.OrdinalIgnoreCase)
     {
-        "mes", "next", "select", "close", "close2", "setquest", "completequest", "warp", "savepoint", "cutin", "end"
+        "mes", "next", "select", "close", "close2", "setquest", "completequest", "warp", "savepoint", "cutin", "npctalk", "cloakonnpcself", "cloakoffnpcself", "navigateto", "end"
     };
     private static readonly HashSet<string> Functions = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -56,6 +56,8 @@ internal static class RathenaScriptLowerer
         IfStatementSyntax conditional => new LoweredIf(LowerExpression(conditional.Condition, diagnostics), LowerStatement(conditional.Then, diagnostics)!, conditional.Else is null ? null : LowerStatement(conditional.Else, diagnostics), conditional.Span),
         ExpressionStatementSyntax { Expression: AssignmentExpressionSyntax { Target: VariableExpressionSyntax variable, Operator: TokenKind.Assign } assignment }
             when variable.Scope == RathenaVariableScope.Local => new LoweredAssignment(variable.Name, LowerExpression(assignment.Value, diagnostics), assignment.Span),
+        ExpressionStatementSyntax { Expression: CallExpressionSyntax { Target: IdentifierExpressionSyntax identifier } call }
+            when Commands.Contains(identifier.Name) => new LoweredCommand(identifier.Name.ToLowerInvariant(), call.Arguments.Select(argument => LowerExpression(argument, diagnostics)).ToArray(), false, call.Span),
         ExpressionStatementSyntax expression => UnsupportedStatement(expression, diagnostics),
         CommandStatementSyntax command when Commands.Contains(command.Name) => new LoweredCommand(command.Name.ToLowerInvariant(), command.Arguments.Select(argument => LowerExpression(argument, diagnostics)).ToArray(), command.Name.Equals("close", StringComparison.OrdinalIgnoreCase), command.Span),
         _ => UnsupportedStatement(syntax, diagnostics),
@@ -73,6 +75,8 @@ internal static class RathenaScriptLowerer
         VariableExpressionSyntax variable when variable.Scope == RathenaVariableScope.Local => new LoweredVariable(variable.Name, variable.Scope, variable.IsString, variable.Span),
         BinaryExpressionSyntax binary => new LoweredBinary(LowerExpression(binary.Left, diagnostics), binary.Operator, LowerExpression(binary.Right, diagnostics), binary.Span),
         CallExpressionSyntax { Target: IdentifierExpressionSyntax identifier } call when Functions.Contains(identifier.Name) => new LoweredCall(identifier.Name.ToLowerInvariant(), call.Arguments.Select(argument => LowerExpression(argument, diagnostics)).ToArray(), call.Span),
+        IdentifierExpressionSyntax identifier when identifier.Name.Equals("bc_self", StringComparison.OrdinalIgnoreCase) => new LoweredLiteral(3L, identifier.Span),
+        IdentifierExpressionSyntax identifier when identifier.Name.Equals("nav_none", StringComparison.OrdinalIgnoreCase) => new LoweredLiteral(0L, identifier.Span),
         _ => UnsupportedExpression(syntax, diagnostics),
     };
 

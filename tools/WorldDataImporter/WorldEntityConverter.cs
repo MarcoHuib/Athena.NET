@@ -9,7 +9,9 @@ internal sealed record ConversionFilter(string? SourceFile, string? Map, string?
         (Map is null || string.Equals(value.Map, Map, StringComparison.OrdinalIgnoreCase)) &&
         (Name is null || string.Equals(value.Name, Name, StringComparison.Ordinal)) &&
         (Kind is null || string.Equals(Kind, "warp", StringComparison.OrdinalIgnoreCase) ||
-            (string.Equals(Kind, "npc", StringComparison.OrdinalIgnoreCase) && value.Directive == "script" && !value.Arguments.Contains("WARPNPC", StringComparison.Ordinal)));
+            (string.Equals(Kind, "npc", StringComparison.OrdinalIgnoreCase) &&
+             (value.Directive == "script" || value.Directive.StartsWith("duplicate(", StringComparison.Ordinal)) &&
+             !value.Arguments.Contains("WARPNPC", StringComparison.Ordinal)));
 }
 internal sealed record UnsupportedConversion(string Name, string File, int Line, string Reason);
 internal sealed record ConversionResult(IReadOnlyList<WorldEntityDefinition> Entities, IReadOnlyList<UnsupportedConversion> Unsupported);
@@ -45,22 +47,38 @@ internal static partial class WorldEntityConverter
                 else unsupported.Add(Unsupported(declaration, "Malformed WARPNPC duplicate"));
             }
             else if (declaration.Directive == "script" && TryOrdinaryScript(declaration, roots, out var ordinary)) entities.Add(ordinary);
+            else if (TryDuplicateName(declaration.Directive, out templateName) && templates.TryGetValue(templateName, out template) &&
+                     TryOrdinaryScript(declaration, template, roots, out ordinary)) entities.Add(ordinary);
         }
         return new(entities.OrderBy(item => item.Id, StringComparer.Ordinal).ToArray(), unsupported);
     }
 
     private static bool TryOrdinaryScript(RathenaDeclaration source, IEnumerable<string> roots, out WorldEntityDefinition entity)
+        => TryOrdinaryScript(source, source, roots, out entity);
+
+    private static bool TryOrdinaryScript(RathenaDeclaration instance, RathenaDeclaration template, IEnumerable<string> roots, out WorldEntityDefinition entity)
     {
         entity = default!;
-        var visual = source.Arguments.Split(',').Select(value => value.Trim().TrimEnd('{')).Where(value => value.Length > 0).ToArray();
+        var visual = instance.Arguments.Split(',').Select(value => value.Trim().TrimEnd('{')).Where(value => value.Length > 0).ToArray();
         if (visual.Length == 0 || !NpcSpriteClassResolver.TryResolve(roots, visual[0], out var spriteClass)) return false;
         var rx = visual.Length > 1 && U16(visual[1], out var parsedRx) ? parsedRx : (ushort)0;
         var ry = visual.Length > 2 && U16(visual[2], out var parsedRy) ? parsedRy : (ushort)0;
-        var clickSource = source.ScriptBody.Split("OnTouch:", 2, StringSplitOptions.None)[0].Split("OnInit:", 2, StringSplitOptions.None)[0].Trim();
-        entity = new(1, DeterministicId.For("npc", source.Map, source.Name), "Npc",
-            new(source.Name, source.Map, source.X, source.Y, source.Direction, spriteClass, source.ScriptBody.Contains("cloakonnpc();", StringComparison.Ordinal) ? 4u : 0u), [],
-            [new("OnClick", source.Map, source.X, source.Y, rx, ry, true, true, ScriptCapabilities.Classify(clickSource), clickSource, null, null)],
-            new("rAthena", Commit, source.Source.File, source.Source.Line));
+        var clickSource = template.ScriptBody.Split("OnTouch:", 2, StringSplitOptions.None)[0].Split("OnInit:", 2, StringSplitOptions.None)[0].Trim();
+        var scripts = new List<ScriptBehaviorDefinition>
+        {
+            new("OnClick", instance.Map, instance.X, instance.Y, rx, ry, true, true, ScriptCapabilities.Classify(clickSource), clickSource, null,
+                ReferenceEquals(instance, template) ? null : template.Name)
+        };
+        if (template.ScriptBody.Contains("OnTouch:", StringComparison.Ordinal))
+        {
+            var touchSource = template.ScriptBody.Split("OnTouch:", 2, StringSplitOptions.None)[1].Split("OnInit:", 2, StringSplitOptions.None)[0].Trim();
+            scripts.Add(new("OnTouch", instance.Map, instance.X, instance.Y, rx, ry, true, true, ScriptCapabilities.Classify(touchSource), touchSource, null,
+                ReferenceEquals(instance, template) ? null : template.Name));
+        }
+        entity = new(1, DeterministicId.For("npc", instance.Map, instance.Name), "Npc",
+            new(instance.Name, instance.Map, instance.X, instance.Y, instance.Direction, spriteClass, template.ScriptBody.Contains("cloakonnpc();", StringComparison.Ordinal) ? 4u : 0u), [],
+            scripts,
+            new("rAthena", Commit, instance.Source.File, instance.Source.Line));
         return true;
     }
 

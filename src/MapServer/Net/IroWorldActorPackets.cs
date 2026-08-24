@@ -35,6 +35,16 @@ public static class IroWorldActorPackets
 
     public static byte[] BuildWarpActor(WarpActor actor) => BuildWorldActor(actor);
 
+    public static byte[] BuildNpcName(uint actorId, string name)
+    {
+        var encoded = Encoding.ASCII.GetBytes(name);
+        var packet = new byte[58];
+        BinaryPrimitives.WriteUInt16LittleEndian(packet, 0x0adf);
+        BinaryPrimitives.WriteUInt32LittleEndian(packet.AsSpan(2), actorId);
+        encoded.AsSpan(0, Math.Min(encoded.Length, PacketConstants.NameLength - 1)).CopyTo(packet.AsSpan(10, PacketConstants.NameLength));
+        return packet;
+    }
+
     private static void WritePosition(Span<byte> buffer, ushort x, ushort y, byte direction)
     {
         buffer[0] = (byte)(x >> 2);

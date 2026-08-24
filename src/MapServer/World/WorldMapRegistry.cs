@@ -11,6 +11,7 @@ public sealed class WorldMapRegistry
     private readonly IReadOnlyDictionary<uint, (WorldEntityDefinition Entity, ScriptBehaviorDefinition Script)> _interactionsByActorId;
     private readonly IReadOnlyList<ScriptTouchBinding> _touchScripts;
     private readonly int _dynamicWarpActorCount;
+    private readonly IReadOnlyList<NavigationDefinition> _navigation;
     public NpcScriptRegistry Scripts { get; }
 
     public WorldMapRegistry(IEnumerable<WarpDefinition> warps, IEnumerable<WarpActorDefinition>? dynamicWarpActors = null)
@@ -19,6 +20,7 @@ public sealed class WorldMapRegistry
     internal WorldMapRegistry(IEnumerable<WarpDefinition> warps, IEnumerable<WorldEntityDefinition> entities, IEnumerable<WarpActorDefinition>? dynamicWarpActors = null, NpcScriptRegistry? scripts = null)
     {
         Scripts = scripts ?? GeneratedScriptRegistry.Registry;
+        _navigation = GeneratedTutorialNavigation.All;
         _warps = warps.ToArray();
         _entitiesById = entities.ToDictionary(entity => entity.Id, StringComparer.OrdinalIgnoreCase);
         var allocator = new WorldActorIdAllocator();
@@ -54,6 +56,20 @@ public sealed class WorldMapRegistry
     public int DynamicWarpActorCount => _dynamicWarpActorCount;
     public IReadOnlyDictionary<string, WorldEntityDefinition> EntitiesById => _entitiesById;
     public IEnumerable<WorldActor> GetVisibleWarpActors(string mapName, ushort x, ushort y, ushort range = 14) => _worldActors.Where(actor => string.Equals(actor.MapName, mapName, StringComparison.OrdinalIgnoreCase) && Math.Abs((int)actor.X - x) <= range && Math.Abs((int)actor.Y - y) <= range);
+    public bool TryGetActor(string entityIdOrName, string mapName, out WorldActor actor)
+    {
+        actor = _worldActors.FirstOrDefault(candidate => string.Equals(candidate.MapName, mapName, StringComparison.OrdinalIgnoreCase) &&
+            (string.Equals(candidate.EntityId, entityIdOrName, StringComparison.OrdinalIgnoreCase) || string.Equals(candidate.Name, entityIdOrName, StringComparison.Ordinal) ||
+             (candidate.EntityId is not null && _entitiesById.TryGetValue(candidate.EntityId, out var entity) && string.Equals(entity.Actor?.Name, entityIdOrName, StringComparison.Ordinal))))!;
+        return actor is not null;
+    }
+    public bool TryGetActorName(uint actorId, string mapName, out string name)
+    {
+        var actor = _worldActors.FirstOrDefault(candidate => candidate.ActorId == actorId && string.Equals(candidate.MapName, mapName, StringComparison.OrdinalIgnoreCase));
+        if (actor is null) { name = string.Empty; return false; }
+        name = actor.EntityId is not null && _entitiesById.TryGetValue(actor.EntityId, out var entity) ? entity.Actor?.Name ?? actor.Name : actor.Name;
+        return true;
+    }
     public bool TryGetInteraction(uint actorId, string mapName, out WorldEntityDefinition entity, out ScriptBehaviorDefinition script)
     {
         if (_interactionsByActorId.TryGetValue(actorId, out var binding) && binding.Entity.Actor is not null && string.Equals(binding.Entity.Actor.Map, mapName, StringComparison.OrdinalIgnoreCase))
@@ -62,6 +78,7 @@ public sealed class WorldMapRegistry
         }
         entity = null!; script = null!; return false;
     }
+    public IEnumerable<NavigationDefinition> GetNavigationAt(string mapName, ushort x, ushort y) => _navigation.Where(item => item.Contains(mapName, x, y));
     public bool TryFindWarp(string mapName, ushort x, ushort y, out WarpDefinition warp) { warp = _warps.FirstOrDefault(candidate => candidate.Matches(mapName, x, y))!; return warp is not null; }
     public bool TryFindFirstWarpAlongRoute(string mapName, ushort fromX, ushort fromY, ushort toX, ushort toY, out WarpIntersection intersection)
     {
@@ -98,7 +115,7 @@ public sealed class WorldMapRegistry
             : null;
     }
     private static string SemanticKey(string map, string name) => $"{map}:{name}";
-    private static WorldMapRegistry LoadGenerated() => new(GeneratedWarps.All, GeneratedScriptRegistry.Entities);
+    private static WorldMapRegistry LoadGenerated() => new(GeneratedWarps.All, GeneratedScriptRegistry.Entities.Concat(GeneratedTutorialActors.All));
 }
 
 public readonly record struct WarpIntersection(WarpDefinition Warp, ushort X, ushort Y);

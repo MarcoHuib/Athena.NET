@@ -17,6 +17,26 @@ public sealed class IroNpcDialoguePacketsTests
     }
 
     [Fact]
+    public void TutorialGuidanceAndNpcStatePackets_MatchCapturedLayouts()
+    {
+        var navigation = IroNpcDialoguePackets.BuildNavigateTo("iz_int04", 52, 30);
+        Assert.Equal(27, navigation.Length);
+        Assert.Equal((short)0x08e2, BinaryPrimitives.ReadInt16LittleEndian(navigation));
+        Assert.Equal((byte)1, navigation[4]);
+        Assert.Equal("iz_int04", Encoding.ASCII.GetString(navigation.AsSpan(5, 16)).TrimEnd('\0'));
+        Assert.Equal((ushort)52, BinaryPrimitives.ReadUInt16LittleEndian(navigation.AsSpan(21)));
+
+        var talk = IroNpcDialoguePackets.BuildNpcTalk(0x091b, "Oh...");
+        Assert.Equal((short)0x008d, BinaryPrimitives.ReadInt16LittleEndian(talk));
+        Assert.Equal("Oh...\0", Encoding.ASCII.GetString(talk.AsSpan(8)));
+
+        var option = IroNpcDialoguePackets.BuildNpcOption(0x091c, 4);
+        Assert.Equal(15, option.Length);
+        Assert.Equal((short)0x0229, BinaryPrimitives.ReadInt16LittleEndian(option));
+        Assert.Equal(4u, BinaryPrimitives.ReadUInt32LittleEndian(option.AsSpan(10)));
+    }
+
+    [Fact]
     public void CapturedChangeDirection_ParsesClassicFieldsAndOpaqueTrailingByte()
     {
         Assert.True(IroChangeDirectionPacket.TryParse([0x61, 0x03, 0x01, 0x00, 0x03, 0x7d], out var packet));

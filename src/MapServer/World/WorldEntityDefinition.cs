@@ -27,3 +27,7 @@ public abstract record WorldActionDefinition;
 public sealed record WarpAction(string Map, ushort X, ushort Y) : WorldActionDefinition;
 public sealed record SetSavePointAction(string Map, ushort X, ushort Y) : WorldActionDefinition;
 public sealed record WorldSourceInfo(string Repository, string Commit, string File, int Line);
+public sealed record NavigationDefinition(string EntityId, string SourceMap, ushort X, ushort Y, ushort RadiusX, ushort RadiusY, string DestinationMap, ushort DestinationX, ushort DestinationY, string SourceFile, int SourceLine)
+{
+    public bool Contains(string map, ushort x, ushort y) => string.Equals(SourceMap, map, StringComparison.OrdinalIgnoreCase) && Math.Abs((int)X - x) <= RadiusX && Math.Abs((int)Y - y) <= RadiusY;
+}

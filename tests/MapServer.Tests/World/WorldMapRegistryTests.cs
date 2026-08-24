@@ -9,11 +9,31 @@ public sealed class WorldMapRegistryTests
     public void DefaultWorld_IsTheIntentionalGeneratedVerticalSlice()
     {
         var registry = WorldMapRegistry.Tutorial;
-        Assert.Equal(2, registry.StaticWarpCount);
-        Assert.Equal(2, registry.EntityCount);
+        Assert.Equal(10, registry.StaticWarpCount);
+        Assert.Equal(22, registry.EntityCount);
         Assert.Equal(0, registry.DynamicWarpActorCount);
-        Assert.Equal(["npc:iz_int:wounded swordsman#intro_npc02_iz_int", "warp:int_land04:intro_to_izlude_d"], registry.EntitiesById.Keys.Order());
+        Assert.Contains("npc:int_land03:captain carocc#intro_npc03_03", registry.EntitiesById.Keys);
+        Assert.Contains("npc:int_land03:lumin#new_ship03", registry.EntitiesById.Keys);
+        Assert.Contains("npc:iz_int03:wounded swordsman#intro_npc01_iz_int03", registry.EntitiesById.Keys);
+        Assert.Contains("npc:iz_int03:wounded swordsman#intro_npc02_iz_int03", registry.EntitiesById.Keys);
+        Assert.Contains("warp:iz_int01:ship_out01", registry.EntitiesById.Keys);
         Assert.DoesNotContain("dev:int_land04:athena_test_npc", registry.EntitiesById.Keys);
+    }
+
+    [Fact]
+    public void GeneratedTutorialActorsAndNavigation_MatchPinnedInstance03Source()
+    {
+        var captain = WorldMapRegistry.Tutorial.EntitiesById["npc:int_land03:captain carocc#intro_npc03_03"].Actor!;
+        Assert.Equal(("int_land03", (ushort)78, (ushort)103, (ushort)873), (captain.Map, captain.X, captain.Y, captain.Class));
+        var lumin = WorldMapRegistry.Tutorial.EntitiesById["npc:int_land03:lumin#new_ship03"].Actor!;
+        Assert.Equal(("int_land03", (ushort)73, (ushort)100), (lumin.Map, lumin.X, lumin.Y));
+        var start = Assert.Single(WorldMapRegistry.Tutorial.GetNavigationAt("iz_int03", 18, 26));
+        Assert.Equal(("iz_int03", (ushort)52, (ushort)30), (start.DestinationMap, start.DestinationX, start.DestinationY));
+        var instance01Start = Assert.Single(WorldMapRegistry.Tutorial.GetNavigationAt("iz_int01", 18, 26));
+        Assert.Equal((ushort)52, instance01Start.DestinationX);
+        Assert.True(WorldMapRegistry.Tutorial.TryFindWarp("iz_int01", 27, 30, out var instance01RoomOut));
+        Assert.Equal("iz_int01", instance01RoomOut.DestinationMap);
+        Assert.Contains(WorldMapRegistry.Tutorial.GetVisibleWarpActors("iz_int01", 56, 32), actor => actor.EntityId == "npc:iz_int01:wounded swordsman#intro_npc01_iz_int01");
     }
 
     [Fact]
@@ -25,7 +45,8 @@ public sealed class WorldMapRegistryTests
         Assert.True(WorldMapRegistry.Tutorial.TryFindWarp("iz_int", 48, 31, out var roomIn));
         Assert.Equal(("iz_int", (ushort)22, (ushort)30), (roomIn.DestinationMap, roomIn.DestinationX, roomIn.DestinationY));
         Assert.Equal(63, roomIn.SourceLine);
-        Assert.False(WorldMapRegistry.Tutorial.TryFindWarp("iz_int03", 27, 30, out _));
+        Assert.True(WorldMapRegistry.Tutorial.TryFindWarp("iz_int03", 27, 30, out var instanceRoomOut));
+        Assert.Equal(("iz_int03", (ushort)51, (ushort)30), (instanceRoomOut.DestinationMap, instanceRoomOut.DestinationX, instanceRoomOut.DestinationY));
     }
 
     [Fact]

@@ -52,6 +52,7 @@ public sealed class GeneratedIntroToIzludeIntegrationTests
         Assert.Equal("[Sailor]\0", ReadMessage(await ReadDynamic(stream)));
         Assert.Equal("Let's head towards Izlude!\0", ReadMessage(await ReadDynamic(stream)));
         Assert.Equal((short)0x00b6, BinaryPrimitives.ReadInt16LittleEndian(await ReadExact(stream, 6)));
+        await stream.WriteAsync(BuildActorPacket(0x0146, actorId, 7));
         AssertQuestRemove(21001, await ReadExact(stream, 6));
         var mapChange = await ReadExact(stream, 22);
         Assert.Equal((short)0x0091, BinaryPrimitives.ReadInt16LittleEndian(mapChange));

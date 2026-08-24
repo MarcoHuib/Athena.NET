@@ -150,13 +150,29 @@ public sealed class CompilerTests
         var second = Path.Combine(Path.GetTempPath(), $"required-warps-{Guid.NewGuid():N}.cs");
         try
         {
-            string[] Arguments(string output) => ["compile", "--source-root", Path.Combine(repository, "legacy/rathena/npc/re/warps/cities"), "--source-file", "izlude.txt", "--map", "iz_int", "--name", "#room_out", "--name", "#room_in", "--kind", "warp", "--output", output];
+            string[] Arguments(string output) => ["compile", "--source-root", Path.Combine(repository, "legacy/rathena/npc/re/warps/cities"), "--source-file", "izlude.txt",
+                "--name", "#room_out", "--name", "#room_in", "--name", "#room_out01", "--name", "#room_in01", "--name", "#room_out02", "--name", "#room_in02",
+                "--name", "#room_out03", "--name", "#room_in03", "--name", "#room_out04", "--name", "#room_in04", "--kind", "warp", "--output", output];
             Assert.Equal(0, await WorldDataImporterCli.RunAsync(Arguments(first)));
             Assert.Equal(0, await WorldDataImporterCli.RunAsync(Arguments(second)));
             Assert.Equal(await File.ReadAllBytesAsync(first), await File.ReadAllBytesAsync(second));
             Assert.Equal(await File.ReadAllBytesAsync(Path.Combine(repository, "src/MapServer/Generated/World/Izlude/RequiredWarps.cs")), await File.ReadAllBytesAsync(first));
         }
         finally { File.Delete(first); File.Delete(second); }
+    }
+
+    [Fact]
+    public async Task RealShipOut03OnTouch_IsDeterministicAndMatchesCompiledSource()
+    {
+        var repository = FindRepositoryRoot();
+        var first = Path.Combine(Path.GetTempPath(), $"ship-out03-{Guid.NewGuid():N}.cs");
+        try
+        {
+            var arguments = new[] { "compile-script", "--source-root", Path.Combine(repository, "legacy/rathena/npc/re/warps/cities"), "--source-file", "izlude.txt", "--map", "iz_int03", "--name", "#ship_out03", "--kind", "warp", "--output", first };
+            Assert.Equal(0, await WorldDataImporterCli.RunAsync(arguments));
+            Assert.Equal(await File.ReadAllBytesAsync(Path.Combine(repository, "src/MapServer/Generated/World/Izlude/ShipOut03.cs")), await File.ReadAllBytesAsync(first));
+        }
+        finally { File.Delete(first); }
     }
 
     private static string FindRepositoryRoot()

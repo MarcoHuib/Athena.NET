@@ -98,6 +98,10 @@ internal static class NpcScriptEmitter
             case "warp": EmitTransfer(output, indent, "Warp", command.Arguments); break;
             case "savepoint": EmitTransfer(output, indent, "SetSavePoint", command.Arguments); break;
             case "cutin": output.Append(indent).Append("await context.CutinAsync("); EmitExpression(output, command.Arguments[0]); output.Append(", (byte)"); EmitExpression(output, command.Arguments[1]); output.AppendLine(", cancellationToken);"); break;
+            case "npctalk": output.Append(indent).Append("await context.NpcTalkAsync("); EmitExpression(output, command.Arguments[0]); output.AppendLine(", cancellationToken);"); break;
+            case "cloakonnpcself": output.Append(indent).AppendLine("await context.SetNpcCloakAsync(null, true, cancellationToken);"); break;
+            case "cloakoffnpcself": output.Append(indent).Append("await context.SetNpcCloakAsync("); EmitExpression(output, command.Arguments[0]); output.AppendLine(", false, cancellationToken);"); break;
+            case "navigateto": output.Append(indent).Append("await context.NavigateToAsync("); EmitExpression(output, command.Arguments[0]); output.Append(", (ushort)"); EmitExpression(output, command.Arguments[1]); output.Append(", (ushort)"); EmitExpression(output, command.Arguments[2]); output.AppendLine(", cancellationToken);"); break;
             case "end": break;
             case "select": throw new InvalidOperationException("select is emitted as an expression.");
         }

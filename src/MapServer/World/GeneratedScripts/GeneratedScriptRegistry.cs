@@ -16,7 +16,19 @@ public static partial class GeneratedScriptRegistry
     private static IReadOnlyList<GeneratedScriptRegistration> CreateRegistrations() =>
     [
         WarpIntLand04IntroToIzludeDOnTouchScriptRegistration.Create(),
+        WarpIzInt03ShipOut03OnTouchScriptRegistration.Create(),
+        WarpIzInt01ShipOut01OnTouchScriptRegistration.Create(),
+        WarpIzInt02ShipOut02OnTouchScriptRegistration.Create(),
+        WarpIzInt04ShipOut04OnTouchScriptRegistration.Create(),
         NpcIzIntWoundedSwordsmanIntroNpc02IzIntOnClickScriptRegistration.Create(),
+        NpcIzInt03WoundedSwordsmanIntroNpc01IzInt03OnClickScriptRegistration.Create(),
+        NpcIzInt03WoundedSwordsmanIntroNpc02IzInt03OnClickScriptRegistration.Create(),
+        NpcIzInt01WoundedSwordsmanIntroNpc01IzInt01OnClickScriptRegistration.Create(),
+        NpcIzInt01WoundedSwordsmanIntroNpc02IzInt01OnClickScriptRegistration.Create(),
+        NpcIzInt02WoundedSwordsmanIntroNpc01IzInt02OnClickScriptRegistration.Create(),
+        NpcIzInt02WoundedSwordsmanIntroNpc02IzInt02OnClickScriptRegistration.Create(),
+        NpcIzInt04WoundedSwordsmanIntroNpc01IzInt04OnClickScriptRegistration.Create(),
+        NpcIzInt04WoundedSwordsmanIntroNpc02IzInt04OnClickScriptRegistration.Create(),
     ];
 }
 
