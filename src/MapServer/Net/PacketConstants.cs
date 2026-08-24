@@ -57,6 +57,8 @@ public static class PacketConstants
     public const short ZcNpcClose = 0x00b6;
     public const short ZcNpcMenu = 0x00b7;
     public const short ZcShowImage = 0x01b3;
+    public const short ZcParameterChange = 0x00b0;
+    public const short ZcLongLongParameterChange = 0x0acb;
     public const short ZcRefuseEnter = 0x74;
     public const short ZcNotifyActorInit = 0x0b1b;
     public const short ZcPingLive = 0x0b1d;

@@ -3,6 +3,7 @@ namespace Athena.Net.MapServer.World;
 public sealed record CharacterGameplayState(
     uint CharacterId,
     ulong Version,
+    ushort JobClass,
     ushort BaseLevel,
     ushort JobLevel,
     ulong BaseExperience,

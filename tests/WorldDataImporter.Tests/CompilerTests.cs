@@ -102,6 +102,20 @@ public sealed class CompilerTests
     }
 
     [Fact]
+    public void GetExp_LowersToExecutableRuntimeCapability()
+    {
+        var syntax = new RathenaParser("OnClick: getexp 600,600;", "legacy/rathena/npc/test.txt", 10).ParseCompilationUnit();
+        var lowered = RathenaScriptLowerer.LowerEvent(syntax, "OnClick");
+        Assert.True(lowered.Success);
+        var metadata = new GeneratedNpcMetadata("Athena.Generated", "ExperienceScript", "npc:test:experience", "Npc", "Experience", "test", 1, 2, 0, 45, 0, 0, "OnClick", null, "legacy/rathena/npc/test.txt", 10, 9, "commit");
+
+        var generated = NpcScriptEmitter.Emit(lowered.Script!, metadata);
+
+        Assert.Contains("await context.GrantExperienceAsync(600, 600, cancellationToken);", generated);
+        Assert.DoesNotContain("ScriptInstructionDefinition", generated);
+    }
+
+    [Fact]
     public async Task RealIntroToIzlude_GenerationIsDeterministicAndMatchesCompiledSource()
     {
         var repository = FindRepositoryRoot();
@@ -173,6 +187,23 @@ public sealed class CompilerTests
             Assert.Equal(await File.ReadAllBytesAsync(Path.Combine(repository, "src/MapServer/Generated/World/Izlude/ShipOut03.cs")), await File.ReadAllBytesAsync(first));
         }
         finally { File.Delete(first); }
+    }
+
+    [Fact]
+    public async Task NoviceProgression_IsDeterministicAndMatchesCompiledSource()
+    {
+        var repository = FindRepositoryRoot();
+        var first = Path.Combine(Path.GetTempPath(), $"novice-progression-{Guid.NewGuid():N}.cs");
+        var second = Path.Combine(Path.GetTempPath(), $"novice-progression-{Guid.NewGuid():N}.cs");
+        try
+        {
+            string[] Arguments(string output) => ["compile-progression", "--rathena-root", Path.Combine(repository, "legacy/rathena"), "--output", output];
+            Assert.Equal(0, await WorldDataImporterCli.RunAsync(Arguments(first)));
+            Assert.Equal(0, await WorldDataImporterCli.RunAsync(Arguments(second)));
+            Assert.Equal(await File.ReadAllBytesAsync(first), await File.ReadAllBytesAsync(second));
+            Assert.Equal(await File.ReadAllBytesAsync(Path.Combine(repository, "src/MapServer/Generated/Progression/NoviceProgression.cs")), await File.ReadAllBytesAsync(first));
+        }
+        finally { File.Delete(first); File.Delete(second); }
     }
 
     private static string FindRepositoryRoot()

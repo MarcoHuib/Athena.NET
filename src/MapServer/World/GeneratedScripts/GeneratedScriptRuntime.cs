@@ -26,6 +26,7 @@ public interface INpcScriptHost
     Task NpcTalkAsync(uint actorId, string text, CancellationToken cancellationToken);
     Task SetNpcCloakAsync(string entityIdOrName, bool cloaked, CancellationToken cancellationToken);
     Task NavigateToAsync(string map, ushort x, ushort y, CancellationToken cancellationToken);
+    Task GrantExperienceAsync(long baseExperience, long jobExperience, CancellationToken cancellationToken);
 }
 
 public sealed class ScriptContext
@@ -61,6 +62,7 @@ public sealed class ScriptContext
     public Task SetNpcCloakAsync(string? npcName, bool cloaked, CancellationToken cancellationToken) =>
         _host.SetNpcCloakAsync(npcName ?? EntityId, cloaked, cancellationToken);
     public Task NavigateToAsync(string map, ushort x, ushort y, CancellationToken cancellationToken) => _host.NavigateToAsync(map, x, y, cancellationToken);
+    public Task GrantExperienceAsync(long baseExperience, long jobExperience, CancellationToken cancellationToken) => _host.GrantExperienceAsync(baseExperience, jobExperience, cancellationToken);
 
     public string StrNpcInfo(int type) => type switch
     {

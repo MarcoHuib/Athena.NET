@@ -762,6 +762,14 @@ public sealed class MapClientSession : IDisposable, INpcScriptHost
     Task INpcScriptHost.NavigateToAsync(string map, ushort x, ushort y, CancellationToken cancellationToken) =>
         WriteAsync(IroNpcDialoguePackets.BuildNavigateTo(map, x, y), cancellationToken);
 
+    async Task INpcScriptHost.GrantExperienceAsync(long baseExperience, long jobExperience, CancellationToken cancellationToken)
+    {
+        var state = _gameplayState ?? throw new InvalidOperationException("Character gameplay state is not loaded.");
+        var result = await new CharacterProgressionService(state).AddExperienceAsync(baseExperience, jobExperience, cancellationToken)
+            ?? throw new InvalidOperationException("Character progression persistence failed.");
+        foreach (var packet in IroCharacterProgressionPackets.Build(result, baseExperience > 0, jobExperience > 0)) await WriteAsync(packet, cancellationToken);
+    }
+
     private static TaskCompletionSource NewSignal() => new(TaskCreationOptions.RunContinuationsAsynchronously);
     private static TaskCompletionSource<int> NewContinuation() => new(TaskCreationOptions.RunContinuationsAsynchronously);
     private sealed record GeneratedContinuation(GeneratedContinuationKind Kind, TaskCompletionSource<int> Completion);

@@ -419,6 +419,7 @@ public sealed class MapServerSession : IDisposable, ISession
     internal static bool IsValidGameplayStateUpdate(CharacterGameplayStateDto expected, CharacterGameplayStateDto updated)
         => expected.CharacterId == updated.CharacterId &&
            expected.CharacterId != 0 &&
+           expected.JobClass == updated.JobClass &&
            updated.BaseLevel > 0 &&
            updated.JobLevel > 0 &&
            updated.MaxHp > 0 &&

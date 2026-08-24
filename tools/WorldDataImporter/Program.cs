@@ -21,6 +21,7 @@ internal static class WorldDataImporterCli
                 "compile-script" => await CompileScriptAsync(args[1..]),
                 "compile-actors" => await CompileActorsAsync(args[1..]),
                 "compile-navigation" => await CompileNavigationAsync(args[1..]),
+                "compile-progression" => await CompileProgressionAsync(args[1..]),
                 "capabilities" => await CapabilitiesAsync(args[1..]),
                 _ => throw new ArgumentException($"Unknown command '{args[0]}'."),
             };
@@ -170,6 +171,23 @@ internal static class WorldDataImporterCli
         Console.WriteLine($"Generated {rows.Count} navigation definitions into {output}."); return 0;
     }
 
+    private static async Task<int> CompileProgressionAsync(string[] args)
+    {
+        var options = CliOptions.Parse(args);
+        var root = Path.GetFullPath(options.Required("rathena-root"));
+        var generated = ProgressionDataCompiler.Generate(
+            await File.ReadAllTextAsync(Path.Combine(root, "db/re/job_exp.yml")),
+            await File.ReadAllTextAsync(Path.Combine(root, "db/re/job_basepoints.yml")),
+            await File.ReadAllTextAsync(Path.Combine(root, "db/re/job_stats.yml")),
+            await File.ReadAllTextAsync(Path.Combine(root, "db/re/statpoint.yml")),
+            "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca");
+        var output = Path.GetFullPath(options.Required("output"));
+        Directory.CreateDirectory(Path.GetDirectoryName(output)!);
+        await File.WriteAllTextAsync(output, generated, new System.Text.UTF8Encoding(false));
+        Console.WriteLine($"Generated pinned Novice progression data into {output}.");
+        return 0;
+    }
+
     private static T AssertSingle<T>(IEnumerable<T> values, string description)
     {
         var array = values.ToArray(); return array.Length == 1 ? array[0] : throw new ArgumentException($"Expected one {description}, found {array.Length}.");
@@ -203,6 +221,7 @@ internal static class WorldDataImporterCli
         Console.Error.WriteLine("WorldDataImporter compile-script --source-root <folder> --output <Npc.cs> --source-file <path> --map <map> --name <name> --kind <npc|warp> [--trigger OnClick|OnTouch]");
         Console.Error.WriteLine("WorldDataImporter compile-actors --source-root <folder> --output <Actors.cs> --source-file <path> --map <map> --name <name> [--name <name>]");
         Console.Error.WriteLine("WorldDataImporter compile-navigation --source-root <folder> --output <Navigation.cs> --name <name> [--name <name>]");
+        Console.Error.WriteLine("WorldDataImporter compile-progression --rathena-root <folder> --output <Progression.cs>");
     }
 }
 

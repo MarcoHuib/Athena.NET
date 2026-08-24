@@ -29,7 +29,7 @@ public sealed class CharacterGameplayStateSessionTests
         Assert.Equal(first.State,second.State);
     }
 
-    private static CharacterGameplayState State()=>new(9,0,1,1,0,0,40,11,40,11,48,0,1,1,1,1,1,1);
+    private static CharacterGameplayState State()=>new(9,0,0,1,1,0,0,40,11,40,11,48,0,1,1,1,1,1,1);
     private sealed class MemoryStore(CharacterGameplayState state):ICharacterGameplayStatePersistence
     {
         private CharacterGameplayState _state=state; public bool FailUpdates{get;set;}

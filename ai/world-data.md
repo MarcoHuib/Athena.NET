@@ -62,8 +62,26 @@ EF transaction. MapServer replaces its local snapshot only after that commit is
 acknowledged with the incremented authoritative version.
 
 HP/SP and MaxHP/MaxSP already existed as relational `char` fields and remain stored.
-The maxima are transported unchanged until a pinned-data derived-stat engine exists;
-this slice does not invent recalculation formulas.
+Outside the generated Novice progression slice the maxima are transported unchanged;
+unsupported jobs do not receive invented recalculation formulas.
+
+## Novice progression
+
+`compile-progression` reads pinned renewal `job_exp.yml`, `job_basepoints.yml`,
+`job_stats.yml`, and `statpoint.yml` and emits deterministic strongly typed C#.
+The generated table currently covers job class 0 (Novice), base levels 1-99 and
+job levels 1-10. EXP entries are per-current-level costs, not cumulative totals.
+
+`CharacterProgressionService` applies base and job EXP independently, loops over
+all crossed thresholds, awards the difference between cumulative stat-point rows,
+and awards one skill point per job level. One complete resulting gameplay snapshot
+is persisted through the versioned CharServer transaction before MapServer publishes
+it or sends client parameter updates. A failed/stale write sends no success updates.
+
+Base-level recalculation uses the pinned Novice HP/SP base tables, persistent VIT/INT,
+and generated Novice job bonuses. A base level fully restores recalculated HP/SP as
+in `pc_checkbaselevelup`; job-only recalculation preserves current HP/SP within the
+new maxima. Equipment/status modifiers remain outside this Novice-only slice.
 
 ## Regeneration
 
