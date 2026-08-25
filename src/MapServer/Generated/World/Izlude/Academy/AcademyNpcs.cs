@@ -10,7 +10,7 @@ internal static class AcademyNpcs
 {
     internal static readonly NpcDefinition CaptainCarocc = new(
         "npcdef:legacy/rathena/npc/re/jobs/novice/academy.txt:captain carocc#intro_npc03", "Captain Carocc#intro_npc03",
-        [],
+        [new("OnClick", static () => new Athena.Net.MapServer.Generated.World.Izlude.Academy.Scripts.CaptainCaroccOnClickScript())],
         new("rAthena", "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca", "legacy/rathena/npc/re/jobs/novice/academy.txt", 133));
     internal static readonly NpcDefinition Lumin = new(
         "npcdef:legacy/rathena/npc/re/jobs/novice/academy.txt:lumin#new_ship", "Lumin#new_ship",

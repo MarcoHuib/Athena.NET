@@ -188,6 +188,137 @@ implements the independently proven Message, Next suspension/resume, Close, and
 one-based menu selection transport using a test WorldEntity. Quest traffic, combat,
 and item acquisition in this capture remain future evidence without runtime support.
 
+Captain Carocc's pinned source is `legacy/rathena/npc/re/jobs/novice/academy.txt:133`
+(`int_land,78,103,5 script Captain Carocc#intro_npc03`). An earlier version of this
+document claimed frames 3172-3186 proved Captain's `specialeffect2`/`heal`/
+`skilleffect`/`sc_start`/`getexp` commands produced zero client-visible bytes. That
+claim was based on a misattributed frame: frame 3186's dialogue text ("...I'll trust
+you.") and its preceding lines do not appear anywhere in the pinned
+`academy.txt:133` script, so frame 3186 is not proven to be Captain's real pinned
+`case 0:` dialogue in the first place, and the "silence" observed there proves
+nothing about Captain's actual heal/status/getexp commands. **The zero-byte claim is
+retracted.**
+
+Frame 3496 of `npc-interaction-heal-action.pcapng` (reassembled TCP stream, byte-
+identical between the compact and fuller "all-gravity-traffic" exports; the target
+`0x00B4` message spans frames 3485→3496 - the 8-byte header lands in 3485, the
+17-byte remainder opens 3496) is the server burst immediately after
+"[Captain Carocc] / All done now? / Hunt 2 Porings and get 2 pieces of Wood for the
+sailor. / Good luck." (this exact text is likewise not found verbatim in pinned
+`academy.txt`, so this specific in-game NPC's exact script correlation to the pinned
+file remains unproven — matching the pre-existing disclosure a few paragraphs above
+that Captain/Lumin/Sailor dialogue text could not be correlated to pinned
+declarations). What IS conclusively proven, independent of exact script-line
+attribution, is the complete wire behavior of a Blessing(val1=10)/Increase
+AGI(val1=10)/Heal(9999) sequence applied to a player by an NPC actor, which is
+exactly the runtime capability Captain's pinned `heal`/`skilleffect`/`sc_start`
+commands require. The reassembled 461-byte burst (offset 0 = start of frame 3496,
+continuing the split `0x00B4` from frame 3485) segments as:
+
+| Offset | Packet | Fields |
+|---:|---|---|
+| 0x11 | `0x00B4` len=22 | "All done now?" |
+| 0x27 | `0x00B4` len=64 | "Hunt 2 Porings and get 2 pieces of Wood for the sailor." |
+| 0x67 | `0x00B4` len=19 | "Good luck." |
+| 0x7A,0x82,0x8A,0xA0,0xA8 | `0x00B0` | var 45/50/53/53/0 (DEF2/FLEE2/ASPD/ASPD/SPEED - derived-stat cascade, not modeled) |
+| 0x92 | `0x0141` | statusType=14(AGI) base=1 plus=**12** |
+| 0xB0 | `0x0983` len=29 | type=**12(EFST_INC_AGI)** actorId=player state=1 total=remain=**240000** val1=**10** val2=0 val3=0 |
+| 0xCD | `0x09CB` len=17 | SKID=**29(AL_INCAGI)** level=**10** target=player src=Captain's actor result=1 |
+| 0xDE..0xF6 | `0x00B0`x3, `0x0141` | var 41/45/42(ATK2/DEF2/MATK1 cascade); statusType=13(STR) base=1 plus=**10** |
+| 0x104..0x11C | `0x00B0`x3, `0x0141` | var 44/47/43(DEF1/MDEF2/MATK2 cascade); statusType=16(INT) base=1 plus=**10** |
+| 0x12A..0x16A | `0x00B0`x7, `0x0141` | var 8/7/41/44/47/49/53/42 (MAXSP/SP/ATK2/DEF1/MDEF2/FLEE1/ASPD/MATK1 cascade); statusType=17(DEX) base=1 plus=**10** |
+| 0x178 | `0x00B0` | var=49 (FLEE1 cascade) |
+| 0x180 | `0x0983` len=29 | type=**10(EFST_BLESSING)** actorId=player state=1 total=remain=**240000** val1=**10** val2=0 val3=0 |
+| 0x19D | `0x09CB` len=17 | SKID=**34(AL_BLESSING)** level=**10** target=player src=Captain's actor result=1 |
+| 0x1AE | `0x00B0` | var=**5(HP)** val=**40** |
+| 0x1B6 | `0x09CB` len=17 | SKID=**28(AL_HEAL)** level=**9999** target=player src=Captain's actor result=1 |
+| 0x1C7 | `0x00B6` len=6 | dialogue close |
+
+Every non-cascade field matches pinned source exactly: `0x0983` = `ZC_MSG_STATE_CHANGE3`
+(`clif.cpp:6461,6486-6509`, 29 bytes, `type.W actorId.L state.B totalMsec.L remainMsec.L
+val1.L val2.L val3.L`); `EFST_BLESSING=10`/`EFST_INC_AGI=12` (`status.hpp:1456-1469`,
+`EFST_BLANK=-1` origin); `0x09CB` = `ZC_USE_SKILL` (`packets_struct.hpp:4674-4683`,
+17 bytes, PACKETVER_RE>=20130724 layout, built by `clif_skill_nodamage`); `0x0141` =
+`ZC_COUPLESTATUS` (`clif.cpp:3608-3618`, 14 bytes, `statusType.L base.L plus.L`, sent
+by `clif_updatestatus(SP_STR/SP_AGI/SP_INT/SP_DEX)` — `map.hpp:500-501` gives
+`SP_STR=13, SP_AGI=14, SP_INT=16, SP_DEX=17`); the captured `plus` values (STR/INT/
+DEX=+10, AGI=+12) exactly match `db/re/status.yml`'s `Blessing`/`Increaseagi`
+`CalcFlags` (`Str/Int/Dex` and `Agi/Speed/Aspd` respectively) combined with
+`status_change_start_post_delay`'s val-settings switch (`status.cpp:10844-10854`,
+`val2 = 2 + val1` for `SC_INCREASEAGI`; `status.cpp:11566-11571`, `val2 = val1` for
+`SC_BLESSING` on a `BL_PC` target) — independently confirming the server-side fix
+already applied to `CharacterStatusEffectState`.
+
+One field is a genuine, documented discrepancy against the pinned snapshot: pinned
+`status_change_start_post_delay` (`status.cpp:13194`) sends `val1` only when the
+status DB entry sets the `SendVal1` flag (`scdb->flag[SCF_SENDVAL1] ? val1 : 1`), and
+neither `Blessing` nor `Increaseagi` sets it in `db/re/status.yml:445-481` — meaning
+pinned source implies `val1=1` (hardcoded), yet the capture proves `val1=10` (the
+real skill level) for both. This is treated as the capture's operator-side status DB
+differing from this pinned snapshot for the `SendVal1` flag on these two entries;
+per this project's evidence priority the capture's `val1` is used as-is.
+
+The `0x09CB` packets' `src` actor (Captain, not the player) was likewise not
+conclusively traced to a specific pinned call site: `skilleffect(id,lv)`'s own code
+path (`script.cpp:15519-15556`, `script_skill_effect`) targets `bl=sd` (the player)
+for both src and target when called with the 2-argument form Captain's script uses,
+which would imply `src=player`, not `src=Captain`. The capture is used as-is per the
+same evidence priority; the packet's existence, layout, and its skill-ID/level/
+target-actor fields are unambiguous regardless of this open src-attribution question.
+
+The heal visual (`0x09CB SKID=28 level=9999`) is likewise not attributable to
+`specialeffect2 EF_HEAL2`, whose pinned path (`BUILDIN_FUNC(specialeffect2)` ->
+`clif_specialeffect` -> `0x01F3`/`ZC_NOTIFY_EFFECT2`) produced **zero** `0x01F3` bytes
+anywhere in the 461-byte burst — that part of the original zero-byte claim holds.
+`level=9999` matches `heal 9999,0`'s exact HP argument (not the resulting clamped
+HP=40, which is separately synced via the ordinary `0x00B0 var=5` parameter packet
+immediately before it), so Athena attributes this visual to `heal`, not
+`specialeffect2`.
+
+### Natural status expiration (Blessing / Increase AGI)
+
+Captain's dialogue never runs long enough to observe a real 240-second expiry in
+this capture, so nothing below is capture-proven — it is derived entirely from
+pinned `status_change_end` (`status.cpp:13433-14123`) and applied to the already
+capture-proven `0x0196`/`0x0141` serializers, per the same evidence rules used for
+the rest of this document (capture wins when it exists; pinned source is the
+fallback when it doesn't).
+
+Neither `SC_BLESSING` nor `SC_INCREASEAGI` has a case in `status_change_end`'s
+per-type switch (`status.cpp:13433-14045`) — both fall through to the function's
+generic tail (`status.cpp:14085-14109`), which unconditionally does, in order:
+`clif_status_change(bl, status_icon, 0, 0, 0, 0, 0)` (the "off" form of the same
+builder used for activation — `state=0`, `flag=0` for this PACKETVER, i.e. `0x0196`
+`ZC_MSG_STATE_CHANGE`), then, if `calc_flag.any()`, `status_calc_bl_(bl, calc_flag)`
+(recalculates and emits `clif_updatestatus`/`0x0141` for only the stats whose
+recalculated value actually changed). This exactly matches "send status-end, then
+resync only the changed stats" — no new packet shape was needed.
+
+Athena implements this with one expiration scheduler per `MapClientSession`
+(`RunStatusExpirationLoopAsync`/`ProcessDueStatusExpirationsAsync` in
+`MapClientSession.cs`) rather than a timer per active status: it sleeps until
+`CharacterStatusEffectState.NextExpiration` (via the session's `TimeProvider`, so
+tests drive it with a fake clock instead of real 240-second waits), waking early
+whenever `StartStatusAsync` moves the next deadline. On a due status it snapshots
+effective stats immediately before removal (`RecalculateBeforeExpiration`), removes
+the status (`ExpireDue`), recalculates after, sends one `0x0196` per expired status
+(actor=player, `EFST_BLESSING=10`/`EFST_INC_AGI=12`), then sends only the `0x0141`
+fields whose before/after effective value actually differs (STR/INT/DEX for
+Blessing, AGI for Increase AGI) — mirroring `status_calc_bl_`'s "only what changed"
+behavior rather than resending every stat unconditionally. Re-applying an
+already-active status (`sc_start` semantics, matching pinned `status_change_start`'s
+overwrite-not-stack behavior already documented above) replaces `ExpiresAt`
+outright, so the old deadline cannot fire for the refreshed status — the scheduler
+always re-reads the current stored value, never a stale captured one.
+
+Remaining gap, explicitly not addressed here: the client's own `0x0983`
+`totalMsec`/`remainMsec` fields almost certainly drive a client-side countdown that
+clears its icon locally regardless of server behavior (standard RO client
+convention), but this was not, and cannot be, capture-verified from Captain's short
+dialogue window. Server/client convergence after natural expiration therefore rests
+on pinned-source semantics for the packet sequence, not on independent wire proof —
+flagged the same way the `SendVal1`/`src`-actor discrepancies above are flagged.
+
 Captain Carocc's captured `0x09FF/105` actor record uses object type 6, actor ID
 7963, class 873 at offset 23, and the same modern idle-unit layout as the proven
 class-45 WARPNPC records. Athena uses that captured normal-NPC class for its

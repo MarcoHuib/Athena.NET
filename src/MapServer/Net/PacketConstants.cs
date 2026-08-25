@@ -62,4 +62,8 @@ public static class PacketConstants
     public const short ZcRefuseEnter = 0x74;
     public const short ZcNotifyActorInit = 0x0b1b;
     public const short ZcPingLive = 0x0b1d;
+    public const short ZcMsgStateChange3 = 0x0983;
+    public const short ZcMsgStateChange = 0x0196;
+    public const short ZcUseSkill = 0x09cb;
+    public const short ZcCoupleStatus = 0x0141;
 }

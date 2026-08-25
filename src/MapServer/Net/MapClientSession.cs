@@ -59,6 +59,14 @@ public sealed class MapClientSession : IDisposable, INpcScriptHost
     private bool _positionDirty;
     private int _disposed;
     private CharacterGameplayStateSession? _gameplayState;
+    private readonly CharacterStatusEffectState _statusEffects;
+    private readonly TimeProvider _timeProvider;
+    // Single-slot wake signal (max count 1, not int.MaxValue): StartStatusAsync may Release()
+    // several times before the scheduler loop gets a chance to consume a wake, and only one
+    // extra wake-and-recheck is ever needed regardless of how many times the deadline moved
+    // meanwhile - the loop always re-reads NextExpiration fresh on each iteration.
+    private readonly SemaphoreSlim _statusExpirationSignal = new(0, 1);
+    private Task? _statusExpirationLoop;
 
     public MapClientSession(int sessionId, TcpClient client, CharServerConnector charConnector)
         : this(sessionId, client, charConnector, WorldMapRegistry.Tutorial)
@@ -72,7 +80,8 @@ public sealed class MapClientSession : IDisposable, INpcScriptHost
         WorldMapRegistry worldMapRegistry,
         ICharacterPositionPersistence? positionPersistence = null,
         ICharacterQuestPersistence? questPersistence = null,
-        ICharacterGameplayStatePersistence? gameplayStatePersistence = null)
+        ICharacterGameplayStatePersistence? gameplayStatePersistence = null,
+        TimeProvider? timeProvider = null)
     {
         SessionId = sessionId;
         _client = client;
@@ -82,6 +91,8 @@ public sealed class MapClientSession : IDisposable, INpcScriptHost
         _questPersistence = questPersistence ?? charConnector;
         _gameplayStatePersistence = gameplayStatePersistence ?? charConnector;
         _worldMapRegistry = worldMapRegistry;
+        _timeProvider = timeProvider ?? TimeProvider.System;
+        _statusEffects = new CharacterStatusEffectState(_timeProvider);
     }
 
     internal MapClientSession(
@@ -97,7 +108,8 @@ public sealed class MapClientSession : IDisposable, INpcScriptHost
         ICharacterQuestPersistence? questPersistence = null,
         uint accountId = 0,
         uint charId = 0,
-        ICharacterGameplayStatePersistence? gameplayStatePersistence = null)
+        ICharacterGameplayStatePersistence? gameplayStatePersistence = null,
+        TimeProvider? timeProvider = null)
         : this(
             sessionId,
             client,
@@ -105,7 +117,8 @@ public sealed class MapClientSession : IDisposable, INpcScriptHost
             worldMapRegistry ?? WorldMapRegistry.Tutorial,
             positionPersistence,
             questPersistence,
-            gameplayStatePersistence)
+            gameplayStatePersistence,
+            timeProvider)
     {
         _iroAuthRequested = iroAuthenticated;
         _authRequested = iroAuthenticated;
@@ -125,6 +138,7 @@ public sealed class MapClientSession : IDisposable, INpcScriptHost
     internal ScriptExecutionState? ActiveScriptState => _scriptExecutionSession?.State;
     internal string? ActiveGeneratedScriptEntityId => _generatedScriptEntityId;
     internal CharacterGameplayStateSession? GameplayState => _gameplayState;
+    internal CharacterStatusEffectState StatusEffects => _statusEffects;
 
     public async Task RunAsync(CancellationToken cancellationToken)
     {
@@ -188,7 +202,80 @@ public sealed class MapClientSession : IDisposable, INpcScriptHost
         _gameplayState = new CharacterGameplayStateSession(authOk.AccountId, state, _gameplayStatePersistence);
         _authenticated = true; _positionDirty = false;
         MapLogger.Info($"[iRO MAP DEBUG] 0x0C1F MapAuthNode authentication succeeded accountId={authOk.AccountId} charId={authOk.CharId} sessionMatch=true gameplayStateVersion={state.Version}");
+        _statusExpirationLoop = RunStatusExpirationLoopAsync(_sessionCancellation.Token);
         await SendIroInitialBootstrapAsync(authOk, _sessionCancellation.Token);
+    }
+
+    // One expiration scheduler per session (not one Task.Delay/Timer per active status).
+    // Sleeps until CharacterStatusEffectState.NextExpiration via the shared TimeProvider (so
+    // tests can drive it deterministically with a fake clock), waking early whenever
+    // StartStatusAsync adds or refreshes a status (which can move the next deadline earlier).
+    // Pinned status_change_end's generic tail (status.cpp:14047-14123, no SC_BLESSING/
+    // SC_INCREASEAGI-specific case in the switch at status.cpp:13433-14045) is: send the
+    // "off" status-change packet (clif_status_change with state=0 -> 0x0196 for this
+    // PACKETVER), then recalculate and resync only the stats that actually changed
+    // (status_calc_bl_ -> clif_updatestatus -> 0x0141) - exactly the sequence implemented here.
+    private async Task RunStatusExpirationLoopAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                var next = _statusEffects.NextExpiration;
+                if (next is null)
+                {
+                    await _statusExpirationSignal.WaitAsync(cancellationToken);
+                    continue;
+                }
+
+                var delay = next.Value - _timeProvider.GetUtcNow();
+                if (delay > TimeSpan.Zero)
+                {
+                    using var delayCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                    var wake = _statusExpirationSignal.WaitAsync(delayCancellation.Token);
+                    var sleep = Task.Delay(delay, _timeProvider, delayCancellation.Token);
+                    var completed = await Task.WhenAny(wake, sleep);
+                    delayCancellation.Cancel();
+                    if (completed == wake)
+                    {
+                        try { await wake; } catch (OperationCanceledException) { }
+                        continue;
+                    }
+                    try { await sleep; } catch (OperationCanceledException) { continue; }
+                }
+
+                await ProcessDueStatusExpirationsAsync(cancellationToken);
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (ObjectDisposedException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+    }
+
+    private async Task ProcessDueStatusExpirationsAsync(CancellationToken cancellationToken)
+    {
+        var before = _gameplayState is null ? default : _statusEffects.RecalculateBeforeExpiration(_gameplayState.State);
+        var due = _statusEffects.ExpireDue(_timeProvider.GetUtcNow());
+        if (due.Count == 0 || _gameplayState is null) return;
+        var after = _statusEffects.Recalculate(_gameplayState.State);
+
+        foreach (var status in due)
+        {
+            ushort efstType;
+            if (status.StatusId == CharacterStatusEffectState.StatusIds.Blessing) efstType = IroStatusEffectPackets.EfstBlessing;
+            else if (status.StatusId == CharacterStatusEffectState.StatusIds.IncreaseAgi) efstType = IroStatusEffectPackets.EfstIncAgi;
+            else continue;
+
+            await WriteAsync(IroStatusEffectPackets.BuildStatusChangeEnd(_accountId, efstType), cancellationToken);
+        }
+
+        if (before.Strength != after.Strength) await WriteAsync(IroStatusEffectPackets.BuildCoupleStatus(IroStatusEffectPackets.SpStr, _gameplayState.State.Strength, after.Strength - _gameplayState.State.Strength), cancellationToken);
+        if (after.Agility != before.Agility) await WriteAsync(IroStatusEffectPackets.BuildCoupleStatus(IroStatusEffectPackets.SpAgi, _gameplayState.State.Agility, after.Agility - _gameplayState.State.Agility), cancellationToken);
+        if (before.Intelligence != after.Intelligence) await WriteAsync(IroStatusEffectPackets.BuildCoupleStatus(IroStatusEffectPackets.SpInt, _gameplayState.State.Intelligence, after.Intelligence - _gameplayState.State.Intelligence), cancellationToken);
+        if (before.Dexterity != after.Dexterity) await WriteAsync(IroStatusEffectPackets.BuildCoupleStatus(IroStatusEffectPackets.SpDex, _gameplayState.State.Dexterity, after.Dexterity - _gameplayState.State.Dexterity), cancellationToken);
     }
 
     private async Task CompleteIroAuthenticationSafelyAsync(MapAuthOkData authOk)
@@ -227,10 +314,14 @@ public sealed class MapClientSession : IDisposable, INpcScriptHost
         }
 
         _sessionCancellation.Cancel();
+        // Unblock a pending WaitAsync so the loop observes cancellation promptly; a wake may
+        // already be pending (SemaphoreFullException), which is harmless here too.
+        try { _statusExpirationSignal.Release(); } catch (SemaphoreFullException) { }
         _generatedContinuation?.Completion.TrySetCanceled();
         _stream.Dispose();
         _writeLock.Dispose();
         _sessionCancellation.Dispose();
+        _statusExpirationSignal.Dispose();
     }
 
     private async Task HandlePacketAsync(short packetType, byte[] packet, CancellationToken cancellationToken)
@@ -502,82 +593,186 @@ public sealed class MapClientSession : IDisposable, INpcScriptHost
         var execution = _scriptExecutionSession!;
         foreach (var instruction in instructions)
         {
-            switch (instruction)
+            var result = await ExecuteInstructionAsync(execution, instruction, cancellationToken);
+            if (result == InstructionExecutionResult.Stop)
             {
-                case MessageInstruction message:
-                    MapLogger.Info($"[iRO MAP DEBUG] Script message entity='{execution.EntityId}' actorId={execution.ActorId}");
-                    await WriteAsync(IroNpcDialoguePackets.BuildMessage(execution.ActorId, message.Text), cancellationToken);
-                    break;
-                case NextInstruction:
-                    await WriteAsync(IroNpcDialoguePackets.BuildNext(execution.ActorId), cancellationToken);
-                    MapLogger.Info($"[iRO MAP DEBUG] Script suspended reason=Next entity='{execution.EntityId}'");
-                    break;
-                case SelectInstruction select:
-                    MapLogger.Info($"[iRO MAP DEBUG] Script selection shown entity='{execution.EntityId}' options={select.Options.Count}");
-                    await WriteAsync(IroNpcDialoguePackets.BuildMenu(execution.ActorId, select.Options.Select(option => option.Text).ToArray()), cancellationToken);
-                    MapLogger.Info($"[iRO MAP DEBUG] Script suspended reason=Selection entity='{execution.EntityId}'");
-                    break;
-                case CloseInstruction:
-                    await WriteAsync(IroNpcDialoguePackets.BuildClose(execution.ActorId), cancellationToken);
-                    MapLogger.Info($"[iRO MAP DEBUG] Script closed entity='{execution.EntityId}'");
-                    _scriptExecutionSession = null;
-                    break;
-                case Close2Instruction:
-                    await WriteAsync(IroNpcDialoguePackets.BuildClose(execution.ActorId), cancellationToken);
-                    MapLogger.Info($"[iRO MAP DEBUG] Script dialogue closed; execution continues entity='{execution.EntityId}'");
-                    break;
-                case AssignmentInstruction assignment:
-                    execution.Assign(assignment.Variable, assignment.Value);
-                    break;
-                case WarpInstruction warp:
-                    await ExecuteScriptWarpAsync(execution, warp, cancellationToken);
-                    break;
-                case SavePointInstruction savePoint:
-                    if (!await SavePointAsync(execution.Evaluate(savePoint.Map), savePoint.X, savePoint.Y, cancellationToken))
-                    {
-                        MapLogger.Warning($"SavePoint persistence aborted script entity='{execution.EntityId}' charId={_charId}.");
-                        _scriptExecutionSession = null;
-                        return;
-                    }
-                    break;
-                case SetQuestInstruction setQuest:
-                    if (!await SetQuestAsync(setQuest.QuestId, cancellationToken))
-                    {
-                        await AbortScriptForPersistenceFailureAsync(execution, setQuest.QuestId, cancellationToken);
-                        return;
-                    }
-                    break;
-                case CompleteQuestInstruction completeQuest:
-                    if (!await CompleteQuestAsync(completeQuest.QuestId, cancellationToken))
-                    {
-                        await AbortScriptForPersistenceFailureAsync(execution, completeQuest.QuestId, cancellationToken);
-                        return;
-                    }
-                    break;
-                case IfQuestStateInstruction check:
-                    if (check.QuestId == 0) return;
-                    var state = await _questPersistence.GetQuestStateAsync(_accountId, _charId, check.QuestId, cancellationToken);
-                    if (state is null)
-                    {
-                        await AbortScriptForPersistenceFailureAsync(execution, check.QuestId, cancellationToken);
-                        return;
-                    }
-                    await SendScriptOutputAsync(execution.ResumeQuestState(execution.ActorId, state.Value), cancellationToken);
-                    break;
+                return;
             }
         }
-        if (execution.State == ScriptExecutionState.Closed) _scriptExecutionSession = null;
+
+        if (execution.State == ScriptExecutionState.Closed)
+        {
+            ClearScript(execution);
+        }
     }
 
-    private async Task AbortScriptForPersistenceFailureAsync(
+    private async Task<InstructionExecutionResult> ExecuteInstructionAsync(
         ScriptExecutionSession execution,
-        uint questId,
+        ScriptInstructionDefinition instruction,
+        CancellationToken cancellationToken) => instruction switch
+        {
+            MessageInstruction message => await ExecuteMessageInstructionAsync(execution, message, cancellationToken),
+            NextInstruction => await ExecuteNextInstructionAsync(execution, cancellationToken),
+            SelectInstruction select => await ExecuteSelectInstructionAsync(execution, select, cancellationToken),
+            CloseInstruction => await ExecuteCloseInstructionAsync(execution, cancellationToken),
+            Close2Instruction => await ExecuteClose2InstructionAsync(execution, cancellationToken),
+            AssignmentInstruction assignment => ExecuteAssignmentInstruction(execution, assignment),
+            WarpInstruction warp => await ExecuteWarpInstructionAsync(execution, warp, cancellationToken),
+            SavePointInstruction savePoint => await ExecuteSavePointInstructionAsync(execution, savePoint, cancellationToken),
+            SetQuestInstruction setQuest => await ExecuteSetQuestInstructionAsync(execution, setQuest, cancellationToken),
+            CompleteQuestInstruction completeQuest => await ExecuteCompleteQuestInstructionAsync(execution, completeQuest, cancellationToken),
+            IfQuestStateInstruction check => await ExecuteQuestStateInstructionAsync(execution, check, cancellationToken),
+            _ => InstructionExecutionResult.Continue,
+        };
+
+    private async Task<InstructionExecutionResult> ExecuteMessageInstructionAsync(
+        ScriptExecutionSession execution,
+        MessageInstruction message,
         CancellationToken cancellationToken)
     {
-        MapLogger.Warning(
-            $"Quest persistence aborted script entity='{execution.EntityId}' charId={_charId} questId={questId}.");
+        MapLogger.Info($"[iRO MAP DEBUG] Script message entity='{execution.EntityId}' actorId={execution.ActorId}");
+        await WriteAsync(IroNpcDialoguePackets.BuildMessage(execution.ActorId, message.Text), cancellationToken);
+        return InstructionExecutionResult.Continue;
+    }
+
+    private async Task<InstructionExecutionResult> ExecuteNextInstructionAsync(
+        ScriptExecutionSession execution,
+        CancellationToken cancellationToken)
+    {
+        await WriteAsync(IroNpcDialoguePackets.BuildNext(execution.ActorId), cancellationToken);
+        MapLogger.Info($"[iRO MAP DEBUG] Script suspended reason=Next entity='{execution.EntityId}'");
+        return InstructionExecutionResult.Continue;
+    }
+
+    private async Task<InstructionExecutionResult> ExecuteSelectInstructionAsync(
+        ScriptExecutionSession execution,
+        SelectInstruction select,
+        CancellationToken cancellationToken)
+    {
+        MapLogger.Info($"[iRO MAP DEBUG] Script selection shown entity='{execution.EntityId}' options={select.Options.Count}");
+        await WriteAsync(
+            IroNpcDialoguePackets.BuildMenu(execution.ActorId, select.Options.Select(option => option.Text).ToArray()),
+            cancellationToken);
+        MapLogger.Info($"[iRO MAP DEBUG] Script suspended reason=Selection entity='{execution.EntityId}'");
+        return InstructionExecutionResult.Continue;
+    }
+
+    private async Task<InstructionExecutionResult> ExecuteCloseInstructionAsync(
+        ScriptExecutionSession execution,
+        CancellationToken cancellationToken)
+    {
+        // Clear server-side state before exposing the close packet to the client.
+        // Otherwise a client/test can observe the close while ActiveScriptState is still Closed.
+        ClearScript(execution);
         await WriteAsync(IroNpcDialoguePackets.BuildClose(execution.ActorId), cancellationToken);
-        _scriptExecutionSession = null;
+        MapLogger.Info($"[iRO MAP DEBUG] Script closed entity='{execution.EntityId}'");
+        return InstructionExecutionResult.Stop;
+    }
+
+    private async Task<InstructionExecutionResult> ExecuteClose2InstructionAsync(
+        ScriptExecutionSession execution,
+        CancellationToken cancellationToken)
+    {
+        await WriteAsync(IroNpcDialoguePackets.BuildClose(execution.ActorId), cancellationToken);
+        MapLogger.Info($"[iRO MAP DEBUG] Script dialogue closed; execution continues entity='{execution.EntityId}'");
+        return InstructionExecutionResult.Continue;
+    }
+
+    private static InstructionExecutionResult ExecuteAssignmentInstruction(
+        ScriptExecutionSession execution,
+        AssignmentInstruction assignment)
+    {
+        execution.Assign(assignment.Variable, assignment.Value);
+        return InstructionExecutionResult.Continue;
+    }
+
+    private async Task<InstructionExecutionResult> ExecuteWarpInstructionAsync(
+        ScriptExecutionSession execution,
+        WarpInstruction warp,
+        CancellationToken cancellationToken)
+    {
+        await ExecuteScriptWarpAsync(execution, warp, cancellationToken);
+        return InstructionExecutionResult.Continue;
+    }
+
+    private async Task<InstructionExecutionResult> ExecuteSavePointInstructionAsync(
+        ScriptExecutionSession execution,
+        SavePointInstruction savePoint,
+        CancellationToken cancellationToken)
+    {
+        if (await SavePointAsync(execution.Evaluate(savePoint.Map), savePoint.X, savePoint.Y, cancellationToken))
+        {
+            return InstructionExecutionResult.Continue;
+        }
+
+        MapLogger.Warning($"SavePoint persistence aborted script entity='{execution.EntityId}' charId={_charId}.");
+        ClearScript(execution);
+        return InstructionExecutionResult.Stop;
+    }
+
+    private async Task<InstructionExecutionResult> ExecuteSetQuestInstructionAsync(
+        ScriptExecutionSession execution,
+        SetQuestInstruction setQuest,
+        CancellationToken cancellationToken)
+    {
+        if (await SetQuestAsync(setQuest.QuestId, cancellationToken))
+        {
+            return InstructionExecutionResult.Continue;
+        }
+
+        await AbortScriptForPersistenceFailureAsync(execution, setQuest.QuestId, cancellationToken);
+        return InstructionExecutionResult.Stop;
+    }
+
+    private async Task<InstructionExecutionResult> ExecuteCompleteQuestInstructionAsync(
+        ScriptExecutionSession execution,
+        CompleteQuestInstruction completeQuest,
+        CancellationToken cancellationToken)
+    {
+        if (await CompleteQuestAsync(completeQuest.QuestId, cancellationToken))
+        {
+            return InstructionExecutionResult.Continue;
+        }
+
+        await AbortScriptForPersistenceFailureAsync(execution, completeQuest.QuestId, cancellationToken);
+        return InstructionExecutionResult.Stop;
+    }
+
+    private async Task<InstructionExecutionResult> ExecuteQuestStateInstructionAsync(
+        ScriptExecutionSession execution,
+        IfQuestStateInstruction check,
+        CancellationToken cancellationToken)
+    {
+        if (check.QuestId == 0)
+        {
+            return InstructionExecutionResult.Stop;
+        }
+
+        var state = await _questPersistence.GetQuestStateAsync(_accountId, _charId, check.QuestId, cancellationToken);
+        if (state is null)
+        {
+            await AbortScriptForPersistenceFailureAsync(execution, check.QuestId, cancellationToken);
+            return InstructionExecutionResult.Stop;
+        }
+
+        await SendScriptOutputAsync(execution.ResumeQuestState(execution.ActorId, state.Value), cancellationToken);
+        return InstructionExecutionResult.Continue;
+    }
+
+    private void ClearScript(ScriptExecutionSession execution)
+    {
+        if (ReferenceEquals(_scriptExecutionSession, execution))
+        {
+            _scriptExecutionSession = null;
+        }
+    }
+
+    private async Task AbortScriptForPersistenceFailureAsync(ScriptExecutionSession execution, uint questId, CancellationToken cancellationToken)
+    {
+        MapLogger.Warning($"Quest persistence aborted script entity='{execution.EntityId}' charId={_charId} questId={questId}.");
+
+        ClearScript(execution);
+        await WriteAsync(IroNpcDialoguePackets.BuildClose(execution.ActorId), cancellationToken);
     }
 
     private async Task<bool> SetQuestAsync(uint questId, CancellationToken cancellationToken)
@@ -770,9 +965,86 @@ public sealed class MapClientSession : IDisposable, INpcScriptHost
         foreach (var packet in IroCharacterProgressionPackets.Build(result, baseExperience > 0, jobExperience > 0)) await WriteAsync(packet, cancellationToken);
     }
 
+    // Frame 3496 of npc-interaction-heal-action.pcapng (Captain Carocc's completion burst;
+    // see ai/iro-2026-wire.md for the complete byte segmentation) proves heal 9999,0 is
+    // followed by a ZC_USE_SKILL (0x09CB) visual: SKID=28 (AL_HEAL), level=9999 (the exact
+    // heal amount, not the resulting HP), src=the executing NPC's actor, target=player,
+    // result=1. The pinned BUILDIN_FUNC(heal)/status_heal path does not itself call
+    // clif_skill_nodamage for this case, so the precise source line producing this packet
+    // was not conclusively located in static source; the packet's existence, layout, and
+    // field values are wire-proven and used as-is, attributed to HealAsync (not
+    // SpecialEffectAsync/SkillEffectAsync - see their remarks) because its level value
+    // matches the heal amount, not any skilleffect argument in Captain's script.
+    async Task INpcScriptHost.HealAsync(int hp, int sp, CancellationToken cancellationToken)
+    {
+        var state = _gameplayState ?? throw new InvalidOperationException("Character gameplay state is not loaded.");
+        var result = await new CharacterHealService(state).HealAsync(hp, sp, cancellationToken)
+            ?? throw new InvalidOperationException("Heal persistence failed.");
+        // No parameter packet is sent when the mutation left HP/SP unchanged (e.g. an
+        // already-full heal) - there is nothing to synchronize. This mirrors the existing
+        // GrantExperienceAsync policy of only emitting packets for fields that actually
+        // changed; it is not Captain-specific behavior.
+        if (result.HpChanged) await WriteAsync(IroCharacterProgressionPackets.Parameter(5, result.After.CurrentHp), cancellationToken);
+        if (result.SpChanged) await WriteAsync(IroCharacterProgressionPackets.Parameter(7, result.After.CurrentSp), cancellationToken);
+        if (result.HpChanged && hp > 0) await WriteAsync(IroStatusEffectPackets.BuildUseSkillVisual(IroStatusEffectPackets.AlHeal, hp, _accountId, _generatedScriptActorId), cancellationToken);
+    }
+
+    // Pinned legacy/rathena/src/map/script.cpp BUILDIN_FUNC(specialeffect2) calls
+    // clif_specialeffect (-> ZC_NOTIFY_EFFECT2, 0x01F3), which the capture proves was NOT
+    // sent anywhere in Captain's completion burst (no 0x01F3 bytes anywhere in the
+    // reassembled stream; see ai/iro-2026-wire.md). This remains a documented, unproven gap:
+    // the server-side effect is presentation-only (no persistent state), so there is nothing
+    // to mutate, and no packet is synthesized without independent wire proof.
+    Task INpcScriptHost.SpecialEffectAsync(int effectId, CancellationToken cancellationToken) => Task.CompletedTask;
+
+    // Pinned skilleffect(skillId, level) -> script_skill_effect -> clif_skill_nodamage for a
+    // CAST_NODAMAGE skill (AL_INCAGI/AL_BLESSING both are), producing the same ZC_USE_SKILL
+    // (0x09CB) family independently proven by the capture for Captain's Blessing/Increase AGI
+    // activation (SKID=34/level=10 and SKID=29/level=10 respectively, src=Captain's actor,
+    // target=player). Emitted here (once per skilleffect call, exactly matching Captain's
+    // script order) rather than folded into StartStatusAsync, since skilleffect and sc_start
+    // are independent script commands with independent capture-proven packets.
+    Task INpcScriptHost.SkillEffectAsync(int skillId, int level, CancellationToken cancellationToken) =>
+        WriteAsync(IroStatusEffectPackets.BuildUseSkillVisual((ushort)skillId, level, _accountId, _generatedScriptActorId), cancellationToken);
+
+    // sc_start's generic server-side semantics (CharacterStatusEffectState.Start) plus, for
+    // the two currently modeled statuses, their capture-proven client synchronization: a
+    // ZC_MSG_STATE_CHANGE3 (0x0983) activation icon and the ZC_COUPLESTATUS (0x0141)/generic
+    // parameter packets for whichever effective stats that status changes, all independently
+    // verified against frame 3496 of npc-interaction-heal-action.pcapng (see
+    // ai/iro-2026-wire.md and CharacterStatusEffectState's remarks for the exact val1/val2
+    // derivation). Other statusIds apply only server-side state, matching the generic,
+    // non-Captain-specific policy used throughout this host.
+    async Task INpcScriptHost.StartStatusAsync(int statusId, int durationMilliseconds, int val1, CancellationToken cancellationToken)
+    {
+        var id = (ushort)statusId;
+        _statusEffects.Start(id, durationMilliseconds, val1);
+        // Wake the expiration loop: this may have moved the next deadline earlier. Best-effort -
+        // SemaphoreFullException means a wake is already pending (the loop hasn't consumed it
+        // yet), which is fine, it will re-read NextExpiration fresh when it does; the signal may
+        // also already be disposed if the session is tearing down concurrently.
+        try { _statusExpirationSignal.Release(); } catch (ObjectDisposedException) { } catch (SemaphoreFullException) { }
+        if (!_statusEffects.TryGet(id, out var status)) return;
+        var actorId = _accountId;
+
+        if (id == CharacterStatusEffectState.StatusIds.Blessing)
+        {
+            await WriteAsync(IroStatusEffectPackets.BuildStatusChange3(actorId, IroStatusEffectPackets.EfstBlessing, true, durationMilliseconds, durationMilliseconds, status.Val1), cancellationToken);
+            await WriteAsync(IroStatusEffectPackets.BuildCoupleStatus(IroStatusEffectPackets.SpStr, (_gameplayState?.State.Strength ?? 0), status.Val2), cancellationToken);
+            await WriteAsync(IroStatusEffectPackets.BuildCoupleStatus(IroStatusEffectPackets.SpInt, (_gameplayState?.State.Intelligence ?? 0), status.Val2), cancellationToken);
+            await WriteAsync(IroStatusEffectPackets.BuildCoupleStatus(IroStatusEffectPackets.SpDex, (_gameplayState?.State.Dexterity ?? 0), status.Val2), cancellationToken);
+        }
+        else if (id == CharacterStatusEffectState.StatusIds.IncreaseAgi)
+        {
+            await WriteAsync(IroStatusEffectPackets.BuildStatusChange3(actorId, IroStatusEffectPackets.EfstIncAgi, true, durationMilliseconds, durationMilliseconds, status.Val1), cancellationToken);
+            await WriteAsync(IroStatusEffectPackets.BuildCoupleStatus(IroStatusEffectPackets.SpAgi, (_gameplayState?.State.Agility ?? 0), status.Val2), cancellationToken);
+        }
+    }
+
     private static TaskCompletionSource NewSignal() => new(TaskCreationOptions.RunContinuationsAsynchronously);
     private static TaskCompletionSource<int> NewContinuation() => new(TaskCreationOptions.RunContinuationsAsynchronously);
     private sealed record GeneratedContinuation(GeneratedContinuationKind Kind, TaskCompletionSource<int> Completion);
+    private enum InstructionExecutionResult { Continue, Stop }
     private enum GeneratedContinuationKind { Next, Selection, Close2 }
 
     private async Task SendVisibleWarpActorsAsync(CancellationToken cancellationToken)

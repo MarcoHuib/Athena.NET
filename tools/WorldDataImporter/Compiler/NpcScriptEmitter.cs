@@ -139,7 +139,8 @@ internal static class NpcScriptEmitter
                     if (item.Value is not null) EmitExpression(output, item.Value);
                     output.AppendLine(":");
                     foreach (var child in item.Statements) EmitStatement(output, child, depth + 2);
-                    output.Append(indent).AppendLine("        break;");
+                    if (item.Statements.Count == 0 || item.Statements[^1] is not LoweredCommand { Terminates: true })
+                        output.Append(indent).AppendLine("        break;");
                 }
                 output.Append(indent).AppendLine("}");
                 break;

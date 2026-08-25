@@ -96,7 +96,6 @@ dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- compile
   --exclude-placement 'npc:iz_int:wounded swordsman#intro_npc01_iz_int' \
   --exclude-placement 'npc:int_land:captain carocc#intro_npc03' \
   --exclude-placement 'npc:int_land:lumin#new_ship' \
-  --no-behavior 'Captain Carocc#intro_npc03' \
   --no-behavior 'Lumin#new_ship' \
   --warp-name '#ship_out' \
   --warp-name '#intro_to_izlude' \
@@ -116,11 +115,12 @@ isn't currently lowerable (a `sleep2` timer construct), so only its OnClick
 `#intro_to_izlude`'s own template placements (`iz_int`/`int_land`) and
 `#intro_to_izlude`'s `_a/_b/_c` duplicates were never part of the original
 hand-curated registry, matching `int_land`'s Captain Carocc/Lumin template
-placements. `--no-behavior` keeps Captain Carocc and Lumin actor-only: both
-have real, non-trivial rAthena click dialogue (the converter finds it
-losslessly), but their scripts deliberately stay unregistered pending real
-healing/EXP/status-effect/inventory runtime support (see `ai/world-data.md`)
-— this is an explicit emission-time decision, not a converter limitation.
+placements. `--no-behavior` keeps Lumin actor-only: it has real, non-trivial
+rAthena click dialogue (the converter finds it losslessly), but its script
+deliberately stays unregistered pending real inventory runtime support (see
+`ai/world-data.md`) — this is an explicit emission-time decision, not a
+converter limitation. Captain Carocc's script is registered: it only needs
+dialogue/quest/heal/status/EXP runtime capabilities, which now all exist.
 
 Omitting the exclusion/no-behavior flags entirely emits every placement and
 behavior the converter finds for the selected `--name`/`--warp-name`

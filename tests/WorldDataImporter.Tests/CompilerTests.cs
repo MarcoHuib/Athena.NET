@@ -133,7 +133,7 @@ public sealed class CompilerTests
                 "--exclude-placement", "npc:iz_int:wounded swordsman#intro_npc01_iz_int",
                 "--exclude-placement", "npc:int_land:captain carocc#intro_npc03",
                 "--exclude-placement", "npc:int_land:lumin#new_ship",
-                "--no-behavior", "Captain Carocc#intro_npc03", "--no-behavior", "Lumin#new_ship",
+                "--no-behavior", "Lumin#new_ship",
                 "--warp-name", "#ship_out", "--warp-name", "#intro_to_izlude",
                 "--warp-exclude-placement", "warp:iz_int:ship_out",
                 "--warp-exclude-placement", "warp:int_land01:intro_to_izlude_a",
@@ -171,9 +171,18 @@ public sealed class CompilerTests
             var introToIzludeScript = scriptFiles.Select(File.ReadAllText).Single(source => source.Contains("\"intro_to_izlude\", \"\")"));
             Assert.Contains("await context.WarpAsync(local_map, 196, 209, cancellationToken);", introToIzludeScript);
 
+            var captainCaroccScript = scriptFiles.Select(File.ReadAllText).Single(source => source.Contains("CaptainCaroccOnClickScript"));
+            Assert.Contains("await context.HealAsync(9999, 0, cancellationToken);", captainCaroccScript);
+            Assert.Contains("await context.SpecialEffectAsync(RathenaConstants.EF_HEAL2, cancellationToken);", captainCaroccScript);
+            Assert.Contains("await context.SkillEffectAsync(34, 0, cancellationToken);", captainCaroccScript);
+            Assert.Contains("await context.StartStatusAsync(RathenaConstants.SC_BLESSING, 240000, 10, cancellationToken);", captainCaroccScript);
+            Assert.Contains("await context.StartStatusAsync(RathenaConstants.SC_INCREASEAGI, 240000, 10, cancellationToken);", captainCaroccScript);
+            Assert.Contains("await context.GrantExperienceAsync(600, 600, cancellationToken);", captainCaroccScript);
+
             var academyNpcs = await File.ReadAllTextAsync(Path.Combine(academyDir, "AcademyNpcs.cs"));
             Assert.Contains("\"Wounded Swordsman#intro_npc02_iz_int\"", academyNpcs);
             Assert.Contains("CaptainCarocc = new(", academyNpcs);
+            Assert.Contains("static () => new Athena.Net.MapServer.Generated.World.Izlude.Academy.Scripts.CaptainCaroccOnClickScript()", academyNpcs);
             Assert.Contains("Lumin = new(", academyNpcs);
 
             var academyWarpTriggers = await File.ReadAllTextAsync(Path.Combine(academyDir, "AcademyWarpTriggers.cs"));

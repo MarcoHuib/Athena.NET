@@ -28,6 +28,7 @@
 - [![Login Server CI][login-ci-shield]][login-ci-url]
 - [![Char Server CI][char-ci-shield]][char-ci-url]
 - [![Map Server CI][map-ci-shield]][map-ci-url]
+- [![World Data Importer CI][world-data-importer-ci-shield]][world-data-importer-ci-url]
 
 <details>
   <summary>Table of Contents</summary>
@@ -148,3 +149,5 @@ Athena.NET is distributed under the terms described in [LICENSE](LICENSE).
 [char-ci-url]: https://github.com/MarcoHuib/Athena.NET/actions/workflows/char-server-ci.yml
 [map-ci-shield]: https://github.com/MarcoHuib/Athena.NET/actions/workflows/map-server-ci.yml/badge.svg?style=for-the-badge
 [map-ci-url]: https://github.com/MarcoHuib/Athena.NET/actions/workflows/map-server-ci.yml
+[world-data-importer-ci-shield]: https://github.com/MarcoHuib/Athena.NET/actions/workflows/world-data-importer-ci.yml/badge.svg?style=for-the-badge
+[world-data-importer-ci-url]: https://github.com/MarcoHuib/Athena.NET/actions/workflows/world-data-importer-ci.yml

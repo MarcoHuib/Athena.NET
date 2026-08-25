@@ -134,6 +134,8 @@ _NCrunch*
 
 /SolutionFiles/Secrets/*
 /legacy/*
+!/legacy/rathena
+!/legacy/openkore
 /conf/inter_athena.conf
 /conf/login_athena.conf
 /conf/char_athena.conf
