@@ -28,7 +28,7 @@ public sealed class GeneratedCaptainCaroccIntegrationTests
         await using var stream = client.GetStream();
         var questPersistence = new RecordingQuestPersistence(21001, CharacterQuestStatus.Active); // quest 21001 already active, matching the capture's own quest state; 21008 defaults to Absent (case 0).
         var gameplayPersistence = new RecordingGameplayStatePersistence(new(9, 0, 0, 1, 1, 0, 0, 20, 5, 40, 11, 48, 0, 1, 1, 1, 1, 1, 1));
-        using var session = new MapClientSession(1, serverClient, new CharServerConnector(new MapConfigStore(new MapConfig(), "unused.conf")), true, "int_land03", 78, 103, registry,
+        await using var session = new MapClientSession(1, serverClient, new CharServerConnector(new MapConfigStore(new MapConfig(), "unused.conf")), true, "int_land03", 78, 103, registry,
             questPersistence: questPersistence, gameplayStatePersistence: gameplayPersistence, accountId: 7, charId: 9);
         var run = session.RunAsync(CancellationToken.None);
         // Unlike the gameplay-state-free Wounded Swordsman fixture, Captain's script needs

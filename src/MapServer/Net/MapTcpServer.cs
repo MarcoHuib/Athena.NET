@@ -64,7 +64,7 @@ public sealed class MapTcpServer
         MapLogger.Info($"[iRO MAP DEBUG] Client connected: {endpoint}");
 
         using (client)
-        using (var session = new MapClientSession(sessionId, client, _charConnector, _world))
+        await using (var session = new MapClientSession(sessionId, client, _charConnector, _world))
         {
             try
             {

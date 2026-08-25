@@ -16,7 +16,7 @@ public sealed class MapClientSessionHealAndStatusTests
         using var listener = new TcpListener(IPAddress.Loopback, 0); listener.Start(); var endpoint = (IPEndPoint)listener.LocalEndpoint;
         using var client = new TcpClient(); var connecting = client.ConnectAsync(endpoint.Address, endpoint.Port); using var server = await listener.AcceptTcpClientAsync(); await connecting;
         var persistence = new RecordingPersistence(new(9, 0, 0, 1, 1, 0, 0, 20, 5, 40, 11, 48, 0, 1, 1, 1, 1, 1, 1));
-        using var session = new MapClientSession(1, server, new CharServerConnector(new MapConfigStore(new MapConfig(), "unused")), false, gameplayStatePersistence: persistence);
+        await using var session = new MapClientSession(1, server, new CharServerConnector(new MapConfigStore(new MapConfig(), "unused")), false, gameplayStatePersistence: persistence);
         await session.CompleteIroAuthenticationAsync(new(7, 9, 1, 2, 0, 0, false, "iz_int01", 18, 26, 0, 0, 0));
         var bootstrap = new byte[29]; await client.GetStream().ReadExactlyAsync(bootstrap);
 
@@ -36,7 +36,7 @@ public sealed class MapClientSessionHealAndStatusTests
         using var listener = new TcpListener(IPAddress.Loopback, 0); listener.Start(); var endpoint = (IPEndPoint)listener.LocalEndpoint;
         using var client = new TcpClient(); var connecting = client.ConnectAsync(endpoint.Address, endpoint.Port); using var server = await listener.AcceptTcpClientAsync(); await connecting;
         var persistence = new RecordingPersistence(new(9, 0, 0, 1, 1, 0, 0, 40, 5, 40, 11, 48, 0, 1, 1, 1, 1, 1, 1));
-        using var session = new MapClientSession(1, server, new CharServerConnector(new MapConfigStore(new MapConfig(), "unused")), false, gameplayStatePersistence: persistence);
+        await using var session = new MapClientSession(1, server, new CharServerConnector(new MapConfigStore(new MapConfig(), "unused")), false, gameplayStatePersistence: persistence);
         await session.CompleteIroAuthenticationAsync(new(7, 9, 1, 2, 0, 0, false, "iz_int01", 18, 26, 0, 0, 0));
         var bootstrap = new byte[29]; await client.GetStream().ReadExactlyAsync(bootstrap);
 
@@ -56,7 +56,7 @@ public sealed class MapClientSessionHealAndStatusTests
         using var listener = new TcpListener(IPAddress.Loopback, 0); listener.Start(); var endpoint = (IPEndPoint)listener.LocalEndpoint;
         using var client = new TcpClient(); var connecting = client.ConnectAsync(endpoint.Address, endpoint.Port); using var server = await listener.AcceptTcpClientAsync(); await connecting;
         var persistence = new RecordingPersistence(new(9, 0, 0, 1, 1, 0, 0, 20, 5, 40, 11, 48, 0, 1, 1, 1, 1, 1, 1));
-        using var session = new MapClientSession(1, server, new CharServerConnector(new MapConfigStore(new MapConfig(), "unused")), false, gameplayStatePersistence: persistence);
+        await using var session = new MapClientSession(1, server, new CharServerConnector(new MapConfigStore(new MapConfig(), "unused")), false, gameplayStatePersistence: persistence);
         await session.CompleteIroAuthenticationAsync(new(7, 9, 1, 2, 0, 0, false, "iz_int01", 18, 26, 0, 0, 0));
         var bootstrap = new byte[29]; await client.GetStream().ReadExactlyAsync(bootstrap);
 
@@ -78,7 +78,7 @@ public sealed class MapClientSessionHealAndStatusTests
         using var listener = new TcpListener(IPAddress.Loopback, 0); listener.Start(); var endpoint = (IPEndPoint)listener.LocalEndpoint;
         using var client = new TcpClient(); var connecting = client.ConnectAsync(endpoint.Address, endpoint.Port); using var server = await listener.AcceptTcpClientAsync(); await connecting;
         var persistence = new RecordingPersistence(new(9, 0, 0, 1, 1, 0, 0, 20, 5, 40, 11, 48, 0, 1, 1, 1, 1, 1, 1));
-        using var session = new MapClientSession(1, server, new CharServerConnector(new MapConfigStore(new MapConfig(), "unused")), false, accountId: 7, gameplayStatePersistence: persistence);
+        await using var session = new MapClientSession(1, server, new CharServerConnector(new MapConfigStore(new MapConfig(), "unused")), false, accountId: 7, gameplayStatePersistence: persistence);
         await session.CompleteIroAuthenticationAsync(new(7, 9, 1, 2, 0, 0, false, "iz_int01", 18, 26, 0, 0, 0));
         var bootstrap = new byte[29]; await client.GetStream().ReadExactlyAsync(bootstrap);
 
@@ -99,7 +99,7 @@ public sealed class MapClientSessionHealAndStatusTests
         using var listener = new TcpListener(IPAddress.Loopback, 0); listener.Start(); var endpoint = (IPEndPoint)listener.LocalEndpoint;
         using var client = new TcpClient(); var connecting = client.ConnectAsync(endpoint.Address, endpoint.Port); using var server = await listener.AcceptTcpClientAsync(); await connecting;
         var persistence = new RecordingPersistence(new(9, 0, 0, 1, 1, 0, 0, 40, 11, 40, 11, 48, 0, 1, 1, 1, 1, 1, 1));
-        using var session = new MapClientSession(1, server, new CharServerConnector(new MapConfigStore(new MapConfig(), "unused")), false, gameplayStatePersistence: persistence);
+        await using var session = new MapClientSession(1, server, new CharServerConnector(new MapConfigStore(new MapConfig(), "unused")), false, gameplayStatePersistence: persistence);
         await session.CompleteIroAuthenticationAsync(new(7, 9, 1, 2, 0, 0, false, "iz_int01", 18, 26, 0, 0, 0));
         var bootstrap = new byte[29]; await client.GetStream().ReadExactlyAsync(bootstrap);
 
@@ -115,7 +115,7 @@ public sealed class MapClientSessionHealAndStatusTests
         using var listener = new TcpListener(IPAddress.Loopback, 0); listener.Start(); var endpoint = (IPEndPoint)listener.LocalEndpoint;
         using var client = new TcpClient(); var connecting = client.ConnectAsync(endpoint.Address, endpoint.Port); using var server = await listener.AcceptTcpClientAsync(); await connecting;
         var persistence = new RecordingPersistence(new(9, 0, 0, 1, 1, 0, 0, 20, 5, 40, 11, 48, 0, 1, 1, 1, 1, 1, 1)) { FailUpdates = true };
-        using var session = new MapClientSession(1, server, new CharServerConnector(new MapConfigStore(new MapConfig(), "unused")), false, gameplayStatePersistence: persistence);
+        await using var session = new MapClientSession(1, server, new CharServerConnector(new MapConfigStore(new MapConfig(), "unused")), false, gameplayStatePersistence: persistence);
         await session.CompleteIroAuthenticationAsync(new(7, 9, 1, 2, 0, 0, false, "iz_int01", 18, 26, 0, 0, 0));
         var bootstrap = new byte[29]; await client.GetStream().ReadExactlyAsync(bootstrap);
 
@@ -131,7 +131,7 @@ public sealed class MapClientSessionHealAndStatusTests
         using var listener = new TcpListener(IPAddress.Loopback, 0); listener.Start(); var endpoint = (IPEndPoint)listener.LocalEndpoint;
         using var client = new TcpClient(); var connecting = client.ConnectAsync(endpoint.Address, endpoint.Port); using var server = await listener.AcceptTcpClientAsync(); await connecting;
         var persistence = new RecordingPersistence(new(9, 0, 0, 1, 1, 0, 0, 40, 11, 40, 11, 48, 0, 1, 1, 1, 1, 1, 1));
-        using var session = new MapClientSession(1, server, new CharServerConnector(new MapConfigStore(new MapConfig(), "unused")), false, gameplayStatePersistence: persistence);
+        await using var session = new MapClientSession(1, server, new CharServerConnector(new MapConfigStore(new MapConfig(), "unused")), false, gameplayStatePersistence: persistence);
         await session.CompleteIroAuthenticationAsync(new(7, 9, 1, 2, 0, 0, false, "iz_int01", 18, 26, 0, 0, 0));
         var bootstrap = new byte[29]; await client.GetStream().ReadExactlyAsync(bootstrap);
 
@@ -159,7 +159,7 @@ public sealed class MapClientSessionHealAndStatusTests
         using var listener = new TcpListener(IPAddress.Loopback, 0); listener.Start(); var endpoint = (IPEndPoint)listener.LocalEndpoint;
         using var client = new TcpClient(); var connecting = client.ConnectAsync(endpoint.Address, endpoint.Port); using var server = await listener.AcceptTcpClientAsync(); await connecting;
         var persistence = new RecordingPersistence(new(9, 0, 0, 1, 1, 0, 0, 40, 11, 40, 11, 48, 0, 1, 1, 1, 1, 1, 1));
-        using var session = new MapClientSession(1, server, new CharServerConnector(new MapConfigStore(new MapConfig(), "unused")), false, accountId: 7, gameplayStatePersistence: persistence);
+        await using var session = new MapClientSession(1, server, new CharServerConnector(new MapConfigStore(new MapConfig(), "unused")), false, accountId: 7, gameplayStatePersistence: persistence);
         await session.CompleteIroAuthenticationAsync(new(7, 9, 1, 2, 0, 0, false, "iz_int01", 18, 26, 0, 0, 0));
         var bootstrap = new byte[29]; await client.GetStream().ReadExactlyAsync(bootstrap);
 
@@ -195,7 +195,7 @@ public sealed class MapClientSessionHealAndStatusTests
         using var listener = new TcpListener(IPAddress.Loopback, 0); listener.Start(); var endpoint = (IPEndPoint)listener.LocalEndpoint;
         using var client = new TcpClient(); var connecting = client.ConnectAsync(endpoint.Address, endpoint.Port); using var server = await listener.AcceptTcpClientAsync(); await connecting;
         var persistence = new RecordingPersistence(new(9, 0, 0, 1, 1, 0, 0, 40, 11, 40, 11, 48, 0, 1, 1, 1, 1, 1, 1));
-        using var session = new MapClientSession(1, server, new CharServerConnector(new MapConfigStore(new MapConfig(), "unused")), false, accountId: 7, gameplayStatePersistence: persistence);
+        await using var session = new MapClientSession(1, server, new CharServerConnector(new MapConfigStore(new MapConfig(), "unused")), false, accountId: 7, gameplayStatePersistence: persistence);
         await session.CompleteIroAuthenticationAsync(new(7, 9, 1, 2, 0, 0, false, "iz_int01", 18, 26, 0, 0, 0));
         var bootstrap = new byte[29]; await client.GetStream().ReadExactlyAsync(bootstrap);
 
@@ -222,7 +222,7 @@ public sealed class MapClientSessionHealAndStatusTests
         using var listener = new TcpListener(IPAddress.Loopback, 0); listener.Start(); var endpoint = (IPEndPoint)listener.LocalEndpoint;
         using var client = new TcpClient(); var connecting = client.ConnectAsync(endpoint.Address, endpoint.Port); using var server = await listener.AcceptTcpClientAsync(); await connecting;
         var persistence = new RecordingPersistence(new(9, 0, 0, 1, 1, 0, 0, 40, 11, 40, 11, 48, 0, 1, 1, 1, 1, 1, 1));
-        using var session = new MapClientSession(1, server, new CharServerConnector(new MapConfigStore(new MapConfig(), "unused")), false, gameplayStatePersistence: persistence);
+        await using var session = new MapClientSession(1, server, new CharServerConnector(new MapConfigStore(new MapConfig(), "unused")), false, gameplayStatePersistence: persistence);
         await session.CompleteIroAuthenticationAsync(new(7, 9, 1, 2, 0, 0, false, "iz_int01", 18, 26, 0, 0, 0));
         var bootstrap = new byte[29]; await client.GetStream().ReadExactlyAsync(bootstrap);
 
@@ -244,7 +244,7 @@ public sealed class MapClientSessionHealAndStatusTests
         using var listener = new TcpListener(IPAddress.Loopback, 0); listener.Start(); var endpoint = (IPEndPoint)listener.LocalEndpoint;
         using var client = new TcpClient(); var connecting = client.ConnectAsync(endpoint.Address, endpoint.Port); using var server = await listener.AcceptTcpClientAsync(); await connecting;
         var persistence = new RecordingPersistence(new(9, 0, 0, 1, 1, 0, 0, 40, 11, 40, 11, 48, 0, 1, 1, 1, 1, 1, 1));
-        using var session = new MapClientSession(1, server, new CharServerConnector(new MapConfigStore(new MapConfig(), "unused")), false, accountId: 7, gameplayStatePersistence: persistence);
+        await using var session = new MapClientSession(1, server, new CharServerConnector(new MapConfigStore(new MapConfig(), "unused")), false, accountId: 7, gameplayStatePersistence: persistence);
         await session.CompleteIroAuthenticationAsync(new(7, 9, 1, 2, 0, 0, false, "iz_int01", 18, 26, 0, 0, 0));
         var bootstrap = new byte[29]; await client.GetStream().ReadExactlyAsync(bootstrap);
 
@@ -266,7 +266,7 @@ public sealed class MapClientSessionHealAndStatusTests
         using var listener = new TcpListener(IPAddress.Loopback, 0); listener.Start(); var endpoint = (IPEndPoint)listener.LocalEndpoint;
         using var client = new TcpClient(); var connecting = client.ConnectAsync(endpoint.Address, endpoint.Port); using var server = await listener.AcceptTcpClientAsync(); await connecting;
         var persistence = new RecordingPersistence(new(9, 0, 0, 1, 1, 0, 0, 40, 11, 40, 11, 48, 0, 1, 1, 1, 1, 1, 1));
-        using var session = new MapClientSession(1, server, new CharServerConnector(new MapConfigStore(new MapConfig(), "unused")), false, gameplayStatePersistence: persistence);
+        await using var session = new MapClientSession(1, server, new CharServerConnector(new MapConfigStore(new MapConfig(), "unused")), false, gameplayStatePersistence: persistence);
         await session.CompleteIroAuthenticationAsync(new(7, 9, 1, 2, 0, 0, false, "iz_int01", 18, 26, 0, 0, 0));
         var bootstrap = new byte[29]; await client.GetStream().ReadExactlyAsync(bootstrap);
 
@@ -283,7 +283,7 @@ public sealed class MapClientSessionHealAndStatusTests
         using var listener = new TcpListener(IPAddress.Loopback, 0); listener.Start(); var endpoint = (IPEndPoint)listener.LocalEndpoint;
         using var client = new TcpClient(); var connecting = client.ConnectAsync(endpoint.Address, endpoint.Port); using var server = await listener.AcceptTcpClientAsync(); await connecting;
         var persistence = new RecordingPersistence(new(9, 0, 0, 1, 1, 0, 0, 40, 11, 40, 11, 48, 0, 1, 1, 1, 1, 1, 1));
-        using var session = new MapClientSession(1, server, new CharServerConnector(new MapConfigStore(new MapConfig(), "unused")), false, gameplayStatePersistence: persistence);
+        await using var session = new MapClientSession(1, server, new CharServerConnector(new MapConfigStore(new MapConfig(), "unused")), false, gameplayStatePersistence: persistence);
         await session.CompleteIroAuthenticationAsync(new(7, 9, 1, 2, 0, 0, false, "iz_int01", 18, 26, 0, 0, 0));
         var bootstrap = new byte[29]; await client.GetStream().ReadExactlyAsync(bootstrap);
 

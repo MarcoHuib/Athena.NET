@@ -1,13 +1,14 @@
 using System.Buffers.Binary;
 using System.Net;
 using System.Net.Sockets;
+using System.Runtime.ExceptionServices;
 using Athena.Net.MapServer.Logging;
 using Athena.Net.MapServer.World;
 using Athena.Net.MapServer.World.GeneratedScripts;
 
 namespace Athena.Net.MapServer.Net;
 
-public sealed class MapClientSession : IDisposable, INpcScriptHost
+public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
 {
     private static readonly Dictionary<short, int> PacketLengths = new()
     {
@@ -42,6 +43,36 @@ public sealed class MapClientSession : IDisposable, INpcScriptHost
     // no live attack path exists - but it is threaded through explicitly now so a future handler
     // does not need another constructor-plumbing change.
     private readonly MonsterRegistry? _monsters;
+    private readonly IMovementPathProvider _movementPathProvider;
+    // Owns authoritative per-cell walk timing (see CharacterMovementState's own doc comment for the
+    // rAthena unit_walktoxy_timer trace this replaces). _x/_y/_mapName remain the fields every other
+    // handler in this class reads; SyncPositionFromMovement() is the one place that reconciles them
+    // against _movement's real elapsed-time state, called at the top of HandleIroMovementAsync so a
+    // new movement request always retargets from the character's ACTUAL current cell rather than
+    // wherever a previous request's destination happened to be.
+    private CharacterMovementState? _movement;
+    // Guards all reads/mutations of _movement, _pendingArrival, and the position fields they drive
+    // (_mapName/_x/_y/_positionDirty) against a race between the movement loop (background task,
+    // below) and a packet-handling call (HandleIroMovementAsync, TeleportTo) running concurrently -
+    // this session's RunAsync packet loop and the movement loop are two independently-scheduled
+    // tasks that both touch this state.
+    private readonly SemaphoreSlim _movementGate = new(1, 1);
+    // The warp/script-touch action attached to the CURRENT walk's destination cell, executed by the
+    // movement loop only once that cell is actually reached (AdvanceTo reports it as newly crossed),
+    // not immediately at click time - this is what makes OnTouch/warp execution match rAthena's
+    // per-cell semantics (npc_touch_area_allnpc/npc_touch_areanpc2 inside unit_walktoxy_timer,
+    // unit.cpp:684-699) instead of firing the instant a route is detected to intersect one.
+    // Cleared by TeleportTo (a teleport/warp/map-change invalidates any old walk's pending action)
+    // and by StartWalk with no intersection.
+    private PendingMovementArrival? _pendingArrival;
+    private abstract record PendingMovementArrival;
+    private sealed record PendingWarpArrival(WarpDefinition Warp) : PendingMovementArrival;
+    private sealed record PendingScriptTouchArrival(WorldEntityDefinition Entity, uint ActorId, ScriptBehaviorDefinition Script) : PendingMovementArrival;
+    // Single-slot wake signal (same semantics as _statusExpirationSignal above): a new/retargeted
+    // walk may need the loop to wake earlier than its current sleep, or wake it from indefinite
+    // waiting when it starts moving from a standstill.
+    private readonly SemaphoreSlim _movementSignal = new(0, 1);
+    private Task? _movementLoop;
     private readonly SemaphoreSlim _writeLock = new(1, 1);
     private readonly CancellationTokenSource _sessionCancellation = new();
     private readonly HashSet<uint> _visibleActorIds = new();
@@ -62,7 +93,20 @@ public sealed class MapClientSession : IDisposable, INpcScriptHost
     private bool _iroAuthRequested;
     private bool _authenticated;
     private bool _positionDirty;
-    private int _disposed;
+    // Guards EnsureRuntimeLoopsStarted so exactly one _statusExpirationLoop/_movementLoop pair is
+    // ever created for this session, even if CompleteIroAuthenticationAsync and RunAsync's own
+    // already-authenticated startup check both reach it (HandleAuthOk fires CompleteIroAuthentication-
+    // SafelyAsync fire-and-forget, so it can race a RunAsync that started first on the already-
+    // authenticated test constructor path). A plain `lock` is fine here: the guarded body only
+    // reads/writes two Task? fields and starts two fire-and-forget async methods - it never awaits
+    // while holding the lock.
+    private readonly object _runtimeLoopStartGate = new();
+    private bool _runtimeLoopsStarted;
+    // Backs StopAsync/DisposeAsync's idempotent, shared shutdown: every caller (RunAsync's finally,
+    // DisposeAsync, a direct StopAsync call) observes the SAME Task and therefore the same outcome,
+    // instead of each caller racing its own teardown against the others' resource disposal.
+    private readonly object _shutdownGate = new();
+    private Task? _shutdownTask;
     private CharacterGameplayStateSession? _gameplayState;
     private readonly CharacterStatusEffectState _statusEffects;
     private readonly TimeProvider _timeProvider;
@@ -92,7 +136,8 @@ public sealed class MapClientSession : IDisposable, INpcScriptHost
         ICharacterQuestPersistence? questPersistence = null,
         ICharacterGameplayStatePersistence? gameplayStatePersistence = null,
         TimeProvider? timeProvider = null,
-        MonsterRegistry? monsters = null)
+        MonsterRegistry? monsters = null,
+        IMovementPathProvider? movementPathProvider = null)
     {
         SessionId = sessionId;
         _client = client;
@@ -104,6 +149,7 @@ public sealed class MapClientSession : IDisposable, INpcScriptHost
         _worldMapRegistry = worldMapRegistry;
         _monsters = monsters;
         _timeProvider = timeProvider ?? TimeProvider.System;
+        _movementPathProvider = movementPathProvider ?? new UnverifiedGridLineMovementPathProvider();
         _statusEffects = new CharacterStatusEffectState(_timeProvider);
     }
 
@@ -126,7 +172,8 @@ public sealed class MapClientSession : IDisposable, INpcScriptHost
         uint charId = 0,
         ICharacterGameplayStatePersistence? gameplayStatePersistence = null,
         TimeProvider? timeProvider = null,
-        MonsterRegistry? monsters = null)
+        MonsterRegistry? monsters = null,
+        IMovementPathProvider? movementPathProvider = null)
         : this(
             sessionId,
             client,
@@ -136,7 +183,8 @@ public sealed class MapClientSession : IDisposable, INpcScriptHost
             questPersistence,
             gameplayStatePersistence,
             timeProvider,
-            monsters)
+            monsters,
+            movementPathProvider)
     {
         _iroAuthRequested = iroAuthenticated;
         _authRequested = iroAuthenticated;
@@ -151,8 +199,12 @@ public sealed class MapClientSession : IDisposable, INpcScriptHost
     public int SessionId { get; }
 
     internal string CurrentMapName => _mapName;
-    internal ushort CurrentX => _x;
-    internal ushort CurrentY => _y;
+    // Syncs against real elapsed walking time on every read (no background timer - mirrors
+    // CharacterStatusEffectState's lazy-on-read expiration model), so any caller (tests, a future
+    // melee-range check, actor visibility) always observes the character's ACTUAL current cell
+    // rather than a stale destination from the last movement packet.
+    internal ushort CurrentX { get { SyncPositionToNow(); return _x; } }
+    internal ushort CurrentY { get { SyncPositionToNow(); return _y; } }
     internal ScriptExecutionState? ActiveScriptState => _scriptExecutionSession?.State;
     internal string? ActiveGeneratedScriptEntityId => _generatedScriptEntityId;
     internal CharacterGameplayStateSession? GameplayState => _gameplayState;
@@ -164,6 +216,19 @@ public sealed class MapClientSession : IDisposable, INpcScriptHost
             cancellationToken,
             _sessionCancellation.Token);
         var sessionToken = linkedCancellation.Token;
+
+        // Covers the already-authenticated test-facing constructor (iroAuthenticated: true), which
+        // sets _authenticated directly and never goes through CompleteIroAuthenticationAsync - the
+        // only other place that starts the runtime loops. Without this, such a session can accept a
+        // movement packet (HandleIroMovementAsync) and register a deferred PendingMovementArrival
+        // with no _movementLoop ever running to process it: the arrival is registered but never
+        // fires, and any caller awaiting its effect (a warp/OnTouch packet) blocks forever. See
+        // EnsureRuntimeLoopsStarted's own doc comment for why this must be idempotent/race-safe
+        // against CompleteIroAuthenticationAsync's own call on the production path.
+        if (_authenticated)
+        {
+            EnsureRuntimeLoopsStarted();
+        }
 
         try
         {
@@ -182,7 +247,40 @@ public sealed class MapClientSession : IDisposable, INpcScriptHost
         }
         finally
         {
-            await PersistPositionIfDirtyAsync(CancellationToken.None);
+            // StopAsync is idempotent and shared: whichever of RunAsync/DisposeAsync/an explicit
+            // StopAsync call reaches it first performs the ONE shutdown sequence (cancel -> join both
+            // runtime loops -> sync position -> persist once -> dispose resources); every other
+            // caller just awaits the same in-flight or completed Task. This is what makes RunAsync's
+            // contract "when RunAsync returns, no background scheduler remains alive" hold
+            // unconditionally, not just on the happy path.
+            await StopAsync();
+        }
+    }
+
+    // Idempotent, concurrency-safe startup boundary for this session's two background schedulers.
+    // Must be reachable from BOTH: (a) CompleteIroAuthenticationAsync, the production path, and (b)
+    // RunAsync's own startup check for a session that was already authenticated through the
+    // test-facing iroAuthenticated: true constructor (see RunAsync's doc comment). Those two paths
+    // can race - HandleAuthOk's fire-and-forget CompleteIroAuthenticationSafelyAsync can still be
+    // in flight when RunAsync's caller invokes this from the other path - so a bare "if (_field is
+    // null) start" without a lock could start two independent status/movement loops. The lock body
+    // never awaits: it only checks/sets a bool and kicks off the two fire-and-forget async methods,
+    // so holding it is always momentary. Deliberately NOT started from a constructor: constructing a
+    // session must never have an observable side effect beyond field initialization, and both
+    // legitimate starting points (successful auth completion, RunAsync beginning for an
+    // already-authenticated session) are only known well after construction.
+    private void EnsureRuntimeLoopsStarted()
+    {
+        lock (_runtimeLoopStartGate)
+        {
+            if (_runtimeLoopsStarted)
+            {
+                return;
+            }
+
+            _runtimeLoopsStarted = true;
+            _statusExpirationLoop = RunStatusExpirationLoopAsync(_sessionCancellation.Token);
+            _movementLoop = RunMovementLoopAsync(_sessionCancellation.Token);
         }
     }
 
@@ -220,7 +318,7 @@ public sealed class MapClientSession : IDisposable, INpcScriptHost
         _gameplayState = new CharacterGameplayStateSession(authOk.AccountId, state, _gameplayStatePersistence);
         _authenticated = true; _positionDirty = false;
         MapLogger.Info($"[iRO MAP DEBUG] 0x0C1F MapAuthNode authentication succeeded accountId={authOk.AccountId} charId={authOk.CharId} sessionMatch=true gameplayStateVersion={state.Version}");
-        _statusExpirationLoop = RunStatusExpirationLoopAsync(_sessionCancellation.Token);
+        EnsureRuntimeLoopsStarted();
         await SendIroInitialBootstrapAsync(authOk, _sessionCancellation.Token);
     }
 
@@ -296,6 +394,112 @@ public sealed class MapClientSession : IDisposable, INpcScriptHost
         if (before.Dexterity != after.Dexterity) await WriteAsync(IroStatusEffectPackets.BuildCoupleStatus(IroStatusEffectPackets.SpDex, _gameplayState.State.Dexterity, after.Dexterity - _gameplayState.State.Dexterity), cancellationToken);
     }
 
+    // One movement scheduler per session (not one Task.Delay/Timer per cell), mirroring
+    // RunStatusExpirationLoopAsync's exact shape: sleep until CharacterMovementState.NextStepDueAt
+    // via the shared TimeProvider, waking early whenever HandleIroMovementAsync starts or retargets
+    // a walk (which can move the next deadline earlier, or wake the loop from indefinite waiting).
+    // This is what makes per-cell OnTouch/warp evaluation happen when a cell is actually reached
+    // instead of only when some later packet/property-read happens to call AdvanceTo.
+    private async Task RunMovementLoopAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                DateTimeOffset? next;
+                await _movementGate.WaitAsync(cancellationToken);
+                try { next = _movement?.NextStepDueAt; }
+                finally { _movementGate.Release(); }
+
+                if (next is null)
+                {
+                    await _movementSignal.WaitAsync(cancellationToken);
+                    continue;
+                }
+
+                var delay = next.Value - _timeProvider.GetUtcNow();
+                if (delay > TimeSpan.Zero)
+                {
+                    using var delayCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                    var wake = _movementSignal.WaitAsync(delayCancellation.Token);
+                    var sleep = Task.Delay(delay, _timeProvider, delayCancellation.Token);
+                    var completed = await Task.WhenAny(wake, sleep);
+                    delayCancellation.Cancel();
+                    if (completed == wake)
+                    {
+                        try { await wake; } catch (OperationCanceledException) { }
+                        continue;
+                    }
+                    try { await sleep; } catch (OperationCanceledException) { continue; }
+                }
+
+                await ProcessDueMovementAsync(cancellationToken);
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (ObjectDisposedException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+    }
+
+    // Advances the walk to `now`, processing every newly-crossed cell IN ORDER. Only the cell that
+    // is both (a) newly crossed and (b) the walk's final destination can carry a pending warp/script
+    // touch action (HandleIroMovementAsync only ever attaches one to the destination of a truncated
+    // path - see its own comments) - so evaluating "is this the last crossed cell AND is there a
+    // pending arrival" is sufficient to fire it exactly once, at the moment that cell is truly
+    // reached, matching rAthena's per-cell touch checks (unit.cpp:684-699) rather than firing
+    // instantly at click time. If that action changes the map (a warp), TeleportTo resets _movement
+    // and clears _pendingArrival before this method continues, so no further stale processing can
+    // occur for a walk that no longer exists.
+    private async Task ProcessDueMovementAsync(CancellationToken cancellationToken)
+    {
+        IReadOnlyList<(ushort X, ushort Y)> crossed;
+        PendingMovementArrival? arrival;
+        string mapAtAdvance;
+        await _movementGate.WaitAsync(cancellationToken);
+        try
+        {
+            var movement = _movement;
+            if (movement is null) return;
+            crossed = movement.AdvanceTo(_timeProvider.GetUtcNow());
+            if (crossed.Count == 0) return;
+            _x = movement.CurrentX;
+            _y = movement.CurrentY;
+            _positionDirty = true;
+            arrival = movement.IsMoving ? null : _pendingArrival; // Only relevant once the walk actually finished.
+            mapAtAdvance = _mapName;
+        }
+        finally { _movementGate.Release(); }
+
+        if (arrival is null) return;
+
+        // Consume the pending arrival before executing it (a re-entrant movement request arriving
+        // while the arrival action itself awaits below must not also see/re-fire it, and TeleportTo
+        // -triggered-by-the-arrival-action-itself will independently clear it again harmlessly).
+        await _movementGate.WaitAsync(cancellationToken);
+        try
+        {
+            if (!string.Equals(_mapName, mapAtAdvance, StringComparison.OrdinalIgnoreCase) || !ReferenceEquals(_pendingArrival, arrival)) return;
+            _pendingArrival = null;
+        }
+        finally { _movementGate.Release(); }
+
+        switch (arrival)
+        {
+            case PendingWarpArrival warpArrival:
+                MapLogger.Info($"[iRO MAP DEBUG] Movement reached warp cell map='{mapAtAdvance}' at=({_x},{_y})");
+                await SendSameServerWarpAsync(warpArrival.Warp, cancellationToken);
+                break;
+            case PendingScriptTouchArrival scriptArrival:
+                await SendVisibleWarpActorsAsync(cancellationToken);
+                MapLogger.Info($"[iRO MAP DEBUG] Movement reached script trigger entity='{scriptArrival.Entity.Id}' map='{mapAtAdvance}' at=({_x},{_y})");
+                await StartScriptAsync(scriptArrival.Entity, scriptArrival.ActorId, scriptArrival.Script, "OnTouch", cancellationToken);
+                break;
+        }
+    }
+
     private async Task CompleteIroAuthenticationSafelyAsync(MapAuthOkData authOk)
     {
         try
@@ -324,22 +528,93 @@ public sealed class MapClientSession : IDisposable, INpcScriptHost
         _ = SendRefuseEnterAsync(0, CancellationToken.None);
     }
 
-    public void Dispose()
+    // Idempotent, shared async shutdown. Every caller (RunAsync's finally, DisposeAsync, or a direct
+    // StopAsync call from a test) observes the exact same Task and therefore the exact same
+    // completion/exception - there is only ever one shutdown in flight, and only one final position
+    // persistence. The lock body never awaits (it only checks/creates the Task field), so it can
+    // never block another thread's shutdown attempt.
+    //
+    // Deliberately NOT `Dispose() => StopAsync().GetAwaiter().GetResult()`: MapClientSession's
+    // background loops must be genuinely joined (awaited), not blocked-on from a sync frame, so the
+    // primary lifetime contract is IAsyncDisposable. Every construction site in this codebase is
+    // already inside an async method (MapTcpServer.HandleClientAsync, every test's async Task
+    // [Fact]), so there is no call site that actually needs synchronous disposal.
+    public Task StopAsync()
     {
-        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+        lock (_shutdownGate)
         {
-            return;
+            return _shutdownTask ??= StopCoreAsync();
+        }
+    }
+
+    public ValueTask DisposeAsync() => new(StopAsync());
+
+    private async Task StopCoreAsync()
+    {
+        _sessionCancellation.Cancel();
+        // Unblock a pending WaitAsync so a parked loop observes cancellation promptly instead of
+        // waiting for its own indefinite signal wait to somehow resolve; a wake may already be
+        // pending (SemaphoreFullException), which is harmless here too.
+        try { _statusExpirationSignal.Release(); } catch (ObjectDisposedException) { } catch (SemaphoreFullException) { }
+        try { _movementSignal.Release(); } catch (ObjectDisposedException) { } catch (SemaphoreFullException) { }
+        _generatedContinuation?.Completion.TrySetCanceled();
+
+        // Join BOTH runtime loops before touching anything they can still access. This is the
+        // invariant the earlier lifecycle audit found missing: cancellation is only a request: it
+        // does not guarantee either loop has actually stopped reading _movement/_statusEffects or
+        // calling WriteAsync. Neither loop may be running yet (auth never completed), hence the
+        // null filter.
+        var loops = new[] { _statusExpirationLoop, _movementLoop }.Where(loop => loop is not null)!;
+        Exception? firstError = null;
+        try
+        {
+            await Task.WhenAll(loops!);
+        }
+        catch (Exception ex)
+        {
+            // Task.WhenAll only surfaces the first faulting task's exception via `await`, but both
+            // loops already swallow every exception they can produce internally (OperationCanceled/
+            // ObjectDisposed guarded by cancellationToken.IsCancellationRequested) - so reaching here
+            // at all means something unexpected escaped a loop. Preserve it instead of losing it to
+            // the resource cleanup below; still reachable in the finally-equivalent path.
+            firstError = ex;
         }
 
-        _sessionCancellation.Cancel();
-        // Unblock a pending WaitAsync so the loop observes cancellation promptly; a wake may
-        // already be pending (SemaphoreFullException), which is harmless here too.
-        try { _statusExpirationSignal.Release(); } catch (SemaphoreFullException) { }
-        _generatedContinuation?.Completion.TrySetCanceled();
-        _stream.Dispose();
-        _writeLock.Dispose();
-        _sessionCancellation.Dispose();
-        _statusExpirationSignal.Dispose();
+        // Safe only now: RunMovementLoopAsync/RunStatusExpirationLoopAsync are confirmed no longer
+        // running, so nothing else can mutate _movement/_pendingArrival/_statusEffects concurrently.
+        // SyncPositionToNow only advances CharacterMovementState's elapsed-time position and reads it
+        // back - it does NOT consult _pendingArrival, so no warp/OnTouch side effect can fire here;
+        // those are owned exclusively by ProcessDueMovementAsync, which cannot run anymore.
+        try
+        {
+            await _movementGate.WaitAsync(CancellationToken.None);
+            try { SyncPositionToNow(); }
+            finally { _movementGate.Release(); }
+
+            await PersistPositionIfDirtyAsync(CancellationToken.None);
+        }
+        catch (Exception ex) when (firstError is null)
+        {
+            firstError = ex;
+        }
+        catch
+        {
+            // A loop already faulted; do not let a second failure here replace the first one below.
+        }
+        finally
+        {
+            _stream.Dispose();
+            _writeLock.Dispose();
+            _sessionCancellation.Dispose();
+            _statusExpirationSignal.Dispose();
+            _movementSignal.Dispose();
+            _movementGate.Dispose();
+        }
+
+        if (firstError is not null)
+        {
+            ExceptionDispatchInfo.Throw(firstError);
+        }
     }
 
     private async Task HandlePacketAsync(short packetType, byte[] packet, CancellationToken cancellationToken)
@@ -462,6 +737,56 @@ public sealed class MapClientSession : IDisposable, INpcScriptHost
         _authRequested = true;
     }
 
+    // Lazily attaches CharacterMovementState to the session's current (_mapName,_x,_y) the first
+    // time movement matters - _mapName/_x/_y are set earlier by several independent auth/warp paths
+    // (HandleAuthOk, CompleteIroAuthenticationAsync, etc.), so the movement state cannot simply be
+    // constructed once in the constructor before any of those have run.
+    private CharacterMovementState EnsureMovementState()
+    {
+        _movement ??= new CharacterMovementState(_mapName, _x, _y);
+        return _movement;
+    }
+
+    // The single place _mapName/_x/_y are assigned for a warp/map-change/auth-position-restore
+    // (never a timed walk - see HandleIroMovementAsync for that path). Also resets _movement via
+    // CharacterMovementState.Teleport so a stale in-flight walk from before the teleport can never
+    // be advanced afterward - a same-map teleport (e.g. a same-map warp) would not otherwise be
+    // caught by EnsureMovementState's now-removed map-mismatch check, which is exactly the bug this
+    // helper fixes: MapClientSessionWarpTests.MovementIntoTutorialDoor_... teleports within
+    // "iz_int03", so map-equality alone cannot detect that the previous walk state is stale.
+    private void TeleportTo(string map, ushort x, ushort y)
+    {
+        _mapName = map;
+        _x = x;
+        _y = y;
+        _movement?.Teleport(map, x, y);
+
+        // Invalidate any pending arrival action from the walk being cancelled - otherwise a movement
+        // loop iteration already in flight (or a later one, if this teleport did not itself originate
+        // from the pending arrival) could still fire a stale warp/OnTouch belonging to the walk that
+        // was just replaced by this teleport.
+        _pendingArrival = null;
+    }
+
+    // Reconciles _x/_y against real elapsed walking time. Pinned rAthena's authoritative position
+    // (unit_walktoxy_timer, unit.cpp:542) only ever advances one cell per real CellDurationMs -
+    // never jumps straight to a requested destination - so this must run before any code (a new
+    // movement request's `from`, a future melee-range check, etc.) treats _x/_y as "where the
+    // character actually is right now".
+    private void SyncPositionToNow()
+    {
+        var movement = EnsureMovementState();
+        movement.AdvanceTo(_timeProvider.GetUtcNow());
+        _x = movement.CurrentX;
+        _y = movement.CurrentY;
+    }
+
+    private int CurrentCellDurationMs()
+    {
+        var haste = _gameplayState is null ? 0 : _statusEffects.Recalculate(_gameplayState.State).MoveSpeedHaste;
+        return MovementSpeedCalculator.CellDurationMs(haste);
+    }
+
     private async Task HandleIroMovementAsync(byte[] packet, CancellationToken cancellationToken)
     {
         if (!IroMovementPackets.TryParseRequest(packet, out var request))
@@ -470,6 +795,13 @@ public sealed class MapClientSession : IDisposable, INpcScriptHost
             return;
         }
 
+        // Advance any walk already in progress to the character's ACTUAL current cell before doing
+        // anything else - this is the fix for the diagnosed bug: a second movement request must
+        // retarget from wherever the character has really walked to by now, not from a previous
+        // request's destination that the client may not have visually reached yet (see
+        // CharacterMovementState.StartWalk's doc comment for the exact rAthena unit_walktoxy
+        // mid-walk-retarget citation this mirrors).
+        SyncPositionToNow();
         var fromX = _x;
         var fromY = _y;
         MapLogger.Info(
@@ -492,6 +824,34 @@ public sealed class MapClientSession : IDisposable, INpcScriptHost
         var movementTargetX = intersectsWarp ? intersection.X : intersectsScript ? scriptIntersection.X : request.TargetX;
         var movementTargetY = intersectsWarp ? intersection.Y : intersectsScript ? scriptIntersection.Y : request.TargetY;
 
+        // Start (or retarget) the timed walk from the current cell toward movementTarget, rather
+        // than jumping _x/_y there immediately. The wire response below still reports the full
+        // destination (unchanged, capture-proven 0x0087 semantics) - only the SERVER-authoritative
+        // position now advances gradually, matching rAthena. Computed before the response is sent so
+        // that, by the time a caller observes the response, the new walk is already authoritative -
+        // avoiding a race where a caller could read stale position between the write and this update.
+        var path = _movementPathProvider.ComputePath(_mapName, fromX, fromY, movementTargetX, movementTargetY);
+        var now = _timeProvider.GetUtcNow();
+
+        // Warp/OnTouch must fire only when the destination cell is actually reached over real
+        // elapsed time (RunMovementLoopAsync/ProcessDueMovementAsync), matching rAthena's per-cell
+        // npc_touch_area_allnpc/npc_touch_areanpc2 checks inside unit_walktoxy_timer - not the moment
+        // the client clicks. Attach the pending action here (under the gate, alongside StartWalk) so
+        // the movement loop can execute it exactly once, at true arrival.
+        await _movementGate.WaitAsync(cancellationToken);
+        try
+        {
+            EnsureMovementState().StartWalk(path, CurrentCellDurationMs(), now);
+            _pendingArrival = intersectsWarp
+                ? new PendingWarpArrival(intersection.Warp)
+                : intersectsScript
+                    ? new PendingScriptTouchArrival(scriptIntersection.Binding.Entity, scriptIntersection.Binding.Actor.ActorId, scriptIntersection.Binding.Script)
+                    : null;
+        }
+        finally { _movementGate.Release(); }
+        _positionDirty = true;
+        try { _movementSignal.Release(); } catch (SemaphoreFullException) { }
+
         var response = IroMovementPackets.BuildResponse(
             unchecked((uint)Environment.TickCount),
             fromX,
@@ -502,21 +862,14 @@ public sealed class MapClientSession : IDisposable, INpcScriptHost
             $"[iRO MAP DEBUG] Sending 0x0087 len=12 from=({fromX},{fromY}) to=({movementTargetX},{movementTargetY})");
         await WriteAsync(response, cancellationToken);
 
-        _x = movementTargetX;
-        _y = movementTargetY;
-        _positionDirty = true;
-
         if (intersectsWarp)
         {
             MapLogger.Info(
-                $"[iRO MAP DEBUG] Movement path intersects warp map='{_mapName}' at=({intersection.X},{intersection.Y}) requestedTarget=({request.TargetX},{request.TargetY})");
-            await SendSameServerWarpAsync(intersection.Warp, cancellationToken);
+                $"[iRO MAP DEBUG] Movement path intersects warp map='{_mapName}' at=({intersection.X},{intersection.Y}) requestedTarget=({request.TargetX},{request.TargetY}) (deferred to actual arrival)");
         }
         else if (intersectsScript)
         {
-            await SendVisibleWarpActorsAsync(cancellationToken);
-            MapLogger.Info($"[iRO MAP DEBUG] Movement entered script trigger entity='{scriptIntersection.Binding.Entity.Id}' map='{_mapName}' at=({scriptIntersection.X},{scriptIntersection.Y})");
-            await StartScriptAsync(scriptIntersection.Binding.Entity, scriptIntersection.Binding.Actor.ActorId, scriptIntersection.Binding.Script, "OnTouch", cancellationToken);
+            MapLogger.Info($"[iRO MAP DEBUG] Movement path intersects script trigger entity='{scriptIntersection.Binding.Entity.Id}' map='{_mapName}' at=({scriptIntersection.X},{scriptIntersection.Y}) (deferred to actual arrival)");
         }
         else
         {
@@ -545,9 +898,7 @@ public sealed class MapClientSession : IDisposable, INpcScriptHost
             if (action is WarpAction warpAction)
             {
                 MapLogger.Info($"[iRO MAP DEBUG] Warp triggered map='{_mapName}' at=({_x},{_y}) -> map='{warpAction.Map}' x={warpAction.X} y={warpAction.Y}");
-                _mapName = warpAction.Map;
-                _x = warpAction.X;
-                _y = warpAction.Y;
+                TeleportTo(warpAction.Map, warpAction.X, warpAction.Y);
             }
         }
 
@@ -822,7 +1173,7 @@ public sealed class MapClientSession : IDisposable, INpcScriptHost
         var map = execution.Evaluate(warp.Map);
         if (string.IsNullOrWhiteSpace(map)) throw new InvalidOperationException("Warp map expression evaluated to an empty value.");
         MapLogger.Info($"[iRO MAP DEBUG] Script warp entity='{execution.EntityId}' map='{_mapName}' -> map='{map}' x={warp.X} y={warp.Y}");
-        _mapName = map; _x = warp.X; _y = warp.Y; _positionDirty = true; _visibleActorIds.Clear();
+        TeleportTo(map, warp.X, warp.Y); _positionDirty = true; _visibleActorIds.Clear();
         await WriteAsync(IroMapTransitionPackets.BuildSameServerMapChange(_mapName, _x, _y), cancellationToken);
         await PersistPositionIfDirtyAsync(cancellationToken);
     }
@@ -946,7 +1297,7 @@ public sealed class MapClientSession : IDisposable, INpcScriptHost
     async Task INpcScriptHost.WarpAsync(string map, ushort x, ushort y, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(map)) throw new InvalidOperationException("Generated script warp map is empty.");
-        _mapName = map; _x = x; _y = y; _positionDirty = true; _visibleActorIds.Clear();
+        TeleportTo(map, x, y); _positionDirty = true; _visibleActorIds.Clear();
         await WriteAsync(IroMapTransitionPackets.BuildSameServerMapChange(map, x, y), cancellationToken);
         await PersistPositionIfDirtyAsync(cancellationToken);
     }
@@ -1087,6 +1438,14 @@ public sealed class MapClientSession : IDisposable, INpcScriptHost
         {
             return;
         }
+
+        // Reconcile against real elapsed walking time first - without this, a disconnect mid-walk
+        // would persist the position from the last click/request rather than wherever the character
+        // has actually walked to by now (the movement loop advances _x/_y proactively too, but a
+        // disconnect can race ahead of its next scheduled wake, so this call is still required here).
+        await _movementGate.WaitAsync(cancellationToken);
+        try { SyncPositionToNow(); }
+        finally { _movementGate.Release(); }
 
         try
         {

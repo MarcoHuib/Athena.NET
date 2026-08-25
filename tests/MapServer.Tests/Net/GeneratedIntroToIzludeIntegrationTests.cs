@@ -3,6 +3,7 @@ using System.Net;
 using System.Net.Sockets;
 using Athena.Net.MapServer.Config;
 using Athena.Net.MapServer.Net;
+using Athena.Net.MapServer.Tests.Testing;
 using Athena.Net.MapServer.World;
 using Athena.Net.MapServer.World.GeneratedScripts;
 
@@ -24,14 +25,25 @@ public sealed class GeneratedIntroToIzludeIntegrationTests
         var persistence = new RecordingPersistence();
         persistence.Quests[21008] = CharacterQuestStatus.Active;
         persistence.Quests[21001] = CharacterQuestStatus.Active;
-        using var session = new MapClientSession(1, serverClient, connector, true, "int_land04", 54, 64, registry,
-            positionPersistence: persistence, questPersistence: persistence, accountId: 7, charId: 9);
+        var clock = new ControllableTimeProvider();
+        await using var session = new MapClientSession(1, serverClient, connector, true, "int_land04", 54, 64, registry,
+            positionPersistence: persistence, questPersistence: persistence, accountId: 7, charId: 9, timeProvider: clock);
         var run = session.RunAsync(CancellationToken.None);
 
         await stream.WriteAsync(BuildMovementPacket(49, 57));
         Assert.Equal((short)0x0087, BinaryPrimitives.ReadInt16LittleEndian(await ReadExact(stream, 12)));
-        var actorId = await ReadActorId(stream);
 
+        // The movement request registered a deferred OnTouch arrival at (50,59) - not fired yet
+        // (this is the intersected/truncated destination, before the walk actually reaches it; see
+        // MapClientSession.ProcessDueMovementAsync's own doc comment on why arrival is deferred to
+        // real elapsed walking time rather than firing at click time). Advance the injected fake
+        // clock through the whole route in one deterministic step instead of a real-time sleep;
+        // completion is the bounded packet reads below (the NPC actor spawn/OnTouch script only
+        // start once ProcessDueMovementAsync's PendingScriptTouchArrival branch actually runs), not
+        // the session's position or socket buffer.
+        await MovementSchedulerTestHelpers.AdvanceEntireWalkAsync(clock, cellCount: 64);
+
+        var actorId = await ReadActorId(stream);
         Assert.Equal("^4d4dffOnce you leave this island there is no way back.\0", ReadMessage(await ReadDynamic(stream)));
         Assert.Equal("Are you sure you want to go directly to Izlude?^000000\0", ReadMessage(await ReadDynamic(stream)));
         Assert.Equal((short)0x00b5, BinaryPrimitives.ReadInt16LittleEndian(await ReadExact(stream, 6)));
@@ -78,7 +90,18 @@ public sealed class GeneratedIntroToIzludeIntegrationTests
     private static string ReadMessage(byte[] packet) => System.Text.Encoding.ASCII.GetString(packet.AsSpan(8));
     private static async Task<byte[]> ReadDynamic(Stream stream) { var header = await ReadExact(stream, 4); var length = BinaryPrimitives.ReadUInt16LittleEndian(header.AsSpan(2)); return [.. header, .. await ReadExact(stream, length - 4)]; }
     private static async Task<uint> ReadActorId(Stream stream) { var header = await ReadExact(stream, 9); var id = BinaryPrimitives.ReadUInt32LittleEndian(header.AsSpan(5)); await ReadExact(stream, BinaryPrimitives.ReadUInt16LittleEndian(header.AsSpan(2)) - 9); return id; }
-    private static async Task<byte[]> ReadExact(Stream stream, int length) { var buffer = new byte[length]; await stream.ReadExactlyAsync(buffer); return buffer; }
+
+    // Bounded assertion read: a 10-second guard against a packet that never arrives (e.g. a
+    // scheduler regression like the one that originally hung this exact test), NOT a
+    // synchronization mechanism - every await in this file that reaches the network goes through
+    // this method so a missing packet fails the test instead of hanging the whole CI run.
+    private static async Task<byte[]> ReadExact(Stream stream, int length)
+    {
+        var buffer = new byte[length];
+        await stream.ReadExactlyAsync(buffer).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+        return buffer;
+    }
+
     private static async Task WaitUntilAsync(Func<bool> condition) { for (var attempt = 0; attempt < 100 && !condition(); attempt++) await Task.Delay(5); Assert.True(condition()); }
     private static void AssertQuestRemove(uint questId, byte[] packet) { Assert.Equal((short)0x02b4, BinaryPrimitives.ReadInt16LittleEndian(packet)); Assert.Equal(questId, BinaryPrimitives.ReadUInt32LittleEndian(packet.AsSpan(2))); }
 

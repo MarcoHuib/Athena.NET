@@ -3,100 +3,11 @@ using System.Net;
 using System.Net.Sockets;
 using Athena.Net.MapServer.Config;
 using Athena.Net.MapServer.Net;
+using Athena.Net.MapServer.Tests.Testing;
 using Athena.Net.MapServer.World;
 using Athena.Net.MapServer.World.GeneratedScripts;
 
 namespace Athena.Net.MapServer.Tests.Net;
-
-// Deterministic controllable TimeProvider: GetUtcNow() only advances on explicit Advance()
-// calls, and Advance() also fires any Task.Delay(..., this, ...) timers whose due time has
-// been crossed - this is what lets MapClientSession's expiration scheduler (built on
-// Task.Delay(delay, TimeProvider, cancellationToken), which internally calls CreateTimer) be
-// driven deterministically in tests without real 240-second waits or a new package dependency.
-internal sealed class ControllableTimeProvider : TimeProvider
-{
-    private readonly object _gate = new();
-    private DateTimeOffset _now = DateTimeOffset.UnixEpoch;
-    private readonly List<ScheduledCallback> _callbacks = [];
-
-    public override DateTimeOffset GetUtcNow() { lock (_gate) return _now; }
-
-    public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
-    {
-        var timer = new ScheduledTimer(this, callback, state);
-        timer.Change(dueTime, period);
-        return timer;
-    }
-
-    public async Task AdvanceAsync(TimeSpan delta)
-    {
-        List<ScheduledCallback> due;
-        lock (_gate)
-        {
-            _now += delta;
-            due = [.. _callbacks.Where(c => c.DueAt <= _now)];
-            _callbacks.RemoveAll(c => c.DueAt <= _now);
-        }
-        foreach (var callback in due) callback.Invoke();
-        // A short settle so synchronous-looking assertions right after AdvanceAsync (e.g.
-        // "nothing was sent") are stable; tests that expect a packet rely on ReadExact's own
-        // generous timeout (it blocks until data arrives), not on this loop, since the write
-        // chain's length varies (single vs. simultaneous expirations) and CI/parallel test
-        // load can slow scheduling arbitrarily.
-        for (var i = 0; i < 20; i++)
-        {
-            await Task.Yield();
-            await Task.Delay(5);
-        }
-    }
-
-    // Waits (bounded, real time) until at least one timer is registered - i.e. until the
-    // scheduler loop has reacted to a wake signal and called CreateTimer for its new deadline.
-    // Needed before the next AdvanceAsync when the wake was triggered by something that does
-    // NOT itself await the scheduler's reschedule (StartStatusAsync releases the signal and
-    // returns; the scheduler's wake-and-reschedule runs concurrently on the background task).
-    public async Task SettleAsync()
-    {
-        for (var i = 0; i < 200; i++)
-        {
-            lock (_gate) { if (_callbacks.Count > 0) return; }
-            await Task.Delay(5);
-        }
-    }
-
-    private void Schedule(ScheduledCallback callback)
-    {
-        lock (_gate)
-        {
-            if (callback.DueAt <= _now) { callback.Invoke(); return; }
-            _callbacks.Add(callback);
-        }
-    }
-
-    private void Cancel(ScheduledCallback callback) { lock (_gate) _callbacks.Remove(callback); }
-
-    private sealed record ScheduledCallback(DateTimeOffset DueAt, TimerCallback Callback, object? State)
-    {
-        public void Invoke() => Callback(State);
-    }
-
-    private sealed class ScheduledTimer(ControllableTimeProvider owner, TimerCallback callback, object? state) : ITimer
-    {
-        private ScheduledCallback? _current;
-
-        public bool Change(TimeSpan dueTime, TimeSpan period)
-        {
-            if (_current is not null) owner.Cancel(_current);
-            if (dueTime == Timeout.InfiniteTimeSpan) { _current = null; return true; }
-            _current = new ScheduledCallback(owner.GetUtcNow() + dueTime, callback, state);
-            owner.Schedule(_current);
-            return true;
-        }
-
-        public void Dispose() { if (_current is not null) owner.Cancel(_current); }
-        public ValueTask DisposeAsync() { Dispose(); return ValueTask.CompletedTask; }
-    }
-}
 
 public sealed class MapClientSessionStatusExpirationTests
 {
@@ -106,9 +17,8 @@ public sealed class MapClientSessionStatusExpirationTests
     public async Task BlessingRemainsActiveBeforeItsDeadline()
     {
         await using var harness = await Harness.CreateAsync();
-        await harness.Context.StartStatusAsync(CharacterStatusEffectState.StatusIds.Blessing, BlessingDurationMs, 10, default);
+        await harness.StartStatusAndWaitForRescheduleAsync(CharacterStatusEffectState.StatusIds.Blessing, BlessingDurationMs, 10, default);
         await harness.DrainBlessingActivation();
-
         await harness.Clock.AdvanceAsync(TimeSpan.FromMilliseconds(BlessingDurationMs - 1));
 
         Assert.True(harness.Session.StatusEffects.TryGet(CharacterStatusEffectState.StatusIds.Blessing, out _));
@@ -119,7 +29,7 @@ public sealed class MapClientSessionStatusExpirationTests
     public async Task BlessingExpiresAtItsDeadlineAndSendsStatusEndPacket()
     {
         await using var harness = await Harness.CreateAsync();
-        await harness.Context.StartStatusAsync(CharacterStatusEffectState.StatusIds.Blessing, BlessingDurationMs, 10, default);
+        await harness.StartStatusAndWaitForRescheduleAsync(CharacterStatusEffectState.StatusIds.Blessing, BlessingDurationMs, 10, default);
         await harness.DrainBlessingActivation();
 
         await harness.Clock.AdvanceAsync(TimeSpan.FromMilliseconds(BlessingDurationMs));
@@ -136,7 +46,7 @@ public sealed class MapClientSessionStatusExpirationTests
     public async Task IncreaseAgiExpiresAtItsDeadlineAndSendsStatusEndPacket()
     {
         await using var harness = await Harness.CreateAsync();
-        await harness.Context.StartStatusAsync(CharacterStatusEffectState.StatusIds.IncreaseAgi, BlessingDurationMs, 10, default);
+        await harness.StartStatusAndWaitForRescheduleAsync(CharacterStatusEffectState.StatusIds.IncreaseAgi, BlessingDurationMs, 10, default);
         await harness.DrainIncreaseAgiActivation();
 
         await harness.Clock.AdvanceAsync(TimeSpan.FromMilliseconds(BlessingDurationMs));
@@ -151,7 +61,7 @@ public sealed class MapClientSessionStatusExpirationTests
     public async Task ExpirationRemovesStatusFromEffectiveServerStats()
     {
         await using var harness = await Harness.CreateAsync();
-        await harness.Context.StartStatusAsync(CharacterStatusEffectState.StatusIds.Blessing, BlessingDurationMs, 10, default);
+        await harness.StartStatusAndWaitForRescheduleAsync(CharacterStatusEffectState.StatusIds.Blessing, BlessingDurationMs, 10, default);
         await harness.DrainBlessingActivation();
 
         await harness.Clock.AdvanceAsync(TimeSpan.FromMilliseconds(BlessingDurationMs));
@@ -166,7 +76,7 @@ public sealed class MapClientSessionStatusExpirationTests
     public async Task BlessingExpiryRevertsStrIntDexToBaseEffectiveValues()
     {
         await using var harness = await Harness.CreateAsync();
-        await harness.Context.StartStatusAsync(CharacterStatusEffectState.StatusIds.Blessing, BlessingDurationMs, 10, default);
+        await harness.StartStatusAndWaitForRescheduleAsync(CharacterStatusEffectState.StatusIds.Blessing, BlessingDurationMs, 10, default);
         await harness.DrainBlessingActivation();
 
         await harness.Clock.AdvanceAsync(TimeSpan.FromMilliseconds(BlessingDurationMs));
@@ -187,7 +97,7 @@ public sealed class MapClientSessionStatusExpirationTests
     public async Task IncreaseAgiExpiryRevertsAgiByTwelveForCaptainVal1Ten()
     {
         await using var harness = await Harness.CreateAsync();
-        await harness.Context.StartStatusAsync(CharacterStatusEffectState.StatusIds.IncreaseAgi, BlessingDurationMs, 10, default);
+        await harness.StartStatusAndWaitForRescheduleAsync(CharacterStatusEffectState.StatusIds.IncreaseAgi, BlessingDurationMs, 10, default);
         await harness.DrainIncreaseAgiActivation();
 
         await harness.Clock.AdvanceAsync(TimeSpan.FromMilliseconds(BlessingDurationMs));
@@ -205,13 +115,12 @@ public sealed class MapClientSessionStatusExpirationTests
     public async Task RefreshBeforeExpirationPreventsOldDeadlineFromExpiringStatus()
     {
         await using var harness = await Harness.CreateAsync();
-        await harness.Context.StartStatusAsync(CharacterStatusEffectState.StatusIds.Blessing, BlessingDurationMs, 10, default);
+        await harness.StartStatusAndWaitForRescheduleAsync(CharacterStatusEffectState.StatusIds.Blessing, BlessingDurationMs, 10, default);
         await harness.DrainBlessingActivation();
 
         await harness.Clock.AdvanceAsync(TimeSpan.FromMilliseconds(BlessingDurationMs - 5000));
-        await harness.Context.StartStatusAsync(CharacterStatusEffectState.StatusIds.Blessing, BlessingDurationMs, 3, default);
+        await harness.StartStatusAndWaitForRescheduleAsync(CharacterStatusEffectState.StatusIds.Blessing, BlessingDurationMs, 3, default);
         await harness.DrainBlessingActivation();
-        await harness.Clock.SettleAsync();
 
         // The OLD deadline (original activation + 240000ms) has now passed, but the refresh
         // moved ExpiresAt forward, so nothing should have expired and no 0x0196/0x0141 should
@@ -227,17 +136,12 @@ public sealed class MapClientSessionStatusExpirationTests
     public async Task RefreshedStatusExpiresAtTheNewDeadline()
     {
         await using var harness = await Harness.CreateAsync();
-        await harness.Context.StartStatusAsync(CharacterStatusEffectState.StatusIds.Blessing, BlessingDurationMs, 10, default);
+        await harness.StartStatusAndWaitForRescheduleAsync(CharacterStatusEffectState.StatusIds.Blessing, BlessingDurationMs, 10, default);
         await harness.DrainBlessingActivation();
 
         await harness.Clock.AdvanceAsync(TimeSpan.FromMilliseconds(BlessingDurationMs - 5000));
-        await harness.Context.StartStatusAsync(CharacterStatusEffectState.StatusIds.Blessing, 100000, 3, default);
+        await harness.StartStatusAndWaitForRescheduleAsync(CharacterStatusEffectState.StatusIds.Blessing, 100000, 3, default);
         await harness.DrainBlessingActivation();
-        // Let the scheduler's background wake-and-reschedule (triggered by StartStatusAsync's
-        // signal release, but not itself awaited by it) actually register the new deadline's
-        // timer before advancing the clock again - otherwise AdvanceAsync can race ahead of
-        // the reschedule and the still-in-flight old-deadline delay computation.
-        await harness.Clock.SettleAsync();
 
         await harness.Clock.AdvanceAsync(TimeSpan.FromMilliseconds(99999));
         Assert.True(harness.Session.StatusEffects.TryGet(CharacterStatusEffectState.StatusIds.Blessing, out _));
@@ -252,9 +156,9 @@ public sealed class MapClientSessionStatusExpirationTests
     public async Task TwoSimultaneousStatusesExpireCorrectlyWithoutCorruptingEffectiveValues()
     {
         await using var harness = await Harness.CreateAsync();
-        await harness.Context.StartStatusAsync(CharacterStatusEffectState.StatusIds.Blessing, BlessingDurationMs, 10, default);
+        await harness.StartStatusAndWaitForRescheduleAsync(CharacterStatusEffectState.StatusIds.Blessing, BlessingDurationMs, 10, default);
         await harness.DrainBlessingActivation();
-        await harness.Context.StartStatusAsync(CharacterStatusEffectState.StatusIds.IncreaseAgi, BlessingDurationMs, 10, default);
+        await harness.StartStatusAndWaitForRescheduleAsync(CharacterStatusEffectState.StatusIds.IncreaseAgi, BlessingDurationMs, 10, default);
         await harness.DrainIncreaseAgiActivation();
 
         await harness.Clock.AdvanceAsync(TimeSpan.FromMilliseconds(BlessingDurationMs));
@@ -294,7 +198,7 @@ public sealed class MapClientSessionStatusExpirationTests
     public async Task TemporaryStatusExpirationPerformsZeroGameplayStatePersistence()
     {
         await using var harness = await Harness.CreateAsync();
-        await harness.Context.StartStatusAsync(CharacterStatusEffectState.StatusIds.Blessing, BlessingDurationMs, 10, default);
+        await harness.StartStatusAndWaitForRescheduleAsync(CharacterStatusEffectState.StatusIds.Blessing, BlessingDurationMs, 10, default);
         await harness.DrainBlessingActivation();
 
         await harness.Clock.AdvanceAsync(TimeSpan.FromMilliseconds(BlessingDurationMs));
@@ -310,10 +214,12 @@ public sealed class MapClientSessionStatusExpirationTests
         await harness.Context.StartStatusAsync(CharacterStatusEffectState.StatusIds.Blessing, BlessingDurationMs, 10, default);
         await harness.DrainBlessingActivation();
 
-        harness.Session.Dispose();
+        // StopAsync joins the scheduler before returning, so by the time it completes the loop is
+        // provably no longer running - not merely cancellation-requested.
+        await harness.Session.StopAsync();
 
-        // Advancing the clock past the deadline after disposal must not throw or hang -
-        // the scheduler observed cancellation and exited instead of writing to a disposed stream.
+        // Advancing the clock past the deadline after shutdown must not throw or hang -
+        // the scheduler already exited instead of writing to a disposed stream.
         await harness.Clock.AdvanceAsync(TimeSpan.FromMilliseconds(BlessingDurationMs));
         harness.Listener.Stop();
     }
@@ -371,12 +277,24 @@ public sealed class MapClientSessionStatusExpirationTests
             await ReadExact(29); await ReadExact(14);
         }
 
-        public ValueTask DisposeAsync()
+        // Captures the registration generation BEFORE triggering StartStatusAsync, then waits for
+        // the expiration scheduler's resulting reschedule to actually register its new deadline -
+        // deterministically, not via a fixed real-time settle. StartStatusAsync's own signal release
+        // is fire-and-forget from the scheduler's perspective (see MapClientSession's own doc
+        // comment on _statusExpirationSignal), so without this a subsequent AdvanceAsync could race
+        // ahead of the scheduler's wake-and-reschedule.
+        public async Task StartStatusAndWaitForRescheduleAsync(ushort statusId, int durationMilliseconds, int val1, CancellationToken cancellationToken)
         {
-            Session.Dispose();
+            var generation = Clock.RegistrationGeneration;
+            await Context.StartStatusAsync(statusId, durationMilliseconds, val1, cancellationToken);
+            await Clock.WaitForRegistrationAfterAsync(generation).WaitAsync(TimeSpan.FromSeconds(5));
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            await Session.StopAsync();
             Client.Dispose();
             Listener.Stop();
-            return ValueTask.CompletedTask;
         }
     }
 
