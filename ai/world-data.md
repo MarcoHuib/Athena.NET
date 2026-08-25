@@ -227,24 +227,22 @@ misattributed frame and has been retracted (see `ai/iro-2026-wire.md`).
 
 ### Verified stock-iRO evidence
 
-None found for combat itself. The supplied
-`npc-interaction-npc's_v2.pcapng`/`npc-interaction-heal-action.pcapng`
-captures (already cited above and in `ai/iro-2026-wire.md`) contain movement,
-warps, and extensive NPC/tutorial dialogue, but **no attack-initiation
-packet, no damage packet, no monster-death packet, and no item-acquisition
-packet correlated to a monster actor**. `ai/iro-2026-wire.md`'s own "Verified
-NPC dialogue evidence" section already states this explicitly: "Quest
-traffic, combat, and item acquisition in this capture remain future evidence
-without runtime support." This branch did not find a stronger capture. The
-only reusable *proven* wire fact for monster visibility is `0x09FF`
-(`ZC_NOTIFY_STANDENTRY`)'s field layout for a WARPNPC actor (object type `6`,
-speed sentinel `300`, HP sentinels `0xFFFFFFFF`) — and that layout is
-**object-type-specific**: pinned rAthena (`clif.cpp:1200` et al.) sends
-`objecttype = 0x5` (`NPC_MOB_TYPE`) for a real monster, with real current/max
-HP, not the `6`/sentinel-HP shape Athena's existing `IroWorldActorPackets.
-BuildWorldActor` already sends for NPCs/warps. Reusing that serializer
-unchanged for a monster would not be proven; a real monster-visibility packet
-is left as an explicit, isolated evidence gap rather than invented.
+`kill-poring-heal-jobup.pcapng` (see `ai/iro-2026-wire.md`'s "Verified monster
+combat wire evidence" section for the full frame-by-frame table) closes this
+gap: a real stock iRO client kills G_PORING (actor `0x00001E9D`) on
+`128.241.92.42:4506` and receives Wood. Proven: monster appearance (`0x09FF`,
+object type 5, real HP fields), actor-info correlation (`0x0368`/`0x0ADF`),
+attack request (`0x0437`), damage response (`0x08C8`, exact `ZC_NOTIFY_ACT3`
+match), death (`0x0080` type=1 "died"), and item-pickup acknowledgement
+(`0x0B41`, exact `ZC_ITEM_PICKUP_ACK` match). The earlier finding below (that
+the WARPNPC `0x09FF` serializer must not be reused unchanged for a monster)
+is confirmed by this capture and remains accurate: a monster's `0x09FF` uses
+`objecttype=5` and a real, HP-state-dependent sentinel, not WARPNPC's
+`objecttype=6`/always-`0xFFFFFFFF` shape - see `IroMonsterActorPackets`
+(distinct from `IroWorldActorPackets.BuildWorldActor`). Respawn/reappearance
+for this actor was not itself captured (the player moved away first); that
+one behavior remains inferred from pinned source, not independently
+capture-verified.
 
 ### Pinned rAthena semantics
 
@@ -390,13 +388,42 @@ already follow. Respawn uses `TimeProvider`-driven due-time checks
 (`MonsterRegistry.ProcessDueRespawns`), not one `Timer`/`Task.Delay` per
 monster.
 
-Not wired: no client packet handler drives `MonsterCombatCoordinator.Attack`
-from a live socket (no verified attack-request packet ID/layout exists), and
-no monster-specific `0x09FF` variant is sent to make a spawned instance
-visible to a real client (see evidence gap above). `MapClientSession` now
-carries an optional `MonsterRegistry` field (populated on the live path via
-`MapServerWorld`, `null` on the test-facing constructor's default), but no
-packet handler reads it yet.
+Now wired end-to-end on the live client path (`feature/poring-live-wire`,
+verified against `kill-poring-heal-jobup.pcapng` - see `ai/iro-2026-wire.md`).
+`MapClientSession.HandleIroAttackRequestAsync` parses the proven `0x0437`
+request, resolves the target through the existing `MonsterRegistry`, and
+calls the existing unmodified `MonsterCombatCoordinator.Attack` - no damage
+calculation happens in networking code. Results are represented (not
+recalculated) by `IroMonsterCombatPackets` (`0x08C8` damage, `0x0080`
+death, `0x0B41` item pickup) and `IroMonsterActorPackets` (`0x09FF` monster
+appearance, distinct from the NPC/warp `IroWorldActorPackets` serializer -
+see the evidence section above for why). `MapServerWorld.Build()` now also
+composes one `MonsterCombatCoordinator` (over the same shared
+`MonsterRegistry`/`WorldActorIdAllocator`) and threads it into
+`MapClientSession` alongside the pre-existing `MonsterRegistry` field.
+Monster visibility (`0x09FF`) is sent from the same call sites that already
+send NPC/warp visibility (post-`0x007D` map-load, post-movement), sharing the
+existing `_visibleActorIds` dedup set. Monster actor IDs are never routed
+into NPC script dispatch (`_worldMapRegistry.TryGetInteraction` simply never
+matches a monster ID, since monsters were never registered there - not a new
+exclusion rule). Respawn re-visibility reuses the existing
+`MonsterRegistry.ProcessDueRespawns`/`0x09FF`-emission path the next time a
+session sends visibility to a map containing the respawned instance; no new
+scheduler was added, and this specific behavior is pinned-source-inferred
+rather than independently capture-verified (see evidence section above).
+
+The captured `0x0B41`'s `Index` field required one small, deliberately
+minimal protocol extension: pinned `client_index()` (`clif.cpp:122-124`) is
+server-side inventory array position + 2, and neither Athena's
+`CharInventory` schema nor real rAthena's own SQL schema persists that
+position as a column - it is derived from row-insertion order at grant time.
+The internal MapServer<->CharServer `0x2b31`/`0x2b32` protocol
+(`MapInventoryAddProtocol`) and `ICharacterInventoryPersistence`/
+`CharacterInventorySession`/`InventoryAddResult` now carry an additional
+`SlotIndex` (server-side, 0-based) alongside the pre-existing
+`Success`/`NewAmount` fields; the `+2` wire transform is applied only at the
+point `MapClientSession` serializes `0x0B41`, not inside the persistence
+layer.
 
 ### Inventory persistence guarantees — precise scope
 

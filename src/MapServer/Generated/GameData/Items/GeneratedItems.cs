@@ -16,4 +16,10 @@ internal static class GeneratedItems
         Name: "Wood",
         Stackable: true,
         Source: new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/re/item_db_etc.yml", 0));
+
+    // Hand-composed lookup (not compiler output) over the generated items above, mirroring
+    // how AcademyMobSpawnRegistration.cs composes AcademyMobSpawns.GPoringSpawns outside the
+    // NpcWorldEmitter's own deterministic-reproducibility guarantee. Extend by adding entries
+    // here as more items are generated; do not regenerate this file to add lookup logic.
+    internal static readonly IReadOnlyDictionary<int, ItemDefinition> ById = new Dictionary<int, ItemDefinition> { [Wood.Id] = Wood };
 }

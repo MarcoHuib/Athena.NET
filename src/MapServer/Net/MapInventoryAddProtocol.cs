@@ -8,7 +8,7 @@ namespace Athena.Net.MapServer.Net;
 internal static class MapInventoryAddProtocol
 {
     internal const int RequestLength = 18;
-    internal const int ResponseLength = 15;
+    internal const int ResponseLength = 19;
 
     internal static byte[] BuildRequest(uint accountId, uint charId, int itemId, uint amount)
     {
@@ -21,9 +21,9 @@ internal static class MapInventoryAddProtocol
         return packet;
     }
 
-    internal static bool TryParseResponse(ReadOnlySpan<byte> packet, out uint charId, out int itemId, out uint newAmount, out bool success)
+    internal static bool TryParseResponse(ReadOnlySpan<byte> packet, out uint charId, out int itemId, out uint newAmount, out uint slotIndex, out bool success)
     {
-        charId = 0; itemId = 0; newAmount = 0; success = false;
+        charId = 0; itemId = 0; newAmount = 0; slotIndex = 0; success = false;
         if (packet.Length != ResponseLength || BinaryPrimitives.ReadInt16LittleEndian(packet) != PacketConstants.MapInventoryAddResponse)
         {
             return false;
@@ -31,7 +31,8 @@ internal static class MapInventoryAddProtocol
         charId = BinaryPrimitives.ReadUInt32LittleEndian(packet[2..]);
         itemId = BinaryPrimitives.ReadInt32LittleEndian(packet[6..]);
         newAmount = BinaryPrimitives.ReadUInt32LittleEndian(packet[10..]);
-        success = packet[14] == 1;
+        slotIndex = BinaryPrimitives.ReadUInt32LittleEndian(packet[14..]);
+        success = packet[18] == 1;
         return true;
     }
 }

@@ -29,7 +29,7 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
     private readonly ConcurrentDictionary<uint, TaskCompletionSource<bool>> _pendingSavePoints = new();
     private readonly ConcurrentDictionary<uint, TaskCompletionSource<CharacterGameplayState?>> _pendingGameplayReads = new();
     private readonly ConcurrentDictionary<uint, TaskCompletionSource<CharacterGameplayState?>> _pendingGameplayUpdates = new();
-    private readonly ConcurrentDictionary<(uint CharId, int ItemId), TaskCompletionSource<(bool Success, uint NewAmount)>> _pendingInventoryAdds = new();
+    private readonly ConcurrentDictionary<(uint CharId, int ItemId), TaskCompletionSource<(bool Success, uint NewAmount, uint SlotIndex)>> _pendingInventoryAdds = new();
     private CharServerConnectionState? _connection;
 
     public CharServerConnector(MapConfigStore configStore)
@@ -131,13 +131,13 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
         finally { _pendingGameplayUpdates.TryRemove(expected.CharacterId,out _); }
     }
 
-    public async Task<(bool Success, uint NewAmount)> AddStackableItemAsync(uint accountId, uint charId, int itemId, uint amount, CancellationToken cancellationToken)
+    public async Task<(bool Success, uint NewAmount, uint SlotIndex)> AddStackableItemAsync(uint accountId, uint charId, int itemId, uint amount, CancellationToken cancellationToken)
     {
         var connection = _connection;
-        if (connection is null || itemId <= 0 || amount == 0) return (false, 0);
+        if (connection is null || itemId <= 0 || amount == 0) return (false, 0, 0);
         var key = (charId, itemId);
-        var pending = new TaskCompletionSource<(bool, uint)>(TaskCreationOptions.RunContinuationsAsynchronously);
-        if (!_pendingInventoryAdds.TryAdd(key, pending)) return (false, 0);
+        var pending = new TaskCompletionSource<(bool, uint, uint)>(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (!_pendingInventoryAdds.TryAdd(key, pending)) return (false, 0, 0);
         using var registration = cancellationToken.Register(() => pending.TrySetCanceled(cancellationToken));
         try
         {
@@ -356,10 +356,10 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
 
     private bool HandleInventoryAddResponse(byte[] packet)
     {
-        if (!MapInventoryAddProtocol.TryParseResponse(packet, out var charId, out var itemId, out var newAmount, out var success)) return false;
+        if (!MapInventoryAddProtocol.TryParseResponse(packet, out var charId, out var itemId, out var newAmount, out var slotIndex, out var success)) return false;
         if (_pendingInventoryAdds.TryRemove((charId, itemId), out var pending))
-            pending.TrySetResult((success, newAmount));
-        if (success) MapLogger.Info($"Inventory-add succeeded charId={charId} itemId={itemId} newAmount={newAmount}.");
+            pending.TrySetResult((success, newAmount, slotIndex));
+        if (success) MapLogger.Info($"Inventory-add succeeded charId={charId} itemId={itemId} newAmount={newAmount} slotIndex={slotIndex}.");
         else MapLogger.Warning($"Inventory-add failed charId={charId} itemId={itemId}.");
         return true;
     }
@@ -481,7 +481,7 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
 
     private void FailPendingInventoryAdds()
     {
-        foreach (var pending in _pendingInventoryAdds.Values) pending.TrySetResult((false, 0));
+        foreach (var pending in _pendingInventoryAdds.Values) pending.TrySetResult((false, 0, 0));
         _pendingInventoryAdds.Clear();
     }
 

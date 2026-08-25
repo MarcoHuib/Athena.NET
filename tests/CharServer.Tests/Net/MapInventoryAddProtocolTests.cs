@@ -20,11 +20,11 @@ public sealed class MapInventoryAddProtocolTests
     [Theory]
     [InlineData(true, 1)]
     [InlineData(false, 0)]
-    public void Response_HasExplicitFifteenByteLayout(bool success, byte expectedResult)
+    public void Response_HasExplicitNineteenByteLayout(bool success, byte expectedResult)
     {
-        var packet = MapInventoryAddProtocol.BuildResponse(100, 6008, 2, success);
+        var packet = MapInventoryAddProtocol.BuildResponse(100, 6008, 2, slotIndex: 3, success);
 
-        Assert.Equal(15, packet.Length);
-        Assert.Equal(new byte[] { 0x32, 0x2b, 100, 0, 0, 0, 0x78, 0x17, 0, 0, 2, 0, 0, 0, expectedResult }, packet);
+        Assert.Equal(19, packet.Length);
+        Assert.Equal(new byte[] { 0x32, 0x2b, 100, 0, 0, 0, 0x78, 0x17, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0, expectedResult }, packet);
     }
 }

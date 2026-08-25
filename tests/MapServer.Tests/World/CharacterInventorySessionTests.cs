@@ -6,22 +6,32 @@ namespace Athena.Net.MapServer.Tests.World;
 internal sealed class FakeInventoryPersistence : ICharacterInventoryPersistence
 {
     private readonly Dictionary<(uint CharId, int ItemId), uint> _stacks = new();
+    private readonly Dictionary<uint, List<int>> _slotOrderByChar = new();
     public bool FailNextCall { get; set; }
     public int CallCount { get; private set; }
 
-    public Task<(bool Success, uint NewAmount)> AddStackableItemAsync(uint accountId, uint charId, int itemId, uint amount, CancellationToken cancellationToken)
+    public Task<(bool Success, uint NewAmount, uint SlotIndex)> AddStackableItemAsync(uint accountId, uint charId, int itemId, uint amount, CancellationToken cancellationToken)
     {
         CallCount++;
         if (FailNextCall)
         {
             FailNextCall = false;
-            return Task.FromResult((false, 0u));
+            return Task.FromResult((false, 0u, 0u));
         }
         var key = (charId, itemId);
         _stacks.TryGetValue(key, out var current);
         var updated = current + amount;
         _stacks[key] = updated;
-        return Task.FromResult((true, updated));
+
+        var order = _slotOrderByChar.TryGetValue(charId, out var existing) ? existing : (_slotOrderByChar[charId] = []);
+        var slotIndex = order.IndexOf(itemId);
+        if (slotIndex < 0)
+        {
+            slotIndex = order.Count;
+            order.Add(itemId);
+        }
+
+        return Task.FromResult((true, updated, (uint)slotIndex));
     }
 
     public uint Persisted(uint charId, int itemId) => _stacks.GetValueOrDefault((charId, itemId));

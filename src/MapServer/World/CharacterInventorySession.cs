@@ -2,7 +2,11 @@ using Athena.Net.MapServer.Net;
 
 namespace Athena.Net.MapServer.World;
 
-public readonly record struct InventoryAddResult(bool Success, uint NewAmount);
+// SlotIndex is the SERVER-side inventory array position (0-based), matching
+// pinned rAthena's sd->inventory.u.items_inventory[n] - the caller building a
+// wire packet must apply the pinned client_index() transform (n + 2,
+// clif.cpp:122-124) before placing it into ZC_ITEM_PICKUP_ACK.Index.
+public readonly record struct InventoryAddResult(bool Success, uint NewAmount, uint SlotIndex);
 
 // Generic "add a stackable item to this character's real persistent
 // inventory" capability, following the same success rule already used by
@@ -17,7 +21,7 @@ public sealed class CharacterInventorySession(uint accountId, uint charId, IChar
     public async Task<InventoryAddResult> AddItemAsync(ItemDefinition item, uint amount, CancellationToken cancellationToken)
     {
         if (!item.Stackable && amount > 1) throw new ArgumentException($"Item '{item.AegisName}' is not stackable; amount must be 1.", nameof(amount));
-        var (success, newAmount) = await persistence.AddStackableItemAsync(accountId, charId, item.Id, amount, cancellationToken);
-        return new InventoryAddResult(success, newAmount);
+        var (success, newAmount, slotIndex) = await persistence.AddStackableItemAsync(accountId, charId, item.Id, amount, cancellationToken);
+        return new InventoryAddResult(success, newAmount, slotIndex);
     }
 }

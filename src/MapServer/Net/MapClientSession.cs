@@ -2,6 +2,8 @@ using System.Buffers.Binary;
 using System.Net;
 using System.Net.Sockets;
 using System.Runtime.ExceptionServices;
+using Athena.Net.MapServer.Generated.GameData.Items;
+using Athena.Net.MapServer.Generated.GameData.Quests;
 using Athena.Net.MapServer.Logging;
 using Athena.Net.MapServer.World;
 using Athena.Net.MapServer.World.GeneratedScripts;
@@ -29,6 +31,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
         [PacketConstants.IroCzNpcNext] = PacketConstants.IroCzNpcNextLength,
         [PacketConstants.IroCzNpcClose] = PacketConstants.IroCzNpcCloseLength,
         [PacketConstants.IroCzNpcSelection] = PacketConstants.IroCzNpcSelectionLength,
+        [PacketConstants.IroCzAttackRequest] = PacketConstants.IroCzAttackRequestLength,
     };
 
     private readonly TcpClient _client;
@@ -37,12 +40,13 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
     private readonly ICharacterPositionPersistence _positionPersistence;
     private readonly ICharacterQuestPersistence _questPersistence;
     private readonly ICharacterGameplayStatePersistence _gameplayStatePersistence;
+    private readonly ICharacterInventoryPersistence _inventoryPersistence;
     private readonly WorldMapRegistry _worldMapRegistry;
-    // Null when no MapServerWorld was supplied (test-facing constructor default). No packet
-    // handler reads this yet - see MonsterRegistry/MonsterCombatCoordinator doc comments for why
-    // no live attack path exists - but it is threaded through explicitly now so a future handler
-    // does not need another constructor-plumbing change.
+    // Null when no MapServerWorld was supplied (test-facing constructor default).
     private readonly MonsterRegistry? _monsters;
+    // Null alongside _monsters on the test-facing default path; both are populated together
+    // by the production MapServerWorld-based constructor.
+    private readonly MonsterCombatCoordinator? _combat;
     private readonly IMovementPathProvider _movementPathProvider;
     // Owns authoritative per-cell walk timing (see CharacterMovementState's own doc comment for the
     // rAthena unit_walktoxy_timer trace this replaces). _x/_y/_mapName remain the fields every other
@@ -123,7 +127,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
     // so silently falling back to it here would reintroduce a second, independent actor-ID
     // namespace alongside the composed MonsterRegistry's shared one.
     public MapClientSession(int sessionId, TcpClient client, CharServerConnector charConnector, MapServerWorld world)
-        : this(sessionId, client, charConnector, world.Maps, monsters: world.Monsters)
+        : this(sessionId, client, charConnector, world.Maps, monsters: world.Monsters, combat: world.Combat)
     {
     }
 
@@ -137,7 +141,9 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
         ICharacterGameplayStatePersistence? gameplayStatePersistence = null,
         TimeProvider? timeProvider = null,
         MonsterRegistry? monsters = null,
-        IMovementPathProvider? movementPathProvider = null)
+        IMovementPathProvider? movementPathProvider = null,
+        MonsterCombatCoordinator? combat = null,
+        ICharacterInventoryPersistence? inventoryPersistence = null)
     {
         SessionId = sessionId;
         _client = client;
@@ -146,8 +152,10 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
         _positionPersistence = positionPersistence ?? charConnector;
         _questPersistence = questPersistence ?? charConnector;
         _gameplayStatePersistence = gameplayStatePersistence ?? charConnector;
+        _inventoryPersistence = inventoryPersistence ?? charConnector;
         _worldMapRegistry = worldMapRegistry;
         _monsters = monsters;
+        _combat = combat;
         _timeProvider = timeProvider ?? TimeProvider.System;
         _movementPathProvider = movementPathProvider ?? new UnverifiedGridLineMovementPathProvider();
         _statusEffects = new CharacterStatusEffectState(_timeProvider);
@@ -173,7 +181,9 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
         ICharacterGameplayStatePersistence? gameplayStatePersistence = null,
         TimeProvider? timeProvider = null,
         MonsterRegistry? monsters = null,
-        IMovementPathProvider? movementPathProvider = null)
+        IMovementPathProvider? movementPathProvider = null,
+        MonsterCombatCoordinator? combat = null,
+        ICharacterInventoryPersistence? inventoryPersistence = null)
         : this(
             sessionId,
             client,
@@ -184,7 +194,9 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
             gameplayStatePersistence,
             timeProvider,
             monsters,
-            movementPathProvider)
+            movementPathProvider,
+            combat,
+            inventoryPersistence)
     {
         _iroAuthRequested = iroAuthenticated;
         _authRequested = iroAuthenticated;
@@ -632,6 +644,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
                         $"[iRO MAP DEBUG] Received stock iRO map-loaded packet=0x{packetType:X4} len={packet.Length}");
                     _visibleActorIds.Clear();
                     await SendVisibleWarpActorsAsync(cancellationToken);
+                    await SendVisibleMonsterActorsAsync(cancellationToken);
                     foreach (var navigation in _worldMapRegistry.GetNavigationAt(_mapName, _x, _y))
                         await WriteAsync(IroNpcDialoguePackets.BuildNavigateTo(navigation.DestinationMap, navigation.DestinationX, navigation.DestinationY), cancellationToken);
                     break;
@@ -669,6 +682,12 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
                     MapLogger.Info($"[iRO MAP DEBUG] Sending 0x0ADF NPC name actorId={requestedActorId} name='{actorName}'");
                     await WriteAsync(IroWorldActorPackets.BuildNpcName(requestedActorId, actorName), cancellationToken);
                 }
+                else if (_visibleActorIds.Contains(requestedActorId) && _monsters is not null && _monsters.TryGetInstance(requestedActorId, _mapName, out var monsterInstance))
+                {
+                    var monsterName = monsterInstance.Spawn.Mob.Name;
+                    MapLogger.Info($"[iRO MAP DEBUG] Sending 0x0ADF monster name actorId={requestedActorId} name='{monsterName}'");
+                    await WriteAsync(IroWorldActorPackets.BuildNpcName(requestedActorId, monsterName), cancellationToken);
+                }
                 break;
             case PacketConstants.IroCzChangeDirection when _iroAuthRequested:
                 if (IroChangeDirectionPacket.TryParse(packet, out var direction))
@@ -695,6 +714,9 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
                 break;
             case PacketConstants.IroCzNpcSelection when _iroAuthRequested:
                 await HandleNpcSelectionAsync(packet, cancellationToken);
+                break;
+            case PacketConstants.IroCzAttackRequest when _iroAuthRequested:
+                await HandleIroAttackRequestAsync(packet, cancellationToken);
                 break;
             default:
                 LogUnsupportedPacket(packetType, packet);
@@ -874,6 +896,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
         else
         {
             await SendVisibleWarpActorsAsync(cancellationToken);
+            await SendVisibleMonsterActorsAsync(cancellationToken);
         }
     }
 
@@ -909,8 +932,88 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
         await PersistPositionIfDirtyAsync(cancellationToken);
     }
 
+    // Verified capture: 0x0437/8 (clif_parse_ActionRequest, clif.cpp:11818): id.W targetActorId.L
+    // actionType.B (offset 6, DMG_REPEAT=7 in the capture) opaqueByte.B (offset 7). Only the
+    // continuous/normal-attack case this slice supports is handled; a target that does not
+    // resolve to a live MobInstance on the player's current map is silently ignored (no fake
+    // success), matching the task's "never fake a result" rule.
+    private async Task HandleIroAttackRequestAsync(byte[] packet, CancellationToken cancellationToken)
+    {
+        if (!IroAttackRequestPacket.TryParse(packet, out var request)) return;
+        var targetActorId = request.TargetActorId;
+        if (_monsters is null || _combat is null || _gameplayState is null) return;
+        if (!_monsters.TryGetInstance(targetActorId, _mapName, out var target) || !target.IsAlive) return;
+
+        // QuestDropResolver requires each distinct QuestId its generated rules mention to be
+        // resolved beforehand through the real persistence interface (see its own doc comment) -
+        // Athena has no materialized "all active quests" concept anywhere else either.
+        var questStates = new Dictionary<uint, CharacterQuestStatus>();
+        foreach (var rule in GeneratedQuestDrops.All)
+        {
+            if (questStates.ContainsKey(rule.QuestId)) continue;
+            questStates[rule.QuestId] = await _questPersistence.GetQuestStateAsync(_accountId, _charId, rule.QuestId, cancellationToken) ?? CharacterQuestStatus.Absent;
+        }
+
+        var effectiveStats = _statusEffects.Recalculate(_gameplayState.State);
+        var outcome = _combat.Attack(
+            target,
+            effectiveStats,
+            _gameplayState.State.BaseLevel,
+            questId => questStates.GetValueOrDefault(questId, CharacterQuestStatus.Absent));
+        if (!outcome.Accepted) return;
+
+        var tick = unchecked((uint)Environment.TickCount);
+        var damageDealt = outcome.HpBefore - outcome.HpAfter;
+        MapLogger.Info(
+            $"[iRO MAP DEBUG] Attack accepted attackerAccountId={_accountId} targetActorId={targetActorId} damage={damageDealt} hpBefore={outcome.HpBefore} hpAfter={outcome.HpAfter} killed={outcome.KilledByThisHit}");
+
+        var damagePacket = IroMonsterCombatPackets.BuildNotifyAct3(
+            _accountId,
+            targetActorId,
+            tick,
+            srcSpeed: 460,
+            dstSpeed: 480,
+            damage: damageDealt,
+            div: 1,
+            actionType: 0);
+        await WriteAsync(damagePacket, cancellationToken);
+
+        if (!outcome.KilledByThisHit) return;
+
+        MapLogger.Info($"[iRO MAP DEBUG] Monster died actorId={targetActorId} mob={target.Spawn.Mob.AegisName}");
+        var vanishPacket = IroMonsterCombatPackets.BuildNotifyVanish(targetActorId, PacketConstants.ZcNotifyVanishReasonDied);
+        await WriteAsync(vanishPacket, cancellationToken);
+        _visibleActorIds.Remove(targetActorId);
+
+        foreach (var drop in outcome.QuestDrops)
+        {
+            if (!GeneratedItems.ById.TryGetValue(drop.ItemId, out var itemDefinition))
+            {
+                MapLogger.Warning($"[iRO MAP DEBUG] Quest drop references unregistered itemId={drop.ItemId}; skipping client notification.");
+                continue;
+            }
+
+            var inventorySession = new CharacterInventorySession(_accountId, _charId, _inventoryPersistence);
+            var addResult = await inventorySession.AddItemAsync(itemDefinition, (uint)drop.Count, cancellationToken);
+            if (!addResult.Success)
+            {
+                MapLogger.Warning($"[iRO MAP DEBUG] Inventory persistence failed for itemId={drop.ItemId}; not notifying client.");
+                continue;
+            }
+
+            // client_index(): server-side array position + 2 (clif.cpp:122-124).
+            var clientIndex = (ushort)(addResult.SlotIndex + 2);
+            var pickupPacket = IroMonsterCombatPackets.BuildItemPickupAck(clientIndex, (ushort)drop.Count, itemDefinition.Id, itemType: 3);
+            MapLogger.Info($"[iRO MAP DEBUG] Sending 0x0B41 itemId={itemDefinition.Id} count={drop.Count} clientIndex={clientIndex}");
+            await WriteAsync(pickupPacket, cancellationToken);
+        }
+    }
+
     private async Task HandleNpcInteractionAsync(byte[] packet, CancellationToken cancellationToken)
     {
+        // A monster actor ID is never registered in _worldMapRegistry (NPC/warp actors only),
+        // so TryGetInteraction below already rejects it - monster actors are never routed into
+        // NPC script dispatch, intentionally, not by accident.
         if (!IroNpcDialoguePackets.TryParseInteraction(packet, out var actorId) || HasActiveScript || !_visibleActorIds.Contains(actorId) || !_worldMapRegistry.TryGetInteraction(actorId, _mapName, out var entity, out var script))
         {
             MapLogger.Info($"[iRO MAP DEBUG] NPC interaction rejected actorId={actorId}");
@@ -1428,6 +1531,40 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
             var packet = IroWorldActorPackets.BuildWorldActor(actor);
             MapLogger.Info(
                 $"[iRO MAP DEBUG] Sending NPC actor id={actor.ActorId} name='{actor.Name}' class={actor.SpriteClass} map='{actor.MapName}' x={actor.X} y={actor.Y}");
+            await WriteAsync(packet, cancellationToken);
+        }
+    }
+
+    // Sends 0x09FF for every alive monster instance in range, reusing the same _visibleActorIds
+    // dedup set NPC/warp actors already share (one visibility-tracking collection, matching the
+    // one shared WorldActorIdAllocator namespace all actor kinds draw from - MapServerWorld.Build).
+    // Null _monsters (test-facing constructor default) means no monster runtime is composed for
+    // this session; the method is then a no-op rather than throwing, matching how existing tests
+    // exercise NPC/warp/dialogue behavior without ever touching monster state.
+    private async Task SendVisibleMonsterActorsAsync(CancellationToken cancellationToken)
+    {
+        if (_monsters is null) return;
+
+        foreach (var instance in _monsters.GetVisibleInstances(_mapName, _x, _y))
+        {
+            if (!_visibleActorIds.Add(instance.ActorId))
+            {
+                continue;
+            }
+
+            var mob = instance.Spawn.Mob;
+            var packet = IroMonsterActorPackets.BuildStandEntry(
+                instance.ActorId,
+                (ushort)mob.Id,
+                (ushort)mob.WalkSpeed,
+                mob.Name,
+                instance.X,
+                instance.Y,
+                direction: 0,
+                currentHp: instance.CurrentHp,
+                maxHp: mob.MaxHp);
+            MapLogger.Info(
+                $"[iRO MAP DEBUG] Sending monster actor id={instance.ActorId} name='{mob.Name}' class={mob.Id} map='{instance.Map}' x={instance.X} y={instance.Y} hp={instance.CurrentHp}/{mob.MaxHp}");
             await WriteAsync(packet, cancellationToken);
         }
     }

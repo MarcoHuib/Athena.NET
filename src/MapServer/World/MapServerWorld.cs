@@ -1,3 +1,4 @@
+using Athena.Net.MapServer.Generated.GameData.Quests;
 using Athena.Net.MapServer.World.GeneratedScripts;
 
 namespace Athena.Net.MapServer.World;
@@ -12,7 +13,7 @@ namespace Athena.Net.MapServer.World;
 // fall back to WorldMapRegistry.Tutorial once this exists; that static
 // singleton remains only for existing tests/legacy standalone callers that
 // don't combine world data with a monster runtime.
-public sealed record MapServerWorld(WorldMapRegistry Maps, MonsterRegistry Monsters)
+public sealed record MapServerWorld(WorldMapRegistry Maps, MonsterRegistry Monsters, MonsterCombatCoordinator Combat)
 {
     // `cellSelector` defaults to UnverifiedFallbackMobSpawnCellSelector because
     // Athena.NET has no GAT/mapcache/collision data anywhere in this repository
@@ -31,6 +32,8 @@ public sealed record MapServerWorld(WorldMapRegistry Maps, MonsterRegistry Monst
             allocator,
             cellSelector ?? new UnverifiedFallbackMobSpawnCellSelector(),
             timeProvider ?? TimeProvider.System);
-        return new MapServerWorld(maps, monsters);
+        var questDrops = new QuestDropResolver(GeneratedQuestDrops.All);
+        var combat = new MonsterCombatCoordinator(monsters, questDrops);
+        return new MapServerWorld(maps, monsters, combat);
     }
 }

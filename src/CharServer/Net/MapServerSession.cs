@@ -356,6 +356,7 @@ public sealed class MapServerSession : IDisposable, ISession
         }
 
         uint newAmount = 0;
+        uint slotIndex = 0;
         var success = false;
         if (!IsInventoryAddRequestAuthorized(_authenticated, _ownedCharacters, request.AccountId, request.CharId, request.ItemId, request.Amount))
         {
@@ -388,8 +389,19 @@ public sealed class MapServerSession : IDisposable, ISession
                     await db.SaveChangesAsync(cancellationToken);
                     newAmount = row.Amount;
                     success = true;
+                    // pinned rAthena builds sd->inventory.u.items_inventory[] by loading a
+                    // character's rows in a stable order (client_index() then adds a fixed +2
+                    // wire offset - clif.cpp:122). Real rAthena's own `inventory` table has no
+                    // persisted slot/position column either (sql-files/main.sql) - the server-side
+                    // array index is derived purely from load order, not stored state. Mirror that
+                    // here: the row's own primary key already reflects (and never changes) its
+                    // relative insertion order among this character's rows, so counting rows with
+                    // a smaller Id reproduces the same stable 0-based array position a real load
+                    // pass would assign, without inventing a new persisted column.
+                    slotIndex = (uint)await db.Inventory.CountAsync(
+                        item => item.CharId == request.CharId && item.Equip == 0 && item.Id < row.Id, cancellationToken);
                     CharLogger.Info(
-                        $"Inventory-add succeeded charId={request.CharId} itemId={request.ItemId} newAmount={newAmount}.");
+                        $"Inventory-add succeeded charId={request.CharId} itemId={request.ItemId} newAmount={newAmount} slotIndex={slotIndex}.");
                 }
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
@@ -400,7 +412,7 @@ public sealed class MapServerSession : IDisposable, ISession
             }
         }
 
-        await WriteAsync(MapInventoryAddProtocol.BuildResponse(request.CharId, request.ItemId, newAmount, success), cancellationToken);
+        await WriteAsync(MapInventoryAddProtocol.BuildResponse(request.CharId, request.ItemId, newAmount, slotIndex, success), cancellationToken);
     }
 
     private async Task HandleGameplayStateGetAsync(byte[] packet, CancellationToken cancellationToken)
