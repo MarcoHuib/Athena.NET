@@ -108,6 +108,7 @@ public sealed class MapClientSessionStatusExpirationTests
         await using var harness = await Harness.CreateAsync();
         await harness.Context.StartStatusAsync(CharacterStatusEffectState.StatusIds.Blessing, BlessingDurationMs, 10, default);
         await harness.DrainBlessingActivation();
+        await harness.Clock.SettleAsync();
 
         await harness.Clock.AdvanceAsync(TimeSpan.FromMilliseconds(BlessingDurationMs - 1));
 
@@ -121,6 +122,7 @@ public sealed class MapClientSessionStatusExpirationTests
         await using var harness = await Harness.CreateAsync();
         await harness.Context.StartStatusAsync(CharacterStatusEffectState.StatusIds.Blessing, BlessingDurationMs, 10, default);
         await harness.DrainBlessingActivation();
+        await harness.Clock.SettleAsync();
 
         await harness.Clock.AdvanceAsync(TimeSpan.FromMilliseconds(BlessingDurationMs));
 
@@ -138,6 +140,7 @@ public sealed class MapClientSessionStatusExpirationTests
         await using var harness = await Harness.CreateAsync();
         await harness.Context.StartStatusAsync(CharacterStatusEffectState.StatusIds.IncreaseAgi, BlessingDurationMs, 10, default);
         await harness.DrainIncreaseAgiActivation();
+        await harness.Clock.SettleAsync();
 
         await harness.Clock.AdvanceAsync(TimeSpan.FromMilliseconds(BlessingDurationMs));
 
@@ -153,6 +156,7 @@ public sealed class MapClientSessionStatusExpirationTests
         await using var harness = await Harness.CreateAsync();
         await harness.Context.StartStatusAsync(CharacterStatusEffectState.StatusIds.Blessing, BlessingDurationMs, 10, default);
         await harness.DrainBlessingActivation();
+        await harness.Clock.SettleAsync();
 
         await harness.Clock.AdvanceAsync(TimeSpan.FromMilliseconds(BlessingDurationMs));
         await harness.ReadExact(9); // 0x0196
@@ -168,6 +172,7 @@ public sealed class MapClientSessionStatusExpirationTests
         await using var harness = await Harness.CreateAsync();
         await harness.Context.StartStatusAsync(CharacterStatusEffectState.StatusIds.Blessing, BlessingDurationMs, 10, default);
         await harness.DrainBlessingActivation();
+        await harness.Clock.SettleAsync();
 
         await harness.Clock.AdvanceAsync(TimeSpan.FromMilliseconds(BlessingDurationMs));
         await harness.ReadExact(9); // 0x0196
@@ -189,6 +194,7 @@ public sealed class MapClientSessionStatusExpirationTests
         await using var harness = await Harness.CreateAsync();
         await harness.Context.StartStatusAsync(CharacterStatusEffectState.StatusIds.IncreaseAgi, BlessingDurationMs, 10, default);
         await harness.DrainIncreaseAgiActivation();
+        await harness.Clock.SettleAsync();
 
         await harness.Clock.AdvanceAsync(TimeSpan.FromMilliseconds(BlessingDurationMs));
         await harness.ReadExact(9); // 0x0196
@@ -256,6 +262,7 @@ public sealed class MapClientSessionStatusExpirationTests
         await harness.DrainBlessingActivation();
         await harness.Context.StartStatusAsync(CharacterStatusEffectState.StatusIds.IncreaseAgi, BlessingDurationMs, 10, default);
         await harness.DrainIncreaseAgiActivation();
+        await harness.Clock.SettleAsync();
 
         await harness.Clock.AdvanceAsync(TimeSpan.FromMilliseconds(BlessingDurationMs));
 
@@ -296,6 +303,7 @@ public sealed class MapClientSessionStatusExpirationTests
         await using var harness = await Harness.CreateAsync();
         await harness.Context.StartStatusAsync(CharacterStatusEffectState.StatusIds.Blessing, BlessingDurationMs, 10, default);
         await harness.DrainBlessingActivation();
+        await harness.Clock.SettleAsync();
 
         await harness.Clock.AdvanceAsync(TimeSpan.FromMilliseconds(BlessingDurationMs));
         await harness.ReadExact(9); await harness.ReadExact(14); await harness.ReadExact(14); await harness.ReadExact(14);

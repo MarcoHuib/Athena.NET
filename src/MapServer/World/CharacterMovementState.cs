@@ -31,6 +31,11 @@ public sealed class CharacterMovementState
     public (ushort X, ushort Y) Destination => _path[^1];
     public bool IsMoving => _pathPosition < _path.Count - 1;
 
+    // Next per-cell deadline, for a scheduler to sleep until (mirrors
+    // CharacterStatusEffectState.NextExpiration's "null means wait indefinitely" contract). Null
+    // when not moving.
+    public DateTimeOffset? NextStepDueAt => IsMoving ? _stepStartedAt.AddMilliseconds(_cellDurationMs) : null;
+
     // Starts walking a new path from the character's CURRENT cell (NOT necessarily the cell any
     // earlier in-flight walk was originally heading toward). Callers MUST call AdvanceTo(now) first
     // if a walk is already in progress, matching pinned rAthena's mid-walk retarget: unit_walktoxy

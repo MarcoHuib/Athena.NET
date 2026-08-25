@@ -50,6 +50,28 @@ public sealed class MapClientSession : IDisposable, INpcScriptHost
     // new movement request always retargets from the character's ACTUAL current cell rather than
     // wherever a previous request's destination happened to be.
     private CharacterMovementState? _movement;
+    // Guards all reads/mutations of _movement, _pendingArrival, and the position fields they drive
+    // (_mapName/_x/_y/_positionDirty) against a race between the movement loop (background task,
+    // below) and a packet-handling call (HandleIroMovementAsync, TeleportTo) running concurrently -
+    // this session's RunAsync packet loop and the movement loop are two independently-scheduled
+    // tasks that both touch this state.
+    private readonly SemaphoreSlim _movementGate = new(1, 1);
+    // The warp/script-touch action attached to the CURRENT walk's destination cell, executed by the
+    // movement loop only once that cell is actually reached (AdvanceTo reports it as newly crossed),
+    // not immediately at click time - this is what makes OnTouch/warp execution match rAthena's
+    // per-cell semantics (npc_touch_area_allnpc/npc_touch_areanpc2 inside unit_walktoxy_timer,
+    // unit.cpp:684-699) instead of firing the instant a route is detected to intersect one.
+    // Cleared by TeleportTo (a teleport/warp/map-change invalidates any old walk's pending action)
+    // and by StartWalk with no intersection.
+    private PendingMovementArrival? _pendingArrival;
+    private abstract record PendingMovementArrival;
+    private sealed record PendingWarpArrival(WarpDefinition Warp) : PendingMovementArrival;
+    private sealed record PendingScriptTouchArrival(WorldEntityDefinition Entity, uint ActorId, ScriptBehaviorDefinition Script) : PendingMovementArrival;
+    // Single-slot wake signal (same semantics as _statusExpirationSignal above): a new/retargeted
+    // walk may need the loop to wake earlier than its current sleep, or wake it from indefinite
+    // waiting when it starts moving from a standstill.
+    private readonly SemaphoreSlim _movementSignal = new(0, 1);
+    private Task? _movementLoop;
     private readonly SemaphoreSlim _writeLock = new(1, 1);
     private readonly CancellationTokenSource _sessionCancellation = new();
     private readonly HashSet<uint> _visibleActorIds = new();
@@ -237,6 +259,7 @@ public sealed class MapClientSession : IDisposable, INpcScriptHost
         _authenticated = true; _positionDirty = false;
         MapLogger.Info($"[iRO MAP DEBUG] 0x0C1F MapAuthNode authentication succeeded accountId={authOk.AccountId} charId={authOk.CharId} sessionMatch=true gameplayStateVersion={state.Version}");
         _statusExpirationLoop = RunStatusExpirationLoopAsync(_sessionCancellation.Token);
+        _movementLoop = RunMovementLoopAsync(_sessionCancellation.Token);
         await SendIroInitialBootstrapAsync(authOk, _sessionCancellation.Token);
     }
 
@@ -312,6 +335,112 @@ public sealed class MapClientSession : IDisposable, INpcScriptHost
         if (before.Dexterity != after.Dexterity) await WriteAsync(IroStatusEffectPackets.BuildCoupleStatus(IroStatusEffectPackets.SpDex, _gameplayState.State.Dexterity, after.Dexterity - _gameplayState.State.Dexterity), cancellationToken);
     }
 
+    // One movement scheduler per session (not one Task.Delay/Timer per cell), mirroring
+    // RunStatusExpirationLoopAsync's exact shape: sleep until CharacterMovementState.NextStepDueAt
+    // via the shared TimeProvider, waking early whenever HandleIroMovementAsync starts or retargets
+    // a walk (which can move the next deadline earlier, or wake the loop from indefinite waiting).
+    // This is what makes per-cell OnTouch/warp evaluation happen when a cell is actually reached
+    // instead of only when some later packet/property-read happens to call AdvanceTo.
+    private async Task RunMovementLoopAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                DateTimeOffset? next;
+                await _movementGate.WaitAsync(cancellationToken);
+                try { next = _movement?.NextStepDueAt; }
+                finally { _movementGate.Release(); }
+
+                if (next is null)
+                {
+                    await _movementSignal.WaitAsync(cancellationToken);
+                    continue;
+                }
+
+                var delay = next.Value - _timeProvider.GetUtcNow();
+                if (delay > TimeSpan.Zero)
+                {
+                    using var delayCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                    var wake = _movementSignal.WaitAsync(delayCancellation.Token);
+                    var sleep = Task.Delay(delay, _timeProvider, delayCancellation.Token);
+                    var completed = await Task.WhenAny(wake, sleep);
+                    delayCancellation.Cancel();
+                    if (completed == wake)
+                    {
+                        try { await wake; } catch (OperationCanceledException) { }
+                        continue;
+                    }
+                    try { await sleep; } catch (OperationCanceledException) { continue; }
+                }
+
+                await ProcessDueMovementAsync(cancellationToken);
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (ObjectDisposedException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+    }
+
+    // Advances the walk to `now`, processing every newly-crossed cell IN ORDER. Only the cell that
+    // is both (a) newly crossed and (b) the walk's final destination can carry a pending warp/script
+    // touch action (HandleIroMovementAsync only ever attaches one to the destination of a truncated
+    // path - see its own comments) - so evaluating "is this the last crossed cell AND is there a
+    // pending arrival" is sufficient to fire it exactly once, at the moment that cell is truly
+    // reached, matching rAthena's per-cell touch checks (unit.cpp:684-699) rather than firing
+    // instantly at click time. If that action changes the map (a warp), TeleportTo resets _movement
+    // and clears _pendingArrival before this method continues, so no further stale processing can
+    // occur for a walk that no longer exists.
+    private async Task ProcessDueMovementAsync(CancellationToken cancellationToken)
+    {
+        IReadOnlyList<(ushort X, ushort Y)> crossed;
+        PendingMovementArrival? arrival;
+        string mapAtAdvance;
+        await _movementGate.WaitAsync(cancellationToken);
+        try
+        {
+            var movement = _movement;
+            if (movement is null) return;
+            crossed = movement.AdvanceTo(_timeProvider.GetUtcNow());
+            if (crossed.Count == 0) return;
+            _x = movement.CurrentX;
+            _y = movement.CurrentY;
+            _positionDirty = true;
+            arrival = movement.IsMoving ? null : _pendingArrival; // Only relevant once the walk actually finished.
+            mapAtAdvance = _mapName;
+        }
+        finally { _movementGate.Release(); }
+
+        if (arrival is null) return;
+
+        // Consume the pending arrival before executing it (a re-entrant movement request arriving
+        // while the arrival action itself awaits below must not also see/re-fire it, and TeleportTo
+        // -triggered-by-the-arrival-action-itself will independently clear it again harmlessly).
+        await _movementGate.WaitAsync(cancellationToken);
+        try
+        {
+            if (!string.Equals(_mapName, mapAtAdvance, StringComparison.OrdinalIgnoreCase) || !ReferenceEquals(_pendingArrival, arrival)) return;
+            _pendingArrival = null;
+        }
+        finally { _movementGate.Release(); }
+
+        switch (arrival)
+        {
+            case PendingWarpArrival warpArrival:
+                MapLogger.Info($"[iRO MAP DEBUG] Movement reached warp cell map='{mapAtAdvance}' at=({_x},{_y})");
+                await SendSameServerWarpAsync(warpArrival.Warp, cancellationToken);
+                break;
+            case PendingScriptTouchArrival scriptArrival:
+                await SendVisibleWarpActorsAsync(cancellationToken);
+                MapLogger.Info($"[iRO MAP DEBUG] Movement reached script trigger entity='{scriptArrival.Entity.Id}' map='{mapAtAdvance}' at=({_x},{_y})");
+                await StartScriptAsync(scriptArrival.Entity, scriptArrival.ActorId, scriptArrival.Script, "OnTouch", cancellationToken);
+                break;
+        }
+    }
+
     private async Task CompleteIroAuthenticationSafelyAsync(MapAuthOkData authOk)
     {
         try
@@ -351,11 +480,14 @@ public sealed class MapClientSession : IDisposable, INpcScriptHost
         // Unblock a pending WaitAsync so the loop observes cancellation promptly; a wake may
         // already be pending (SemaphoreFullException), which is harmless here too.
         try { _statusExpirationSignal.Release(); } catch (SemaphoreFullException) { }
+        try { _movementSignal.Release(); } catch (SemaphoreFullException) { }
         _generatedContinuation?.Completion.TrySetCanceled();
         _stream.Dispose();
         _writeLock.Dispose();
         _sessionCancellation.Dispose();
         _statusExpirationSignal.Dispose();
+        _movementSignal.Dispose();
+        _movementGate.Dispose();
     }
 
     private async Task HandlePacketAsync(short packetType, byte[] packet, CancellationToken cancellationToken)
@@ -501,6 +633,12 @@ public sealed class MapClientSession : IDisposable, INpcScriptHost
         _x = x;
         _y = y;
         _movement?.Teleport(map, x, y);
+
+        // Invalidate any pending arrival action from the walk being cancelled - otherwise a movement
+        // loop iteration already in flight (or a later one, if this teleport did not itself originate
+        // from the pending arrival) could still fire a stale warp/OnTouch belonging to the walk that
+        // was just replaced by this teleport.
+        _pendingArrival = null;
     }
 
     // Reconciles _x/_y against real elapsed walking time. Pinned rAthena's authoritative position
@@ -567,8 +705,25 @@ public sealed class MapClientSession : IDisposable, INpcScriptHost
         // avoiding a race where a caller could read stale position between the write and this update.
         var path = _movementPathProvider.ComputePath(_mapName, fromX, fromY, movementTargetX, movementTargetY);
         var now = _timeProvider.GetUtcNow();
-        EnsureMovementState().StartWalk(path, CurrentCellDurationMs(), now);
+
+        // Warp/OnTouch must fire only when the destination cell is actually reached over real
+        // elapsed time (RunMovementLoopAsync/ProcessDueMovementAsync), matching rAthena's per-cell
+        // npc_touch_area_allnpc/npc_touch_areanpc2 checks inside unit_walktoxy_timer - not the moment
+        // the client clicks. Attach the pending action here (under the gate, alongside StartWalk) so
+        // the movement loop can execute it exactly once, at true arrival.
+        await _movementGate.WaitAsync(cancellationToken);
+        try
+        {
+            EnsureMovementState().StartWalk(path, CurrentCellDurationMs(), now);
+            _pendingArrival = intersectsWarp
+                ? new PendingWarpArrival(intersection.Warp)
+                : intersectsScript
+                    ? new PendingScriptTouchArrival(scriptIntersection.Binding.Entity, scriptIntersection.Binding.Actor.ActorId, scriptIntersection.Binding.Script)
+                    : null;
+        }
+        finally { _movementGate.Release(); }
         _positionDirty = true;
+        try { _movementSignal.Release(); } catch (SemaphoreFullException) { }
 
         var response = IroMovementPackets.BuildResponse(
             unchecked((uint)Environment.TickCount),
@@ -582,23 +737,12 @@ public sealed class MapClientSession : IDisposable, INpcScriptHost
 
         if (intersectsWarp)
         {
-            // A detected warp/touch intersection fires immediately on click rather than waiting for
-            // timed per-cell arrival (existing, separately-tested simplification, unchanged by this
-            // fix) - so the character is treated as already at the intersection cell for the warp
-            // handler below, which both logs and then overwrites _x/_y with the destination.
-            _x = intersection.X;
-            _y = intersection.Y;
             MapLogger.Info(
-                $"[iRO MAP DEBUG] Movement path intersects warp map='{_mapName}' at=({intersection.X},{intersection.Y}) requestedTarget=({request.TargetX},{request.TargetY})");
-            await SendSameServerWarpAsync(intersection.Warp, cancellationToken);
+                $"[iRO MAP DEBUG] Movement path intersects warp map='{_mapName}' at=({intersection.X},{intersection.Y}) requestedTarget=({request.TargetX},{request.TargetY}) (deferred to actual arrival)");
         }
         else if (intersectsScript)
         {
-            _x = scriptIntersection.X;
-            _y = scriptIntersection.Y;
-            await SendVisibleWarpActorsAsync(cancellationToken);
-            MapLogger.Info($"[iRO MAP DEBUG] Movement entered script trigger entity='{scriptIntersection.Binding.Entity.Id}' map='{_mapName}' at=({scriptIntersection.X},{scriptIntersection.Y})");
-            await StartScriptAsync(scriptIntersection.Binding.Entity, scriptIntersection.Binding.Actor.ActorId, scriptIntersection.Binding.Script, "OnTouch", cancellationToken);
+            MapLogger.Info($"[iRO MAP DEBUG] Movement path intersects script trigger entity='{scriptIntersection.Binding.Entity.Id}' map='{_mapName}' at=({scriptIntersection.X},{scriptIntersection.Y}) (deferred to actual arrival)");
         }
         else
         {
@@ -1167,6 +1311,14 @@ public sealed class MapClientSession : IDisposable, INpcScriptHost
         {
             return;
         }
+
+        // Reconcile against real elapsed walking time first - without this, a disconnect mid-walk
+        // would persist the position from the last click/request rather than wherever the character
+        // has actually walked to by now (the movement loop advances _x/_y proactively too, but a
+        // disconnect can race ahead of its next scheduled wake, so this call is still required here).
+        await _movementGate.WaitAsync(cancellationToken);
+        try { SyncPositionToNow(); }
+        finally { _movementGate.Release(); }
 
         try
         {
