@@ -1,0 +1,6 @@
+[submodule "legacy/rathena"]
+	path = legacy/rathena
+	url = https://github.com/rathena/rathena.git
+[submodule "legacy/openkore"]
+	path = legacy/openkore
+	url = https://github.com/OpenKore/openkore.git
