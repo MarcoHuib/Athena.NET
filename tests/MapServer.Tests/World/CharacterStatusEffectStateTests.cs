@@ -44,15 +44,19 @@ public sealed class CharacterStatusEffectStateTests
     }
 
     [Fact]
-    public void IncreaseAgiDoesNotChangeAgiButGrantsMoveHasteAndAspdBonus()
+    public void IncreaseAgiAddsTwoPlusLevelToAgiAndGrantsMoveHasteAndAspdBonus()
     {
+        // Pinned legacy/rathena/src/map/status.cpp:10844-10854 (status_change_start_post_delay's
+        // val-settings switch) sets val2 = 2 + val1 for SC_INCREASEAGI regardless of caller
+        // (script sc_start or the real AL_INCAGI skill cast both pass val2=0 and let this
+        // switch compute it); status_calc_agi (status.cpp:6843-6844) adds that val2 to AGI.
         var clock = new FakeTimeProvider();
         var state = new CharacterStatusEffectState(clock);
         state.Start(CharacterStatusEffectState.StatusIds.IncreaseAgi, 240000, 10);
 
         var effective = state.Recalculate(BaseState());
 
-        Assert.Equal(BaseState().Agility, effective.Agility);
+        Assert.Equal((ushort)(BaseState().Agility + 12), effective.Agility);
         Assert.Equal(25, effective.MoveSpeedHaste);
         Assert.Equal(10, effective.AttackSpeedBonus);
     }

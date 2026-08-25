@@ -166,7 +166,9 @@ uses, via `CharacterHealService`. It clamps to `[0, MaxHp]`/`[0, MaxSp]` per pin
 `status_heal`. The already-verified `0x00B0` parameter-change packet synchronizes
 HP/SP, and is only sent for the field(s) that actually changed (e.g. an
 already-full heal sends nothing) — the same policy `GrantExperienceAsync` already
-uses for level-up fields, not new or NPC-specific behavior.
+uses for level-up fields, not new or NPC-specific behavior. A positive heal amount
+also sends the capture-proven `0x09CB` (`ZC_USE_SKILL`) heal visual with
+`SKID=AL_HEAL(28)` and `level=` the heal amount (see `ai/iro-2026-wire.md`).
 
 `sc_start` starts a small generic temporary status foundation
 (`CharacterStatusEffectState`), not the complete Ragnarok status system. Each
@@ -180,18 +182,24 @@ Re-applying an already-active status (pinned `sc_start` semantics) overwrites it
 stored values/duration outright rather than stacking.
 
 Only `Blessing`/`Increase AGI` are currently modeled, matching pinned
-`legacy/rathena/src/map/status.cpp`: Blessing adds `+val1` (its `val2`, which
-equals `val1` for a player target) to STR/INT/DEX; Increase AGI does not modify
-the AGI stat itself (no default `val2` assignment exists for it in pinned
-`status_change_start`) but grants a flat `+25` move-speed haste value and a
-`+val1` attack-speed bonus.
-
-The `npc-interaction-heal-action.pcapng` capture (see `ai/iro-2026-wire.md`) proves
-Captain Carocc's own dialogue turn produced no client-visible bytes at all for
-`specialeffect2`/`skilleffect`/`sc_start`. Pending independent wire proof of their
-packet layout, Athena implements only their required server-side semantics and
-sends no client packet for them; this is not Captain-specific — any generated
-script reaching these commands gets the same behavior.
+`legacy/rathena/src/map/status.cpp` and independently confirmed by the
+`npc-interaction-heal-action.pcapng` frame-3496 burst (`ai/iro-2026-wire.md`):
+Blessing adds `+val1` (its `val2`, which equals `val1` for a player target) to
+STR/INT/DEX; Increase AGI adds `+(2 + val1)` (its `val2`, per
+`status_change_start_post_delay`'s val-settings switch) to AGI itself, and
+additionally grants a flat `+25` move-speed haste value and a `+val1`
+attack-speed bonus. `StartStatusAsync` sends the capture-proven client
+synchronization for both: a `0x0983` (`ZC_MSG_STATE_CHANGE3`) activation icon
+(`EFST_BLESSING=10`/`EFST_INC_AGI=12`) and `0x0141` (`ZC_COUPLESTATUS`) for each
+capture-proven affected base stat (STR/INT/DEX for Blessing, AGI for Increase
+AGI). `SkillEffectAsync` sends the matching `0x09CB` skill-cast visual
+(`SKID`/`level` from the script's own arguments). `specialeffect2` remains a
+no-op: the capture proves zero `0x01F3` bytes for it in this same burst, so no
+packet is synthesized for it pending independent wire proof. An earlier version
+of this document incorrectly claimed all of `specialeffect2`/`skilleffect`/
+`sc_start` produced zero client bytes in this capture; that claim was based on a
+misattributed frame and has been retracted (see `ai/iro-2026-wire.md`).
+`specialeffect2`'s own zero-byte finding, specifically, still holds.
 
 - Remaining rAthena NPCs, warps, shops, monsters, items, and scripts.
 - Poring spawn/combat/death and quest kill-progress synchronization.

@@ -43,15 +43,26 @@ public sealed class CharacterStatusEffectState(TimeProvider timeProvider)
     // not average or add to the previous instance. Matches that: the newest call wins.
     //
     // val2/val3 default to 0, matching sc_start's own 3-argument default (no val2/val3
-    // supplied). Pinned status_change_start then computes type-specific defaults for
-    // some statuses before storing them (e.g. SC_BLESSING's default-value switch sets
-    // val2 = val1 for a BL_PC target - MapServer's status state models player targets
-    // exclusively, so that specialization is applied unconditionally here rather than
-    // duplicated at every call site).
+    // supplied) - both the script BUILDIN_FUNC(sc_start) 3-arg form (script.cpp:12450-12453,
+    // start_type==1: status_change_start(bl, bl, type, rate, val1, 0, 0, val4, tick, flag))
+    // and the real skill-cast path used by AL_INCAGI (SkillIncreaseAgi::castendNoDamageId in
+    // skills/acolyte/incagi.cpp:28, via the sc_start(...) C++ helper at status.hpp:3665-3667,
+    // which is likewise `status_change_start(..., val1, val2=0, val3=0, val4=0, ...)`) pass
+    // val2=0 to status_change_start. Both then converge on the SAME function,
+    // status_change_start_post_delay (status.cpp:10309-13368, entered unconditionally for
+    // delay<=0 at status.cpp:10269-10270), whose "val settings" switch at status.cpp:10812
+    // (guarded only by `if(!(flag&SCSTART_LOADED))`, which is not set by either call path)
+    // computes type-specific defaults before storing them:
+    //   - SC_BLESSING: status.cpp:11566-11571, val2 = val1 for a BL_PC target.
+    //   - SC_INCREASEAGI: status.cpp:10844-10854, val2 = 2 + val1 ("// Agi change" comment).
+    // Both statuses are therefore identical between the script-command and skill-cast paths;
+    // this is a property of status_change_start_post_delay, not something either caller
+    // computes, so it is applied unconditionally here rather than duplicated at call sites.
     public void Start(ushort statusId, int durationMilliseconds, int val1, int val2 = 0, int val3 = 0)
     {
         if (durationMilliseconds <= 0) throw new ArgumentOutOfRangeException(nameof(durationMilliseconds), "Status duration must be positive.");
         if (statusId == StatusIds.Blessing) val2 = val1;
+        else if (statusId == StatusIds.IncreaseAgi) val2 = 2 + val1;
         var expiresAt = _timeProvider.GetUtcNow().AddMilliseconds(durationMilliseconds);
         _statuses[statusId] = new ActiveStatus(statusId, val1, val2, val3, expiresAt);
     }
@@ -82,16 +93,16 @@ public sealed class CharacterStatusEffectState(TimeProvider timeProvider)
     }
 
     // Derives effective stats from persisted base stats plus every currently active
-    // status. Pinned legacy/rathena/src/map/status.cpp semantics, verified against the
-    // exact SC_BLESSING/SC_INCREASEAGI val1/val2 usage in status_calc_str/agi/int/dex/hit
-    // and status_calc_speed/status_calc_aspd_rate:
-    //   - SC_BLESSING val2 (== val1 for a PC target; status_change_start's default-value
-    //     switch sets val2 = val1 for BL_PC) adds +val2 to STR, INT, and DEX.
-    //   - SC_INCREASEAGI does not modify the AGI stat itself (no val2 assignment exists
-    //     in status_change_start's default-value switch for SC_INCREASEAGI, so val2
-    //     stays the sc_start(type, tick, val1) default of 0, and status_calc_agi only
-    //     adds val2); it instead grants a flat +25 move-speed haste value
-    //     (status_calc_speed) and a +val1 attack-speed bonus (status_calc_aspd_rate).
+    // status. Pinned legacy/rathena/src/map/status.cpp semantics (see Start's remarks for
+    // full status_change_start_post_delay tracing):
+    //   - SC_BLESSING: status_calc_str/int/dex (status.cpp:6776-6778, 6977-6979, 7059-7061)
+    //     add +val2 (== val1 for a PC target) to STR, INT, and DEX.
+    //   - SC_INCREASEAGI: status_calc_agi (status.cpp:6843-6844) adds +val2 (== 2 + val1) to
+    //     AGI - it DOES modify the AGI stat, unlike an earlier incorrect assumption in this
+    //     file. It additionally grants a flat +25 move-speed haste value (status_calc_speed,
+    //     status.cpp:8151-8152) and a +val1 attack-speed bonus (status_calc_aspd,
+    //     status.cpp:8344-8345); both are unconditional (no RENEWAL/#ifdef guards around
+    //     either SC_INCREASEAGI line in this pinned revision).
     public EffectiveCharacterStats Recalculate(CharacterGameplayState baseState)
     {
         PruneExpired();
@@ -109,6 +120,7 @@ public sealed class CharacterStatusEffectState(TimeProvider timeProvider)
 
         if (TryGet(StatusIds.IncreaseAgi, out var increaseAgi))
         {
+            agility = (ushort)(agility + increaseAgi.Val2);
             moveSpeedHaste = Math.Max(moveSpeedHaste, 25);
             attackSpeedBonus += increaseAgi.Val1;
         }

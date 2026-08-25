@@ -880,34 +880,75 @@ public sealed class MapClientSession : IDisposable, INpcScriptHost
         foreach (var packet in IroCharacterProgressionPackets.Build(result, baseExperience > 0, jobExperience > 0)) await WriteAsync(packet, cancellationToken);
     }
 
+    // Frame 3496 of npc-interaction-heal-action.pcapng (Captain Carocc's completion burst;
+    // see ai/iro-2026-wire.md for the complete byte segmentation) proves heal 9999,0 is
+    // followed by a ZC_USE_SKILL (0x09CB) visual: SKID=28 (AL_HEAL), level=9999 (the exact
+    // heal amount, not the resulting HP), src=the executing NPC's actor, target=player,
+    // result=1. The pinned BUILDIN_FUNC(heal)/status_heal path does not itself call
+    // clif_skill_nodamage for this case, so the precise source line producing this packet
+    // was not conclusively located in static source; the packet's existence, layout, and
+    // field values are wire-proven and used as-is, attributed to HealAsync (not
+    // SpecialEffectAsync/SkillEffectAsync - see their remarks) because its level value
+    // matches the heal amount, not any skilleffect argument in Captain's script.
     async Task INpcScriptHost.HealAsync(int hp, int sp, CancellationToken cancellationToken)
     {
         var state = _gameplayState ?? throw new InvalidOperationException("Character gameplay state is not loaded.");
         var result = await new CharacterHealService(state).HealAsync(hp, sp, cancellationToken)
             ?? throw new InvalidOperationException("Heal persistence failed.");
-        // No client packet is sent when the mutation left HP/SP unchanged (e.g. an
-        // already-full heal) - there is nothing to synchronize. This mirrors the
-        // existing GrantExperienceAsync policy of only emitting the packets for
-        // fields that actually changed; it is not Captain-specific behavior.
+        // No parameter packet is sent when the mutation left HP/SP unchanged (e.g. an
+        // already-full heal) - there is nothing to synchronize. This mirrors the existing
+        // GrantExperienceAsync policy of only emitting packets for fields that actually
+        // changed; it is not Captain-specific behavior.
         if (result.HpChanged) await WriteAsync(IroCharacterProgressionPackets.Parameter(5, result.After.CurrentHp), cancellationToken);
         if (result.SpChanged) await WriteAsync(IroCharacterProgressionPackets.Parameter(7, result.After.CurrentSp), cancellationToken);
+        if (hp > 0) await WriteAsync(IroStatusEffectPackets.BuildUseSkillVisual(IroStatusEffectPackets.AlHeal, hp, _accountId, _generatedScriptActorId), cancellationToken);
     }
 
-    // The npc-interaction-heal-action capture proves Captain Carocc's dialogue turn
-    // that reaches specialeffect2/skilleffect/sc_start produced zero client-visible
-    // bytes for those three commands (see ai/iro-2026-wire.md). Pending independent
-    // wire proof of their packet layout, Athena implements only the required
-    // server-side semantics: specialeffect2/skilleffect are presentation-only in
-    // pinned rAthena (no persistent state), so there is nothing to mutate; sc_start's
-    // server-side semantics are implemented by StartStatusAsync below.
+    // Pinned legacy/rathena/src/map/script.cpp BUILDIN_FUNC(specialeffect2) calls
+    // clif_specialeffect (-> ZC_NOTIFY_EFFECT2, 0x01F3), which the capture proves was NOT
+    // sent anywhere in Captain's completion burst (no 0x01F3 bytes anywhere in the
+    // reassembled stream; see ai/iro-2026-wire.md). This remains a documented, unproven gap:
+    // the server-side effect is presentation-only (no persistent state), so there is nothing
+    // to mutate, and no packet is synthesized without independent wire proof.
     Task INpcScriptHost.SpecialEffectAsync(int effectId, CancellationToken cancellationToken) => Task.CompletedTask;
 
-    Task INpcScriptHost.SkillEffectAsync(int skillId, int level, CancellationToken cancellationToken) => Task.CompletedTask;
+    // Pinned skilleffect(skillId, level) -> script_skill_effect -> clif_skill_nodamage for a
+    // CAST_NODAMAGE skill (AL_INCAGI/AL_BLESSING both are), producing the same ZC_USE_SKILL
+    // (0x09CB) family independently proven by the capture for Captain's Blessing/Increase AGI
+    // activation (SKID=34/level=10 and SKID=29/level=10 respectively, src=Captain's actor,
+    // target=player). Emitted here (once per skilleffect call, exactly matching Captain's
+    // script order) rather than folded into StartStatusAsync, since skilleffect and sc_start
+    // are independent script commands with independent capture-proven packets.
+    Task INpcScriptHost.SkillEffectAsync(int skillId, int level, CancellationToken cancellationToken) =>
+        WriteAsync(IroStatusEffectPackets.BuildUseSkillVisual((ushort)skillId, level, _accountId, _generatedScriptActorId), cancellationToken);
 
-    Task INpcScriptHost.StartStatusAsync(int statusId, int durationMilliseconds, int val1, CancellationToken cancellationToken)
+    // sc_start's generic server-side semantics (CharacterStatusEffectState.Start) plus, for
+    // the two currently modeled statuses, their capture-proven client synchronization: a
+    // ZC_MSG_STATE_CHANGE3 (0x0983) activation icon and the ZC_COUPLESTATUS (0x0141)/generic
+    // parameter packets for whichever effective stats that status changes, all independently
+    // verified against frame 3496 of npc-interaction-heal-action.pcapng (see
+    // ai/iro-2026-wire.md and CharacterStatusEffectState's remarks for the exact val1/val2
+    // derivation). Other statusIds apply only server-side state, matching the generic,
+    // non-Captain-specific policy used throughout this host.
+    async Task INpcScriptHost.StartStatusAsync(int statusId, int durationMilliseconds, int val1, CancellationToken cancellationToken)
     {
-        _statusEffects.Start((ushort)statusId, durationMilliseconds, val1);
-        return Task.CompletedTask;
+        var id = (ushort)statusId;
+        _statusEffects.Start(id, durationMilliseconds, val1);
+        if (!_statusEffects.TryGet(id, out var status)) return;
+        var actorId = _accountId;
+
+        if (id == CharacterStatusEffectState.StatusIds.Blessing)
+        {
+            await WriteAsync(IroStatusEffectPackets.BuildStatusChange3(actorId, IroStatusEffectPackets.EfstBlessing, true, durationMilliseconds, durationMilliseconds, status.Val1), cancellationToken);
+            await WriteAsync(IroStatusEffectPackets.BuildCoupleStatus(IroStatusEffectPackets.SpStr, (_gameplayState?.State.Strength ?? 0), status.Val2), cancellationToken);
+            await WriteAsync(IroStatusEffectPackets.BuildCoupleStatus(IroStatusEffectPackets.SpInt, (_gameplayState?.State.Intelligence ?? 0), status.Val2), cancellationToken);
+            await WriteAsync(IroStatusEffectPackets.BuildCoupleStatus(IroStatusEffectPackets.SpDex, (_gameplayState?.State.Dexterity ?? 0), status.Val2), cancellationToken);
+        }
+        else if (id == CharacterStatusEffectState.StatusIds.IncreaseAgi)
+        {
+            await WriteAsync(IroStatusEffectPackets.BuildStatusChange3(actorId, IroStatusEffectPackets.EfstIncAgi, true, durationMilliseconds, durationMilliseconds, status.Val1), cancellationToken);
+            await WriteAsync(IroStatusEffectPackets.BuildCoupleStatus(IroStatusEffectPackets.SpAgi, (_gameplayState?.State.Agility ?? 0), status.Val2), cancellationToken);
+        }
     }
 
     private static TaskCompletionSource NewSignal() => new(TaskCreationOptions.RunContinuationsAsynchronously);

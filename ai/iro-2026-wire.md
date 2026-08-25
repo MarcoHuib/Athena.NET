@@ -189,51 +189,91 @@ one-based menu selection transport using a test WorldEntity. Quest traffic, comb
 and item acquisition in this capture remain future evidence without runtime support.
 
 Captain Carocc's pinned source is `legacy/rathena/npc/re/jobs/novice/academy.txt:133`
-(`int_land,78,103,5 script Captain Carocc#intro_npc03`). Frames 3172-3186 of
-`npc-interaction-heal-action.pcapng` (reassembled TCP stream, verified byte-for-byte
-identical in both the compact and the fuller "all-gravity-traffic" exports of the
-same capture) prove the captured character already had quest 21001 active when this
-Captain interaction ran: frame 3186's payload contains, immediately after the
-NUL-terminated "...I'll trust you." message text, `0x0B0C` (add quest 21001 active),
-then `0x02B4` (remove quest 21001), then `0x0B0C` (add quest 21008 active) — with
-zero other packets between them. TCP sequence numbers across frames 3172→3186 are
-exactly contiguous (no gap, no retransmission), so this is not a reassembly artifact.
+(`int_land,78,103,5 script Captain Carocc#intro_npc03`). An earlier version of this
+document claimed frames 3172-3186 proved Captain's `specialeffect2`/`heal`/
+`skilleffect`/`sc_start`/`getexp` commands produced zero client-visible bytes. That
+claim was based on a misattributed frame: frame 3186's dialogue text ("...I'll trust
+you.") and its preceding lines do not appear anywhere in the pinned
+`academy.txt:133` script, so frame 3186 is not proven to be Captain's real pinned
+`case 0:` dialogue in the first place, and the "silence" observed there proves
+nothing about Captain's actual heal/status/getexp commands. **The zero-byte claim is
+retracted.**
 
-This proves that the pinned script's `specialeffect2 EF_HEAL2`, `heal 9999,0`,
-`skilleffect 34,0`, `sc_start SC_BLESSING,240000,10`, `skilleffect 29,0`,
-`sc_start SC_INCREASEAGI,240000,10`, `completequest 21001`, and `getexp 600,600` —
-all of which execute in this exact dialogue turn per the pinned source, since quest
-21001 was already active — produced **no observed client-facing bytes whatsoever**
-in this capture, beyond the quest transition packets already documented above. No
-`0x00B0`/`0x0ACB` parameter-change packet, no special-effect packet, no status/EFST
-packet, and no distinguishable heal-HP-sync packet appears anywhere in the
-reassembled stream for this turn.
+Frame 3496 of `npc-interaction-heal-action.pcapng` (reassembled TCP stream, byte-
+identical between the compact and fuller "all-gravity-traffic" exports; the target
+`0x00B4` message spans frames 3485→3496 - the 8-byte header lands in 3485, the
+17-byte remainder opens 3496) is the server burst immediately after
+"[Captain Carocc] / All done now? / Hunt 2 Porings and get 2 pieces of Wood for the
+sailor. / Good luck." (this exact text is likewise not found verbatim in pinned
+`academy.txt`, so this specific in-game NPC's exact script correlation to the pinned
+file remains unproven — matching the pre-existing disclosure a few paragraphs above
+that Captain/Lumin/Sailor dialogue text could not be correlated to pinned
+declarations). What IS conclusively proven, independent of exact script-line
+attribution, is the complete wire behavior of a Blessing(val1=10)/Increase
+AGI(val1=10)/Heal(9999) sequence applied to a player by an NPC actor, which is
+exactly the runtime capability Captain's pinned `heal`/`skilleffect`/`sc_start`
+commands require. The reassembled 461-byte burst (offset 0 = start of frame 3496,
+continuing the split `0x00B4` from frame 3485) segments as:
 
-This is capture evidence, not an implementation gap: Athena's generated Captain
-script must apply these HP/SP, EXP, and temporary-status mutations to authoritative
-server-side state exactly per pinned rAthena semantics, but must not synthesize any
-client-facing packet for `specialeffect2`, `skilleffect`, or `sc_start`/status-sync
-without independent proof.
+| Offset | Packet | Fields |
+|---:|---|---|
+| 0x11 | `0x00B4` len=22 | "All done now?" |
+| 0x27 | `0x00B4` len=64 | "Hunt 2 Porings and get 2 pieces of Wood for the sailor." |
+| 0x67 | `0x00B4` len=19 | "Good luck." |
+| 0x7A,0x82,0x8A,0xA0,0xA8 | `0x00B0` | var 45/50/53/53/0 (DEF2/FLEE2/ASPD/ASPD/SPEED - derived-stat cascade, not modeled) |
+| 0x92 | `0x0141` | statusType=14(AGI) base=1 plus=**12** |
+| 0xB0 | `0x0983` len=29 | type=**12(EFST_INC_AGI)** actorId=player state=1 total=remain=**240000** val1=**10** val2=0 val3=0 |
+| 0xCD | `0x09CB` len=17 | SKID=**29(AL_INCAGI)** level=**10** target=player src=Captain's actor result=1 |
+| 0xDE..0xF6 | `0x00B0`x3, `0x0141` | var 41/45/42(ATK2/DEF2/MATK1 cascade); statusType=13(STR) base=1 plus=**10** |
+| 0x104..0x11C | `0x00B0`x3, `0x0141` | var 44/47/43(DEF1/MDEF2/MATK2 cascade); statusType=16(INT) base=1 plus=**10** |
+| 0x12A..0x16A | `0x00B0`x7, `0x0141` | var 8/7/41/44/47/49/53/42 (MAXSP/SP/ATK2/DEF1/MDEF2/FLEE1/ASPD/MATK1 cascade); statusType=17(DEX) base=1 plus=**10** |
+| 0x178 | `0x00B0` | var=49 (FLEE1 cascade) |
+| 0x180 | `0x0983` len=29 | type=**10(EFST_BLESSING)** actorId=player state=1 total=remain=**240000** val1=**10** val2=0 val3=0 |
+| 0x19D | `0x09CB` len=17 | SKID=**34(AL_BLESSING)** level=**10** target=player src=Captain's actor result=1 |
+| 0x1AE | `0x00B0` | var=**5(HP)** val=**40** |
+| 0x1B6 | `0x09CB` len=17 | SKID=**28(AL_HEAL)** level=**9999** target=player src=Captain's actor result=1 |
+| 0x1C7 | `0x00B6` len=6 | dialogue close |
 
-For `getexp`/heal specifically, this is a genuine open contradiction rather than a
-confirming absence: pinned `pc_gainexp` unconditionally calls
-`clif_updatestatus(SP_BASEEXP)`/`SP_JOBEXP` even without a level-up, and pinned
-`status_heal` normally triggers an HP/SP sync via the same generic parameter-change
-mechanism Athena's existing `GrantExperienceAsync`/`0x00B0`/`0x0ACB` serializers
-already implement for the Novice-progression slice (`ai/world-data.md`). The
-capture's own quest state proves quest 21001 was already active for this turn
-(`0x02B4` removes 21001 immediately after a `0x0B0C` add-active-1 for it earlier in
-the same turn), so pinned Captain's `getexp 600,600` should have executed here too,
-yet no EXP/HP/SP parameter packet appears anywhere in the reassembled stream.
+Every non-cascade field matches pinned source exactly: `0x0983` = `ZC_MSG_STATE_CHANGE3`
+(`clif.cpp:6461,6486-6509`, 29 bytes, `type.W actorId.L state.B totalMsec.L remainMsec.L
+val1.L val2.L val3.L`); `EFST_BLESSING=10`/`EFST_INC_AGI=12` (`status.hpp:1456-1469`,
+`EFST_BLANK=-1` origin); `0x09CB` = `ZC_USE_SKILL` (`packets_struct.hpp:4674-4683`,
+17 bytes, PACKETVER_RE>=20130724 layout, built by `clif_skill_nodamage`); `0x0141` =
+`ZC_COUPLESTATUS` (`clif.cpp:3608-3618`, 14 bytes, `statusType.L base.L plus.L`, sent
+by `clif_updatestatus(SP_STR/SP_AGI/SP_INT/SP_DEX)` — `map.hpp:500-501` gives
+`SP_STR=13, SP_AGI=14, SP_INT=16, SP_DEX=17`); the captured `plus` values (STR/INT/
+DEX=+10, AGI=+12) exactly match `db/re/status.yml`'s `Blessing`/`Increaseagi`
+`CalcFlags` (`Str/Int/Dex` and `Agi/Speed/Aspd` respectively) combined with
+`status_change_start_post_delay`'s val-settings switch (`status.cpp:10844-10854`,
+`val2 = 2 + val1` for `SC_INCREASEAGI`; `status.cpp:11566-11571`, `val2 = val1` for
+`SC_BLESSING` on a `BL_PC` target) — independently confirming the server-side fix
+already applied to `CharacterStatusEffectState`.
 
-This is treated as an unexplained capture gap, not as evidence that Captain (or
-heal/getexp generally) requires suppressed client sync. Athena's generated Captain
-script mutates authoritative gameplay state exactly per pinned semantics and reuses
-the existing, independently wire-verified `GrantExperienceAsync`/`CharacterProgressionService`
-path for `getexp` unchanged, and the existing `0x00B0` parameter-change mechanism for
-`heal`'s HP/SP sync (skipping the packet only when the mutation left HP/SP
-unchanged, e.g. an already-full heal) — the same generic policy any other generated
-script gets, not a Captain-specific behavior.
+One field is a genuine, documented discrepancy against the pinned snapshot: pinned
+`status_change_start_post_delay` (`status.cpp:13194`) sends `val1` only when the
+status DB entry sets the `SendVal1` flag (`scdb->flag[SCF_SENDVAL1] ? val1 : 1`), and
+neither `Blessing` nor `Increaseagi` sets it in `db/re/status.yml:445-481` — meaning
+pinned source implies `val1=1` (hardcoded), yet the capture proves `val1=10` (the
+real skill level) for both. This is treated as the capture's operator-side status DB
+differing from this pinned snapshot for the `SendVal1` flag on these two entries;
+per this project's evidence priority the capture's `val1` is used as-is.
+
+The `0x09CB` packets' `src` actor (Captain, not the player) was likewise not
+conclusively traced to a specific pinned call site: `skilleffect(id,lv)`'s own code
+path (`script.cpp:15519-15556`, `script_skill_effect`) targets `bl=sd` (the player)
+for both src and target when called with the 2-argument form Captain's script uses,
+which would imply `src=player`, not `src=Captain`. The capture is used as-is per the
+same evidence priority; the packet's existence, layout, and its skill-ID/level/
+target-actor fields are unambiguous regardless of this open src-attribution question.
+
+The heal visual (`0x09CB SKID=28 level=9999`) is likewise not attributable to
+`specialeffect2 EF_HEAL2`, whose pinned path (`BUILDIN_FUNC(specialeffect2)` ->
+`clif_specialeffect` -> `0x01F3`/`ZC_NOTIFY_EFFECT2`) produced **zero** `0x01F3` bytes
+anywhere in the 461-byte burst — that part of the original zero-byte claim holds.
+`level=9999` matches `heal 9999,0`'s exact HP argument (not the resulting clamped
+HP=40, which is separately synced via the ordinary `0x00B0 var=5` parameter packet
+immediately before it), so Athena attributes this visual to `heal`, not
+`specialeffect2`.
 
 Captain Carocc's captured `0x09FF/105` actor record uses object type 6, actor ID
 7963, class 873 at offset 23, and the same modern idle-unit layout as the proven

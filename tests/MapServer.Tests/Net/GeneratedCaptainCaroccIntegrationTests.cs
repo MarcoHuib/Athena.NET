@@ -74,6 +74,11 @@ public sealed class GeneratedCaptainCaroccIntegrationTests
         Assert.Equal("[Captain Carocc]\0", Message(await ReadDynamic(stream)));
         Assert.Equal("It is a hard task, but you look tough enough.\0", Message(await ReadDynamic(stream)));
 
+        // Frame-3496 proven burst, in the generated script's exact call order (academy.txt:165-172):
+        // specialeffect2(no-op) -> heal(9999,0) -> skilleffect(34,0) -> sc_start(BLESSING) ->
+        // skilleffect(29,0) -> sc_start(INCREASEAGI). See ai/iro-2026-wire.md for the full
+        // byte segmentation this was derived from.
+
         // heal(9999,0): HP 20 -> 40 (clamped to MaxHp), sent via the generic 0x00B0 parameter path.
         // The packet is only sent after HealAsync's mutation is persisted (see
         // CharacterHealService/CharacterGameplayStateSession.MutateAsync), so observing it here is
@@ -85,6 +90,50 @@ public sealed class GeneratedCaptainCaroccIntegrationTests
         Assert.Equal(PacketConstants.ZcParameterChange, BinaryPrimitives.ReadInt16LittleEndian(healPacket));
         Assert.Equal((ushort)5, BinaryPrimitives.ReadUInt16LittleEndian(healPacket.AsSpan(2)));
         Assert.Equal(40U, BinaryPrimitives.ReadUInt32LittleEndian(healPacket.AsSpan(4)));
+
+        // heal(9999,0) also sends the capture-proven 0x09CB AL_HEAL visual (target=player, src=Captain).
+        var healVisual = await ReadExact(stream, 17);
+        Assert.Equal(PacketConstants.ZcUseSkill, BinaryPrimitives.ReadInt16LittleEndian(healVisual));
+        Assert.Equal(IroStatusEffectPackets.AlHeal, BinaryPrimitives.ReadUInt16LittleEndian(healVisual.AsSpan(2)));
+        Assert.Equal(9999, BinaryPrimitives.ReadInt32LittleEndian(healVisual.AsSpan(4)));
+        Assert.Equal(7u, BinaryPrimitives.ReadUInt32LittleEndian(healVisual.AsSpan(8)));
+        Assert.Equal(actor.ActorId, BinaryPrimitives.ReadUInt32LittleEndian(healVisual.AsSpan(12)));
+
+        // skilleffect(34,0) sends the AL_BLESSING 0x09CB cast visual (level=0, the script's own arg).
+        var blessingVisual = await ReadExact(stream, 17);
+        Assert.Equal(PacketConstants.ZcUseSkill, BinaryPrimitives.ReadInt16LittleEndian(blessingVisual));
+        Assert.Equal((ushort)34, BinaryPrimitives.ReadUInt16LittleEndian(blessingVisual.AsSpan(2)));
+        Assert.Equal(0, BinaryPrimitives.ReadInt32LittleEndian(blessingVisual.AsSpan(4)));
+
+        // sc_start(SC_BLESSING,240000,10) sends 0x0983 activation (EFST_BLESSING=10, val1=10)
+        // then 0x0141 STR/INT/DEX (base=1, plus=val1=10).
+        var blessingActivation = await ReadExact(stream, 29);
+        Assert.Equal(PacketConstants.ZcMsgStateChange3, BinaryPrimitives.ReadInt16LittleEndian(blessingActivation));
+        Assert.Equal(IroStatusEffectPackets.EfstBlessing, BinaryPrimitives.ReadUInt16LittleEndian(blessingActivation.AsSpan(2)));
+        Assert.Equal(10, BinaryPrimitives.ReadInt32LittleEndian(blessingActivation.AsSpan(17)));
+        foreach (var expectedType in new ushort[] { IroStatusEffectPackets.SpStr, IroStatusEffectPackets.SpInt, IroStatusEffectPackets.SpDex })
+        {
+            var stat = await ReadExact(stream, 14);
+            Assert.Equal(PacketConstants.ZcCoupleStatus, BinaryPrimitives.ReadInt16LittleEndian(stat));
+            Assert.Equal(expectedType, BinaryPrimitives.ReadUInt32LittleEndian(stat.AsSpan(2)));
+            Assert.Equal(10, BinaryPrimitives.ReadInt32LittleEndian(stat.AsSpan(10)));
+        }
+
+        // skilleffect(29,0) sends the AL_INCAGI 0x09CB cast visual.
+        var incAgiVisual = await ReadExact(stream, 17);
+        Assert.Equal(PacketConstants.ZcUseSkill, BinaryPrimitives.ReadInt16LittleEndian(incAgiVisual));
+        Assert.Equal((ushort)29, BinaryPrimitives.ReadUInt16LittleEndian(incAgiVisual.AsSpan(2)));
+
+        // sc_start(SC_INCREASEAGI,240000,10) sends 0x0983 activation (EFST_INC_AGI=12, val1=10)
+        // then 0x0141 AGI (base=1, plus=2+val1=12).
+        var incAgiActivation = await ReadExact(stream, 29);
+        Assert.Equal(PacketConstants.ZcMsgStateChange3, BinaryPrimitives.ReadInt16LittleEndian(incAgiActivation));
+        Assert.Equal(IroStatusEffectPackets.EfstIncAgi, BinaryPrimitives.ReadUInt16LittleEndian(incAgiActivation.AsSpan(2)));
+        Assert.Equal(10, BinaryPrimitives.ReadInt32LittleEndian(incAgiActivation.AsSpan(17)));
+        var agiStat = await ReadExact(stream, 14);
+        Assert.Equal(PacketConstants.ZcCoupleStatus, BinaryPrimitives.ReadInt16LittleEndian(agiStat));
+        Assert.Equal(IroStatusEffectPackets.SpAgi, BinaryPrimitives.ReadUInt32LittleEndian(agiStat.AsSpan(2)));
+        Assert.Equal(12, BinaryPrimitives.ReadInt32LittleEndian(agiStat.AsSpan(10)));
 
         // completequest 21001 sends 0x02B4 (quest removed from client log) before getexp's
         // progression packets - matching ai/iro-2026-wire.md's documented completequest
@@ -113,7 +162,8 @@ public sealed class GeneratedCaptainCaroccIntegrationTests
         Assert.True(progressionPacketCount > 0);
         Assert.Equal(21008u, BinaryPrimitives.ReadUInt32LittleEndian(addQuest.AsSpan(2)));
 
-        // sc_start SC_BLESSING/SC_INCREASEAGI applied to session-local status state; no client packet.
+        // sc_start SC_BLESSING/SC_INCREASEAGI additionally applied to session-local status state
+        // (server-side authority; already proven client-synced above).
         Assert.True(session.StatusEffects.TryGet(CharacterStatusEffectState.StatusIds.Blessing, out var blessing));
         Assert.Equal(10, blessing.Val1);
         Assert.True(session.StatusEffects.TryGet(CharacterStatusEffectState.StatusIds.IncreaseAgi, out var increaseAgi));
