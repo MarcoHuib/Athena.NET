@@ -4,7 +4,7 @@
 // </auto-generated>
 using Athena.Net.MapServer.World;
 
-namespace Athena.Net.MapServer.Generated.World.Izlude;
+namespace Athena.Net.MapServer.Generated.World.Izlude.Academy;
 
 internal static class GeneratedWarps
 {

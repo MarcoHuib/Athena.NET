@@ -7,9 +7,9 @@
 using Athena.Net.MapServer.World;
 using Athena.Net.MapServer.World.GeneratedScripts;
 
-namespace Athena.Net.MapServer.Generated.World.Izlude
+namespace Athena.Net.MapServer.Generated.World.Izlude.Academy.Scripts
 {
-internal sealed class WarpIntLand04IntroToIzludeDOnTouchScript : INpcScript
+internal sealed class IntroToIzludeOnTouchScript : INpcScript
 {
     public async Task ExecuteAsync(ScriptContext context, CancellationToken cancellationToken)
     {
@@ -45,29 +45,5 @@ internal sealed class WarpIntLand04IntroToIzludeDOnTouchScript : INpcScript
         await context.SetSavePointAsync(local_map, 128, 142, cancellationToken);
 #line default
     }
-}
-}
-
-namespace Athena.Net.MapServer.World.GeneratedScripts
-{
-internal static class WarpIntLand04IntroToIzludeDOnTouchScriptRegistration
-{
-    internal static GeneratedScriptRegistration Create() =>
-        new(
-            new WorldEntityDefinition(
-                1, "warp:int_land04:intro_to_izlude_d",
-                "Warp",
-                new WorldActorComponent("#intro_to_izlude_d", "int_land04", 49, 57, 0, 45, 0),
-                [],
-                [new ScriptBehaviorDefinition(
-                    "OnTouch", "int_land04", 49, 57, 2, 2,
-                    true, true,
-                    ["Conditional", "QuestState", "Dialogue", "DialogueNext", "Selection", "SetQuest", "CompleteQuest", "Close", "Cutin", "VariableAssignment", "NpcIdentity", "StringReplace", "Warp", "SavePoint"],
-                    "Generated from legacy/rathena/npc/re/warps/cities/izlude.txt:83",
-                    null,
-                    "#intro_to_izlude")],
-                new WorldSourceInfo("rAthena", "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca", "legacy/rathena/npc/re/warps/cities/izlude.txt", 83)),
-            "OnTouch",
-            static () => new Athena.Net.MapServer.Generated.World.Izlude.WarpIntLand04IntroToIzludeDOnTouchScript());
 }
 }

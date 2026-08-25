@@ -58,9 +58,83 @@ and performs the existing same-server transfer through `ScriptContext`.
 
 | Runtime entity | Generated equivalent | Runtime consumer | Parity test | Safe to remove JSON |
 |---|---|---|---|---|
-| `int_land04/#intro_to_izlude_d` | `IntroToIzlude.g.cs` | Generated registry + `ScriptContext` | generated stock-iRO session integration | Yes; removed |
-| `iz_int/Wounded Swordsman#intro_npc02_iz_int` | `WoundedSwordsman.cs` | Generated registry + `ScriptContext` | visible actor/click/dialogue/quest integration | Yes; no runtime JSON existed |
-| `iz_int` and `iz_int03` room door pairs | `RequiredWarps.cs` | compiled `WorldMapRegistry` | generated minimal-warp/manual-login tests | Yes; aggregate removed |
+| `int_land04/#intro_to_izlude_d` + duplicates | `Academy/AcademyWorld.cs`, `Academy/AcademyWarpTriggers.cs`, `Academy/Scripts/IntroToIzludeOnTouchScript.cs` | `WorldRegistryBuilder` + `ScriptContext` | generated stock-iRO session integration | Yes; no runtime JSON existed |
+| `iz_int/#ship_out` + duplicates | `Academy/AcademyWorld.cs`, `Academy/AcademyWarpTriggers.cs`, `Academy/Scripts/ShipOutOnTouchScript.cs` | `WorldRegistryBuilder` + `ScriptContext` | generated ShipOut03 warp/savepoint integration | Yes; no runtime JSON existed |
+| `iz_int/Wounded Swordsman#intro_npc02_iz_int` + duplicates | `Academy/AcademyWorld.cs`, `Academy/AcademyNpcs.cs`, `Academy/Scripts/*.cs` | `WorldRegistryBuilder` + `ScriptContext` | visible actor/click/dialogue/quest integration | Yes; no runtime JSON existed |
+| `int_land/Captain Carocc#intro_npc03`, `int_land/Lumin#new_ship` + duplicates | `Academy/AcademyWorld.cs`, `Academy/AcademyNpcs.cs` (actor-only, no behavior) | `WorldRegistryBuilder` | visible actor presence | Yes; no runtime JSON existed |
+| `iz_int` and `iz_int03` room door pairs | `Academy/AcademyWarps.cs` | compiled `WorldMapRegistry` | generated minimal-warp/manual-login tests | Yes; aggregate removed |
+
+## Generate an area's NPC/warp-trigger definitions + placements (duplicate-aware)
+
+`compile-npc-world` groups a rAthena `script`/`duplicate(...)` chain into ONE
+shared `NpcDefinition`/`WarpTriggerDefinition` + ONE shared `INpcScript` class
++ N `NpcPlacement`/`WarpTriggerPlacement` records, instead of emitting N
+independent classes with duplicated dialogue. `--name` selects ordinary NPC
+templates (`WorldEntityConverter.ConvertNpcDefinitions`); `--warp-name`
+selects WARPNPC templates such as `#ship_out`/`#intro_to_izlude`
+(`WorldEntityConverter.ConvertWarpTriggers`) — a parallel, warp-scoped type
+pair mirroring `NpcDefinition`/`NpcPlacement` exactly, kept separate because
+warp triggers have no sprite/class concept and never model NPC content.
+
+Both conversions are always lossless: for a template with 4 duplicates they
+always find the complete set of 5 placements (the template's own row plus its
+4 duplicates), regardless of which of them a particular generated world slice
+actually uses. Emission selection (`--exclude-placement`/`--warp-exclude-placement`,
+`--no-behavior`) is applied strictly after that lossless conversion and never
+special-cases a name inside either converter.
+
+The current checked Academy slice is reproduced with:
+
+```bash
+dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- compile-npc-world \
+  --source-root legacy/rathena/npc/re/jobs/novice \
+  --source-root legacy/rathena/npc/re/warps/cities \
+  --name 'Wounded Swordsman#intro_npc02_iz_int' \
+  --name 'Wounded Swordsman#intro_npc01_iz_int' \
+  --name 'Captain Carocc#intro_npc03' \
+  --name 'Lumin#new_ship' \
+  --exclude-placement 'npc:iz_int:wounded swordsman#intro_npc01_iz_int' \
+  --exclude-placement 'npc:int_land:captain carocc#intro_npc03' \
+  --exclude-placement 'npc:int_land:lumin#new_ship' \
+  --no-behavior 'Captain Carocc#intro_npc03' \
+  --no-behavior 'Lumin#new_ship' \
+  --warp-name '#ship_out' \
+  --warp-name '#intro_to_izlude' \
+  --warp-exclude-placement 'warp:iz_int:ship_out' \
+  --warp-exclude-placement 'warp:int_land01:intro_to_izlude_a' \
+  --warp-exclude-placement 'warp:int_land02:intro_to_izlude_b' \
+  --warp-exclude-placement 'warp:int_land03:intro_to_izlude_c' \
+  --warp-exclude-placement 'warp:int_land:intro_to_izlude' \
+  --namespace Athena.Net.MapServer.Generated.World.Izlude.Academy \
+  --output-dir src/MapServer/Generated/World/Izlude/Academy
+```
+
+`--exclude-placement`/`--warp-exclude-placement` preserve today's exact
+vertical slice: the pinned `Wounded Swordsman#intro_npc01_iz_int` OnTouch body
+isn't currently lowerable (a `sleep2` timer construct), so only its OnClick
+("Lying"/cloak-toggle) behavior is emitted; `#ship_out`'s and
+`#intro_to_izlude`'s own template placements (`iz_int`/`int_land`) and
+`#intro_to_izlude`'s `_a/_b/_c` duplicates were never part of the original
+hand-curated registry, matching `int_land`'s Captain Carocc/Lumin template
+placements. `--no-behavior` keeps Captain Carocc and Lumin actor-only: both
+have real, non-trivial rAthena click dialogue (the converter finds it
+losslessly), but their scripts deliberately stay unregistered pending real
+healing/EXP/status-effect/inventory runtime support (see `ai/world-data.md`)
+— this is an explicit emission-time decision, not a converter limitation.
+
+Omitting the exclusion/no-behavior flags entirely emits every placement and
+behavior the converter finds for the selected `--name`/`--warp-name`
+templates — the normal, fully-reproducible-from-source case for new content
+that doesn't need to preserve a pre-existing narrower slice.
+
+`compile-npc-world` writes one area-level `AcademyWorld.cs` (one
+`world.AddNpc(...)`/`world.AddWarpTrigger(...)` call per definition), one
+area-level `AcademyNpcs.cs` (one `NpcDefinition` field per definition), one
+area-level `AcademyWarpTriggers.cs` when `--warp-name` is given (one
+`WarpTriggerDefinition` field per definition), and one `Scripts/*.cs` file per
+unique executable behavior — no per-NPC generated fragments, no hand-maintained
+registration list to edit when new content is added within the same
+invocation's scope.
 
 ## Offline JSON conversion
 

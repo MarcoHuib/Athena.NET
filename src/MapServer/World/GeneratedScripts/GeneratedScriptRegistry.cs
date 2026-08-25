@@ -1,10 +1,17 @@
+using Athena.Net.MapServer.Generated.World.Izlude.Academy;
+
 namespace Athena.Net.MapServer.World.GeneratedScripts;
 
 public static partial class GeneratedScriptRegistry
 {
-    public static NpcScriptRegistry Registry { get; } = new NpcScriptRegistryBuilder().AddGenerated(CreateRegistrations()).Build();
+    private static readonly WorldRegistryBuildResult Result = BuildRegistry();
 
-    public static IReadOnlyList<WorldEntityDefinition> Entities => Registry.Entities;
+    public static NpcScriptRegistry Registry => Result.Scripts;
+
+    // Includes actor-only entities (e.g. Captain Carocc/Lumin) directly - they never depend on having
+    // a script registration to be present here, since WorldRegistryBuilder tracks entities independently
+    // of whether AddNpc's definition has any behaviors.
+    public static IReadOnlyList<WorldEntityDefinition> Entities => Result.Entities;
 
     public static bool ContainsEntity(string entityId) => Entities.Any(entity => string.Equals(entity.Id, entityId, StringComparison.OrdinalIgnoreCase));
 
@@ -13,23 +20,12 @@ public static partial class GeneratedScriptRegistry
         return Registry.TryCreate(entityId, trigger, out script);
     }
 
-    private static IReadOnlyList<GeneratedScriptRegistration> CreateRegistrations() =>
-    [
-        WarpIntLand04IntroToIzludeDOnTouchScriptRegistration.Create(),
-        WarpIzInt03ShipOut03OnTouchScriptRegistration.Create(),
-        WarpIzInt01ShipOut01OnTouchScriptRegistration.Create(),
-        WarpIzInt02ShipOut02OnTouchScriptRegistration.Create(),
-        WarpIzInt04ShipOut04OnTouchScriptRegistration.Create(),
-        NpcIzIntWoundedSwordsmanIntroNpc02IzIntOnClickScriptRegistration.Create(),
-        NpcIzInt03WoundedSwordsmanIntroNpc01IzInt03OnClickScriptRegistration.Create(),
-        NpcIzInt03WoundedSwordsmanIntroNpc02IzInt03OnClickScriptRegistration.Create(),
-        NpcIzInt01WoundedSwordsmanIntroNpc01IzInt01OnClickScriptRegistration.Create(),
-        NpcIzInt01WoundedSwordsmanIntroNpc02IzInt01OnClickScriptRegistration.Create(),
-        NpcIzInt02WoundedSwordsmanIntroNpc01IzInt02OnClickScriptRegistration.Create(),
-        NpcIzInt02WoundedSwordsmanIntroNpc02IzInt02OnClickScriptRegistration.Create(),
-        NpcIzInt04WoundedSwordsmanIntroNpc01IzInt04OnClickScriptRegistration.Create(),
-        NpcIzInt04WoundedSwordsmanIntroNpc02IzInt04OnClickScriptRegistration.Create(),
-    ];
+    private static WorldRegistryBuildResult BuildRegistry()
+    {
+        var builder = new WorldRegistryBuilder();
+        AcademyWorld.Register(builder);
+        return builder.Build();
+    }
 }
 
 public sealed class NpcScriptRegistry

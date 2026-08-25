@@ -116,44 +116,75 @@ public sealed class CompilerTests
     }
 
     [Fact]
-    public async Task RealIntroToIzlude_GenerationIsDeterministicAndMatchesCompiledSource()
+    public async Task RealAcademyWorld_GenerationIsDeterministicAndMatchesCompiledAcademyTree()
     {
         var repository = FindRepositoryRoot();
-        var first = Path.Combine(Path.GetTempPath(), $"intro-{Guid.NewGuid():N}.g.cs");
-        var second = Path.Combine(Path.GetTempPath(), $"intro-{Guid.NewGuid():N}.g.cs");
+        var first = Path.Combine(Path.GetTempPath(), $"academy-{Guid.NewGuid():N}");
+        var second = Path.Combine(Path.GetTempPath(), $"academy-{Guid.NewGuid():N}");
         try
         {
-            string[] Arguments(string output) => ["compile-script", "--source-root", Path.Combine(repository, "legacy/rathena/npc/re/warps"), "--source-file", "cities/izlude.txt", "--map", "int_land04", "--name", "#intro_to_izlude_d", "--kind", "warp", "--output", output];
+            string[] Arguments(string outputDir) =>
+            [
+                "compile-npc-world",
+                "--source-root", Path.Combine(repository, "legacy/rathena/npc/re/jobs/novice"),
+                "--source-root", Path.Combine(repository, "legacy/rathena/npc/re/warps/cities"),
+                "--name", "Wounded Swordsman#intro_npc02_iz_int", "--name", "Wounded Swordsman#intro_npc01_iz_int",
+                "--name", "Captain Carocc#intro_npc03", "--name", "Lumin#new_ship",
+                "--exclude-placement", "npc:iz_int:wounded swordsman#intro_npc01_iz_int",
+                "--exclude-placement", "npc:int_land:captain carocc#intro_npc03",
+                "--exclude-placement", "npc:int_land:lumin#new_ship",
+                "--no-behavior", "Captain Carocc#intro_npc03", "--no-behavior", "Lumin#new_ship",
+                "--warp-name", "#ship_out", "--warp-name", "#intro_to_izlude",
+                "--warp-exclude-placement", "warp:iz_int:ship_out",
+                "--warp-exclude-placement", "warp:int_land01:intro_to_izlude_a",
+                "--warp-exclude-placement", "warp:int_land02:intro_to_izlude_b",
+                "--warp-exclude-placement", "warp:int_land03:intro_to_izlude_c",
+                "--warp-exclude-placement", "warp:int_land:intro_to_izlude",
+                "--namespace", "Athena.Net.MapServer.Generated.World.Izlude.Academy",
+                "--output-dir", outputDir,
+            ];
             Assert.Equal(0, await WorldDataImporterCli.RunAsync(Arguments(first)));
             Assert.Equal(0, await WorldDataImporterCli.RunAsync(Arguments(second)));
-            Assert.Equal(await File.ReadAllBytesAsync(first), await File.ReadAllBytesAsync(second));
-            Assert.Equal(await File.ReadAllBytesAsync(Path.Combine(repository, "src/MapServer/Generated/World/Izlude/IntroToIzlude.g.cs")), await File.ReadAllBytesAsync(first));
-        }
-        finally
-        {
-            File.Delete(first); File.Delete(second);
-        }
-    }
 
-    [Fact]
-    public async Task RealWoundedSwordsmanOnClick_IsDeterministicAndMatchesCompiledSource()
-    {
-        var repository = FindRepositoryRoot();
-        var first = Path.Combine(Path.GetTempPath(), $"wounded-{Guid.NewGuid():N}.cs");
-        var second = Path.Combine(Path.GetTempPath(), $"wounded-{Guid.NewGuid():N}.cs");
-        try
-        {
-            string[] Arguments(string output) => ["compile-script", "--source-root", Path.Combine(repository, "legacy/rathena/npc/re/jobs/novice"), "--source-file", "academy.txt", "--map", "iz_int", "--name", "Wounded Swordsman#intro_npc02_iz_int", "--kind", "npc", "--output", output];
-            Assert.Equal(0, await WorldDataImporterCli.RunAsync(Arguments(first)));
-            Assert.Equal(0, await WorldDataImporterCli.RunAsync(Arguments(second)));
-            Assert.Equal(await File.ReadAllBytesAsync(first), await File.ReadAllBytesAsync(second));
-            Assert.Equal(await File.ReadAllBytesAsync(Path.Combine(repository, "src/MapServer/Generated/World/Izlude/WoundedSwordsman.cs")), await File.ReadAllBytesAsync(first));
-            var source = await File.ReadAllTextAsync(first);
-            Assert.Contains("OnClickScript", source);
-            Assert.Contains("context.CutinAsync(\"tutorial02\", (byte)4", source);
-            Assert.Contains("new WorldActorComponent(\"Wounded Swordsman#intro_npc02_iz_int\", \"iz_int\", 56, 32, 3, 688, 4)", source);
+            var academyDir = Path.Combine(repository, "src/MapServer/Generated/World/Izlude/Academy");
+            foreach (var relative in new[] { "AcademyNpcs.cs", "AcademyWorld.cs", "AcademyWarpTriggers.cs" })
+            {
+                var checkedIn = await File.ReadAllBytesAsync(Path.Combine(academyDir, relative));
+                var firstRun = await File.ReadAllBytesAsync(Path.Combine(first, relative));
+                var secondRun = await File.ReadAllBytesAsync(Path.Combine(second, relative));
+                Assert.Equal(firstRun, secondRun);
+                Assert.Equal(checkedIn, firstRun);
+            }
+
+            var scriptFiles = Directory.EnumerateFiles(Path.Combine(academyDir, "Scripts"), "*.cs").OrderBy(f => f, StringComparer.Ordinal).ToArray();
+            var firstScriptFiles = Directory.EnumerateFiles(Path.Combine(first, "Scripts"), "*.cs").OrderBy(f => f, StringComparer.Ordinal).ToArray();
+            Assert.Equal(scriptFiles.Select(Path.GetFileName), firstScriptFiles.Select(Path.GetFileName));
+            foreach (var (checkedInPath, firstRunPath) in scriptFiles.Zip(firstScriptFiles))
+                Assert.Equal(await File.ReadAllBytesAsync(checkedInPath), await File.ReadAllBytesAsync(firstRunPath));
+
+            var woundedSwordsmanScript = scriptFiles.Select(File.ReadAllText).Single(source => source.Contains("context.CutinAsync(\"tutorial02\", (byte)4"));
+            Assert.Contains("OnClickScript", woundedSwordsmanScript);
+
+            var shipOutScript = scriptFiles.Select(File.ReadAllText).Single(source => source.Contains("\"ship_out\", \"\")"));
+            Assert.Contains("await context.WarpAsync(local_map, 85, 107, cancellationToken);", shipOutScript);
+
+            var introToIzludeScript = scriptFiles.Select(File.ReadAllText).Single(source => source.Contains("\"intro_to_izlude\", \"\")"));
+            Assert.Contains("await context.WarpAsync(local_map, 196, 209, cancellationToken);", introToIzludeScript);
+
+            var academyNpcs = await File.ReadAllTextAsync(Path.Combine(academyDir, "AcademyNpcs.cs"));
+            Assert.Contains("\"Wounded Swordsman#intro_npc02_iz_int\"", academyNpcs);
+            Assert.Contains("CaptainCarocc = new(", academyNpcs);
+            Assert.Contains("Lumin = new(", academyNpcs);
+
+            var academyWarpTriggers = await File.ReadAllTextAsync(Path.Combine(academyDir, "AcademyWarpTriggers.cs"));
+            Assert.Contains("\"#ship_out\"", academyWarpTriggers);
+            Assert.Contains("\"#intro_to_izlude\"", academyWarpTriggers);
+
+            var academyWorld = await File.ReadAllTextAsync(Path.Combine(academyDir, "AcademyWorld.cs"));
+            Assert.Equal(4, System.Text.RegularExpressions.Regex.Matches(academyWorld, "warp:iz_int0.:ship_out0.").Count);
+            Assert.Contains("warp:int_land04:intro_to_izlude_d", academyWorld);
         }
-        finally { File.Delete(first); File.Delete(second); }
+        finally { Directory.Delete(first, true); Directory.Delete(second, true); }
     }
 
     [Fact]
@@ -170,13 +201,24 @@ public sealed class CompilerTests
             Assert.Equal(0, await WorldDataImporterCli.RunAsync(Arguments(first)));
             Assert.Equal(0, await WorldDataImporterCli.RunAsync(Arguments(second)));
             Assert.Equal(await File.ReadAllBytesAsync(first), await File.ReadAllBytesAsync(second));
-            Assert.Equal(await File.ReadAllBytesAsync(Path.Combine(repository, "src/MapServer/Generated/World/Izlude/RequiredWarps.cs")), await File.ReadAllBytesAsync(first));
+            var checkedIn = await File.ReadAllTextAsync(Path.Combine(repository, "src/MapServer/Generated/World/Izlude/Academy/AcademyWarps.cs"));
+            var generated = (await File.ReadAllTextAsync(first)).Replace(
+                "namespace Athena.Net.MapServer.Generated.World.Izlude;",
+                "namespace Athena.Net.MapServer.Generated.World.Izlude.Academy;", StringComparison.Ordinal);
+            Assert.Equal(checkedIn, generated);
         }
         finally { File.Delete(first); File.Delete(second); }
     }
 
+    // compile-script (the single-file WARPNPC path) stays available for standalone use, but #ship_out's
+    // checked-in representation now lives only inside the area-grouped Academy tree (AcademyWarpTriggers.cs
+    // + Scripts/ShipOutOnTouchScript.cs, one shared class for all 5 placements) - proven by
+    // RealAcademyWorld_GenerationIsDeterministicAndMatchesCompiledAcademyTree above. This test instead
+    // proves compile-script's independent lowering of the SAME pinned #ship_out03 duplicate produces the
+    // identical executable body as the Academy-emitted shared class, i.e. the underlying lowering logic
+    // for this content is unchanged by the Definition/Placement/Behavior split.
     [Fact]
-    public async Task RealShipOut03OnTouch_IsDeterministicAndMatchesCompiledSource()
+    public async Task RealShipOut03OnTouch_MatchesTheSharedAcademyBehaviorBody()
     {
         var repository = FindRepositoryRoot();
         var first = Path.Combine(Path.GetTempPath(), $"ship-out03-{Guid.NewGuid():N}.cs");
@@ -184,9 +226,25 @@ public sealed class CompilerTests
         {
             var arguments = new[] { "compile-script", "--source-root", Path.Combine(repository, "legacy/rathena/npc/re/warps/cities"), "--source-file", "izlude.txt", "--map", "iz_int03", "--name", "#ship_out03", "--kind", "warp", "--output", first };
             Assert.Equal(0, await WorldDataImporterCli.RunAsync(arguments));
-            Assert.Equal(await File.ReadAllBytesAsync(Path.Combine(repository, "src/MapServer/Generated/World/Izlude/ShipOut03.cs")), await File.ReadAllBytesAsync(first));
+
+            var standalone = await File.ReadAllTextAsync(first);
+            var standaloneBody = ExecuteAsyncBody(standalone);
+
+            var academyScript = Directory.EnumerateFiles(Path.Combine(repository, "src/MapServer/Generated/World/Izlude/Academy/Scripts"), "*.cs")
+                .Select(File.ReadAllText).Single(source => source.Contains("\"ship_out\", \"\")"));
+            var academyBody = ExecuteAsyncBody(academyScript);
+
+            Assert.Equal(academyBody, standaloneBody);
         }
         finally { File.Delete(first); }
+    }
+
+    private static string ExecuteAsyncBody(string source)
+    {
+        var start = source.IndexOf("#line", StringComparison.Ordinal);
+        var end = source.IndexOf("#line default", StringComparison.Ordinal);
+        var body = source[start..end];
+        return body[(body.IndexOf('\n') + 1)..].Trim();
     }
 
     [Fact]
