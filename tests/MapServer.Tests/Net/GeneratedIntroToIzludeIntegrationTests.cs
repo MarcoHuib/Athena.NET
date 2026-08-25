@@ -36,15 +36,12 @@ public sealed class GeneratedIntroToIzludeIntegrationTests
         // The movement request registered a deferred OnTouch arrival at (50,59) - not fired yet
         // (this is the intersected/truncated destination, before the walk actually reaches it; see
         // MapClientSession.ProcessDueMovementAsync's own doc comment on why arrival is deferred to
-        // real elapsed walking time rather than firing at click time). Drive _movementLoop
-        // deterministically, one cell-duration step at a time, via the injected fake clock instead
-        // of a real-time sleep, until the character's authoritative position actually reaches the
-        // trigger cell - mirroring exactly what the scheduler requires in production, just without
-        // real wall-clock waiting. Only once the walk actually reaches that cell does
-        // ProcessDueMovementAsync's PendingScriptTouchArrival branch send the NPC actor spawn
-        // (SendVisibleWarpActorsAsync) and start the OnTouch script - so this must run before the
-        // reads below, not after them.
-        await MovementSchedulerTestHelpers.AdvanceUntilArrivedAsync(session, clock, client, targetX: 50, targetY: 59);
+        // real elapsed walking time rather than firing at click time). Advance the injected fake
+        // clock through the whole route in one deterministic step instead of a real-time sleep;
+        // completion is the bounded packet reads below (the NPC actor spawn/OnTouch script only
+        // start once ProcessDueMovementAsync's PendingScriptTouchArrival branch actually runs), not
+        // the session's position or socket buffer.
+        await MovementSchedulerTestHelpers.AdvanceEntireWalkAsync(clock, cellCount: 64);
 
         var actorId = await ReadActorId(stream);
         Assert.Equal("^4d4dffOnce you leave this island there is no way back.\0", ReadMessage(await ReadDynamic(stream)));

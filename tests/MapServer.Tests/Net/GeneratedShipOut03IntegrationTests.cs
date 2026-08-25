@@ -37,10 +37,13 @@ public sealed class GeneratedShipOut03IntegrationTests
 
         // The movement path intersects the warp's OnTouch trigger cell at (56,16) - one cell short
         // of the requested (56,15), matching TryFindFirstScriptTouchEnterAlongRoute's own
-        // intersection-truncation logic (see HandleIroMovementAsync). The deferred
-        // PendingScriptTouchArrival only fires once _movementLoop actually advances the walk there -
-        // drive it deterministically via the injected fake clock instead of a real-time sleep.
-        await MovementSchedulerTestHelpers.AdvanceUntilArrivedAsync(session, clock, client, targetX: 56, targetY: 16);
+        // intersection-truncation logic (see HandleIroMovementAsync). The deferred PendingWarpArrival
+        // only fires once _movementLoop actually advances the walk there, and TeleportTo (inside
+        // SendSameServerWarpAsync) moves the session to the post-warp map/cell before the map-change
+        // packet is written - so completion is the bounded packet reads below, not the session's
+        // position or socket buffer. 64 cells is a generous bound for this short route; the walk
+        // stops at its destination regardless of how far the clock advances past it.
+        await MovementSchedulerTestHelpers.AdvanceEntireWalkAsync(clock, cellCount: 64);
 
         var shipSpawn = await ReadDynamic(stream);
         Assert.Equal(actor.ActorId, BinaryPrimitives.ReadUInt32LittleEndian(shipSpawn.AsSpan(5)));
