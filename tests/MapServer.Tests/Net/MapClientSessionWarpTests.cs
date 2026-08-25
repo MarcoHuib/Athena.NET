@@ -49,18 +49,27 @@ public sealed class MapClientSessionWarpTests
         Assert.Equal("iz_int03", session.CurrentMapName);
         Assert.Equal((ushort)51, session.CurrentX);
         Assert.Equal((ushort)30, session.CurrentY);
-        Assert.Contains(persistence.Saves, save => save.MapName == "iz_int03" && save.X == 51 && save.Y == 30);
+
+        // SendSameServerWarpAsync writes the 0x0091 map-change packet BEFORE awaiting
+        // PersistPositionIfDirtyAsync, so the client can legitimately observe the packet above
+        // before the save has run - await the explicit completion signal (not the unsynchronized
+        // Saves list, which SavePositionAsync may still be concurrently appending to) rather than
+        // asserting on it immediately.
+        var persisted = await persistence.Saved.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal("iz_int03", persisted.MapName);
+        Assert.Equal((ushort)51, persisted.X);
+        Assert.Equal((ushort)30, persisted.Y);
         Assert.False(runTask.IsCompleted);
 
         client.Close();
         await runTask.WaitAsync(TimeSpan.FromSeconds(5));
-        Assert.Contains(persistence.Saves, save => save.MapName == "iz_int03" && save.X == 51 && save.Y == 30);
         listener.Stop();
     }
 
     private sealed class RecordingPositionPersistence : ICharacterPositionPersistence
     {
-        public List<(uint AccountId, uint CharId, string MapName, ushort X, ushort Y)> Saves { get; } = new();
+        public TaskCompletionSource<(uint AccountId, uint CharId, string MapName, ushort X, ushort Y)> Saved { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public Task<bool> SavePositionAsync(
             uint accountId,
@@ -70,7 +79,7 @@ public sealed class MapClientSessionWarpTests
             ushort y,
             CancellationToken cancellationToken)
         {
-            Saves.Add((accountId, charId, mapName, x, y));
+            Saved.TrySetResult((accountId, charId, mapName, x, y));
             return Task.FromResult(true);
         }
     }
