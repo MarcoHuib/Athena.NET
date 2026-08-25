@@ -2,6 +2,7 @@ using Athena.Net.MapServer.Config;
 using Athena.Net.MapServer.Logging;
 using Athena.Net.MapServer.Net;
 using Athena.Net.MapServer.Telemetry;
+using Athena.Net.MapServer.World;
 
 namespace Athena.Net.MapServer.Startup;
 
@@ -27,8 +28,9 @@ public static class MapServerApp
             cts.Cancel();
         };
 
+        var world = MapServerWorld.Build();
         var connector = new CharServerConnector(configStore);
-        var mapServer = new MapTcpServer(configStore, connector);
+        var mapServer = new MapTcpServer(configStore, connector, world);
 
         var connectTask = connector.RunAsync(cts.Token);
         await mapServer.RunAsync(cts.Token);

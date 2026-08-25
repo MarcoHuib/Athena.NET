@@ -20,6 +20,7 @@ public sealed class MapServerSession : IDisposable, ISession
         [PacketConstants.MapSavePointRequest] = MapSavePointProtocol.RequestLength,
         [PacketConstants.MapGameplayStateGetRequest] = MapCharacterGameplayStateProtocol.GetRequestLength,
         [PacketConstants.MapGameplayStateUpdateRequest] = MapCharacterGameplayStateProtocol.UpdateRequestLength,
+        [PacketConstants.MapInventoryAddRequest] = MapInventoryAddProtocol.RequestLength,
     };
 
     private readonly TcpClient _client;
@@ -112,6 +113,9 @@ public sealed class MapServerSession : IDisposable, ISession
                 break;
             case PacketConstants.MapGameplayStateUpdateRequest:
                 await HandleGameplayStateUpdateAsync(packet, cancellationToken);
+                break;
+            case PacketConstants.MapInventoryAddRequest:
+                await HandleInventoryAddRequestAsync(packet, cancellationToken);
                 break;
             default:
                 CharLogger.Warning($"Unknown map server packet 0x{packetType:X4}, disconnecting.");
@@ -343,6 +347,62 @@ public sealed class MapServerSession : IDisposable, ISession
         await WriteAsync(MapQuestStateProtocol.BuildResponse(request.CharId, request.QuestId, state, success), cancellationToken);
     }
 
+    private async Task HandleInventoryAddRequestAsync(byte[] packet, CancellationToken cancellationToken)
+    {
+        if (!MapInventoryAddProtocol.TryParseRequest(packet, out var request))
+        {
+            CharLogger.Warning($"Rejected malformed inventory-add request session={SessionId} length={packet.Length}.");
+            return;
+        }
+
+        uint newAmount = 0;
+        var success = false;
+        if (!IsInventoryAddRequestAuthorized(_authenticated, _ownedCharacters, request.AccountId, request.CharId, request.ItemId, request.Amount))
+        {
+            CharLogger.Warning(
+                $"Inventory-add rejected reason=unauthorized-or-invalid accountId={request.AccountId} " +
+                $"charId={request.CharId} itemId={request.ItemId}.");
+        }
+        else
+        {
+            try
+            {
+                await using var db = _dbFactory();
+                if (db is null)
+                {
+                    CharLogger.Warning("Inventory-add rejected reason=database-unavailable.");
+                }
+                else
+                {
+                    var row = await db.Inventory.FirstOrDefaultAsync(
+                        item => item.CharId == request.CharId && item.NameId == (uint)request.ItemId && item.Equip == 0, cancellationToken);
+                    if (row is null)
+                    {
+                        row = new() { CharId = request.CharId, NameId = (uint)request.ItemId, Amount = request.Amount, Identify = 1 };
+                        db.Inventory.Add(row);
+                    }
+                    else
+                    {
+                        row.Amount += request.Amount;
+                    }
+                    await db.SaveChangesAsync(cancellationToken);
+                    newAmount = row.Amount;
+                    success = true;
+                    CharLogger.Info(
+                        $"Inventory-add succeeded charId={request.CharId} itemId={request.ItemId} newAmount={newAmount}.");
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                CharLogger.Warning(
+                    $"Inventory-add rejected reason=database-error charId={request.CharId} " +
+                    $"itemId={request.ItemId} error={ex.GetType().Name}.");
+            }
+        }
+
+        await WriteAsync(MapInventoryAddProtocol.BuildResponse(request.CharId, request.ItemId, newAmount, success), cancellationToken);
+    }
+
     private async Task HandleGameplayStateGetAsync(byte[] packet, CancellationToken cancellationToken)
     {
         if (!MapCharacterGameplayStateProtocol.TryParseGet(packet, out var accountId, out var charId)) return;
@@ -449,6 +509,17 @@ public sealed class MapServerSession : IDisposable, ISession
 
     internal static bool IsGameplayStateRequestAuthorized(bool authenticated, IReadOnlySet<(uint AccountId,uint CharId)> ownedCharacters, uint accountId, uint charId)
         => authenticated && charId != 0 && ownedCharacters.Contains((accountId,charId));
+
+    internal static bool IsInventoryAddRequestAuthorized(
+        bool authenticated,
+        IReadOnlySet<(uint AccountId, uint CharId)> ownedCharacters,
+        uint accountId,
+        uint charId,
+        int itemId,
+        uint amount)
+    {
+        return authenticated && itemId > 0 && amount > 0 && ownedCharacters.Contains((accountId, charId));
+    }
 
     internal static bool IsQuestStateRequestAuthorized(
         bool authenticated,

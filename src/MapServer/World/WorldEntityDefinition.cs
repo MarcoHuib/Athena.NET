@@ -27,6 +27,37 @@ public abstract record WorldActionDefinition;
 public sealed record WarpAction(string Map, ushort X, ushort Y) : WorldActionDefinition;
 public sealed record SetSavePointAction(string Map, ushort X, ushort Y) : WorldActionDefinition;
 public sealed record WorldSourceInfo(string Repository, string Commit, string File, int Line);
+
+// Immutable, source-backed monster data (pinned rAthena db/re/mob_db.yml).
+// Renewal semantics: Attack -> rhw.atk (weapon-roll component when this mob
+// is the ATTACKER, irrelevant when it is the target), Defense -> hard DEF,
+// MagicDefense -> mdef (magic only). Soft physical DEF (def2/"vit_def") is
+// NOT a YAML field: it is derived at combat time as floor((Level+Vit)/2)
+// (status.cpp status_calc_misc, BL_MOB branch) from Vit here. BaseExp/JobExp
+// are 0 when the pinned block omits them entirely (rAthena YAML loader
+// default), matching a tutorial punching-bag mob - this is read from source,
+// never assumed nonzero because CharacterProgressionService exists.
+public sealed record MobDefinition(
+    int Id, string AegisName, string Name, int Level, uint MaxHp,
+    int Attack, int Attack2, int Defense, int MagicDefense,
+    int Str, int Agi, int Vit, int Int, int Dex, int Luk,
+    int AttackRange, int WalkSpeed, int AttackDelay,
+    long BaseExp, long JobExp,
+    WorldSourceInfo Source);
+
+// One pinned `monster` spawn-line declaration (npc/re/mobs/*.txt), scoped to
+// a single map. `Count` instances are maintained on that map; `RespawnDelayMs`
+// is the pinned mob.delay1 (npc_parse_mob defaults to 5000 when unspecified).
+public sealed record MobSpawnDefinition(MobDefinition Mob, string Map, int Count, int RespawnDelayMs, WorldSourceInfo Source);
+
+// One pinned quest_db.yml `Drops:` entry (quest.cpp QuestDatabase::parseBodyNode
+// / quest_update_objective's drop-processing loop). This is intentionally NOT a
+// kill-count objective: quest_update_objective only ever increments
+// sd->quest_log[i].count[j] for a quest's `Targets:` objectives, and quest
+// 21008 in the pinned source has none - it has only this Drops rule. Rate is
+// out of 10000 (rnd_chance(rate, 10000)); Count defaults to 1 when the pinned
+// YAML omits it (quest.cpp: "if (!targetExists) target->count = 1;").
+public sealed record QuestDropRule(uint QuestId, int MobId, int ItemId, int Count, int Rate, WorldSourceInfo Source);
 public sealed record NavigationDefinition(string EntityId, string SourceMap, ushort X, ushort Y, ushort RadiusX, ushort RadiusY, string DestinationMap, ushort DestinationX, ushort DestinationY, string SourceFile, int SourceLine)
 {
     public bool Contains(string map, ushort x, ushort y) => string.Equals(SourceMap, map, StringComparison.OrdinalIgnoreCase) && Math.Abs((int)X - x) <= RadiusX && Math.Abs((int)Y - y) <= RadiusY;

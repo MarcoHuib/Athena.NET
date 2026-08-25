@@ -5,12 +5,26 @@ namespace Athena.Net.MapServer.World;
 // Aggregation entry point for a world's content, generic across content kinds.
 // AddNpc is the first content family; future kinds (monster spawns, shop placements, etc.)
 // are expected to gain sibling AddX methods on this same builder rather than parallel types.
-public sealed record WorldRegistryBuildResult(IReadOnlyList<WorldEntityDefinition> Entities, NpcScriptRegistry Scripts);
+public sealed record WorldRegistryBuildResult(IReadOnlyList<WorldEntityDefinition> Entities, NpcScriptRegistry Scripts, IReadOnlyList<MobSpawnDefinition> MobSpawns);
 
 public sealed class WorldRegistryBuilder
 {
     private readonly List<WorldEntityDefinition> _entities = [];
     private readonly NpcScriptRegistryBuilder _scripts = new();
+    private readonly List<MobSpawnDefinition> _mobSpawns = [];
+
+    // Monster spawns have no sprite/script/actor-name concept of their own at
+    // build time (unlike AddNpc/AddWarpTrigger, which construct a
+    // WorldEntityDefinition here) - a MobSpawnDefinition is pure generated
+    // data; MonsterRegistry is what turns it into runtime WorldActor-shaped
+    // MobInstance actors, using the SAME WorldActorIdAllocator MapServerWorld
+    // hands to WorldMapRegistry, so monster/NPC/warp actor IDs share one
+    // namespace instead of each content kind allocating its own.
+    public WorldRegistryBuilder AddMobSpawn(MobSpawnDefinition spawn)
+    {
+        _mobSpawns.Add(spawn);
+        return this;
+    }
 
     public WorldRegistryBuilder AddNpc(NpcDefinition definition, IReadOnlyList<NpcPlacement> placements, bool explicitlyOverrideGenerated = false)
     {
@@ -68,7 +82,7 @@ public sealed class WorldRegistryBuilder
         return this;
     }
 
-    public WorldRegistryBuildResult Build() => new(_entities.ToArray(), _scripts.Build());
+    public WorldRegistryBuildResult Build() => new(_entities.ToArray(), _scripts.Build(), _mobSpawns.ToArray());
 
     private void Add(GeneratedScriptRegistration registration, bool replace)
     {

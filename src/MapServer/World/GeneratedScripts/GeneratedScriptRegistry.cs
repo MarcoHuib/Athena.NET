@@ -13,6 +13,13 @@ public static partial class GeneratedScriptRegistry
     // of whether AddNpc's definition has any behaviors.
     public static IReadOnlyList<WorldEntityDefinition> Entities => Result.Entities;
 
+    // Same underlying WorldRegistryBuilder.Build() result WorldMapRegistry.Tutorial's
+    // Entities/Registry already come from - MapServerWorld.Build() reads this so the
+    // composed live world's MonsterRegistry spawns from the identical generated data
+    // WorldMapRegistry.Tutorial itself would use, rather than reading AcademyMobSpawns
+    // directly and bypassing the builder.
+    public static IReadOnlyList<MobSpawnDefinition> MobSpawns => Result.MobSpawns;
+
     public static bool ContainsEntity(string entityId) => Entities.Any(entity => string.Equals(entity.Id, entityId, StringComparison.OrdinalIgnoreCase));
 
     public static bool TryCreate(string entityId, string trigger, out INpcScript script)
@@ -24,6 +31,14 @@ public static partial class GeneratedScriptRegistry
     {
         var builder = new WorldRegistryBuilder();
         AcademyWorld.Register(builder);
+        // AcademyMobSpawns.GPoringSpawns registration is composed here (not inside AcademyWorld.cs)
+        // because AcademyWorld.cs is `compile-npc-world` output, verified byte-for-byte reproducible
+        // against the pinned source by WorldDataImporter.Tests.CompilerTests.
+        // RealAcademyWorld_GenerationIsDeterministicAndMatchesCompiledAcademyTree. That emitter only
+        // knows NPC/warp source parsing today; extending it to also emit mob-spawn registrations was
+        // judged disproportionate for this one loop, so it lives here instead, alongside this file's
+        // other hand-authored composition logic.
+        foreach (var spawn in AcademyMobSpawns.GPoringSpawns) builder.AddMobSpawn(spawn);
         return builder.Build();
     }
 }

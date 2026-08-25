@@ -217,9 +217,222 @@ of this document incorrectly claimed all of `specialeffect2`/`skilleffect`/
 misattributed frame and has been retracted (see `ai/iro-2026-wire.md`).
 `specialeffect2`'s own zero-byte finding, specifically, still holds.
 
-- Remaining rAthena NPCs, warps, shops, monsters, items, and scripts.
-- Poring spawn/combat/death and quest kill-progress synchronization.
+- Remaining rAthena NPCs, warps, shops, items, and scripts.
+- Live client-facing monster spawn/attack/death/item-acquisition wire packets
+  (domain runtime exists; the network path is not wired - see "Monster combat
+  and quest drops" below).
 - Broader event/state-machine lowering and persistent rAthena variable scopes.
+
+## Monster combat and quest drops (G_PORING / quest 21008)
+
+### Verified stock-iRO evidence
+
+None found for combat itself. The supplied
+`npc-interaction-npc's_v2.pcapng`/`npc-interaction-heal-action.pcapng`
+captures (already cited above and in `ai/iro-2026-wire.md`) contain movement,
+warps, and extensive NPC/tutorial dialogue, but **no attack-initiation
+packet, no damage packet, no monster-death packet, and no item-acquisition
+packet correlated to a monster actor**. `ai/iro-2026-wire.md`'s own "Verified
+NPC dialogue evidence" section already states this explicitly: "Quest
+traffic, combat, and item acquisition in this capture remain future evidence
+without runtime support." This branch did not find a stronger capture. The
+only reusable *proven* wire fact for monster visibility is `0x09FF`
+(`ZC_NOTIFY_STANDENTRY`)'s field layout for a WARPNPC actor (object type `6`,
+speed sentinel `300`, HP sentinels `0xFFFFFFFF`) — and that layout is
+**object-type-specific**: pinned rAthena (`clif.cpp:1200` et al.) sends
+`objecttype = 0x5` (`NPC_MOB_TYPE`) for a real monster, with real current/max
+HP, not the `6`/sentinel-HP shape Athena's existing `IroWorldActorPackets.
+BuildWorldActor` already sends for NPCs/warps. Reusing that serializer
+unchanged for a monster would not be proven; a real monster-visibility packet
+is left as an explicit, isolated evidence gap rather than invented.
+
+### Pinned rAthena semantics
+
+- `npc/re/mobs/int_land.txt:11-15`: `int_land{,01,02,03,04},0,0 monster Poring
+  2401,40,5000` — mob ID **2401** (`Aegis G_PORING`), not ordinary Poring
+  (1002). `db/re/mob_db.yml` Id 2401 has **no `BaseExp`/`JobExp` fields at
+  all** (both resolve to 0) and `Modes: FixedItemDrop: true` (a normal-drop
+  rate-scaling flag, unrelated to aggression/passivity — this branch does not
+  claim to know whether G_PORING retaliates; no combat AI is implemented
+  either way, so the question is moot for this slice).
+- `mob.cpp:1117` (`mob_spawn`) + `map.cpp:1798`
+  (`map_search_freecell`): a spawn declaration with `x=0,y=0` and no
+  `xs,ys` is **not** literal coordinate `(0,0)` and **not** "random within a
+  small radius around `(0,0)`". `xs+ys<1` forces the search branch, which
+  performs a map-wide randomized-candidate search (excluding a configurable
+  edge margin, default 15 cells) checked against real GAT walkability
+  (`CELL_CHKREACH`), retried up to 8 times then falling back to a 50-try
+  whole-map search. Athena.NET has **no `.gat`/mapcache/collision data
+  anywhere in this repository** — not in its own runtime, and not in the
+  pinned `legacy/rathena` submodule (rAthena repos never ship the proprietary
+  client map resources a mapcache is built from; only the mapcache-building
+  *tool's* C++ source exists, `src/tool/mapcache.cpp`, with no generated
+  output checked in anywhere). This is a genuine external data gap, not a
+  scope choice; see `IMobSpawnCellSelector` /
+  `UnverifiedFallbackMobSpawnCellSelector` in `src/MapServer/World/
+  MobSpawnCellSelector.cs`, which isolates it behind one seam with a
+  deterministic (not walkability-checked) placeholder, explicitly documented
+  as non-authoritative rather than presented as production parity.
+- `db/re/quest_db.yml:12538-12543`: quest 21008 ("The first battle") has
+  **only** a `Drops:` rule (`G_PORING -> Wood @ Rate 10000`), **no `Targets:`
+  block**. `quest.cpp:quest_update_objective` (lines 757-838) proves the drop
+  loop is entirely independent of the kill-count/`Targets` objective loop:
+  quest 21008 has zero objectives, so nothing there ever runs for it. The
+  loop only ever iterates a character's own `quest_log` (`Q_COMPLETE` entries
+  are explicitly skipped at line 762), so an absent-from-log or completed
+  quest never reaches the drop-matching code at all. Rate `10000`
+  (`quest.cpp:813`, `rnd_chance(rate,10000)`) is out of 10000 and never rolls
+  at all when equal to 10000 (guaranteed). `Count` defaults to 1 when the
+  pinned YAML omits it (`quest.cpp:409-410`).
+- `npc/re/jobs/novice/academy.txt:133-199` (`Captain Carocc#intro_npc03`):
+  `setquest 21008` (already implemented, `CaptainCaroccOnClickScript.cs`) is
+  the only place quest 21008 is activated in the pinned tree; nothing sets a
+  kill counter anywhere.
+- `db/re/item_db_etc.yml:15582-15588`: Wood is item ID **6008**, `Type: Etc`,
+  which `itemdb.cpp:item_data::isStackable` makes stackable (every type except
+  Weapon/Armor/PetEgg/PetArmor/ShadowGear is stackable).
+- Combat formula (`status.cpp:2424` `status_base_atk`, `:2600`
+  `status_calc_misc`, `battle.cpp:2515` `battle_calc_base_damage`, `:4720`
+  `battle_calc_defense_reduction`, `:6766` `battle_calc_attack`): traced
+  exactly for the one case this slice supports — a fresh Novice, bare fists,
+  no 4th-tier `POW` stat allocation (`POW=0` is the real reset default,
+  `pc.cpp:9262`, not an invented value). `batk = floor((STR*10 + DEX*10/5 +
+  LUK*10/3 + BaseLevel*10/4)/10)`; unarmed weapon-roll contributes 0; monster
+  soft-DEF (`def2`) = `floor((Level+Vit)/2)` (mob's `Vit` defaults to 1 when
+  the pinned block omits it, per the constructor default at `mob.cpp:4954`,
+  not 0); `damage = batk*(4000+Defense)/(4000+10*Defense) - def2`; a result
+  `<1` is a **miss (0 damage)**, not floored to 1 (`battle_calc_attack:6766`
+  — there is no universal min-1-damage clamp for a normal attack). Hit/flee
+  accuracy rolls are deliberately not implemented (disclosed simplification,
+  not a silent one): this slice's only source of a miss is the damage-floor
+  rule above.
+
+### Athena.NET implementation
+
+Generated (via new `WorldDataImporter` commands `compile-mob-spawn`,
+`compile-quest-drop`, `compile-item`, mirroring the existing `compile-
+progression` hand-rolled-scalar-parser pattern rather than adding a new YAML
+library dependency). Global game data — "what is mob 2401", "what is item
+6008", "quest 21008's drop rule" — is deliberately **not** placed under the
+Academy world slice, since a `MobDefinition`/`ItemDefinition`/`QuestDropRule`
+is referenceable from any map/world, not Academy-specific:
+`src/MapServer/Generated/GameData/Mobs/GeneratedMobs.cs`,
+`GameData/Items/GeneratedItems.cs`, `GameData/Quests/GeneratedQuestDrops.cs`.
+Only the genuinely world-scoped placement data —
+`MobSpawnDefinition` ("spawn `GeneratedMobs.GPoring` on this map with this
+count/respawn") — stays under `src/MapServer/Generated/World/Izlude/Academy/
+AcademyMobSpawns.cs` (`int_land01`-`int_land04`, `int_land` base excluded —
+matching how Captain Carocc/Lumin already exclude it), referencing the global
+mob definition rather than duplicating it. `AcademyMobSpawnRegistration.cs`'s
+`world.AddMobSpawn(...)` loop over `AcademyMobSpawns.GPoringSpawns` is
+hand-composed (not compiler output, no `<auto-generated>` header) and
+deliberately kept out of `AcademyWorld.cs`: `compile-npc-world`'s
+`NpcWorldEmitter` only knows NPC/warp source parsing today and is verified
+byte-for-byte reproducible against the pinned source
+(`WorldDataImporter.Tests.CompilerTests.
+RealAcademyWorld_GenerationIsDeterministicAndMatchesCompiledAcademyTree`);
+extending that emitter to also emit mob-spawn registrations, or putting a
+hand-written line inside its otherwise-compiler-output file, was judged
+disproportionate/would break that reproducibility guarantee for one
+registration loop.
+
+Runtime (`src/MapServer/World/`): `MobDefinition`/`MobSpawnDefinition`
+(immutable, generated) vs. `MobInstance` (mutable runtime HP/lifecycle,
+`Alive`/`Dead`, atomic/idempotent damage-and-death under one lock).
+`WorldRegistryBuilder.AddMobSpawn` collects generated spawns into
+`WorldRegistryBuildResult.MobSpawns` alongside the existing `Entities`/
+`Scripts` fields, so `MonsterRegistry` spawns from the *same*
+`WorldRegistryBuilder.Build()` result `WorldMapRegistry.Tutorial` itself is
+built from (via `GeneratedScriptRegistry.MobSpawns`), rather than reading
+generated data directly and bypassing the builder.
+
+`MapServerWorld.Build()` (`src/MapServer/World/MapServerWorld.cs`) is the
+explicit composition root: it constructs **one** `WorldActorIdAllocator` and
+passes it to both `WorldMapRegistry.LoadGenerated(allocator)` and
+`MonsterRegistry`'s constructor, so NPC/warp actors and monster actors share
+one real actor-ID namespace — matching rAthena's own single NPC/monster
+domain — instead of two independently-numbered allocators that could
+collide. `MapServerApp.RunAsync` calls `MapServerWorld.Build()` once at
+startup and threads the result through `MapTcpServer` into every
+`MapClientSession` it constructs; that live path never falls back to
+`WorldMapRegistry.Tutorial` (which remains available only for existing
+tests/legacy standalone callers that don't combine world data with a monster
+runtime, since it builds its own private, unshared allocator).
+`MonsterRegistry` itself is **not** a static singleton like
+`WorldMapRegistry.Tutorial`: unlike that class's genuinely immutable
+definition data, a `MonsterRegistry` holds live mutable runtime state (each
+`MobInstance`'s HP/alive-dead/respawn timers), so it is constructed once at
+startup and passed down explicitly rather than hidden behind a lazy static
+property.
+
+`BasicAttackCalculator` is the pure damage-calculation function described
+above. `MonsterCombatCoordinator` is the single authoritative
+attack→damage→(exactly-once)death→quest-drop→respawn-scheduling transition.
+`QuestDropResolver` is generic/data-driven over `GeneratedQuestDrops.All`, not
+quest-21008-specific code, and is kept **pure and synchronous**: it takes a
+`Func<uint, CharacterQuestStatus>` — an already-resolved, in-memory snapshot
+lookup for just the quest IDs its generated rules mention — rather than an
+`ICharacterQuestPersistence` reference or a materialized "all active quest
+IDs" collection. Athena's runtime has no such materialized set anywhere
+(every real quest check in `MapClientSession` is single-quest-ID-scoped via
+`ICharacterQuestPersistence.GetQuestStateAsync`), so the resolver's caller is
+responsible for resolving each relevant quest ID through the real persistence
+interface beforehand and closing over the result — keeping CharServer/
+persistence I/O entirely outside the pure calculation.
+
+`CharacterInventorySession`/`ICharacterInventoryPersistence` +
+`MapInventoryAddProtocol` (new authenticated MapServer↔CharServer request/
+response pair, `0x2b31`/`0x2b32`, mirroring `MapQuestStateProtocol` exactly)
+add a real `CharInventory` row (find-existing-stack-or-create, then persist)
+through the same "calculate proposed mutation → persist → only report success
+on acknowledgement" rule `CharacterHealService`/`CharacterProgressionService`
+already follow. Respawn uses `TimeProvider`-driven due-time checks
+(`MonsterRegistry.ProcessDueRespawns`), not one `Timer`/`Task.Delay` per
+monster.
+
+Not wired: no client packet handler drives `MonsterCombatCoordinator.Attack`
+from a live socket (no verified attack-request packet ID/layout exists), and
+no monster-specific `0x09FF` variant is sent to make a spawned instance
+visible to a real client (see evidence gap above). `MapClientSession` now
+carries an optional `MonsterRegistry` field (populated on the live path via
+`MapServerWorld`, `null` on the test-facing constructor's default), but no
+packet handler reads it yet.
+
+### Inventory persistence guarantees — precise scope
+
+Proven: `MobInstance.ApplyDamage`'s lock ensures at most one
+`KilledByThisHit=true` per monster death, so at most one quest-drop-award
+*attempt* originates from any single death (`MonsterCombatCoordinatorTests`).
+
+NOT claimed, and explicitly out of scope for this branch:
+- **General inventory-mutation idempotency.** `CharServerConnector`'s
+  `_pendingInventoryAdds` dictionary is keyed by `(charId, itemId)` and its
+  `TryAdd` rejects (returns failure to the caller) a second concurrent
+  request for the same key while one is already in flight — this prevents
+  silent corruption/double-counting for concurrent same-character-same-item
+  requests, but it does so by **failing** the second request outright, not by
+  queuing or merging it. In ordinary single-player play this situation does
+  not arise from one character's own actions (`MapClientSession` processes
+  one TCP session's packets sequentially, so two `Attack` calls for the same
+  character never execute concurrently), but two *different* monsters dying
+  at nearly the same real-world instant for the same character (e.g. from
+  hypothetical future multi-monster-engagement gameplay) is a genuine,
+  undefended concurrency edge case this branch does not add new handling for.
+- **Commit-then-ack-loss.** If CharServer's DB commit for an inventory-add
+  succeeds but the TCP response never reaches MapServer (e.g. a dropped
+  connection), MapServer has no record the item was actually granted and no
+  operation/idempotency key to reconcile on a retry. No distributed
+  idempotency protocol is added in this branch for that case.
+- **DB-integration testing.** `HandleInventoryAddRequestAsync`'s EF Core
+  find-or-create/increment logic is exercised only indirectly, through
+  `CharacterInventorySessionTests`' fake-persistence unit tests and
+  `CharacterPositionPersistenceTests`' authorization-logic tests. This
+  repository has no precedent anywhere for integration-testing a CharServer
+  packet handler against a real (in-memory or SQLite) `CharDbContext` — the
+  only DB-touching CharServer test file (`CharQuestModelTests.cs`) inspects EF
+  compiled-model metadata and never executes a real query — so this branch
+  does not introduce that pattern either; the EF query/mutation path itself
+  is unverified against a real database.
 
 Expand the runtime only through tested vertical slices; do not restore bulk JSON
 runtime data as a shortcut.

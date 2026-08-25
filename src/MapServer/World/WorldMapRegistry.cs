@@ -17,13 +17,18 @@ public sealed class WorldMapRegistry
     public WorldMapRegistry(IEnumerable<WarpDefinition> warps, IEnumerable<WarpActorDefinition>? dynamicWarpActors = null)
         : this(warps, [], dynamicWarpActors) { }
 
-    internal WorldMapRegistry(IEnumerable<WarpDefinition> warps, IEnumerable<WorldEntityDefinition> entities, IEnumerable<WarpActorDefinition>? dynamicWarpActors = null, NpcScriptRegistry? scripts = null)
+    // `allocator` defaults to a fresh private instance, preserving every existing call site's
+    // "each WorldMapRegistry owns its own NPC/warp actor-ID namespace" behavior (all current tests
+    // and WorldMapRegistry.Tutorial rely on this). MapServerWorld.Build() is the one caller that
+    // passes an explicit, SHARED allocator, so the composed live world's NPCs/warps and monsters
+    // draw from the same ID namespace instead of two independently-numbered ones.
+    internal WorldMapRegistry(IEnumerable<WarpDefinition> warps, IEnumerable<WorldEntityDefinition> entities, IEnumerable<WarpActorDefinition>? dynamicWarpActors = null, NpcScriptRegistry? scripts = null, WorldActorIdAllocator? allocator = null)
     {
         Scripts = scripts ?? GeneratedScriptRegistry.Registry;
         _navigation = GeneratedTutorialNavigation.All;
         _warps = warps.ToArray();
         _entitiesById = entities.ToDictionary(entity => entity.Id, StringComparer.OrdinalIgnoreCase);
-        var allocator = new WorldActorIdAllocator();
+        allocator ??= new WorldActorIdAllocator();
         var dynamicActors = (dynamicWarpActors ?? []).ToArray();
         _dynamicWarpActorCount = dynamicActors.Length;
         var entityActorKeys = _entitiesById.Values.Where(entity => entity.Actor is not null).Select(entity => SemanticKey(entity.Actor!.Map, entity.Actor.Name)).ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -116,6 +121,12 @@ public sealed class WorldMapRegistry
     }
     private static string SemanticKey(string map, string name) => $"{map}:{name}";
     private static WorldMapRegistry LoadGenerated() => new(GeneratedWarps.All, GeneratedScriptRegistry.Entities, scripts: GeneratedScriptRegistry.Registry);
+
+    // Same generated data as Tutorial/LoadGenerated(), but taking an externally supplied allocator
+    // so MapServerWorld.Build() can hand WorldMapRegistry and MonsterRegistry the SAME
+    // WorldActorIdAllocator instance instead of Tutorial's own private one.
+    internal static WorldMapRegistry LoadGenerated(WorldActorIdAllocator allocator) =>
+        new(GeneratedWarps.All, GeneratedScriptRegistry.Entities, scripts: GeneratedScriptRegistry.Registry, allocator: allocator);
 }
 
 public readonly record struct WarpIntersection(WarpDefinition Warp, ushort X, ushort Y);
