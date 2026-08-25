@@ -3,6 +3,7 @@ using System.Net;
 using System.Net.Sockets;
 using Athena.Net.MapServer.Config;
 using Athena.Net.MapServer.Net;
+using Athena.Net.MapServer.Tests.Testing;
 using Athena.Net.MapServer.World;
 
 namespace Athena.Net.MapServer.Tests.Net;
@@ -21,8 +22,9 @@ public sealed class GeneratedShipOut03IntegrationTests
         using var serverClient = await listener.AcceptTcpClientAsync(); await connect;
         await using var stream = client.GetStream();
         var persistence = new RecordingPositionPersistence();
-        using var session = new MapClientSession(1, serverClient, new CharServerConnector(new MapConfigStore(new MapConfig(), "unused.conf")), true, "iz_int03", 51, 30,
-            WorldMapRegistry.Tutorial, positionPersistence: persistence, accountId: 7, charId: 9);
+        var clock = new ControllableTimeProvider();
+        await using var session = new MapClientSession(1, serverClient, new CharServerConnector(new MapConfigStore(new MapConfig(), "unused.conf")), true, "iz_int03", 51, 30,
+            WorldMapRegistry.Tutorial, positionPersistence: persistence, accountId: 7, charId: 9, timeProvider: clock);
         var run = session.RunAsync(CancellationToken.None);
 
         await stream.WriteAsync(new byte[] { 0x7d, 0x00, 0xaa });
@@ -32,6 +34,14 @@ public sealed class GeneratedShipOut03IntegrationTests
         Assert.Equal((short)0x08e2, BinaryPrimitives.ReadInt16LittleEndian(await ReadExact(stream, 27))); // generated guidance toward int_land
         await stream.WriteAsync(MovementPacket(56, 15));
         Assert.Equal((short)0x0087, BinaryPrimitives.ReadInt16LittleEndian(await ReadExact(stream, 12)));
+
+        // The movement path intersects the warp's OnTouch trigger cell at (56,16) - one cell short
+        // of the requested (56,15), matching TryFindFirstScriptTouchEnterAlongRoute's own
+        // intersection-truncation logic (see HandleIroMovementAsync). The deferred
+        // PendingScriptTouchArrival only fires once _movementLoop actually advances the walk there -
+        // drive it deterministically via the injected fake clock instead of a real-time sleep.
+        await MovementSchedulerTestHelpers.AdvanceUntilArrivedAsync(session, clock, client, targetX: 56, targetY: 16);
+
         var shipSpawn = await ReadDynamic(stream);
         Assert.Equal(actor.ActorId, BinaryPrimitives.ReadUInt32LittleEndian(shipSpawn.AsSpan(5)));
         var mapChange = await ReadExact(stream, 22);
@@ -48,7 +58,10 @@ public sealed class GeneratedShipOut03IntegrationTests
 
     private static byte[] MovementPacket(ushort x, ushort y) { var packet = new byte[6]; BinaryPrimitives.WriteInt16LittleEndian(packet, 0x035f); packet[2]=(byte)(x>>2); packet[3]=(byte)((x<<6)|((y>>4)&0x3f)); packet[4]=(byte)(y<<4); packet[5]=0xaa; return packet; }
     private static async Task<byte[]> ReadDynamic(Stream stream) { var header=await ReadExact(stream,4); var length=BinaryPrimitives.ReadUInt16LittleEndian(header.AsSpan(2)); return [..header,..await ReadExact(stream,length-4)]; }
-    private static async Task<byte[]> ReadExact(Stream stream,int length) { var data=new byte[length]; await stream.ReadExactlyAsync(data); return data; }
+
+    // Bounded assertion read: a 10-second guard against a packet that never arrives, NOT a
+    // synchronization mechanism.
+    private static async Task<byte[]> ReadExact(Stream stream,int length) { var data=new byte[length]; await stream.ReadExactlyAsync(data).AsTask().WaitAsync(TimeSpan.FromSeconds(10)); return data; }
 
     private sealed class RecordingPositionPersistence : ICharacterPositionPersistence
     {

@@ -10,7 +10,7 @@ public sealed class MapClientSessionGameplayStateTests
         using var listener=new TcpListener(IPAddress.Loopback,0); listener.Start(); var endpoint=(IPEndPoint)listener.LocalEndpoint;
         using var client=new TcpClient(); var connecting=client.ConnectAsync(endpoint.Address,endpoint.Port); using var server=await listener.AcceptTcpClientAsync(); await connecting;
         var state=new CharacterGameplayState(9,3,0,2,4,123,456,30,8,45,11,51,3,2,3,4,5,6,7); var persistence=new StubPersistence(state);
-        using var session=new MapClientSession(1,server,new CharServerConnector(new MapConfigStore(new MapConfig(),"unused")),false,gameplayStatePersistence:persistence);
+        await using var session=new MapClientSession(1,server,new CharServerConnector(new MapConfigStore(new MapConfig(),"unused")),false,gameplayStatePersistence:persistence);
         var auth=new MapAuthOkData(7,9,1,2,0,0,false,"iz_int01",18,26,0,0,0);
         await session.CompleteIroAuthenticationAsync(auth);
         Assert.Equal(state,session.GameplayState!.State); Assert.Equal((short)0x0b18,await ReadInt16Async(client.GetStream()));
@@ -22,7 +22,7 @@ public sealed class MapClientSessionGameplayStateTests
         using var listener=new TcpListener(IPAddress.Loopback,0); listener.Start(); var endpoint=(IPEndPoint)listener.LocalEndpoint;
         using var client=new TcpClient(); var connecting=client.ConnectAsync(endpoint.Address,endpoint.Port); using var server=await listener.AcceptTcpClientAsync(); await connecting;
         var persistence=new ProgressionPersistence(new(9,0,0,1,1,0,0,40,11,40,11,48,0,1,1,1,1,1,1));
-        using var session=new MapClientSession(1,server,new CharServerConnector(new MapConfigStore(new MapConfig(),"unused")),false,gameplayStatePersistence:persistence);
+        await using var session=new MapClientSession(1,server,new CharServerConnector(new MapConfigStore(new MapConfig(),"unused")),false,gameplayStatePersistence:persistence);
         await session.CompleteIroAuthenticationAsync(new(7,9,1,2,0,0,false,"iz_int01",18,26,0,0,0));
         var bootstrap=new byte[29]; await client.GetStream().ReadExactlyAsync(bootstrap);
 

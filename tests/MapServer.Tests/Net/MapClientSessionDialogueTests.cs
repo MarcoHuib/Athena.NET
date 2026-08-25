@@ -23,7 +23,7 @@ public sealed class MapClientSessionDialogueTests
         await using var stream = client.GetStream();
         var connector = new CharServerConnector(new MapConfigStore(new MapConfig(), "unused.conf"));
         var quests = new RecordingQuestPersistence();
-        using var session = new MapClientSession(1, serverClient, connector, true, "test", 10, 10, registry, questPersistence: quests, accountId: 7, charId: 9);
+        await using var session = new MapClientSession(1, serverClient, connector, true, "test", 10, 10, registry, questPersistence: quests, accountId: 7, charId: 9);
         var run = session.RunAsync(CancellationToken.None);
 
         await stream.WriteAsync(new byte[] { 0x7d, 0x00, 0xaa });
@@ -87,7 +87,7 @@ public sealed class MapClientSessionDialogueTests
         using var serverClient = await listener.AcceptTcpClientAsync(); await connect;
         await using var stream = client.GetStream();
         var connector = new CharServerConnector(new MapConfigStore(new MapConfig(), "unused.conf"));
-        using var session = new MapClientSession(1, serverClient, connector, true, "test", 10, 10, registry,
+        await using var session = new MapClientSession(1, serverClient, connector, true, "test", 10, 10, registry,
             questPersistence: new FailingQuestPersistence(), accountId: 7, charId: 9);
         var run = session.RunAsync(CancellationToken.None);
 

@@ -37,7 +37,7 @@ public sealed class MapClientSessionMovementRetargetTests
         await using var clientStream = client.GetStream();
         var connector = new CharServerConnector(new MapConfigStore(new MapConfig(), "unused.conf"));
         var clock = new FakeTimeProvider();
-        using var session = new MapClientSession(
+        await using var session = new MapClientSession(
             1,
             serverClient,
             connector,

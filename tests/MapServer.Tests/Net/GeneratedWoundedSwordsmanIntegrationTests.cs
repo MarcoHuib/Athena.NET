@@ -26,7 +26,7 @@ public sealed class GeneratedWoundedSwordsmanIntegrationTests
         using var serverClient = await listener.AcceptTcpClientAsync(); await connect;
         await using var stream = client.GetStream();
         var persistence = new RecordingQuestPersistence();
-        using var session = new MapClientSession(1, serverClient, new CharServerConnector(new MapConfigStore(new MapConfig(), "unused.conf")), true, "iz_int", 56, 32, registry,
+        await using var session = new MapClientSession(1, serverClient, new CharServerConnector(new MapConfigStore(new MapConfig(), "unused.conf")), true, "iz_int", 56, 32, registry,
             questPersistence: persistence, accountId: 7, charId: 9);
         var run = session.RunAsync(CancellationToken.None);
 

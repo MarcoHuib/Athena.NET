@@ -1,13 +1,14 @@
 using System.Buffers.Binary;
 using System.Net;
 using System.Net.Sockets;
+using System.Runtime.ExceptionServices;
 using Athena.Net.MapServer.Logging;
 using Athena.Net.MapServer.World;
 using Athena.Net.MapServer.World.GeneratedScripts;
 
 namespace Athena.Net.MapServer.Net;
 
-public sealed class MapClientSession : IDisposable, INpcScriptHost
+public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
 {
     private static readonly Dictionary<short, int> PacketLengths = new()
     {
@@ -92,7 +93,20 @@ public sealed class MapClientSession : IDisposable, INpcScriptHost
     private bool _iroAuthRequested;
     private bool _authenticated;
     private bool _positionDirty;
-    private int _disposed;
+    // Guards EnsureRuntimeLoopsStarted so exactly one _statusExpirationLoop/_movementLoop pair is
+    // ever created for this session, even if CompleteIroAuthenticationAsync and RunAsync's own
+    // already-authenticated startup check both reach it (HandleAuthOk fires CompleteIroAuthentication-
+    // SafelyAsync fire-and-forget, so it can race a RunAsync that started first on the already-
+    // authenticated test constructor path). A plain `lock` is fine here: the guarded body only
+    // reads/writes two Task? fields and starts two fire-and-forget async methods - it never awaits
+    // while holding the lock.
+    private readonly object _runtimeLoopStartGate = new();
+    private bool _runtimeLoopsStarted;
+    // Backs StopAsync/DisposeAsync's idempotent, shared shutdown: every caller (RunAsync's finally,
+    // DisposeAsync, a direct StopAsync call) observes the SAME Task and therefore the same outcome,
+    // instead of each caller racing its own teardown against the others' resource disposal.
+    private readonly object _shutdownGate = new();
+    private Task? _shutdownTask;
     private CharacterGameplayStateSession? _gameplayState;
     private readonly CharacterStatusEffectState _statusEffects;
     private readonly TimeProvider _timeProvider;
@@ -203,6 +217,19 @@ public sealed class MapClientSession : IDisposable, INpcScriptHost
             _sessionCancellation.Token);
         var sessionToken = linkedCancellation.Token;
 
+        // Covers the already-authenticated test-facing constructor (iroAuthenticated: true), which
+        // sets _authenticated directly and never goes through CompleteIroAuthenticationAsync - the
+        // only other place that starts the runtime loops. Without this, such a session can accept a
+        // movement packet (HandleIroMovementAsync) and register a deferred PendingMovementArrival
+        // with no _movementLoop ever running to process it: the arrival is registered but never
+        // fires, and any caller awaiting its effect (a warp/OnTouch packet) blocks forever. See
+        // EnsureRuntimeLoopsStarted's own doc comment for why this must be idempotent/race-safe
+        // against CompleteIroAuthenticationAsync's own call on the production path.
+        if (_authenticated)
+        {
+            EnsureRuntimeLoopsStarted();
+        }
+
         try
         {
             while (!sessionToken.IsCancellationRequested)
@@ -220,7 +247,40 @@ public sealed class MapClientSession : IDisposable, INpcScriptHost
         }
         finally
         {
-            await PersistPositionIfDirtyAsync(CancellationToken.None);
+            // StopAsync is idempotent and shared: whichever of RunAsync/DisposeAsync/an explicit
+            // StopAsync call reaches it first performs the ONE shutdown sequence (cancel -> join both
+            // runtime loops -> sync position -> persist once -> dispose resources); every other
+            // caller just awaits the same in-flight or completed Task. This is what makes RunAsync's
+            // contract "when RunAsync returns, no background scheduler remains alive" hold
+            // unconditionally, not just on the happy path.
+            await StopAsync();
+        }
+    }
+
+    // Idempotent, concurrency-safe startup boundary for this session's two background schedulers.
+    // Must be reachable from BOTH: (a) CompleteIroAuthenticationAsync, the production path, and (b)
+    // RunAsync's own startup check for a session that was already authenticated through the
+    // test-facing iroAuthenticated: true constructor (see RunAsync's doc comment). Those two paths
+    // can race - HandleAuthOk's fire-and-forget CompleteIroAuthenticationSafelyAsync can still be
+    // in flight when RunAsync's caller invokes this from the other path - so a bare "if (_field is
+    // null) start" without a lock could start two independent status/movement loops. The lock body
+    // never awaits: it only checks/sets a bool and kicks off the two fire-and-forget async methods,
+    // so holding it is always momentary. Deliberately NOT started from a constructor: constructing a
+    // session must never have an observable side effect beyond field initialization, and both
+    // legitimate starting points (successful auth completion, RunAsync beginning for an
+    // already-authenticated session) are only known well after construction.
+    private void EnsureRuntimeLoopsStarted()
+    {
+        lock (_runtimeLoopStartGate)
+        {
+            if (_runtimeLoopsStarted)
+            {
+                return;
+            }
+
+            _runtimeLoopsStarted = true;
+            _statusExpirationLoop = RunStatusExpirationLoopAsync(_sessionCancellation.Token);
+            _movementLoop = RunMovementLoopAsync(_sessionCancellation.Token);
         }
     }
 
@@ -258,8 +318,7 @@ public sealed class MapClientSession : IDisposable, INpcScriptHost
         _gameplayState = new CharacterGameplayStateSession(authOk.AccountId, state, _gameplayStatePersistence);
         _authenticated = true; _positionDirty = false;
         MapLogger.Info($"[iRO MAP DEBUG] 0x0C1F MapAuthNode authentication succeeded accountId={authOk.AccountId} charId={authOk.CharId} sessionMatch=true gameplayStateVersion={state.Version}");
-        _statusExpirationLoop = RunStatusExpirationLoopAsync(_sessionCancellation.Token);
-        _movementLoop = RunMovementLoopAsync(_sessionCancellation.Token);
+        EnsureRuntimeLoopsStarted();
         await SendIroInitialBootstrapAsync(authOk, _sessionCancellation.Token);
     }
 
@@ -469,25 +528,93 @@ public sealed class MapClientSession : IDisposable, INpcScriptHost
         _ = SendRefuseEnterAsync(0, CancellationToken.None);
     }
 
-    public void Dispose()
+    // Idempotent, shared async shutdown. Every caller (RunAsync's finally, DisposeAsync, or a direct
+    // StopAsync call from a test) observes the exact same Task and therefore the exact same
+    // completion/exception - there is only ever one shutdown in flight, and only one final position
+    // persistence. The lock body never awaits (it only checks/creates the Task field), so it can
+    // never block another thread's shutdown attempt.
+    //
+    // Deliberately NOT `Dispose() => StopAsync().GetAwaiter().GetResult()`: MapClientSession's
+    // background loops must be genuinely joined (awaited), not blocked-on from a sync frame, so the
+    // primary lifetime contract is IAsyncDisposable. Every construction site in this codebase is
+    // already inside an async method (MapTcpServer.HandleClientAsync, every test's async Task
+    // [Fact]), so there is no call site that actually needs synchronous disposal.
+    public Task StopAsync()
     {
-        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+        lock (_shutdownGate)
         {
-            return;
+            return _shutdownTask ??= StopCoreAsync();
+        }
+    }
+
+    public ValueTask DisposeAsync() => new(StopAsync());
+
+    private async Task StopCoreAsync()
+    {
+        _sessionCancellation.Cancel();
+        // Unblock a pending WaitAsync so a parked loop observes cancellation promptly instead of
+        // waiting for its own indefinite signal wait to somehow resolve; a wake may already be
+        // pending (SemaphoreFullException), which is harmless here too.
+        try { _statusExpirationSignal.Release(); } catch (ObjectDisposedException) { } catch (SemaphoreFullException) { }
+        try { _movementSignal.Release(); } catch (ObjectDisposedException) { } catch (SemaphoreFullException) { }
+        _generatedContinuation?.Completion.TrySetCanceled();
+
+        // Join BOTH runtime loops before touching anything they can still access. This is the
+        // invariant the earlier lifecycle audit found missing: cancellation is only a request: it
+        // does not guarantee either loop has actually stopped reading _movement/_statusEffects or
+        // calling WriteAsync. Neither loop may be running yet (auth never completed), hence the
+        // null filter.
+        var loops = new[] { _statusExpirationLoop, _movementLoop }.Where(loop => loop is not null)!;
+        Exception? firstError = null;
+        try
+        {
+            await Task.WhenAll(loops!);
+        }
+        catch (Exception ex)
+        {
+            // Task.WhenAll only surfaces the first faulting task's exception via `await`, but both
+            // loops already swallow every exception they can produce internally (OperationCanceled/
+            // ObjectDisposed guarded by cancellationToken.IsCancellationRequested) - so reaching here
+            // at all means something unexpected escaped a loop. Preserve it instead of losing it to
+            // the resource cleanup below; still reachable in the finally-equivalent path.
+            firstError = ex;
         }
 
-        _sessionCancellation.Cancel();
-        // Unblock a pending WaitAsync so the loop observes cancellation promptly; a wake may
-        // already be pending (SemaphoreFullException), which is harmless here too.
-        try { _statusExpirationSignal.Release(); } catch (SemaphoreFullException) { }
-        try { _movementSignal.Release(); } catch (SemaphoreFullException) { }
-        _generatedContinuation?.Completion.TrySetCanceled();
-        _stream.Dispose();
-        _writeLock.Dispose();
-        _sessionCancellation.Dispose();
-        _statusExpirationSignal.Dispose();
-        _movementSignal.Dispose();
-        _movementGate.Dispose();
+        // Safe only now: RunMovementLoopAsync/RunStatusExpirationLoopAsync are confirmed no longer
+        // running, so nothing else can mutate _movement/_pendingArrival/_statusEffects concurrently.
+        // SyncPositionToNow only advances CharacterMovementState's elapsed-time position and reads it
+        // back - it does NOT consult _pendingArrival, so no warp/OnTouch side effect can fire here;
+        // those are owned exclusively by ProcessDueMovementAsync, which cannot run anymore.
+        try
+        {
+            await _movementGate.WaitAsync(CancellationToken.None);
+            try { SyncPositionToNow(); }
+            finally { _movementGate.Release(); }
+
+            await PersistPositionIfDirtyAsync(CancellationToken.None);
+        }
+        catch (Exception ex) when (firstError is null)
+        {
+            firstError = ex;
+        }
+        catch
+        {
+            // A loop already faulted; do not let a second failure here replace the first one below.
+        }
+        finally
+        {
+            _stream.Dispose();
+            _writeLock.Dispose();
+            _sessionCancellation.Dispose();
+            _statusExpirationSignal.Dispose();
+            _movementSignal.Dispose();
+            _movementGate.Dispose();
+        }
+
+        if (firstError is not null)
+        {
+            ExceptionDispatchInfo.Throw(firstError);
+        }
     }
 
     private async Task HandlePacketAsync(short packetType, byte[] packet, CancellationToken cancellationToken)

@@ -20,7 +20,7 @@ public sealed class MapClientSessionWarpTests
         await using var clientStream = client.GetStream();
         var connector = new CharServerConnector(new MapConfigStore(new MapConfig(), "unused.conf"));
         var persistence = new RecordingPositionPersistence();
-        using var session = new MapClientSession(
+        await using var session = new MapClientSession(
             1,
             serverClient,
             connector,

@@ -11,7 +11,7 @@ public sealed class MapClientSessionLifecycleTests
     public async Task RunAsync_ContinuesAfterIro007dUntilRemoteDisconnect()
     {
         using var fixture = await SessionFixture.CreateAsync();
-        using var session = fixture.CreateIroSession();
+        await using var session = fixture.CreateIroSession();
         var runTask = session.RunAsync(CancellationToken.None);
 
         await fixture.ClientStream.WriteAsync(
@@ -36,7 +36,7 @@ public sealed class MapClientSessionLifecycleTests
     public async Task RunAsync_ServerCancellationStopsBlockedReadCleanly()
     {
         using var fixture = await SessionFixture.CreateAsync();
-        using var session = fixture.CreateIroSession();
+        await using var session = fixture.CreateIroSession();
         using var cancellation = new CancellationTokenSource();
         var runTask = session.RunAsync(cancellation.Token);
 
@@ -47,13 +47,21 @@ public sealed class MapClientSessionLifecycleTests
     }
 
     [Fact]
-    public async Task Dispose_IsIdempotent()
+    public async Task StopAsync_IsIdempotentAndSharedAcrossCallers()
     {
         using var fixture = await SessionFixture.CreateAsync();
         var session = fixture.CreateIroSession();
 
-        session.Dispose();
-        session.Dispose();
+        // StopAsync/DisposeAsync must be safe to call multiple times and concurrently: every caller
+        // observes the SAME shutdown Task rather than each racing its own teardown of the same
+        // resources (the defect the earlier synchronous Dispose() had).
+        var first = session.StopAsync();
+        var second = session.StopAsync();
+        await using var _ = session;
+
+        await first;
+        await second;
+        Assert.Same(first, second);
     }
 
     private sealed class SessionFixture : IDisposable
