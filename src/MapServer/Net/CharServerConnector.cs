@@ -9,7 +9,7 @@ using Athena.Net.MapServer.World;
 
 namespace Athena.Net.MapServer.Net;
 
-public sealed class CharServerConnector : ICharacterPositionPersistence, ICharacterQuestPersistence, ICharacterGameplayStatePersistence
+public sealed class CharServerConnector : ICharacterPositionPersistence, ICharacterQuestPersistence, ICharacterGameplayStatePersistence, ICharacterInventoryPersistence
 {
     private static readonly Dictionary<short, int> PacketLengths = new()
     {
@@ -19,6 +19,7 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
         [PacketConstants.MapSavePointResponse] = MapSavePointProtocol.ResponseLength,
         [PacketConstants.MapGameplayStateGetResponse] = MapCharacterGameplayStateProtocol.ResponseLength,
         [PacketConstants.MapGameplayStateUpdateResponse] = MapCharacterGameplayStateProtocol.ResponseLength,
+        [PacketConstants.MapInventoryAddResponse] = MapInventoryAddProtocol.ResponseLength,
     };
 
     private readonly MapConfigStore _configStore;
@@ -28,6 +29,7 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
     private readonly ConcurrentDictionary<uint, TaskCompletionSource<bool>> _pendingSavePoints = new();
     private readonly ConcurrentDictionary<uint, TaskCompletionSource<CharacterGameplayState?>> _pendingGameplayReads = new();
     private readonly ConcurrentDictionary<uint, TaskCompletionSource<CharacterGameplayState?>> _pendingGameplayUpdates = new();
+    private readonly ConcurrentDictionary<(uint CharId, int ItemId), TaskCompletionSource<(bool Success, uint NewAmount)>> _pendingInventoryAdds = new();
     private CharServerConnectionState? _connection;
 
     public CharServerConnector(MapConfigStore configStore)
@@ -129,6 +131,22 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
         finally { _pendingGameplayUpdates.TryRemove(expected.CharacterId,out _); }
     }
 
+    public async Task<(bool Success, uint NewAmount)> AddStackableItemAsync(uint accountId, uint charId, int itemId, uint amount, CancellationToken cancellationToken)
+    {
+        var connection = _connection;
+        if (connection is null || itemId <= 0 || amount == 0) return (false, 0);
+        var key = (charId, itemId);
+        var pending = new TaskCompletionSource<(bool, uint)>(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (!_pendingInventoryAdds.TryAdd(key, pending)) return (false, 0);
+        using var registration = cancellationToken.Register(() => pending.TrySetCanceled(cancellationToken));
+        try
+        {
+            await connection.WriteAsync(MapInventoryAddProtocol.BuildRequest(accountId, charId, itemId, amount), cancellationToken);
+            return await pending.Task;
+        }
+        finally { _pendingInventoryAdds.TryRemove(key, out _); }
+    }
+
     private async Task<CharacterQuestStatus?> SendQuestStateRequestAsync(uint accountId, uint charId, uint questId, CharacterQuestStatus operation, CancellationToken cancellationToken)
     {
         var connection = _connection;
@@ -203,6 +221,7 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
             FailPendingQuestStates();
             FailPendingSavePoints();
             FailPendingGameplayStates();
+            FailPendingInventoryAdds();
 
             MapLogger.Warning("Char server connection closed. Reconnecting.");
             return false;
@@ -272,6 +291,8 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
                 return HandleGameplayStateResponse(packet, packetType, _pendingGameplayReads);
             case PacketConstants.MapGameplayStateUpdateResponse:
                 return HandleGameplayStateResponse(packet, packetType, _pendingGameplayUpdates);
+            case PacketConstants.MapInventoryAddResponse:
+                return HandleInventoryAddResponse(packet);
             default:
                 MapLogger.Warning($"Unknown char server packet 0x{packetType:X4}, disconnecting.");
                 return false;
@@ -330,6 +351,16 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
             pending.Session.HandleAuthFail();
         }
 
+        return true;
+    }
+
+    private bool HandleInventoryAddResponse(byte[] packet)
+    {
+        if (!MapInventoryAddProtocol.TryParseResponse(packet, out var charId, out var itemId, out var newAmount, out var success)) return false;
+        if (_pendingInventoryAdds.TryRemove((charId, itemId), out var pending))
+            pending.TrySetResult((success, newAmount));
+        if (success) MapLogger.Info($"Inventory-add succeeded charId={charId} itemId={itemId} newAmount={newAmount}.");
+        else MapLogger.Warning($"Inventory-add failed charId={charId} itemId={itemId}.");
         return true;
     }
 
@@ -446,6 +477,12 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
         foreach(var pending in _pendingGameplayReads.Values) pending.TrySetResult(null);
         foreach(var pending in _pendingGameplayUpdates.Values) pending.TrySetResult(null);
         _pendingGameplayReads.Clear(); _pendingGameplayUpdates.Clear();
+    }
+
+    private void FailPendingInventoryAdds()
+    {
+        foreach (var pending in _pendingInventoryAdds.Values) pending.TrySetResult((false, 0));
+        _pendingInventoryAdds.Clear();
     }
 
     private static async Task<byte[]> ReadPacketAsync(NetworkStream stream, CancellationToken cancellationToken)

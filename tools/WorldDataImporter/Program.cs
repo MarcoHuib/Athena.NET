@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using Athena.WorldCompiler.Generation;
 using Athena.WorldCompiler.Lowering;
@@ -23,6 +24,9 @@ internal static class WorldDataImporterCli
                 "compile-actors" => await CompileActorsAsync(args[1..]),
                 "compile-navigation" => await CompileNavigationAsync(args[1..]),
                 "compile-progression" => await CompileProgressionAsync(args[1..]),
+                "compile-mob-spawn" => await CompileMobSpawnAsync(args[1..]),
+                "compile-quest-drop" => await CompileQuestDropAsync(args[1..]),
+                "compile-item" => await CompileItemAsync(args[1..]),
                 "capabilities" => await CapabilitiesAsync(args[1..]),
                 _ => throw new ArgumentException($"Unknown command '{args[0]}'."),
             };
@@ -275,6 +279,85 @@ internal static class WorldDataImporterCli
         return 0;
     }
 
+    private static async Task<int> CompileMobSpawnAsync(string[] args)
+    {
+        var options = CliOptions.Parse(args);
+        var root = Path.GetFullPath(options.Required("rathena-root"));
+        var spawnFile = options.Required("spawn-file");
+        var mobName = options.Required("name");
+        var mobId = int.Parse(options.Required("mob-id"), CultureInfo.InvariantCulture);
+        var commit = options.Required("rathena-commit");
+
+        var mobDbYaml = await File.ReadAllTextAsync(Path.Combine(root, "db/re/mob_db.yml"));
+        var mob = MobDataCompiler.ReadMobDefinition(mobDbYaml, mobId);
+
+        var spawnPath = Path.Combine(root, spawnFile);
+        var spawnText = await File.ReadAllTextAsync(spawnPath);
+        var excludedMaps = options.All("exclude-map").ToHashSet(StringComparer.Ordinal);
+        var spawns = MobDataCompiler.ReadMobSpawns(spawnText, CanonicalSourceFile(spawnPath), mobName, excludedMaps);
+        var mismatched = spawns.Where(spawn => spawn.MobId != mobId).ToArray();
+        if (mismatched.Length > 0) throw new ArgumentException($"Spawn declaration for '{mobName}' at line {mismatched[0].SourceLine} uses mob id {mismatched[0].MobId}, expected {mobId}.");
+
+        var definitionOutput = Path.GetFullPath(options.Required("output-definition"));
+        Directory.CreateDirectory(Path.GetDirectoryName(definitionOutput)!);
+        await File.WriteAllTextAsync(definitionOutput,
+            MobDataCompiler.GenerateMobDefinition(mob, commit, options.Required("class-name"), options.Required("constant-name"), CanonicalSourceFile(Path.Combine(root, "db/re/mob_db.yml")), 0),
+            new System.Text.UTF8Encoding(false));
+
+        var spawnOutput = Path.GetFullPath(options.Required("output-spawns"));
+        Directory.CreateDirectory(Path.GetDirectoryName(spawnOutput)!);
+        var mobExpression = $"{options.Required("class-name")}.{options.Required("constant-name")}";
+        await File.WriteAllTextAsync(spawnOutput,
+            MobDataCompiler.GenerateMobSpawns(spawns, mobExpression, commit, options.Required("spawn-class-name"), options.Required("spawn-array-name")),
+            new System.Text.UTF8Encoding(false));
+
+        Console.WriteLine($"Generated mob definition '{mob.AegisName}' ({mob.Id}) and {spawns.Count} spawn declarations.");
+        return 0;
+    }
+
+    private static async Task<int> CompileQuestDropAsync(string[] args)
+    {
+        var options = CliOptions.Parse(args);
+        var root = Path.GetFullPath(options.Required("rathena-root"));
+        var questId = uint.Parse(options.Required("quest-id"), CultureInfo.InvariantCulture);
+        var commit = options.Required("rathena-commit");
+
+        var questDbYaml = await File.ReadAllTextAsync(Path.Combine(root, "db/re/quest_db.yml"));
+        var mobDbYaml = await File.ReadAllTextAsync(Path.Combine(root, "db/re/mob_db.yml"));
+        var itemDbYaml = await File.ReadAllTextAsync(Path.Combine(root, "db/re/item_db_etc.yml"));
+        var drop = QuestDropDataCompiler.ReadSingleDrop(questDbYaml, questId, mobDbYaml, itemDbYaml);
+
+        var output = Path.GetFullPath(options.Required("output"));
+        Directory.CreateDirectory(Path.GetDirectoryName(output)!);
+        await File.WriteAllTextAsync(output,
+            QuestDropDataCompiler.Generate(drop, commit, CanonicalSourceFile(Path.Combine(root, "db/re/quest_db.yml")), 0),
+            new System.Text.UTF8Encoding(false));
+
+        Console.WriteLine($"Generated quest {drop.QuestId} drop rule: mob {drop.MobId} -> item {drop.ItemId} x{drop.Count} @ rate {drop.Rate}/10000.");
+        return 0;
+    }
+
+    private static async Task<int> CompileItemAsync(string[] args)
+    {
+        var options = CliOptions.Parse(args);
+        var root = Path.GetFullPath(options.Required("rathena-root"));
+        var itemId = int.Parse(options.Required("item-id"), CultureInfo.InvariantCulture);
+        var itemDbFile = options.Optional("item-db-file") ?? "db/re/item_db_etc.yml";
+        var commit = options.Required("rathena-commit");
+
+        var itemDbYaml = await File.ReadAllTextAsync(Path.Combine(root, itemDbFile));
+        var item = ItemDataCompiler.ReadItemDefinition(itemDbYaml, itemId);
+
+        var output = Path.GetFullPath(options.Required("output"));
+        Directory.CreateDirectory(Path.GetDirectoryName(output)!);
+        await File.WriteAllTextAsync(output,
+            ItemDataCompiler.Generate(item, commit, options.Required("class-name"), options.Required("constant-name"), CanonicalSourceFile(Path.Combine(root, itemDbFile)), 0),
+            new System.Text.UTF8Encoding(false));
+
+        Console.WriteLine($"Generated item definition '{item.AegisName}' ({item.Id}), stackable={item.Stackable}.");
+        return 0;
+    }
+
     private static T AssertSingle<T>(IEnumerable<T> values, string description)
     {
         var array = values.ToArray(); return array.Length == 1 ? array[0] : throw new ArgumentException($"Expected one {description}, found {array.Length}.");
@@ -309,6 +392,9 @@ internal static class WorldDataImporterCli
         Console.Error.WriteLine("WorldDataImporter compile-actors --source-root <folder> --output <Actors.cs> --source-file <path> --map <map> --name <name> [--name <name>]");
         Console.Error.WriteLine("WorldDataImporter compile-navigation --source-root <folder> --output <Navigation.cs> --name <name> [--name <name>]");
         Console.Error.WriteLine("WorldDataImporter compile-progression --rathena-root <folder> --output <Progression.cs>");
+        Console.Error.WriteLine("WorldDataImporter compile-mob-spawn --rathena-root <folder> --rathena-commit <sha> --mob-id <id> --name <spawn-name> --spawn-file <path> [--exclude-map <map>] --class-name <n> --constant-name <n> --spawn-class-name <n> --spawn-array-name <n> --output-definition <Mob.cs> --output-spawns <MobSpawns.cs>");
+        Console.Error.WriteLine("WorldDataImporter compile-quest-drop --rathena-root <folder> --rathena-commit <sha> --quest-id <id> --output <QuestDrops.cs>");
+        Console.Error.WriteLine("WorldDataImporter compile-item --rathena-root <folder> --rathena-commit <sha> --item-id <id> [--item-db-file <path>] --class-name <n> --constant-name <n> --output <Item.cs>");
     }
 }
 

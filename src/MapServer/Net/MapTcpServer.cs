@@ -12,13 +12,15 @@ public sealed class MapTcpServer
 {
     private readonly MapConfigStore _configStore;
     private readonly CharServerConnector _charConnector;
+    private readonly MapServerWorld _world;
     private readonly TcpListener _listener;
     private int _nextSessionId;
 
-    public MapTcpServer(MapConfigStore configStore, CharServerConnector charConnector)
+    public MapTcpServer(MapConfigStore configStore, CharServerConnector charConnector, MapServerWorld world)
     {
         _configStore = configStore;
         _charConnector = charConnector;
+        _world = world;
         var config = _configStore.Current;
         _listener = new TcpListener(config.BindIp, config.MapPort);
     }
@@ -31,7 +33,7 @@ public sealed class MapTcpServer
         BoundPort = ((IPEndPoint)_listener.LocalEndpoint).Port;
         MapLogger.Status($"Map server listening on {_configStore.Current.BindIp}:{BoundPort}...");
         MapLogger.Status(
-            $"WORLD: loaded {WorldMapRegistry.Tutorial.EntityCount} world entities over {WorldMapRegistry.Tutorial.MapCount} maps, {WorldMapRegistry.Tutorial.StaticWarpCount} active warps, {WorldMapRegistry.Tutorial.DynamicWarpActorCount} legacy dynamic/scripted warp actors.");
+            $"WORLD: loaded {_world.Maps.EntityCount} world entities over {_world.Maps.MapCount} maps, {_world.Maps.StaticWarpCount} active warps, {_world.Maps.DynamicWarpActorCount} legacy dynamic/scripted warp actors, {_world.Monsters.AllInstances.Count} monster instances.");
 
         try
         {
@@ -62,7 +64,7 @@ public sealed class MapTcpServer
         MapLogger.Info($"[iRO MAP DEBUG] Client connected: {endpoint}");
 
         using (client)
-        using (var session = new MapClientSession(sessionId, client, _charConnector))
+        using (var session = new MapClientSession(sessionId, client, _charConnector, _world))
         {
             try
             {

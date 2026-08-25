@@ -37,6 +37,11 @@ public sealed class MapClientSession : IDisposable, INpcScriptHost
     private readonly ICharacterQuestPersistence _questPersistence;
     private readonly ICharacterGameplayStatePersistence _gameplayStatePersistence;
     private readonly WorldMapRegistry _worldMapRegistry;
+    // Null when no MapServerWorld was supplied (test-facing constructor default). No packet
+    // handler reads this yet - see MonsterRegistry/MonsterCombatCoordinator doc comments for why
+    // no live attack path exists - but it is threaded through explicitly now so a future handler
+    // does not need another constructor-plumbing change.
+    private readonly MonsterRegistry? _monsters;
     private readonly SemaphoreSlim _writeLock = new(1, 1);
     private readonly CancellationTokenSource _sessionCancellation = new();
     private readonly HashSet<uint> _visibleActorIds = new();
@@ -68,8 +73,13 @@ public sealed class MapClientSession : IDisposable, INpcScriptHost
     private readonly SemaphoreSlim _statusExpirationSignal = new(0, 1);
     private Task? _statusExpirationLoop;
 
-    public MapClientSession(int sessionId, TcpClient client, CharServerConnector charConnector)
-        : this(sessionId, client, charConnector, WorldMapRegistry.Tutorial)
+    // Production entry point used by MapTcpServer. Requires the composed MapServerWorld built once
+    // at startup (MapServerApp.RunAsync -> MapServerWorld.Build()) rather than defaulting to
+    // WorldMapRegistry.Tutorial: that static singleton builds its OWN private WorldActorIdAllocator,
+    // so silently falling back to it here would reintroduce a second, independent actor-ID
+    // namespace alongside the composed MonsterRegistry's shared one.
+    public MapClientSession(int sessionId, TcpClient client, CharServerConnector charConnector, MapServerWorld world)
+        : this(sessionId, client, charConnector, world.Maps, monsters: world.Monsters)
     {
     }
 
@@ -81,7 +91,8 @@ public sealed class MapClientSession : IDisposable, INpcScriptHost
         ICharacterPositionPersistence? positionPersistence = null,
         ICharacterQuestPersistence? questPersistence = null,
         ICharacterGameplayStatePersistence? gameplayStatePersistence = null,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        MonsterRegistry? monsters = null)
     {
         SessionId = sessionId;
         _client = client;
@@ -91,10 +102,15 @@ public sealed class MapClientSession : IDisposable, INpcScriptHost
         _questPersistence = questPersistence ?? charConnector;
         _gameplayStatePersistence = gameplayStatePersistence ?? charConnector;
         _worldMapRegistry = worldMapRegistry;
+        _monsters = monsters;
         _timeProvider = timeProvider ?? TimeProvider.System;
         _statusEffects = new CharacterStatusEffectState(_timeProvider);
     }
 
+    // Test-facing constructor. Still defaults to WorldMapRegistry.Tutorial when no registry is
+    // supplied - this default is fine for unit/integration tests that only exercise NPC/warp/
+    // dialogue behavior and never touch monster state, but MUST NOT be reintroduced on the
+    // production path above (see its doc comment).
     internal MapClientSession(
         int sessionId,
         TcpClient client,
@@ -109,7 +125,8 @@ public sealed class MapClientSession : IDisposable, INpcScriptHost
         uint accountId = 0,
         uint charId = 0,
         ICharacterGameplayStatePersistence? gameplayStatePersistence = null,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        MonsterRegistry? monsters = null)
         : this(
             sessionId,
             client,
@@ -118,7 +135,8 @@ public sealed class MapClientSession : IDisposable, INpcScriptHost
             positionPersistence,
             questPersistence,
             gameplayStatePersistence,
-            timeProvider)
+            timeProvider,
+            monsters)
     {
         _iroAuthRequested = iroAuthenticated;
         _authRequested = iroAuthenticated;

@@ -2,7 +2,11 @@ namespace Athena.Net.MapServer.World;
 
 public sealed class WorldActorIdAllocator
 {
-    // rAthena's NPC domain starts at 110,000,000 (npc.hpp:START_NPC_NUM).
+    // rAthena's NPC domain starts at 110,000,000 (npc.hpp:START_NPC_NUM). One
+    // allocator instance is shared across every actor kind in a composed
+    // world (NPCs, warps, monsters) - see MapServerWorld.Build() - so there
+    // is exactly one ID namespace, matching rAthena's own single NPC/monster
+    // domain rather than giving each content kind its own disjoint range.
     private long _lastId = 109_999_999;
 
     public uint Allocate()
