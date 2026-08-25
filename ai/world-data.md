@@ -24,6 +24,58 @@ Generated and custom scripts share `INpcScript`, `ScriptContext`, world entities
 and actor contracts. Duplicate custom registrations fail unless replacement is
 explicitly requested.
 
+## World Definition Model (NPCs)
+
+rAthena `duplicate(...)` chains are represented as one `NpcDefinition`
+(reusable behavior, keyed by a source-position-derived `DefinitionId`) plus N
+`NpcPlacement` records (per-instance map/x/y/direction/sprite/radius) instead
+of N independent generated classes with duplicated dialogue. `WorldEntityConverter.ConvertNpcDefinitions`
+performs this grouping losslessly at conversion time: duplicate resolution
+always scans the complete parsed declaration index, and for a template with N
+duplicates it always returns the complete semantic set of N+1 placements
+(the template's own row plus its duplicates). It never special-cases an NPC by
+name.
+
+Which of those placements/behaviors actually reach a particular generated
+world slice is a separate, later "emission selection" step (`compile-npc-world`'s
+`--exclude-placement`/`--no-behavior` flags), applied strictly after the
+converter returns its lossless result. This is how the Academy slice keeps
+Captain Carocc and Lumin actor-only today even though pinned rAthena contains
+real, non-trivial click dialogue for both — their scripts deliberately remain
+unregistered pending real healing/EXP/status-effect/inventory runtime support,
+which is an emission-time decision, not something the converter encodes.
+
+`WorldRegistryBuilder.AddNpc(NpcDefinition, IReadOnlyList<NpcPlacement>)` is
+the runtime registration entry point generated `AcademyWorld.Register(builder)`
+calls; it lowers the definition/placement pair back into today's
+`WorldEntityDefinition`/`GeneratedScriptRegistration` shapes internally, so
+`WorldMapRegistry`, `ScriptContext`, and `MapClientSession` require no changes.
+Hand-written custom NPC content uses the identical `AddNpc` API. A definition
+with zero behaviors still contributes its `WorldEntityDefinition`s to the
+built world (proven by `WorldRegistryBuildResult.Entities`, independent of
+whether `WorldRegistryBuildResult.Scripts` has any registration for it) — this
+is how actor-only NPCs like Captain Carocc/Lumin remain visible without a
+script registration.
+
+Generated tree for this slice: `src/MapServer/Generated/World/Izlude/Academy/AcademyWorld.cs`,
+`AcademyNpcs.cs`, and one `Scripts/*.cs` file per unique executable behavior.
+See `tools/WorldDataImporter/README.md` for the `compile-npc-world` command.
+
+The same conversion-time-grouping principle applies to rAthena `script`/`duplicate()`
+WARPNPC chains (`#ship_out`, `#intro_to_izlude`) via a parallel, warp-scoped
+`WarpTriggerDefinition`/`WarpTriggerPlacement` pair (mirroring `NpcDefinition`/
+`NpcPlacement`, not modeled as NPCs — warp triggers have no sprite/class
+concept). `WorldRegistryBuilder.AddWarpTrigger` lowers into the same
+`WorldEntityDefinition{Kind: "Warp"}` shape today's runtime already consumes.
+Generated output: `Academy/AcademyWarpTriggers.cs` (one `WarpTriggerDefinition`
+field per template) plus the shared `Academy/Scripts/*.cs` class. Plain
+declarative `warp` directives (`#room_out`/`#room_in`, no `duplicate()` chain)
+have no shared behavior to extract and remain ordinary `WarpDefinition` records
+in `Academy/AcademyWarps.cs` (renamed from `RequiredWarps.cs`, content
+unchanged). Tutorial `navigateto` placement data lives in
+`Academy/AcademyNavigation.cs` (renamed from `TutorialNavigation.cs`, content
+unchanged — it has no rAthena duplicate relationship to model).
+
 The former `data/world/entities`, `data/world/dev`, and `data/world/warps.json`
 runtime datasets are removed. JSON files remaining under `data/world` are compiler
 reports only. Pinned `legacy/rathena` is authoritative and remains available for
@@ -93,8 +145,11 @@ dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- compile
   --source-file izlude.txt \
   --name '#room_out' --name '#room_in' \
   --name '#room_out03' --name '#room_in03' --kind warp \
-  --output src/MapServer/Generated/World/Izlude/RequiredWarps.cs
+  --output src/MapServer/Generated/World/Izlude/Academy/AcademyWarps.cs
 ```
+
+Generate the current Academy NPC definitions/placements/behaviors: see the
+`compile-npc-world` command in `tools/WorldDataImporter/README.md`.
 
 Compiler audit/capability reports may still scan the complete pinned NPC tree;
 their breadth does not imply runtime support.

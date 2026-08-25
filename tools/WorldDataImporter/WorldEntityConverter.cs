@@ -15,6 +15,8 @@ internal sealed record ConversionFilter(string? SourceFile, string? Map, string?
 }
 internal sealed record UnsupportedConversion(string Name, string File, int Line, string Reason);
 internal sealed record ConversionResult(IReadOnlyList<WorldEntityDefinition> Entities, IReadOnlyList<UnsupportedConversion> Unsupported);
+internal sealed record NpcConversionResult(IReadOnlyList<NpcDefinition> Definitions, IReadOnlyList<NpcPlacement> Placements, IReadOnlyList<UnsupportedConversion> Unsupported);
+internal sealed record WarpTriggerConversionResult(IReadOnlyList<WarpTriggerDefinition> Definitions, IReadOnlyList<WarpTriggerPlacement> Placements, IReadOnlyList<UnsupportedConversion> Unsupported);
 
 internal static partial class WorldEntityConverter
 {
@@ -51,6 +53,148 @@ internal static partial class WorldEntityConverter
                      TryOrdinaryScript(declaration, template, roots, out ordinary)) entities.Add(ordinary);
         }
         return new(entities.OrderBy(item => item.Id, StringComparer.Ordinal).ToArray(), unsupported);
+    }
+
+    // Lossless semantic conversion: resolution always scans the FULL declaration index parsed from
+    // roots, independent of filter. Only which template GROUPS get converted/emitted is scoped by
+    // filter (matched against the template's own declaration). This keeps duplicate resolution correct
+    // even if a duplicate ever lived in a different file than its template, and keeps emission-scope
+    // decisions (e.g. limiting which placements a particular generated world slice uses) entirely
+    // outside this method - callers narrow AFTER receiving the complete NpcConversionResult.
+    public static NpcConversionResult ConvertNpcDefinitions(IEnumerable<string> roots, ConversionFilter filter)
+    {
+        var rootList = roots as IReadOnlyList<string> ?? roots.ToArray();
+        var declarations = RathenaSourceParser.Parse(rootList);
+        var templates = declarations.Where(item => item.Directive == "script").ToDictionary(item => item.Name, StringComparer.Ordinal);
+        var definitions = new List<NpcDefinition>();
+        var placements = new List<NpcPlacement>();
+        var unsupported = new List<UnsupportedConversion>();
+
+        var resolved = declarations
+            .Where(declaration => !IsWarpNpc(declaration) && declaration.Directive != "warp")
+            .Select(declaration => (declaration, template: ResolveTemplate(declaration, templates)))
+            .Where(pair => pair.template is not null)
+            .Select(pair => (pair.declaration, template: pair.template!));
+
+        var scoped = resolved.Where(pair => filter.Matches(pair.template));
+
+        foreach (var group in scoped.GroupBy(pair => pair.template))
+        {
+            var template = group.Key;
+            if (!TryBuildDefinition(template, out var definition)) { unsupported.Add(Unsupported(template, "Malformed NPC template")); continue; }
+            definitions.Add(definition);
+            // cloakonnpc() is an OnInit-only rAthena command (see academy.txt:123) - it never appears inside the
+            // OnClick/OnTouch slices captured by NpcTriggerBehavior.NormalizedSource, so the initial-cloak signal
+            // must be read from the template's full raw ScriptBody, computed once per group and applied uniformly.
+            var initialEffectState = template.ScriptBody.Contains("cloakonnpc();", StringComparison.Ordinal) ? 4u : (uint?)null;
+            foreach (var (instance, _) in group)
+            {
+                if (!TryBuildPlacement(instance, definition, initialEffectState, rootList, out var placement)) { unsupported.Add(Unsupported(instance, "Malformed NPC duplicate placement")); continue; }
+                placements.Add(placement);
+            }
+        }
+
+        return new(
+            definitions.OrderBy(item => item.DefinitionId, StringComparer.Ordinal).ToArray(),
+            placements.OrderBy(item => item.PlacementId, StringComparer.Ordinal).ToArray(),
+            unsupported);
+    }
+
+    private static RathenaDeclaration? ResolveTemplate(RathenaDeclaration declaration, Dictionary<string, RathenaDeclaration> templates) =>
+        declaration.Directive == "script" ? declaration
+        : TryDuplicateName(declaration.Directive, out var name) && templates.TryGetValue(name, out var template) ? template
+        : null;
+
+    // Mirrors ConvertNpcDefinitions exactly, scoped to WARPNPC (script+duplicate()) declarations only.
+    // Lossless: resolution always scans the full declaration index; emission-scope decisions (which
+    // placements a generated world slice actually uses) happen strictly outside this method.
+    public static WarpTriggerConversionResult ConvertWarpTriggers(IEnumerable<string> roots, ConversionFilter filter)
+    {
+        var declarations = RathenaSourceParser.Parse(roots);
+        var templates = declarations.Where(item => item.Directive == "script").ToDictionary(item => item.Name, StringComparer.Ordinal);
+        var definitions = new List<WarpTriggerDefinition>();
+        var placements = new List<WarpTriggerPlacement>();
+        var unsupported = new List<UnsupportedConversion>();
+
+        var resolved = declarations
+            .Where(IsWarpNpc)
+            .Select(declaration => (declaration, template: ResolveTemplate(declaration, templates)))
+            .Where(pair => pair.template is not null)
+            .Select(pair => (pair.declaration, template: pair.template!));
+
+        var scoped = resolved.Where(pair => filter.Matches(pair.template));
+
+        foreach (var group in scoped.GroupBy(pair => pair.template))
+        {
+            var template = group.Key;
+            if (!TryBuildWarpTriggerDefinition(template, out var definition)) { unsupported.Add(Unsupported(template, "Malformed WARPNPC template")); continue; }
+            definitions.Add(definition);
+            foreach (var (instance, _) in group)
+            {
+                if (!TryBuildWarpTriggerPlacement(instance, definition, out var placement)) { unsupported.Add(Unsupported(instance, "Malformed WARPNPC duplicate placement")); continue; }
+                placements.Add(placement);
+            }
+        }
+
+        return new(
+            definitions.OrderBy(item => item.DefinitionId, StringComparer.Ordinal).ToArray(),
+            placements.OrderBy(item => item.PlacementId, StringComparer.Ordinal).ToArray(),
+            unsupported);
+    }
+
+    private static bool TryBuildWarpTriggerDefinition(RathenaDeclaration template, out WarpTriggerDefinition definition)
+    {
+        definition = default!;
+        var onTouch = template.ScriptBody.IndexOf("OnTouch:", StringComparison.Ordinal);
+        if (onTouch < 0) return false;
+        var touchSource = string.Join('\n', template.ScriptBody[(onTouch + "OnTouch:".Length)..]
+            .Split("OnInit:", 2, StringSplitOptions.None)[0]
+            .Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n').Select(line => line.TrimEnd())).Trim();
+        var trigger = new NpcTriggerBehavior("OnTouch", true, true, ScriptCapabilities.Classify(touchSource), touchSource);
+        definition = new(1, DeterministicId.ForDefinition(template.Source.File, template.Name), template.Name, trigger,
+            new("rAthena", Commit, template.Source.File, template.Source.Line), template.ScriptBody);
+        return true;
+    }
+
+    private static bool TryBuildWarpTriggerPlacement(RathenaDeclaration instance, WarpTriggerDefinition definition, out WarpTriggerPlacement placement)
+    {
+        placement = default!;
+        var visual = instance.Arguments.Split(',').Select(value => value.Trim().TrimEnd('{')).ToArray();
+        if (visual.Length < 3 || visual[0] != "WARPNPC" || !U16(visual[1], out var rx) || !U16(visual[2], out var ry)) return false;
+        placement = new(DeterministicId.For("warp", instance.Map, instance.Name), definition.DefinitionId, instance.Name,
+            instance.Map, instance.X, instance.Y, instance.Direction, rx, ry,
+            new("rAthena", Commit, instance.Source.File, instance.Source.Line));
+        return true;
+    }
+
+    private static bool TryBuildDefinition(RathenaDeclaration template, out NpcDefinition definition)
+    {
+        definition = default!;
+        var clickSource = template.ScriptBody.Split("OnTouch:", 2, StringSplitOptions.None)[0].Split("OnInit:", 2, StringSplitOptions.None)[0].Trim();
+        var triggers = new List<NpcTriggerBehavior>();
+        if (clickSource.Length > 0)
+            triggers.Add(new("OnClick", true, true, ScriptCapabilities.Classify(clickSource), clickSource));
+        if (template.ScriptBody.Contains("OnTouch:", StringComparison.Ordinal))
+        {
+            var touchSource = template.ScriptBody.Split("OnTouch:", 2, StringSplitOptions.None)[1].Split("OnInit:", 2, StringSplitOptions.None)[0].Trim();
+            triggers.Add(new("OnTouch", true, true, ScriptCapabilities.Classify(touchSource), touchSource));
+        }
+        definition = new(1, DeterministicId.ForDefinition(template.Source.File, template.Name), template.Name, triggers,
+            new("rAthena", Commit, template.Source.File, template.Source.Line), template.ScriptBody);
+        return true;
+    }
+
+    private static bool TryBuildPlacement(RathenaDeclaration instance, NpcDefinition definition, uint? initialEffectState, IEnumerable<string> roots, out NpcPlacement placement)
+    {
+        placement = default!;
+        var visual = instance.Arguments.Split(',').Select(value => value.Trim().TrimEnd('{')).Where(value => value.Length > 0).ToArray();
+        if (visual.Length == 0 || !NpcSpriteClassResolver.TryResolve(roots, visual[0], out var spriteClass)) return false;
+        var rx = visual.Length > 1 && U16(visual[1], out var parsedRx) ? parsedRx : (ushort)0;
+        var ry = visual.Length > 2 && U16(visual[2], out var parsedRy) ? parsedRy : (ushort)0;
+        placement = new(DeterministicId.For("npc", instance.Map, instance.Name), definition.DefinitionId, instance.Name,
+            instance.Map, instance.X, instance.Y, instance.Direction, spriteClass, rx, ry, initialEffectState,
+            new("rAthena", Commit, instance.Source.File, instance.Source.Line));
+        return true;
     }
 
     private static bool TryOrdinaryScript(RathenaDeclaration source, IEnumerable<string> roots, out WorldEntityDefinition entity)

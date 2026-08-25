@@ -19,6 +19,7 @@ internal static class WorldDataImporterCli
                 "convert" => await ConvertAsync(args[1..]),
                 "compile" => await CompileAsync(args[1..]),
                 "compile-script" => await CompileScriptAsync(args[1..]),
+                "compile-npc-world" => await CompileNpcWorldAsync(args[1..]),
                 "compile-actors" => await CompileActorsAsync(args[1..]),
                 "compile-navigation" => await CompileNavigationAsync(args[1..]),
                 "compile-progression" => await CompileProgressionAsync(args[1..]),
@@ -121,6 +122,92 @@ internal static class WorldDataImporterCli
             binding.RadiusX, binding.RadiusY, binding.Trigger, binding.BaseNpcName, CanonicalSourceFile(template.Source.File), template.Source.Line + 1, template.Source.Line, "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca", actor.EffectState);
         var generated = NpcScriptEmitter.Emit(lowered.Script!, metadata); var output = Path.GetFullPath(options.Required("output")); Directory.CreateDirectory(Path.GetDirectoryName(output)!); await File.WriteAllTextAsync(output, generated, new System.Text.UTF8Encoding(false));
         Console.WriteLine($"Generated executable {binding.Trigger} script '{entity.Id}' into {output}."); return 0;
+    }
+
+    // compile-npc-world groups rAthena duplicate(...) chains into shared NpcDefinition/NpcPlacement data
+    // (and, via --warp-name, WarpTriggerDefinition/WarpTriggerPlacement data for WARPNPC script+duplicate()
+    // chains such as #ship_out/#intro_to_izlude) and emits one area-level AcademyWorld.cs + AcademyNpcs.cs
+    // (+ AcademyWarpTriggers.cs when warp names are given) plus one Scripts/*.cs per unique behavior.
+    // Emission selection (--name/--warp-name, --exclude-placement/--warp-exclude-placement, --no-behavior)
+    // is applied strictly AFTER the converter returns its complete, lossless semantic result - the
+    // converter itself never special-cases a name or narrows what it finds in pinned source.
+    private static async Task<int> CompileNpcWorldAsync(string[] args)
+    {
+        var options = CliOptions.Parse(args);
+        var roots = options.All("source-root");
+        if (roots.Count == 0) throw new ArgumentException("compile-npc-world requires --source-root.");
+        var names = options.All("name");
+        var warpNames = options.All("warp-name");
+        if (names.Count == 0 && warpNames.Count == 0) throw new ArgumentException("compile-npc-world requires at least one --name or --warp-name (the templates in scope for this emission).");
+        var sourceFile = options.Optional("source-file");
+        var map = options.Optional("map");
+        var worldNamespace = options.Required("namespace");
+        var scriptsNamespace = worldNamespace + ".Scripts";
+        var outputDir = Path.GetFullPath(options.Required("output-dir"));
+
+        var definitions = new List<NpcDefinition>();
+        var placements = new List<NpcPlacement>();
+        foreach (var name in names)
+        {
+            var filter = new ConversionFilter(sourceFile, map, name, "npc");
+            var result = WorldEntityConverter.ConvertNpcDefinitions(roots, filter);
+            if (result.Unsupported.Count > 0)
+                throw new ArgumentException($"Template '{name}' has unsupported declarations: " + string.Join("; ", result.Unsupported.Select(item => $"{item.File}:{item.Line} {item.Reason}")));
+            definitions.AddRange(result.Definitions);
+            placements.AddRange(result.Placements);
+        }
+        var conversion = new NpcConversionResult(definitions, placements, []);
+
+        var excludedPlacements = options.All("exclude-placement").ToHashSet(StringComparer.Ordinal);
+        var includedPlacementIds = excludedPlacements.Count == 0 ? null
+            : (IReadOnlySet<string>)conversion.Placements.Select(p => p.PlacementId).Where(id => !excludedPlacements.Contains(id)).ToHashSet(StringComparer.Ordinal);
+        var noBehaviorTemplateNames = options.All("no-behavior").ToHashSet(StringComparer.Ordinal);
+        var definitionsWithoutEmittedBehavior = noBehaviorTemplateNames.Count == 0 ? null
+            : (IReadOnlySet<string>)conversion.Definitions.Where(d => noBehaviorTemplateNames.Contains(d.TemplateNpcName)).Select(d => d.DefinitionId).ToHashSet(StringComparer.Ordinal);
+        var selection = new NpcWorldEmissionSelection(includedPlacementIds, definitionsWithoutEmittedBehavior);
+
+        WarpTriggerConversionResult? warpConversion = null;
+        WarpTriggerEmissionSelection? warpSelection = null;
+        if (warpNames.Count > 0)
+        {
+            var warpDefinitions = new List<WarpTriggerDefinition>();
+            var warpPlacements = new List<WarpTriggerPlacement>();
+            foreach (var name in warpNames)
+            {
+                var filter = new ConversionFilter(sourceFile, map, name, "warp");
+                var result = WorldEntityConverter.ConvertWarpTriggers(roots, filter);
+                if (result.Unsupported.Count > 0)
+                    throw new ArgumentException($"WARPNPC template '{name}' has unsupported declarations: " + string.Join("; ", result.Unsupported.Select(item => $"{item.File}:{item.Line} {item.Reason}")));
+                warpDefinitions.AddRange(result.Definitions);
+                warpPlacements.AddRange(result.Placements);
+            }
+            warpConversion = new WarpTriggerConversionResult(warpDefinitions, warpPlacements, []);
+
+            var excludedWarpPlacements = options.All("warp-exclude-placement").ToHashSet(StringComparer.Ordinal);
+            var includedWarpPlacementIds = excludedWarpPlacements.Count == 0 ? null
+                : (IReadOnlySet<string>)warpConversion.Placements.Select(p => p.PlacementId).Where(id => !excludedWarpPlacements.Contains(id)).ToHashSet(StringComparer.Ordinal);
+            warpSelection = new WarpTriggerEmissionSelection(includedWarpPlacementIds);
+        }
+
+        var emission = NpcWorldEmitter.Emit(conversion, selection, worldNamespace, scriptsNamespace, "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca", warpConversion, warpSelection);
+
+        Directory.CreateDirectory(outputDir);
+        var scriptsDir = Path.Combine(outputDir, "Scripts");
+        Directory.CreateDirectory(scriptsDir);
+        var encoding = new System.Text.UTF8Encoding(false);
+        await File.WriteAllTextAsync(Path.Combine(outputDir, "AcademyWorld.cs"), emission.AcademyWorldSource, encoding);
+        await File.WriteAllTextAsync(Path.Combine(outputDir, "AcademyNpcs.cs"), emission.AcademyNpcsSource, encoding);
+        if (emission.AcademyWarpTriggersSource is { } warpTriggersSource)
+            await File.WriteAllTextAsync(Path.Combine(outputDir, "AcademyWarpTriggers.cs"), warpTriggersSource, encoding);
+        foreach (var (className, source) in emission.ScriptSources)
+            await File.WriteAllTextAsync(Path.Combine(scriptsDir, className + ".cs"), source, encoding);
+
+        var emittedPlacementCount = conversion.Placements.Count(placement => selection.IncludesPlacement(placement.PlacementId));
+        var emittedWarpPlacementCount = warpConversion?.Placements.Count(placement => warpSelection!.IncludesPlacement(placement.PlacementId)) ?? 0;
+        Console.WriteLine($"Generated {conversion.Definitions.Count} NPC definitions, {emittedPlacementCount} placements ({conversion.Placements.Count} in complete semantic conversion); " +
+            $"{warpConversion?.Definitions.Count ?? 0} warp trigger definitions, {emittedWarpPlacementCount} placements ({warpConversion?.Placements.Count ?? 0} in complete semantic conversion); " +
+            $"{emission.ScriptSources.Count} script classes into {outputDir}.");
+        return 0;
     }
 
     private static async Task<int> CompileActorsAsync(string[] args)

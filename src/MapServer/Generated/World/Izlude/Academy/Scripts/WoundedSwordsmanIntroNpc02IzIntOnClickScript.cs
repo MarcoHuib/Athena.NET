@@ -7,9 +7,9 @@
 using Athena.Net.MapServer.World;
 using Athena.Net.MapServer.World.GeneratedScripts;
 
-namespace Athena.Net.MapServer.Generated.World.Izlude
+namespace Athena.Net.MapServer.Generated.World.Izlude.Academy.Scripts
 {
-internal sealed class NpcIzInt04WoundedSwordsmanIntroNpc02IzInt04OnClickScript : INpcScript
+internal sealed class WoundedSwordsmanIntroNpc02IzIntOnClickScript : INpcScript
 {
     public async Task ExecuteAsync(ScriptContext context, CancellationToken cancellationToken)
     {
@@ -48,29 +48,5 @@ internal sealed class NpcIzInt04WoundedSwordsmanIntroNpc02IzInt04OnClickScript :
         await context.CutinAsync("", (byte)255, cancellationToken);
 #line default
     }
-}
-}
-
-namespace Athena.Net.MapServer.World.GeneratedScripts
-{
-internal static class NpcIzInt04WoundedSwordsmanIntroNpc02IzInt04OnClickScriptRegistration
-{
-    internal static GeneratedScriptRegistration Create() =>
-        new(
-            new WorldEntityDefinition(
-                1, "npc:iz_int04:wounded swordsman#intro_npc02_iz_int04",
-                "Npc",
-                new WorldActorComponent("Wounded Swordsman#intro_npc02_iz_int04", "iz_int04", 56, 32, 3, 688, 4),
-                [],
-                [new ScriptBehaviorDefinition(
-                    "OnClick", "iz_int04", 56, 32, 0, 0,
-                    true, true,
-                    ["Conditional", "QuestState", "Dialogue", "DialogueNext", "Selection", "SetQuest", "CompleteQuest", "Close", "Cutin", "VariableAssignment", "NpcIdentity", "StringReplace", "Warp", "SavePoint"],
-                    "Generated from legacy/rathena/npc/re/jobs/novice/academy.txt:88",
-                    null,
-                    "Wounded Swordsman#intro_npc02_iz_int")],
-                new WorldSourceInfo("rAthena", "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca", "legacy/rathena/npc/re/jobs/novice/academy.txt", 88)),
-            "OnClick",
-            static () => new Athena.Net.MapServer.Generated.World.Izlude.NpcIzInt04WoundedSwordsmanIntroNpc02IzInt04OnClickScript());
 }
 }

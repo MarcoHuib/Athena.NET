@@ -52,4 +52,42 @@ internal static class DeterministicId
 {
     public static string For(string kind, string map, string name) => $"{kind.ToLowerInvariant()}:{map.ToLowerInvariant()}:{name.TrimStart('#').ToLowerInvariant()}";
     public static string FileName(string id) => id[(id.LastIndexOf(':') + 1)..];
+    public static string ForDefinition(string templateSourceFile, string templateNpcSymbol) =>
+        $"npcdef:{CanonicalizeSourcePath(templateSourceFile).ToLowerInvariant()}:{templateNpcSymbol.TrimStart('#').ToLowerInvariant()}";
+
+    // Mirrors Program.cs's CanonicalSourceFile: normalizes path separators and slices from the
+    // legacy/rathena/ anchor when present, so DefinitionId is identical across Windows/macOS/Linux.
+    public static string CanonicalizeSourcePath(string path)
+    {
+        var normalized = path.Replace('\\', '/');
+        var legacy = normalized.IndexOf("legacy/rathena/", StringComparison.Ordinal);
+        return legacy >= 0 ? normalized[legacy..] : normalized;
+    }
 }
+
+internal sealed record NpcDefinition(
+    int SchemaVersion, string DefinitionId, string TemplateNpcName,
+    IReadOnlyList<NpcTriggerBehavior> Triggers, WorldSourceInfo Source, string RawScriptBody);
+
+internal sealed record NpcTriggerBehavior(
+    string Trigger, bool SourceParsed, bool RuntimeExecutable,
+    IReadOnlyList<string> RequiredCapabilities, string NormalizedSource,
+    IReadOnlyList<ScriptInstructionDefinition>? Instructions = null);
+
+internal sealed record NpcPlacement(
+    string PlacementId, string DefinitionId, string NpcName,
+    string Map, ushort X, ushort Y, byte Direction, ushort Class,
+    ushort RadiusX, ushort RadiusY,
+    uint? InitialEffectState, WorldSourceInfo Source);
+
+// Mirrors NpcDefinition/NpcPlacement for the rAthena WARPNPC script+duplicate() pattern
+// (#ship_out, #intro_to_izlude): one shared OnTouch behavior, N placements. No sprite/class field -
+// WARPNPC instances always resolve to class 45 (JT_WARPNPC), unlike ordinary NPC sprites.
+internal sealed record WarpTriggerDefinition(
+    int SchemaVersion, string DefinitionId, string TemplateNpcName,
+    NpcTriggerBehavior OnTouch, WorldSourceInfo Source, string RawScriptBody);
+
+internal sealed record WarpTriggerPlacement(
+    string PlacementId, string DefinitionId, string NpcName,
+    string Map, ushort X, ushort Y, byte Direction,
+    ushort RadiusX, ushort RadiusY, WorldSourceInfo Source);

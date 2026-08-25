@@ -1,4 +1,4 @@
-using Athena.Net.MapServer.Generated.World.Izlude;
+using Athena.Net.MapServer.Generated.World.Izlude.Academy;
 using Athena.Net.MapServer.World.GeneratedScripts;
 
 namespace Athena.Net.MapServer.World;
@@ -115,7 +115,7 @@ public sealed class WorldMapRegistry
             : null;
     }
     private static string SemanticKey(string map, string name) => $"{map}:{name}";
-    private static WorldMapRegistry LoadGenerated() => new(GeneratedWarps.All, GeneratedScriptRegistry.Entities.Concat(GeneratedTutorialActors.All));
+    private static WorldMapRegistry LoadGenerated() => new(GeneratedWarps.All, GeneratedScriptRegistry.Entities, scripts: GeneratedScriptRegistry.Registry);
 }
 
 public readonly record struct WarpIntersection(WarpDefinition Warp, ushort X, ushort Y);
