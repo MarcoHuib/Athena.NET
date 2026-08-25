@@ -370,14 +370,56 @@ packed movement bytes. Those bytes encode source x/y, destination x/y, and two
 four-bit subcell values. The first four responses correlate as
 `(22,37)->(20,30)`, `(20,30)->(25,23)`, `(25,23)->(25,22)`, and
 `(25,22)->(26,30)`, with subcell `8/8`. Later clicks made before prior movement
-completed show official intermediate source/subcell values; Athena currently has
-no path/timing engine to reproduce those intermediate states.
+completed show official intermediate source/subcell values: frames 425/435/448
+prove the official server's own next `0x0087` after a second click reports
+source `(55,28)` — an intermediate cell on the *first* click's route, not the
+first click's destination `(58,28)` and not the walk's original start. This is
+independently confirmed by pinned rAthena (`unit_walktoxy_timer`, `unit.cpp:542`):
+authoritative position advances exactly one cell per `speed` ms of real elapsed
+time, and a mid-walk retarget (`unit_walktoxy`, `unit.cpp:894-899`) re-paths from
+whichever cell has *actually* been reached by the time the retarget is processed,
+never from the original start or the interrupted walk's destination.
 
-Athena implements the minimal proven case: parse the destination, retain the
-sixth byte as opaque, build `0x0087` from the current in-memory position and a
-monotone 32-bit millisecond tick, then advance the in-memory position to the
-target. This has no collision, pathfinding, travel-time interpolation, or
-per-tile database persistence claim.
+Athena previously did not reproduce this: `HandleIroMovementAsync` parsed the
+destination and immediately assigned the full in-memory position to it, so a
+second movement request before the client had visually finished the first walk
+would retarget from a position the client was never shown reaching — producing
+a visible client/server desync (reported as walking "stutter"). This is fixed:
+`CharacterMovementState` (`src/MapServer/World/CharacterMovementState.cs`) now
+models per-cell walk timing (`AdvanceTo`, called before deriving `from` for a
+new request and on every `CurrentX`/`CurrentY` read) separately from *which*
+cells a walk passes through, which comes from an injected
+`IMovementPathProvider`. Production uses
+`UnverifiedGridLineMovementPathProvider`, an explicitly disclosed placeholder:
+pinned rAthena's real `path_search` (`path.cpp:269`) is A* pathfinding against
+real GAT collision data ("We always use A* ... because it is what game client
+uses. Easy pathfinding cuts corners of non-walkable cells, but client always
+walks around it." — `path.cpp` comment), which only visually degenerates to a
+direct line when the intervening cells happen to be obstacle-free — something
+Athena cannot currently determine at all (same confirmed no-GAT-data gap as
+`IMobSpawnCellSelector`). The straight-line provider is therefore NOT claimed as
+rAthena/client path parity, only as the best available disclosed approximation
+until real GAT/collision data exists; `IMovementPathProvider` isolates that gap
+so the timing/lifecycle model above does not need to change when a real
+path-search capability becomes available.
+
+Per-cell walk speed (`CharacterMovementState`'s `cellDurationMs`) is derived by
+`MovementSpeedCalculator` from the pinned `status_calc_speed` formula
+(`status.cpp:8018-8223`) for the one subset this codebase currently models — a
+PC with only Increase AGI's status-derived haste (already computed as
+`EffectiveCharacterStats.MoveSpeedHaste`) and no other haste/slow modifier:
+`speedRate = max(100 - haste, 40)`, `speed = 150 * speedRate / 100`, clamped to
+rAthena's `MIN_WALK_SPEED`/`MAX_WALK_SPEED` (`20`/`1000`, `mmo.hpp:95-96`). Not
+derived from Increase AGI merely because that status happens to touch movement
+speed: `MoveSpeedHaste` already *is* the accumulated haste value
+`status_calc_speed` itself would compute for this slice; the calculator performs
+only the remaining, separately-traced steps. Mounts, carts, other haste/slow
+statuses, and permanent item speed bonuses are not modeled and would need a
+broader calculator.
+
+This still has no collision, GAT-verified pathfinding, or per-tile database
+persistence claim — only the per-cell *timing* lifecycle is now source-backed;
+which cells a walk visits remains the disclosed placeholder above.
 
 ### 0x0368 correction
 

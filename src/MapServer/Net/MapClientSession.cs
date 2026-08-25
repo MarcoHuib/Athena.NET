@@ -42,6 +42,14 @@ public sealed class MapClientSession : IDisposable, INpcScriptHost
     // no live attack path exists - but it is threaded through explicitly now so a future handler
     // does not need another constructor-plumbing change.
     private readonly MonsterRegistry? _monsters;
+    private readonly IMovementPathProvider _movementPathProvider;
+    // Owns authoritative per-cell walk timing (see CharacterMovementState's own doc comment for the
+    // rAthena unit_walktoxy_timer trace this replaces). _x/_y/_mapName remain the fields every other
+    // handler in this class reads; SyncPositionFromMovement() is the one place that reconciles them
+    // against _movement's real elapsed-time state, called at the top of HandleIroMovementAsync so a
+    // new movement request always retargets from the character's ACTUAL current cell rather than
+    // wherever a previous request's destination happened to be.
+    private CharacterMovementState? _movement;
     private readonly SemaphoreSlim _writeLock = new(1, 1);
     private readonly CancellationTokenSource _sessionCancellation = new();
     private readonly HashSet<uint> _visibleActorIds = new();
@@ -92,7 +100,8 @@ public sealed class MapClientSession : IDisposable, INpcScriptHost
         ICharacterQuestPersistence? questPersistence = null,
         ICharacterGameplayStatePersistence? gameplayStatePersistence = null,
         TimeProvider? timeProvider = null,
-        MonsterRegistry? monsters = null)
+        MonsterRegistry? monsters = null,
+        IMovementPathProvider? movementPathProvider = null)
     {
         SessionId = sessionId;
         _client = client;
@@ -104,6 +113,7 @@ public sealed class MapClientSession : IDisposable, INpcScriptHost
         _worldMapRegistry = worldMapRegistry;
         _monsters = monsters;
         _timeProvider = timeProvider ?? TimeProvider.System;
+        _movementPathProvider = movementPathProvider ?? new UnverifiedGridLineMovementPathProvider();
         _statusEffects = new CharacterStatusEffectState(_timeProvider);
     }
 
@@ -126,7 +136,8 @@ public sealed class MapClientSession : IDisposable, INpcScriptHost
         uint charId = 0,
         ICharacterGameplayStatePersistence? gameplayStatePersistence = null,
         TimeProvider? timeProvider = null,
-        MonsterRegistry? monsters = null)
+        MonsterRegistry? monsters = null,
+        IMovementPathProvider? movementPathProvider = null)
         : this(
             sessionId,
             client,
@@ -136,7 +147,8 @@ public sealed class MapClientSession : IDisposable, INpcScriptHost
             questPersistence,
             gameplayStatePersistence,
             timeProvider,
-            monsters)
+            monsters,
+            movementPathProvider)
     {
         _iroAuthRequested = iroAuthenticated;
         _authRequested = iroAuthenticated;
@@ -151,8 +163,12 @@ public sealed class MapClientSession : IDisposable, INpcScriptHost
     public int SessionId { get; }
 
     internal string CurrentMapName => _mapName;
-    internal ushort CurrentX => _x;
-    internal ushort CurrentY => _y;
+    // Syncs against real elapsed walking time on every read (no background timer - mirrors
+    // CharacterStatusEffectState's lazy-on-read expiration model), so any caller (tests, a future
+    // melee-range check, actor visibility) always observes the character's ACTUAL current cell
+    // rather than a stale destination from the last movement packet.
+    internal ushort CurrentX { get { SyncPositionToNow(); return _x; } }
+    internal ushort CurrentY { get { SyncPositionToNow(); return _y; } }
     internal ScriptExecutionState? ActiveScriptState => _scriptExecutionSession?.State;
     internal string? ActiveGeneratedScriptEntityId => _generatedScriptEntityId;
     internal CharacterGameplayStateSession? GameplayState => _gameplayState;
@@ -462,6 +478,50 @@ public sealed class MapClientSession : IDisposable, INpcScriptHost
         _authRequested = true;
     }
 
+    // Lazily attaches CharacterMovementState to the session's current (_mapName,_x,_y) the first
+    // time movement matters - _mapName/_x/_y are set earlier by several independent auth/warp paths
+    // (HandleAuthOk, CompleteIroAuthenticationAsync, etc.), so the movement state cannot simply be
+    // constructed once in the constructor before any of those have run.
+    private CharacterMovementState EnsureMovementState()
+    {
+        _movement ??= new CharacterMovementState(_mapName, _x, _y);
+        return _movement;
+    }
+
+    // The single place _mapName/_x/_y are assigned for a warp/map-change/auth-position-restore
+    // (never a timed walk - see HandleIroMovementAsync for that path). Also resets _movement via
+    // CharacterMovementState.Teleport so a stale in-flight walk from before the teleport can never
+    // be advanced afterward - a same-map teleport (e.g. a same-map warp) would not otherwise be
+    // caught by EnsureMovementState's now-removed map-mismatch check, which is exactly the bug this
+    // helper fixes: MapClientSessionWarpTests.MovementIntoTutorialDoor_... teleports within
+    // "iz_int03", so map-equality alone cannot detect that the previous walk state is stale.
+    private void TeleportTo(string map, ushort x, ushort y)
+    {
+        _mapName = map;
+        _x = x;
+        _y = y;
+        _movement?.Teleport(map, x, y);
+    }
+
+    // Reconciles _x/_y against real elapsed walking time. Pinned rAthena's authoritative position
+    // (unit_walktoxy_timer, unit.cpp:542) only ever advances one cell per real CellDurationMs -
+    // never jumps straight to a requested destination - so this must run before any code (a new
+    // movement request's `from`, a future melee-range check, etc.) treats _x/_y as "where the
+    // character actually is right now".
+    private void SyncPositionToNow()
+    {
+        var movement = EnsureMovementState();
+        movement.AdvanceTo(_timeProvider.GetUtcNow());
+        _x = movement.CurrentX;
+        _y = movement.CurrentY;
+    }
+
+    private int CurrentCellDurationMs()
+    {
+        var haste = _gameplayState is null ? 0 : _statusEffects.Recalculate(_gameplayState.State).MoveSpeedHaste;
+        return MovementSpeedCalculator.CellDurationMs(haste);
+    }
+
     private async Task HandleIroMovementAsync(byte[] packet, CancellationToken cancellationToken)
     {
         if (!IroMovementPackets.TryParseRequest(packet, out var request))
@@ -470,6 +530,13 @@ public sealed class MapClientSession : IDisposable, INpcScriptHost
             return;
         }
 
+        // Advance any walk already in progress to the character's ACTUAL current cell before doing
+        // anything else - this is the fix for the diagnosed bug: a second movement request must
+        // retarget from wherever the character has really walked to by now, not from a previous
+        // request's destination that the client may not have visually reached yet (see
+        // CharacterMovementState.StartWalk's doc comment for the exact rAthena unit_walktoxy
+        // mid-walk-retarget citation this mirrors).
+        SyncPositionToNow();
         var fromX = _x;
         var fromY = _y;
         MapLogger.Info(
@@ -492,6 +559,17 @@ public sealed class MapClientSession : IDisposable, INpcScriptHost
         var movementTargetX = intersectsWarp ? intersection.X : intersectsScript ? scriptIntersection.X : request.TargetX;
         var movementTargetY = intersectsWarp ? intersection.Y : intersectsScript ? scriptIntersection.Y : request.TargetY;
 
+        // Start (or retarget) the timed walk from the current cell toward movementTarget, rather
+        // than jumping _x/_y there immediately. The wire response below still reports the full
+        // destination (unchanged, capture-proven 0x0087 semantics) - only the SERVER-authoritative
+        // position now advances gradually, matching rAthena. Computed before the response is sent so
+        // that, by the time a caller observes the response, the new walk is already authoritative -
+        // avoiding a race where a caller could read stale position between the write and this update.
+        var path = _movementPathProvider.ComputePath(_mapName, fromX, fromY, movementTargetX, movementTargetY);
+        var now = _timeProvider.GetUtcNow();
+        EnsureMovementState().StartWalk(path, CurrentCellDurationMs(), now);
+        _positionDirty = true;
+
         var response = IroMovementPackets.BuildResponse(
             unchecked((uint)Environment.TickCount),
             fromX,
@@ -502,18 +580,22 @@ public sealed class MapClientSession : IDisposable, INpcScriptHost
             $"[iRO MAP DEBUG] Sending 0x0087 len=12 from=({fromX},{fromY}) to=({movementTargetX},{movementTargetY})");
         await WriteAsync(response, cancellationToken);
 
-        _x = movementTargetX;
-        _y = movementTargetY;
-        _positionDirty = true;
-
         if (intersectsWarp)
         {
+            // A detected warp/touch intersection fires immediately on click rather than waiting for
+            // timed per-cell arrival (existing, separately-tested simplification, unchanged by this
+            // fix) - so the character is treated as already at the intersection cell for the warp
+            // handler below, which both logs and then overwrites _x/_y with the destination.
+            _x = intersection.X;
+            _y = intersection.Y;
             MapLogger.Info(
                 $"[iRO MAP DEBUG] Movement path intersects warp map='{_mapName}' at=({intersection.X},{intersection.Y}) requestedTarget=({request.TargetX},{request.TargetY})");
             await SendSameServerWarpAsync(intersection.Warp, cancellationToken);
         }
         else if (intersectsScript)
         {
+            _x = scriptIntersection.X;
+            _y = scriptIntersection.Y;
             await SendVisibleWarpActorsAsync(cancellationToken);
             MapLogger.Info($"[iRO MAP DEBUG] Movement entered script trigger entity='{scriptIntersection.Binding.Entity.Id}' map='{_mapName}' at=({scriptIntersection.X},{scriptIntersection.Y})");
             await StartScriptAsync(scriptIntersection.Binding.Entity, scriptIntersection.Binding.Actor.ActorId, scriptIntersection.Binding.Script, "OnTouch", cancellationToken);
@@ -545,9 +627,7 @@ public sealed class MapClientSession : IDisposable, INpcScriptHost
             if (action is WarpAction warpAction)
             {
                 MapLogger.Info($"[iRO MAP DEBUG] Warp triggered map='{_mapName}' at=({_x},{_y}) -> map='{warpAction.Map}' x={warpAction.X} y={warpAction.Y}");
-                _mapName = warpAction.Map;
-                _x = warpAction.X;
-                _y = warpAction.Y;
+                TeleportTo(warpAction.Map, warpAction.X, warpAction.Y);
             }
         }
 
@@ -822,7 +902,7 @@ public sealed class MapClientSession : IDisposable, INpcScriptHost
         var map = execution.Evaluate(warp.Map);
         if (string.IsNullOrWhiteSpace(map)) throw new InvalidOperationException("Warp map expression evaluated to an empty value.");
         MapLogger.Info($"[iRO MAP DEBUG] Script warp entity='{execution.EntityId}' map='{_mapName}' -> map='{map}' x={warp.X} y={warp.Y}");
-        _mapName = map; _x = warp.X; _y = warp.Y; _positionDirty = true; _visibleActorIds.Clear();
+        TeleportTo(map, warp.X, warp.Y); _positionDirty = true; _visibleActorIds.Clear();
         await WriteAsync(IroMapTransitionPackets.BuildSameServerMapChange(_mapName, _x, _y), cancellationToken);
         await PersistPositionIfDirtyAsync(cancellationToken);
     }
@@ -946,7 +1026,7 @@ public sealed class MapClientSession : IDisposable, INpcScriptHost
     async Task INpcScriptHost.WarpAsync(string map, ushort x, ushort y, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(map)) throw new InvalidOperationException("Generated script warp map is empty.");
-        _mapName = map; _x = x; _y = y; _positionDirty = true; _visibleActorIds.Clear();
+        TeleportTo(map, x, y); _positionDirty = true; _visibleActorIds.Clear();
         await WriteAsync(IroMapTransitionPackets.BuildSameServerMapChange(map, x, y), cancellationToken);
         await PersistPositionIfDirtyAsync(cancellationToken);
     }
