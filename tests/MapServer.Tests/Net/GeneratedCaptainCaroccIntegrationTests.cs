@@ -75,11 +75,16 @@ public sealed class GeneratedCaptainCaroccIntegrationTests
         Assert.Equal("It is a hard task, but you look tough enough.\0", Message(await ReadDynamic(stream)));
 
         // heal(9999,0): HP 20 -> 40 (clamped to MaxHp), sent via the generic 0x00B0 parameter path.
+        // The packet is only sent after HealAsync's mutation is persisted (see
+        // CharacterHealService/CharacterGameplayStateSession.MutateAsync), so observing it here is
+        // sufficient proof; session.GameplayState.State itself is not re-checked at this point
+        // because the generated script task keeps running concurrently with this read (getexp,
+        // right after, can itself recalculate CurrentHp again on a level-up) - asserting live
+        // session state here would race against that continuation instead of proving anything.
         var healPacket = await ReadExact(stream, 8);
         Assert.Equal(PacketConstants.ZcParameterChange, BinaryPrimitives.ReadInt16LittleEndian(healPacket));
         Assert.Equal((ushort)5, BinaryPrimitives.ReadUInt16LittleEndian(healPacket.AsSpan(2)));
         Assert.Equal(40U, BinaryPrimitives.ReadUInt32LittleEndian(healPacket.AsSpan(4)));
-        Assert.Equal(40U, session.GameplayState!.State.CurrentHp);
 
         // completequest 21001 sends 0x02B4 (quest removed from client log) before getexp's
         // progression packets - matching ai/iro-2026-wire.md's documented completequest
