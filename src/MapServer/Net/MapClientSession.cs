@@ -508,82 +508,186 @@ public sealed class MapClientSession : IDisposable, INpcScriptHost
         var execution = _scriptExecutionSession!;
         foreach (var instruction in instructions)
         {
-            switch (instruction)
+            var result = await ExecuteInstructionAsync(execution, instruction, cancellationToken);
+            if (result == InstructionExecutionResult.Stop)
             {
-                case MessageInstruction message:
-                    MapLogger.Info($"[iRO MAP DEBUG] Script message entity='{execution.EntityId}' actorId={execution.ActorId}");
-                    await WriteAsync(IroNpcDialoguePackets.BuildMessage(execution.ActorId, message.Text), cancellationToken);
-                    break;
-                case NextInstruction:
-                    await WriteAsync(IroNpcDialoguePackets.BuildNext(execution.ActorId), cancellationToken);
-                    MapLogger.Info($"[iRO MAP DEBUG] Script suspended reason=Next entity='{execution.EntityId}'");
-                    break;
-                case SelectInstruction select:
-                    MapLogger.Info($"[iRO MAP DEBUG] Script selection shown entity='{execution.EntityId}' options={select.Options.Count}");
-                    await WriteAsync(IroNpcDialoguePackets.BuildMenu(execution.ActorId, select.Options.Select(option => option.Text).ToArray()), cancellationToken);
-                    MapLogger.Info($"[iRO MAP DEBUG] Script suspended reason=Selection entity='{execution.EntityId}'");
-                    break;
-                case CloseInstruction:
-                    await WriteAsync(IroNpcDialoguePackets.BuildClose(execution.ActorId), cancellationToken);
-                    MapLogger.Info($"[iRO MAP DEBUG] Script closed entity='{execution.EntityId}'");
-                    _scriptExecutionSession = null;
-                    break;
-                case Close2Instruction:
-                    await WriteAsync(IroNpcDialoguePackets.BuildClose(execution.ActorId), cancellationToken);
-                    MapLogger.Info($"[iRO MAP DEBUG] Script dialogue closed; execution continues entity='{execution.EntityId}'");
-                    break;
-                case AssignmentInstruction assignment:
-                    execution.Assign(assignment.Variable, assignment.Value);
-                    break;
-                case WarpInstruction warp:
-                    await ExecuteScriptWarpAsync(execution, warp, cancellationToken);
-                    break;
-                case SavePointInstruction savePoint:
-                    if (!await SavePointAsync(execution.Evaluate(savePoint.Map), savePoint.X, savePoint.Y, cancellationToken))
-                    {
-                        MapLogger.Warning($"SavePoint persistence aborted script entity='{execution.EntityId}' charId={_charId}.");
-                        _scriptExecutionSession = null;
-                        return;
-                    }
-                    break;
-                case SetQuestInstruction setQuest:
-                    if (!await SetQuestAsync(setQuest.QuestId, cancellationToken))
-                    {
-                        await AbortScriptForPersistenceFailureAsync(execution, setQuest.QuestId, cancellationToken);
-                        return;
-                    }
-                    break;
-                case CompleteQuestInstruction completeQuest:
-                    if (!await CompleteQuestAsync(completeQuest.QuestId, cancellationToken))
-                    {
-                        await AbortScriptForPersistenceFailureAsync(execution, completeQuest.QuestId, cancellationToken);
-                        return;
-                    }
-                    break;
-                case IfQuestStateInstruction check:
-                    if (check.QuestId == 0) return;
-                    var state = await _questPersistence.GetQuestStateAsync(_accountId, _charId, check.QuestId, cancellationToken);
-                    if (state is null)
-                    {
-                        await AbortScriptForPersistenceFailureAsync(execution, check.QuestId, cancellationToken);
-                        return;
-                    }
-                    await SendScriptOutputAsync(execution.ResumeQuestState(execution.ActorId, state.Value), cancellationToken);
-                    break;
+                return;
             }
         }
-        if (execution.State == ScriptExecutionState.Closed) _scriptExecutionSession = null;
+
+        if (execution.State == ScriptExecutionState.Closed)
+        {
+            ClearScript(execution);
+        }
     }
 
-    private async Task AbortScriptForPersistenceFailureAsync(
+    private async Task<InstructionExecutionResult> ExecuteInstructionAsync(
         ScriptExecutionSession execution,
-        uint questId,
+        ScriptInstructionDefinition instruction,
+        CancellationToken cancellationToken) => instruction switch
+    {
+        MessageInstruction message => await ExecuteMessageInstructionAsync(execution, message, cancellationToken),
+        NextInstruction => await ExecuteNextInstructionAsync(execution, cancellationToken),
+        SelectInstruction select => await ExecuteSelectInstructionAsync(execution, select, cancellationToken),
+        CloseInstruction => await ExecuteCloseInstructionAsync(execution, cancellationToken),
+        Close2Instruction => await ExecuteClose2InstructionAsync(execution, cancellationToken),
+        AssignmentInstruction assignment => ExecuteAssignmentInstruction(execution, assignment),
+        WarpInstruction warp => await ExecuteWarpInstructionAsync(execution, warp, cancellationToken),
+        SavePointInstruction savePoint => await ExecuteSavePointInstructionAsync(execution, savePoint, cancellationToken),
+        SetQuestInstruction setQuest => await ExecuteSetQuestInstructionAsync(execution, setQuest, cancellationToken),
+        CompleteQuestInstruction completeQuest => await ExecuteCompleteQuestInstructionAsync(execution, completeQuest, cancellationToken),
+        IfQuestStateInstruction check => await ExecuteQuestStateInstructionAsync(execution, check, cancellationToken),
+        _ => InstructionExecutionResult.Continue,
+    };
+
+    private async Task<InstructionExecutionResult> ExecuteMessageInstructionAsync(
+        ScriptExecutionSession execution,
+        MessageInstruction message,
         CancellationToken cancellationToken)
     {
-        MapLogger.Warning(
-            $"Quest persistence aborted script entity='{execution.EntityId}' charId={_charId} questId={questId}.");
+        MapLogger.Info($"[iRO MAP DEBUG] Script message entity='{execution.EntityId}' actorId={execution.ActorId}");
+        await WriteAsync(IroNpcDialoguePackets.BuildMessage(execution.ActorId, message.Text), cancellationToken);
+        return InstructionExecutionResult.Continue;
+    }
+
+    private async Task<InstructionExecutionResult> ExecuteNextInstructionAsync(
+        ScriptExecutionSession execution,
+        CancellationToken cancellationToken)
+    {
+        await WriteAsync(IroNpcDialoguePackets.BuildNext(execution.ActorId), cancellationToken);
+        MapLogger.Info($"[iRO MAP DEBUG] Script suspended reason=Next entity='{execution.EntityId}'");
+        return InstructionExecutionResult.Continue;
+    }
+
+    private async Task<InstructionExecutionResult> ExecuteSelectInstructionAsync(
+        ScriptExecutionSession execution,
+        SelectInstruction select,
+        CancellationToken cancellationToken)
+    {
+        MapLogger.Info($"[iRO MAP DEBUG] Script selection shown entity='{execution.EntityId}' options={select.Options.Count}");
+        await WriteAsync(
+            IroNpcDialoguePackets.BuildMenu(execution.ActorId, select.Options.Select(option => option.Text).ToArray()),
+            cancellationToken);
+        MapLogger.Info($"[iRO MAP DEBUG] Script suspended reason=Selection entity='{execution.EntityId}'");
+        return InstructionExecutionResult.Continue;
+    }
+
+    private async Task<InstructionExecutionResult> ExecuteCloseInstructionAsync(
+        ScriptExecutionSession execution,
+        CancellationToken cancellationToken)
+    {
+        // Clear server-side state before exposing the close packet to the client.
+        // Otherwise a client/test can observe the close while ActiveScriptState is still Closed.
+        ClearScript(execution);
         await WriteAsync(IroNpcDialoguePackets.BuildClose(execution.ActorId), cancellationToken);
-        _scriptExecutionSession = null;
+        MapLogger.Info($"[iRO MAP DEBUG] Script closed entity='{execution.EntityId}'");
+        return InstructionExecutionResult.Stop;
+    }
+
+    private async Task<InstructionExecutionResult> ExecuteClose2InstructionAsync(
+        ScriptExecutionSession execution,
+        CancellationToken cancellationToken)
+    {
+        await WriteAsync(IroNpcDialoguePackets.BuildClose(execution.ActorId), cancellationToken);
+        MapLogger.Info($"[iRO MAP DEBUG] Script dialogue closed; execution continues entity='{execution.EntityId}'");
+        return InstructionExecutionResult.Continue;
+    }
+
+    private static InstructionExecutionResult ExecuteAssignmentInstruction(
+        ScriptExecutionSession execution,
+        AssignmentInstruction assignment)
+    {
+        execution.Assign(assignment.Variable, assignment.Value);
+        return InstructionExecutionResult.Continue;
+    }
+
+    private async Task<InstructionExecutionResult> ExecuteWarpInstructionAsync(
+        ScriptExecutionSession execution,
+        WarpInstruction warp,
+        CancellationToken cancellationToken)
+    {
+        await ExecuteScriptWarpAsync(execution, warp, cancellationToken);
+        return InstructionExecutionResult.Continue;
+    }
+
+    private async Task<InstructionExecutionResult> ExecuteSavePointInstructionAsync(
+        ScriptExecutionSession execution,
+        SavePointInstruction savePoint,
+        CancellationToken cancellationToken)
+    {
+        if (await SavePointAsync(execution.Evaluate(savePoint.Map), savePoint.X, savePoint.Y, cancellationToken))
+        {
+            return InstructionExecutionResult.Continue;
+        }
+
+        MapLogger.Warning($"SavePoint persistence aborted script entity='{execution.EntityId}' charId={_charId}.");
+        ClearScript(execution);
+        return InstructionExecutionResult.Stop;
+    }
+
+    private async Task<InstructionExecutionResult> ExecuteSetQuestInstructionAsync(
+        ScriptExecutionSession execution,
+        SetQuestInstruction setQuest,
+        CancellationToken cancellationToken)
+    {
+        if (await SetQuestAsync(setQuest.QuestId, cancellationToken))
+        {
+            return InstructionExecutionResult.Continue;
+        }
+
+        await AbortScriptForPersistenceFailureAsync(execution, setQuest.QuestId, cancellationToken);
+        return InstructionExecutionResult.Stop;
+    }
+
+    private async Task<InstructionExecutionResult> ExecuteCompleteQuestInstructionAsync(
+        ScriptExecutionSession execution,
+        CompleteQuestInstruction completeQuest,
+        CancellationToken cancellationToken)
+    {
+        if (await CompleteQuestAsync(completeQuest.QuestId, cancellationToken))
+        {
+            return InstructionExecutionResult.Continue;
+        }
+
+        await AbortScriptForPersistenceFailureAsync(execution, completeQuest.QuestId, cancellationToken);
+        return InstructionExecutionResult.Stop;
+    }
+
+    private async Task<InstructionExecutionResult> ExecuteQuestStateInstructionAsync(
+        ScriptExecutionSession execution,
+        IfQuestStateInstruction check,
+        CancellationToken cancellationToken)
+    {
+        if (check.QuestId == 0)
+        {
+            return InstructionExecutionResult.Stop;
+        }
+
+        var state = await _questPersistence.GetQuestStateAsync(_accountId, _charId, check.QuestId, cancellationToken);
+        if (state is null)
+        {
+            await AbortScriptForPersistenceFailureAsync(execution, check.QuestId, cancellationToken);
+            return InstructionExecutionResult.Stop;
+        }
+
+        await SendScriptOutputAsync(execution.ResumeQuestState(execution.ActorId, state.Value), cancellationToken);
+        return InstructionExecutionResult.Continue;
+    }
+
+    private void ClearScript(ScriptExecutionSession execution)
+    {
+        if (ReferenceEquals(_scriptExecutionSession, execution))
+        {
+            _scriptExecutionSession = null;
+        }
+    }
+
+    private async Task AbortScriptForPersistenceFailureAsync(ScriptExecutionSession execution, uint questId, CancellationToken cancellationToken)
+    {
+        MapLogger.Warning($"Quest persistence aborted script entity='{execution.EntityId}' charId={_charId} questId={questId}.");
+
+        ClearScript(execution);
+        await WriteAsync(IroNpcDialoguePackets.BuildClose(execution.ActorId), cancellationToken);
     }
 
     private async Task<bool> SetQuestAsync(uint questId, CancellationToken cancellationToken)
@@ -809,6 +913,7 @@ public sealed class MapClientSession : IDisposable, INpcScriptHost
     private static TaskCompletionSource NewSignal() => new(TaskCreationOptions.RunContinuationsAsynchronously);
     private static TaskCompletionSource<int> NewContinuation() => new(TaskCreationOptions.RunContinuationsAsynchronously);
     private sealed record GeneratedContinuation(GeneratedContinuationKind Kind, TaskCompletionSource<int> Completion);
+    private enum InstructionExecutionResult { Continue, Stop }
     private enum GeneratedContinuationKind { Next, Selection, Close2 }
 
     private async Task SendVisibleWarpActorsAsync(CancellationToken cancellationToken)
