@@ -174,12 +174,28 @@ also sends the capture-proven `0x09CB` (`ZC_USE_SKILL`) heal visual with
 (`CharacterStatusEffectState`), not the complete Ragnarok status system. Each
 `MapClientSession` owns independent mutable status state in MapServer runtime
 memory only — temporary statuses are never persisted to `CharacterGameplayState`.
-Expiration is computed lazily against an injected `TimeProvider` on every read
-(no background timer, no per-status `Task.Delay`). Effective stats are derived on
-demand from persisted base stats plus every currently active (non-expired) status;
-persisted base stats themselves are never mutated by a temporary status.
-Re-applying an already-active status (pinned `sc_start` semantics) overwrites its
-stored values/duration outright rather than stacking.
+Reads (`TryGet`/`Recalculate`) treat an already-expired status as inactive purely
+by comparing against an injected `TimeProvider`, without removing it. Effective
+stats are derived on demand from persisted base stats plus every currently active
+(non-expired) status; persisted base stats themselves are never mutated by a
+temporary status. Re-applying an already-active status (pinned `sc_start`
+semantics) overwrites its stored values/duration outright rather than stacking,
+which also moves its expiration deadline forward.
+
+Natural expiration is driven by one expiration scheduler per `MapClientSession`
+(not a `Task.Delay`/`Timer` per active status) that sleeps until
+`CharacterStatusEffectState.NextExpiration` via the same `TimeProvider`, waking
+early whenever `StartStatusAsync` adds or refreshes a status. When a status comes
+due, `CharacterStatusEffectState.ExpireDue` explicitly removes and returns it (so
+the transition is observed exactly once, never silently), effective stats are
+recalculated before and after, and the client receives a `0x0196`
+(`ZC_MSG_STATE_CHANGE`, the "off" form of the same builder used for activation)
+plus only the `0x0141` fields whose effective value actually changed — matching
+pinned `status_change_end`'s generic tail for both statuses (neither has a
+type-specific case in that function's switch). See `ai/iro-2026-wire.md` for the
+pinned line references and the one open gap (client-side countdown display is
+inferred from the activation packet's duration fields, not independently
+capture-verified, since Captain's dialogue never runs the full 240 seconds).
 
 Only `Blessing`/`Increase AGI` are currently modeled, matching pinned
 `legacy/rathena/src/map/status.cpp` and independently confirmed by the

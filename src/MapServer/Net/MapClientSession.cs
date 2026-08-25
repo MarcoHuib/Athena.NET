@@ -60,6 +60,13 @@ public sealed class MapClientSession : IDisposable, INpcScriptHost
     private int _disposed;
     private CharacterGameplayStateSession? _gameplayState;
     private readonly CharacterStatusEffectState _statusEffects;
+    private readonly TimeProvider _timeProvider;
+    // Single-slot wake signal (max count 1, not int.MaxValue): StartStatusAsync may Release()
+    // several times before the scheduler loop gets a chance to consume a wake, and only one
+    // extra wake-and-recheck is ever needed regardless of how many times the deadline moved
+    // meanwhile - the loop always re-reads NextExpiration fresh on each iteration.
+    private readonly SemaphoreSlim _statusExpirationSignal = new(0, 1);
+    private Task? _statusExpirationLoop;
 
     public MapClientSession(int sessionId, TcpClient client, CharServerConnector charConnector)
         : this(sessionId, client, charConnector, WorldMapRegistry.Tutorial)
@@ -84,7 +91,8 @@ public sealed class MapClientSession : IDisposable, INpcScriptHost
         _questPersistence = questPersistence ?? charConnector;
         _gameplayStatePersistence = gameplayStatePersistence ?? charConnector;
         _worldMapRegistry = worldMapRegistry;
-        _statusEffects = new CharacterStatusEffectState(timeProvider ?? TimeProvider.System);
+        _timeProvider = timeProvider ?? TimeProvider.System;
+        _statusEffects = new CharacterStatusEffectState(_timeProvider);
     }
 
     internal MapClientSession(
@@ -194,7 +202,80 @@ public sealed class MapClientSession : IDisposable, INpcScriptHost
         _gameplayState = new CharacterGameplayStateSession(authOk.AccountId, state, _gameplayStatePersistence);
         _authenticated = true; _positionDirty = false;
         MapLogger.Info($"[iRO MAP DEBUG] 0x0C1F MapAuthNode authentication succeeded accountId={authOk.AccountId} charId={authOk.CharId} sessionMatch=true gameplayStateVersion={state.Version}");
+        _statusExpirationLoop = RunStatusExpirationLoopAsync(_sessionCancellation.Token);
         await SendIroInitialBootstrapAsync(authOk, _sessionCancellation.Token);
+    }
+
+    // One expiration scheduler per session (not one Task.Delay/Timer per active status).
+    // Sleeps until CharacterStatusEffectState.NextExpiration via the shared TimeProvider (so
+    // tests can drive it deterministically with a fake clock), waking early whenever
+    // StartStatusAsync adds or refreshes a status (which can move the next deadline earlier).
+    // Pinned status_change_end's generic tail (status.cpp:14047-14123, no SC_BLESSING/
+    // SC_INCREASEAGI-specific case in the switch at status.cpp:13433-14045) is: send the
+    // "off" status-change packet (clif_status_change with state=0 -> 0x0196 for this
+    // PACKETVER), then recalculate and resync only the stats that actually changed
+    // (status_calc_bl_ -> clif_updatestatus -> 0x0141) - exactly the sequence implemented here.
+    private async Task RunStatusExpirationLoopAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                var next = _statusEffects.NextExpiration;
+                if (next is null)
+                {
+                    await _statusExpirationSignal.WaitAsync(cancellationToken);
+                    continue;
+                }
+
+                var delay = next.Value - _timeProvider.GetUtcNow();
+                if (delay > TimeSpan.Zero)
+                {
+                    using var delayCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                    var wake = _statusExpirationSignal.WaitAsync(delayCancellation.Token);
+                    var sleep = Task.Delay(delay, _timeProvider, delayCancellation.Token);
+                    var completed = await Task.WhenAny(wake, sleep);
+                    delayCancellation.Cancel();
+                    if (completed == wake)
+                    {
+                        try { await wake; } catch (OperationCanceledException) { }
+                        continue;
+                    }
+                    try { await sleep; } catch (OperationCanceledException) { continue; }
+                }
+
+                await ProcessDueStatusExpirationsAsync(cancellationToken);
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (ObjectDisposedException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+    }
+
+    private async Task ProcessDueStatusExpirationsAsync(CancellationToken cancellationToken)
+    {
+        var before = _gameplayState is null ? default : _statusEffects.RecalculateBeforeExpiration(_gameplayState.State);
+        var due = _statusEffects.ExpireDue(_timeProvider.GetUtcNow());
+        if (due.Count == 0 || _gameplayState is null) return;
+        var after = _statusEffects.Recalculate(_gameplayState.State);
+
+        foreach (var status in due)
+        {
+            ushort efstType;
+            if (status.StatusId == CharacterStatusEffectState.StatusIds.Blessing) efstType = IroStatusEffectPackets.EfstBlessing;
+            else if (status.StatusId == CharacterStatusEffectState.StatusIds.IncreaseAgi) efstType = IroStatusEffectPackets.EfstIncAgi;
+            else continue;
+
+            await WriteAsync(IroStatusEffectPackets.BuildStatusChangeEnd(_accountId, efstType), cancellationToken);
+        }
+
+        if (before.Strength != after.Strength) await WriteAsync(IroStatusEffectPackets.BuildCoupleStatus(IroStatusEffectPackets.SpStr, _gameplayState.State.Strength, after.Strength - _gameplayState.State.Strength), cancellationToken);
+        if (after.Agility != before.Agility) await WriteAsync(IroStatusEffectPackets.BuildCoupleStatus(IroStatusEffectPackets.SpAgi, _gameplayState.State.Agility, after.Agility - _gameplayState.State.Agility), cancellationToken);
+        if (before.Intelligence != after.Intelligence) await WriteAsync(IroStatusEffectPackets.BuildCoupleStatus(IroStatusEffectPackets.SpInt, _gameplayState.State.Intelligence, after.Intelligence - _gameplayState.State.Intelligence), cancellationToken);
+        if (before.Dexterity != after.Dexterity) await WriteAsync(IroStatusEffectPackets.BuildCoupleStatus(IroStatusEffectPackets.SpDex, _gameplayState.State.Dexterity, after.Dexterity - _gameplayState.State.Dexterity), cancellationToken);
     }
 
     private async Task CompleteIroAuthenticationSafelyAsync(MapAuthOkData authOk)
@@ -233,10 +314,14 @@ public sealed class MapClientSession : IDisposable, INpcScriptHost
         }
 
         _sessionCancellation.Cancel();
+        // Unblock a pending WaitAsync so the loop observes cancellation promptly; a wake may
+        // already be pending (SemaphoreFullException), which is harmless here too.
+        try { _statusExpirationSignal.Release(); } catch (SemaphoreFullException) { }
         _generatedContinuation?.Completion.TrySetCanceled();
         _stream.Dispose();
         _writeLock.Dispose();
         _sessionCancellation.Dispose();
+        _statusExpirationSignal.Dispose();
     }
 
     private async Task HandlePacketAsync(short packetType, byte[] packet, CancellationToken cancellationToken)
@@ -525,20 +610,20 @@ public sealed class MapClientSession : IDisposable, INpcScriptHost
         ScriptExecutionSession execution,
         ScriptInstructionDefinition instruction,
         CancellationToken cancellationToken) => instruction switch
-    {
-        MessageInstruction message => await ExecuteMessageInstructionAsync(execution, message, cancellationToken),
-        NextInstruction => await ExecuteNextInstructionAsync(execution, cancellationToken),
-        SelectInstruction select => await ExecuteSelectInstructionAsync(execution, select, cancellationToken),
-        CloseInstruction => await ExecuteCloseInstructionAsync(execution, cancellationToken),
-        Close2Instruction => await ExecuteClose2InstructionAsync(execution, cancellationToken),
-        AssignmentInstruction assignment => ExecuteAssignmentInstruction(execution, assignment),
-        WarpInstruction warp => await ExecuteWarpInstructionAsync(execution, warp, cancellationToken),
-        SavePointInstruction savePoint => await ExecuteSavePointInstructionAsync(execution, savePoint, cancellationToken),
-        SetQuestInstruction setQuest => await ExecuteSetQuestInstructionAsync(execution, setQuest, cancellationToken),
-        CompleteQuestInstruction completeQuest => await ExecuteCompleteQuestInstructionAsync(execution, completeQuest, cancellationToken),
-        IfQuestStateInstruction check => await ExecuteQuestStateInstructionAsync(execution, check, cancellationToken),
-        _ => InstructionExecutionResult.Continue,
-    };
+        {
+            MessageInstruction message => await ExecuteMessageInstructionAsync(execution, message, cancellationToken),
+            NextInstruction => await ExecuteNextInstructionAsync(execution, cancellationToken),
+            SelectInstruction select => await ExecuteSelectInstructionAsync(execution, select, cancellationToken),
+            CloseInstruction => await ExecuteCloseInstructionAsync(execution, cancellationToken),
+            Close2Instruction => await ExecuteClose2InstructionAsync(execution, cancellationToken),
+            AssignmentInstruction assignment => ExecuteAssignmentInstruction(execution, assignment),
+            WarpInstruction warp => await ExecuteWarpInstructionAsync(execution, warp, cancellationToken),
+            SavePointInstruction savePoint => await ExecuteSavePointInstructionAsync(execution, savePoint, cancellationToken),
+            SetQuestInstruction setQuest => await ExecuteSetQuestInstructionAsync(execution, setQuest, cancellationToken),
+            CompleteQuestInstruction completeQuest => await ExecuteCompleteQuestInstructionAsync(execution, completeQuest, cancellationToken),
+            IfQuestStateInstruction check => await ExecuteQuestStateInstructionAsync(execution, check, cancellationToken),
+            _ => InstructionExecutionResult.Continue,
+        };
 
     private async Task<InstructionExecutionResult> ExecuteMessageInstructionAsync(
         ScriptExecutionSession execution,
@@ -901,7 +986,7 @@ public sealed class MapClientSession : IDisposable, INpcScriptHost
         // changed; it is not Captain-specific behavior.
         if (result.HpChanged) await WriteAsync(IroCharacterProgressionPackets.Parameter(5, result.After.CurrentHp), cancellationToken);
         if (result.SpChanged) await WriteAsync(IroCharacterProgressionPackets.Parameter(7, result.After.CurrentSp), cancellationToken);
-        if (hp > 0) await WriteAsync(IroStatusEffectPackets.BuildUseSkillVisual(IroStatusEffectPackets.AlHeal, hp, _accountId, _generatedScriptActorId), cancellationToken);
+        if (result.HpChanged && hp > 0) await WriteAsync(IroStatusEffectPackets.BuildUseSkillVisual(IroStatusEffectPackets.AlHeal, hp, _accountId, _generatedScriptActorId), cancellationToken);
     }
 
     // Pinned legacy/rathena/src/map/script.cpp BUILDIN_FUNC(specialeffect2) calls
@@ -934,6 +1019,11 @@ public sealed class MapClientSession : IDisposable, INpcScriptHost
     {
         var id = (ushort)statusId;
         _statusEffects.Start(id, durationMilliseconds, val1);
+        // Wake the expiration loop: this may have moved the next deadline earlier. Best-effort -
+        // SemaphoreFullException means a wake is already pending (the loop hasn't consumed it
+        // yet), which is fine, it will re-read NextExpiration fresh when it does; the signal may
+        // also already be disposed if the session is tearing down concurrently.
+        try { _statusExpirationSignal.Release(); } catch (ObjectDisposedException) { } catch (SemaphoreFullException) { }
         if (!_statusEffects.TryGet(id, out var status)) return;
         var actorId = _accountId;
 

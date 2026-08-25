@@ -275,6 +275,50 @@ HP=40, which is separately synced via the ordinary `0x00B0 var=5` parameter pack
 immediately before it), so Athena attributes this visual to `heal`, not
 `specialeffect2`.
 
+### Natural status expiration (Blessing / Increase AGI)
+
+Captain's dialogue never runs long enough to observe a real 240-second expiry in
+this capture, so nothing below is capture-proven — it is derived entirely from
+pinned `status_change_end` (`status.cpp:13433-14123`) and applied to the already
+capture-proven `0x0196`/`0x0141` serializers, per the same evidence rules used for
+the rest of this document (capture wins when it exists; pinned source is the
+fallback when it doesn't).
+
+Neither `SC_BLESSING` nor `SC_INCREASEAGI` has a case in `status_change_end`'s
+per-type switch (`status.cpp:13433-14045`) — both fall through to the function's
+generic tail (`status.cpp:14085-14109`), which unconditionally does, in order:
+`clif_status_change(bl, status_icon, 0, 0, 0, 0, 0)` (the "off" form of the same
+builder used for activation — `state=0`, `flag=0` for this PACKETVER, i.e. `0x0196`
+`ZC_MSG_STATE_CHANGE`), then, if `calc_flag.any()`, `status_calc_bl_(bl, calc_flag)`
+(recalculates and emits `clif_updatestatus`/`0x0141` for only the stats whose
+recalculated value actually changed). This exactly matches "send status-end, then
+resync only the changed stats" — no new packet shape was needed.
+
+Athena implements this with one expiration scheduler per `MapClientSession`
+(`RunStatusExpirationLoopAsync`/`ProcessDueStatusExpirationsAsync` in
+`MapClientSession.cs`) rather than a timer per active status: it sleeps until
+`CharacterStatusEffectState.NextExpiration` (via the session's `TimeProvider`, so
+tests drive it with a fake clock instead of real 240-second waits), waking early
+whenever `StartStatusAsync` moves the next deadline. On a due status it snapshots
+effective stats immediately before removal (`RecalculateBeforeExpiration`), removes
+the status (`ExpireDue`), recalculates after, sends one `0x0196` per expired status
+(actor=player, `EFST_BLESSING=10`/`EFST_INC_AGI=12`), then sends only the `0x0141`
+fields whose before/after effective value actually differs (STR/INT/DEX for
+Blessing, AGI for Increase AGI) — mirroring `status_calc_bl_`'s "only what changed"
+behavior rather than resending every stat unconditionally. Re-applying an
+already-active status (`sc_start` semantics, matching pinned `status_change_start`'s
+overwrite-not-stack behavior already documented above) replaces `ExpiresAt`
+outright, so the old deadline cannot fire for the refreshed status — the scheduler
+always re-reads the current stored value, never a stale captured one.
+
+Remaining gap, explicitly not addressed here: the client's own `0x0983`
+`totalMsec`/`remainMsec` fields almost certainly drive a client-side countdown that
+clears its icon locally regardless of server behavior (standard RO client
+convention), but this was not, and cannot be, capture-verified from Captain's short
+dialogue window. Server/client convergence after natural expiration therefore rests
+on pinned-source semantics for the packet sequence, not on independent wire proof —
+flagged the same way the `SendVal1`/`src`-actor discrepancies above are flagged.
+
 Captain Carocc's captured `0x09FF/105` actor record uses object type 6, actor ID
 7963, class 873 at offset 23, and the same modern idle-unit layout as the proven
 class-45 WARPNPC records. Athena uses that captured normal-NPC class for its

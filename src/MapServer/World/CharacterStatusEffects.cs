@@ -67,6 +67,11 @@ public sealed class CharacterStatusEffectState(TimeProvider timeProvider)
         _statuses[statusId] = new ActiveStatus(statusId, val1, val2, val3, expiresAt);
     }
 
+    // Treats an already-expired status as inactive without removing it. Reads (TryGet,
+    // Recalculate, effective-stat sync) must reflect expiration immediately, but must not
+    // themselves destroy the ActiveStatus record - the expiration DRIVER (MapClientSession's
+    // scheduler) needs to observe and act on the transition via ExpireDue below (send
+    // 0x0196/0x0141) before the entry disappears. Only ExpireDue removes entries.
     public bool TryGet(ushort statusId, out ActiveStatus status)
     {
         if (_statuses.TryGetValue(statusId, out status) && status.ExpiresAt > _timeProvider.GetUtcNow()) return true;
@@ -74,27 +79,51 @@ public sealed class CharacterStatusEffectState(TimeProvider timeProvider)
         return false;
     }
 
-    // Removes every status whose expiration has passed. Called opportunistically by
-    // recalculation; there is no background timer driving this.
-    public void PruneExpired()
+    // Removes and returns every status whose expiration is at or before `now`. This is the
+    // ONLY member that mutates _statuses by removal - it exists so the expiration driver can
+    // explicitly observe which statuses just transitioned to expired (to synchronize the
+    // client) rather than having them silently vanish. Already-expired-but-not-yet-`ExpireDue`d
+    // entries are still returned by this dictionary's iteration (TryGet/Recalculate just treat
+    // them as inactive), so nothing is lost between "became due" and "driver processed it".
+    public IReadOnlyList<ActiveStatus> ExpireDue(DateTimeOffset now)
     {
-        var now = _timeProvider.GetUtcNow();
+        List<ActiveStatus>? due = null;
         foreach (var (id, status) in _statuses)
-            if (status.ExpiresAt <= now) _statuses.Remove(id);
+        {
+            if (status.ExpiresAt > now) continue;
+            (due ??= []).Add(status);
+        }
+        if (due is null) return [];
+        foreach (var status in due) _statuses.Remove(status.StatusId);
+        return due;
+    }
+
+    // Earliest deadline among currently-stored statuses (whether or not already expired -
+    // an already-due one sorts first, which is exactly what the scheduler needs: "wake now").
+    // Null when nothing is stored, meaning the scheduler should wait indefinitely.
+    public DateTimeOffset? NextExpiration
+    {
+        get
+        {
+            DateTimeOffset? next = null;
+            foreach (var status in _statuses.Values)
+                if (next is null || status.ExpiresAt < next) next = status.ExpiresAt;
+            return next;
+        }
     }
 
     public IReadOnlyCollection<ActiveStatus> ActiveStatuses
     {
         get
         {
-            PruneExpired();
-            return _statuses.Values.ToArray();
+            var now = _timeProvider.GetUtcNow();
+            return _statuses.Values.Where(status => status.ExpiresAt > now).ToArray();
         }
     }
 
     // Derives effective stats from persisted base stats plus every currently active
-    // status. Pinned legacy/rathena/src/map/status.cpp semantics (see Start's remarks for
-    // full status_change_start_post_delay tracing):
+    // (non-expired) status. Pinned legacy/rathena/src/map/status.cpp semantics (see Start's
+    // remarks for full status_change_start_post_delay tracing):
     //   - SC_BLESSING: status_calc_str/int/dex (status.cpp:6776-6778, 6977-6979, 7059-7061)
     //     add +val2 (== val1 for a PC target) to STR, INT, and DEX.
     //   - SC_INCREASEAGI: status_calc_agi (status.cpp:6843-6844) adds +val2 (== 2 + val1) to
@@ -103,22 +132,33 @@ public sealed class CharacterStatusEffectState(TimeProvider timeProvider)
     //     status.cpp:8151-8152) and a +val1 attack-speed bonus (status_calc_aspd,
     //     status.cpp:8344-8345); both are unconditional (no RENEWAL/#ifdef guards around
     //     either SC_INCREASEAGI line in this pinned revision).
-    public EffectiveCharacterStats Recalculate(CharacterGameplayState baseState)
+    public EffectiveCharacterStats Recalculate(CharacterGameplayState baseState) =>
+        RecalculateFrom(baseState, id => TryGet(id, out var status) ? status : null);
+
+    // Effective stats as of just BEFORE an ExpireDue(now) removal, for the expiration driver's
+    // "before" snapshot. Distinct from Recalculate(baseState) because by the time
+    // ProcessDueStatusExpirationsAsync runs, the clock has already reached the statuses' own
+    // ExpiresAt (that is what woke the scheduler), so a time-gated TryGet would already treat
+    // them as inactive and produce a false "nothing changed" diff. This reads the raw stored
+    // entries (still present - ExpireDue has not run yet) unconditionally instead.
+    public EffectiveCharacterStats RecalculateBeforeExpiration(CharacterGameplayState baseState) =>
+        RecalculateFrom(baseState, id => _statuses.TryGetValue(id, out var status) ? status : null);
+
+    private static EffectiveCharacterStats RecalculateFrom(CharacterGameplayState baseState, Func<ushort, ActiveStatus?> lookup)
     {
-        PruneExpired();
         ushort strength = baseState.Strength, agility = baseState.Agility, vitality = baseState.Vitality,
             intelligence = baseState.Intelligence, dexterity = baseState.Dexterity, luck = baseState.Luck;
         var moveSpeedHaste = 0;
         var attackSpeedBonus = 0;
 
-        if (TryGet(StatusIds.Blessing, out var blessing))
+        if (lookup(StatusIds.Blessing) is { } blessing)
         {
             strength = (ushort)(strength + blessing.Val2);
             intelligence = (ushort)(intelligence + blessing.Val2);
             dexterity = (ushort)(dexterity + blessing.Val2);
         }
 
-        if (TryGet(StatusIds.IncreaseAgi, out var increaseAgi))
+        if (lookup(StatusIds.IncreaseAgi) is { } increaseAgi)
         {
             agility = (ushort)(agility + increaseAgi.Val2);
             moveSpeedHaste = Math.Max(moveSpeedHaste, 25);

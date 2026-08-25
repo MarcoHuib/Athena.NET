@@ -135,5 +135,37 @@ public sealed class CharacterStatusEffectStateTests
         Assert.Throws<ArgumentOutOfRangeException>(() => state.Start(CharacterStatusEffectState.StatusIds.Blessing, 0, 10));
     }
 
+    [Fact]
+    public void ExpireDueRemovesAndReturnsOnlyStatusesAtOrBeforeNow()
+    {
+        var clock = new FakeTimeProvider();
+        var state = new CharacterStatusEffectState(clock);
+        state.Start(CharacterStatusEffectState.StatusIds.Blessing, 1000, 10);
+        state.Start(CharacterStatusEffectState.StatusIds.IncreaseAgi, 5000, 10);
+
+        clock.Advance(TimeSpan.FromMilliseconds(1500));
+        var due = state.ExpireDue(clock.GetUtcNow());
+
+        Assert.Equal(CharacterStatusEffectState.StatusIds.Blessing, Assert.Single(due).StatusId);
+        Assert.False(state.TryGet(CharacterStatusEffectState.StatusIds.Blessing, out _));
+        Assert.True(state.TryGet(CharacterStatusEffectState.StatusIds.IncreaseAgi, out _));
+    }
+
+    [Fact]
+    public void NextExpirationReflectsEarliestActiveDeadline()
+    {
+        var clock = new FakeTimeProvider();
+        var state = new CharacterStatusEffectState(clock);
+        Assert.Null(state.NextExpiration);
+
+        state.Start(CharacterStatusEffectState.StatusIds.IncreaseAgi, 5000, 10);
+        state.Start(CharacterStatusEffectState.StatusIds.Blessing, 1000, 10);
+
+        Assert.Equal(clock.GetUtcNow().AddMilliseconds(1000), state.NextExpiration);
+
+        state.ExpireDue(clock.GetUtcNow().AddMilliseconds(1000));
+        Assert.Equal(clock.GetUtcNow().AddMilliseconds(5000), state.NextExpiration);
+    }
+
     private static CharacterGameplayState BaseState() => new(9, 0, 0, 1, 1, 0, 0, 40, 11, 40, 11, 48, 0, 1, 2, 3, 4, 5, 6);
 }
