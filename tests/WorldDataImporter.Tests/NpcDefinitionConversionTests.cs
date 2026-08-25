@@ -29,8 +29,9 @@ public sealed class NpcDefinitionConversionTests
     // Captain Carocc and Lumin both have real, non-trivial rAthena click dialogue (getexp/switch/select/
     // sc_start commands) - they are NOT OnInit-only NPCs. ConvertNpcDefinitions is a lossless text-slicer
     // that parses whatever click/touch body exists, so it correctly returns non-empty Triggers for both;
-    // semantic conversion does not know (and must not encode) that this migration deliberately keeps them
-    // unregistered at the emission layer pending real healing/EXP/status/inventory runtime support.
+    // semantic conversion does not know (and must not encode) which of them the emission layer chooses to
+    // register a behavior for. Captain Carocc's script is now registered (see AcademyNpcs.cs); Lumin's
+    // stays unregistered pending real inventory runtime support.
     [Fact]
     public void CaptainCaroccSemanticConversion_ProducesAllFivePinnedPlacementsIncludingTemplate()
     {

@@ -59,6 +59,7 @@ public sealed class MapClientSession : IDisposable, INpcScriptHost
     private bool _positionDirty;
     private int _disposed;
     private CharacterGameplayStateSession? _gameplayState;
+    private readonly CharacterStatusEffectState _statusEffects;
 
     public MapClientSession(int sessionId, TcpClient client, CharServerConnector charConnector)
         : this(sessionId, client, charConnector, WorldMapRegistry.Tutorial)
@@ -72,7 +73,8 @@ public sealed class MapClientSession : IDisposable, INpcScriptHost
         WorldMapRegistry worldMapRegistry,
         ICharacterPositionPersistence? positionPersistence = null,
         ICharacterQuestPersistence? questPersistence = null,
-        ICharacterGameplayStatePersistence? gameplayStatePersistence = null)
+        ICharacterGameplayStatePersistence? gameplayStatePersistence = null,
+        TimeProvider? timeProvider = null)
     {
         SessionId = sessionId;
         _client = client;
@@ -82,6 +84,7 @@ public sealed class MapClientSession : IDisposable, INpcScriptHost
         _questPersistence = questPersistence ?? charConnector;
         _gameplayStatePersistence = gameplayStatePersistence ?? charConnector;
         _worldMapRegistry = worldMapRegistry;
+        _statusEffects = new CharacterStatusEffectState(timeProvider ?? TimeProvider.System);
     }
 
     internal MapClientSession(
@@ -97,7 +100,8 @@ public sealed class MapClientSession : IDisposable, INpcScriptHost
         ICharacterQuestPersistence? questPersistence = null,
         uint accountId = 0,
         uint charId = 0,
-        ICharacterGameplayStatePersistence? gameplayStatePersistence = null)
+        ICharacterGameplayStatePersistence? gameplayStatePersistence = null,
+        TimeProvider? timeProvider = null)
         : this(
             sessionId,
             client,
@@ -105,7 +109,8 @@ public sealed class MapClientSession : IDisposable, INpcScriptHost
             worldMapRegistry ?? WorldMapRegistry.Tutorial,
             positionPersistence,
             questPersistence,
-            gameplayStatePersistence)
+            gameplayStatePersistence,
+            timeProvider)
     {
         _iroAuthRequested = iroAuthenticated;
         _authRequested = iroAuthenticated;
@@ -125,6 +130,7 @@ public sealed class MapClientSession : IDisposable, INpcScriptHost
     internal ScriptExecutionState? ActiveScriptState => _scriptExecutionSession?.State;
     internal string? ActiveGeneratedScriptEntityId => _generatedScriptEntityId;
     internal CharacterGameplayStateSession? GameplayState => _gameplayState;
+    internal CharacterStatusEffectState StatusEffects => _statusEffects;
 
     public async Task RunAsync(CancellationToken cancellationToken)
     {
@@ -768,6 +774,36 @@ public sealed class MapClientSession : IDisposable, INpcScriptHost
         var result = await new CharacterProgressionService(state).AddExperienceAsync(baseExperience, jobExperience, cancellationToken)
             ?? throw new InvalidOperationException("Character progression persistence failed.");
         foreach (var packet in IroCharacterProgressionPackets.Build(result, baseExperience > 0, jobExperience > 0)) await WriteAsync(packet, cancellationToken);
+    }
+
+    async Task INpcScriptHost.HealAsync(int hp, int sp, CancellationToken cancellationToken)
+    {
+        var state = _gameplayState ?? throw new InvalidOperationException("Character gameplay state is not loaded.");
+        var result = await new CharacterHealService(state).HealAsync(hp, sp, cancellationToken)
+            ?? throw new InvalidOperationException("Heal persistence failed.");
+        // No client packet is sent when the mutation left HP/SP unchanged (e.g. an
+        // already-full heal) - there is nothing to synchronize. This mirrors the
+        // existing GrantExperienceAsync policy of only emitting the packets for
+        // fields that actually changed; it is not Captain-specific behavior.
+        if (result.HpChanged) await WriteAsync(IroCharacterProgressionPackets.Parameter(5, result.After.CurrentHp), cancellationToken);
+        if (result.SpChanged) await WriteAsync(IroCharacterProgressionPackets.Parameter(7, result.After.CurrentSp), cancellationToken);
+    }
+
+    // The npc-interaction-heal-action capture proves Captain Carocc's dialogue turn
+    // that reaches specialeffect2/skilleffect/sc_start produced zero client-visible
+    // bytes for those three commands (see ai/iro-2026-wire.md). Pending independent
+    // wire proof of their packet layout, Athena implements only the required
+    // server-side semantics: specialeffect2/skilleffect are presentation-only in
+    // pinned rAthena (no persistent state), so there is nothing to mutate; sc_start's
+    // server-side semantics are implemented by StartStatusAsync below.
+    Task INpcScriptHost.SpecialEffectAsync(int effectId, CancellationToken cancellationToken) => Task.CompletedTask;
+
+    Task INpcScriptHost.SkillEffectAsync(int skillId, int level, CancellationToken cancellationToken) => Task.CompletedTask;
+
+    Task INpcScriptHost.StartStatusAsync(int statusId, int durationMilliseconds, int val1, CancellationToken cancellationToken)
+    {
+        _statusEffects.Start((ushort)statusId, durationMilliseconds, val1);
+        return Task.CompletedTask;
     }
 
     private static TaskCompletionSource NewSignal() => new(TaskCreationOptions.RunContinuationsAsynchronously);

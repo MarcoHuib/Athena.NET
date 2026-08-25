@@ -156,7 +156,42 @@ their breadth does not imply runtime support.
 
 ## Still missing
 
-The minimal `iz_int03` slice now also includes compiler-generated navigation targets, both Wounded Swordsman actor states/scripts, and actor-only definitions for the pinned `int_land03` Captain Carocc and Lumin duplicates. Captain/Lumin are visible, but their scripts deliberately remain unregistered until real healing, EXP, status-effect, inventory, and related semantics exist; no no-op gameplay commands are used.
+The minimal `iz_int03` slice now also includes compiler-generated navigation targets, both Wounded Swordsman actor states/scripts, and definitions for the pinned `int_land03` Captain Carocc and Lumin duplicates. Captain Carocc's real pinned dialogue/quest/heal/status/EXP script is registered and executable, using the generic heal, temporary-status, and existing quest/progression runtime capabilities described below. Lumin remains actor-only: its script stays unregistered until real inventory runtime support exists; no no-op gameplay commands are used.
+
+## Heal and temporary status effects
+
+`heal` mutates the authoritative `CharacterGameplayState` HP/SP through the same
+versioned `CharacterGameplayStateSession.MutateAsync` persistence path progression
+uses, via `CharacterHealService`. It clamps to `[0, MaxHp]`/`[0, MaxSp]` per pinned
+`status_heal`. The already-verified `0x00B0` parameter-change packet synchronizes
+HP/SP, and is only sent for the field(s) that actually changed (e.g. an
+already-full heal sends nothing) — the same policy `GrantExperienceAsync` already
+uses for level-up fields, not new or NPC-specific behavior.
+
+`sc_start` starts a small generic temporary status foundation
+(`CharacterStatusEffectState`), not the complete Ragnarok status system. Each
+`MapClientSession` owns independent mutable status state in MapServer runtime
+memory only — temporary statuses are never persisted to `CharacterGameplayState`.
+Expiration is computed lazily against an injected `TimeProvider` on every read
+(no background timer, no per-status `Task.Delay`). Effective stats are derived on
+demand from persisted base stats plus every currently active (non-expired) status;
+persisted base stats themselves are never mutated by a temporary status.
+Re-applying an already-active status (pinned `sc_start` semantics) overwrites its
+stored values/duration outright rather than stacking.
+
+Only `Blessing`/`Increase AGI` are currently modeled, matching pinned
+`legacy/rathena/src/map/status.cpp`: Blessing adds `+val1` (its `val2`, which
+equals `val1` for a player target) to STR/INT/DEX; Increase AGI does not modify
+the AGI stat itself (no default `val2` assignment exists for it in pinned
+`status_change_start`) but grants a flat `+25` move-speed haste value and a
+`+val1` attack-speed bonus.
+
+The `npc-interaction-heal-action.pcapng` capture (see `ai/iro-2026-wire.md`) proves
+Captain Carocc's own dialogue turn produced no client-visible bytes at all for
+`specialeffect2`/`skilleffect`/`sc_start`. Pending independent wire proof of their
+packet layout, Athena implements only their required server-side semantics and
+sends no client packet for them; this is not Captain-specific — any generated
+script reaching these commands gets the same behavior.
 
 - Remaining rAthena NPCs, warps, shops, monsters, items, and scripts.
 - Poring spawn/combat/death and quest kill-progress synchronization.

@@ -27,6 +27,25 @@ public interface INpcScriptHost
     Task SetNpcCloakAsync(string entityIdOrName, bool cloaked, CancellationToken cancellationToken);
     Task NavigateToAsync(string map, ushort x, ushort y, CancellationToken cancellationToken);
     Task GrantExperienceAsync(long baseExperience, long jobExperience, CancellationToken cancellationToken);
+    Task HealAsync(int hp, int sp, CancellationToken cancellationToken);
+    Task SpecialEffectAsync(int effectId, CancellationToken cancellationToken);
+    Task SkillEffectAsync(int skillId, int level, CancellationToken cancellationToken);
+    Task StartStatusAsync(int statusId, int durationMilliseconds, int val1, CancellationToken cancellationToken);
+}
+
+// Pinned rAthena numeric constants referenced by generated script identifiers
+// (e.g. `specialeffect2 EF_HEAL2;`, `sc_start SC_BLESSING,240000,10;`). Values are the
+// exact ordinal of each pinned enum entry - see the source references on each field.
+// Only constants actually reached by a currently generated script are added; this is
+// not a transcription of the complete pinned enums.
+public static class RathenaConstants
+{
+    // legacy/rathena/src/map/script.hpp enum e_special_effects (EF_NONE = -1 origin).
+    public const int EF_HEAL2 = 313;
+
+    // legacy/rathena/src/map/status.hpp enum sc_type (SC_STONE = 0 origin).
+    public const int SC_BLESSING = 30;
+    public const int SC_INCREASEAGI = 32;
 }
 
 public sealed class ScriptContext
@@ -63,6 +82,10 @@ public sealed class ScriptContext
         _host.SetNpcCloakAsync(npcName ?? EntityId, cloaked, cancellationToken);
     public Task NavigateToAsync(string map, ushort x, ushort y, CancellationToken cancellationToken) => _host.NavigateToAsync(map, x, y, cancellationToken);
     public Task GrantExperienceAsync(long baseExperience, long jobExperience, CancellationToken cancellationToken) => _host.GrantExperienceAsync(baseExperience, jobExperience, cancellationToken);
+    public Task HealAsync(int hp, int sp, CancellationToken cancellationToken) => _host.HealAsync(hp, sp, cancellationToken);
+    public Task SpecialEffectAsync(int effectId, CancellationToken cancellationToken) => _host.SpecialEffectAsync(effectId, cancellationToken);
+    public Task SkillEffectAsync(int skillId, int level, CancellationToken cancellationToken) => _host.SkillEffectAsync(skillId, level, cancellationToken);
+    public Task StartStatusAsync(int statusId, int durationMilliseconds, int val1, CancellationToken cancellationToken) => _host.StartStatusAsync(statusId, durationMilliseconds, val1, cancellationToken);
 
     public string StrNpcInfo(int type) => type switch
     {

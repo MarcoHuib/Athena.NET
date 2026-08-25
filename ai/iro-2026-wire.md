@@ -188,6 +188,53 @@ implements the independently proven Message, Next suspension/resume, Close, and
 one-based menu selection transport using a test WorldEntity. Quest traffic, combat,
 and item acquisition in this capture remain future evidence without runtime support.
 
+Captain Carocc's pinned source is `legacy/rathena/npc/re/jobs/novice/academy.txt:133`
+(`int_land,78,103,5 script Captain Carocc#intro_npc03`). Frames 3172-3186 of
+`npc-interaction-heal-action.pcapng` (reassembled TCP stream, verified byte-for-byte
+identical in both the compact and the fuller "all-gravity-traffic" exports of the
+same capture) prove the captured character already had quest 21001 active when this
+Captain interaction ran: frame 3186's payload contains, immediately after the
+NUL-terminated "...I'll trust you." message text, `0x0B0C` (add quest 21001 active),
+then `0x02B4` (remove quest 21001), then `0x0B0C` (add quest 21008 active) — with
+zero other packets between them. TCP sequence numbers across frames 3172→3186 are
+exactly contiguous (no gap, no retransmission), so this is not a reassembly artifact.
+
+This proves that the pinned script's `specialeffect2 EF_HEAL2`, `heal 9999,0`,
+`skilleffect 34,0`, `sc_start SC_BLESSING,240000,10`, `skilleffect 29,0`,
+`sc_start SC_INCREASEAGI,240000,10`, `completequest 21001`, and `getexp 600,600` —
+all of which execute in this exact dialogue turn per the pinned source, since quest
+21001 was already active — produced **no observed client-facing bytes whatsoever**
+in this capture, beyond the quest transition packets already documented above. No
+`0x00B0`/`0x0ACB` parameter-change packet, no special-effect packet, no status/EFST
+packet, and no distinguishable heal-HP-sync packet appears anywhere in the
+reassembled stream for this turn.
+
+This is capture evidence, not an implementation gap: Athena's generated Captain
+script must apply these HP/SP, EXP, and temporary-status mutations to authoritative
+server-side state exactly per pinned rAthena semantics, but must not synthesize any
+client-facing packet for `specialeffect2`, `skilleffect`, or `sc_start`/status-sync
+without independent proof.
+
+For `getexp`/heal specifically, this is a genuine open contradiction rather than a
+confirming absence: pinned `pc_gainexp` unconditionally calls
+`clif_updatestatus(SP_BASEEXP)`/`SP_JOBEXP` even without a level-up, and pinned
+`status_heal` normally triggers an HP/SP sync via the same generic parameter-change
+mechanism Athena's existing `GrantExperienceAsync`/`0x00B0`/`0x0ACB` serializers
+already implement for the Novice-progression slice (`ai/world-data.md`). The
+capture's own quest state proves quest 21001 was already active for this turn
+(`0x02B4` removes 21001 immediately after a `0x0B0C` add-active-1 for it earlier in
+the same turn), so pinned Captain's `getexp 600,600` should have executed here too,
+yet no EXP/HP/SP parameter packet appears anywhere in the reassembled stream.
+
+This is treated as an unexplained capture gap, not as evidence that Captain (or
+heal/getexp generally) requires suppressed client sync. Athena's generated Captain
+script mutates authoritative gameplay state exactly per pinned semantics and reuses
+the existing, independently wire-verified `GrantExperienceAsync`/`CharacterProgressionService`
+path for `getexp` unchanged, and the existing `0x00B0` parameter-change mechanism for
+`heal`'s HP/SP sync (skipping the packet only when the mutation left HP/SP
+unchanged, e.g. an already-full heal) — the same generic policy any other generated
+script gets, not a Captain-specific behavior.
+
 Captain Carocc's captured `0x09FF/105` actor record uses object type 6, actor ID
 7963, class 873 at offset 23, and the same modern idle-unit layout as the proven
 class-45 WARPNPC records. Athena uses that captured normal-NPC class for its
