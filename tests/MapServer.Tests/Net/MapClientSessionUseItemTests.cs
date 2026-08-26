@@ -24,19 +24,20 @@ public sealed class MapClientSessionUseItemTests
         private CharacterInventorySnapshot _current = initial;
         public Task<CharacterInventoryReadResult> GetInventoryAsync(uint a, uint c, CancellationToken t) =>
             Task.FromResult(CharacterInventoryReadResult.Success(_current));
-        public Task<bool> SetItemEquipAsync(uint a, uint c, uint slotIndex, uint equip, CancellationToken t) => Task.FromResult(false);
+        public Task<bool> SetItemEquipAsync(uint a, uint c, uint durableId, uint equip, CancellationToken t) => Task.FromResult(false);
     }
 
-    // Simulates CharServer's real InStableSlotOrder-derived behavior: consuming decrements (or
-    // deletes, matching pinned pc_delitem) the row at the given slot; adding appends a new row
-    // (or increments an existing stack) at the end of the current stable ordering - mirroring
-    // MapServerSession.HandleInventoryConsumeAsync/HandleInventoryAddRequestAsync without a real
-    // database.
+    // Simulates CharServer's real durable-row behavior: consuming decrements (or deletes,
+    // matching pinned pc_delitem) the row by its stable DurableId; adding appends a brand-new
+    // durable row (or increments an existing stack) - mirroring MapServerSession.
+    // HandleInventoryConsumeAsync/HandleInventoryAddRequestAsync without a real database.
+    // CharServer has no runtime-slot concept at all - it is never asked for one here either.
     private sealed class RecordingInventoryPersistence(List<CharacterInventoryItem> rows) : ICharacterInventoryPersistence
     {
+        private uint _nextDurableId = rows.Count == 0 ? 1 : rows.Max(r => r.DurableId) + 1;
         public bool FailNextConsume { get; set; }
         public bool FailNextAdd { get; set; }
-        public List<(uint SlotIndex, uint Amount)> ConsumeCalls { get; } = [];
+        public List<(uint DurableId, uint Amount)> ConsumeCalls { get; } = [];
         public List<(int ItemId, uint Amount)> AddCalls { get; } = [];
 
         public Task<InventoryAddPersistenceResult> AddStackableItemAsync(uint accountId, uint charId, int itemId, uint amount, CancellationToken cancellationToken)
@@ -49,30 +50,26 @@ public sealed class MapClientSessionUseItemTests
             {
                 var updated = rows[existingIndex].Amount + amount;
                 rows[existingIndex] = rows[existingIndex] with { Amount = updated };
-                return Task.FromResult(new InventoryAddPersistenceResult(true, updated, rows[existingIndex].SlotIndex, 0, true, 0, 0, 0));
+                return Task.FromResult(new InventoryAddPersistenceResult(true, updated, rows[existingIndex].DurableId, 0, true, 0, 0, 0, IsNewRow: false));
             }
 
-            var slotIndex = (uint)rows.Count;
-            rows.Add(new CharacterInventoryItem(slotIndex, itemId, amount, 0, true, 0, 0, 0));
-            return Task.FromResult(new InventoryAddPersistenceResult(true, amount, slotIndex, 0, true, 0, 0, 0));
+            var durableId = _nextDurableId++;
+            rows.Add(new CharacterInventoryItem(durableId, SlotIndex: 0, itemId, amount, 0, true, 0, 0, 0));
+            return Task.FromResult(new InventoryAddPersistenceResult(true, amount, durableId, 0, true, 0, 0, 0, IsNewRow: true));
         }
 
-        public Task<InventoryConsumePersistenceResult> ConsumeItemAsync(uint accountId, uint charId, uint slotIndex, uint amount, CancellationToken cancellationToken)
+        public Task<InventoryConsumePersistenceResult> ConsumeItemAsync(uint accountId, uint charId, uint durableId, uint amount, CancellationToken cancellationToken)
         {
-            ConsumeCalls.Add((slotIndex, amount));
+            ConsumeCalls.Add((durableId, amount));
             if (FailNextConsume) { FailNextConsume = false; return Task.FromResult(InventoryConsumePersistenceResult.Failed()); }
 
-            var index = rows.FindIndex(r => r.SlotIndex == slotIndex);
+            var index = rows.FindIndex(r => r.DurableId == durableId);
             if (index < 0 || rows[index].Amount < amount) return Task.FromResult(InventoryConsumePersistenceResult.Failed());
 
             var newAmount = rows[index].Amount - amount;
             if (newAmount == 0)
             {
                 rows.RemoveAt(index);
-                // Renumber later rows down by one, matching CharServer's real behavior.
-                for (var i = 0; i < rows.Count; i++)
-                    if (rows[i].SlotIndex > slotIndex)
-                        rows[i] = rows[i] with { SlotIndex = rows[i].SlotIndex - 1 };
                 return Task.FromResult(new InventoryConsumePersistenceResult(true, 0, RowDeleted: true));
             }
 
@@ -101,9 +98,20 @@ public sealed class MapClientSessionUseItemTests
 
     private static CharacterInventorySnapshot ThreeStarterRowsPlusFirstAidBox() => new(
     [
-        new CharacterInventoryItem(0, 1201, 1, 0x000002, true, 0, 0, 0), // Knife, equipped
-        new CharacterInventoryItem(1, 2301, 1, 0x000010, true, 0, 0, 0), // Cotton Shirt, equipped
-        new CharacterInventoryItem(2, 23484, 1, 0, true, 0, 0, 0), // First Aid Box, unequipped - clientIndex 4
+        new CharacterInventoryItem(DurableId: 1, SlotIndex: 0, 1201, 1, 0x000002, true, 0, 0, 0), // Knife, equipped
+        new CharacterInventoryItem(DurableId: 2, SlotIndex: 1, 2301, 1, 0x000010, true, 0, 0, 0), // Cotton Shirt, equipped
+        new CharacterInventoryItem(DurableId: 3, SlotIndex: 2, 23484, 1, 0, true, 0, 0, 0), // First Aid Box, unequipped - clientIndex 4
+    ]);
+
+    // The user's exact required scenario: slot 0 Knife, slot 1 Cotton Shirt, slot 2 FirstAidBox,
+    // slot 3 Wood - proving that after consuming the First Aid Box (leaving a hole at slot 2),
+    // Wood remains slot 3/clientIndex 5, and the first grant reuses the hole at slot 2/clientIndex 4.
+    private static CharacterInventorySnapshot FourStarterRowsPlusFirstAidBoxAndWood() => new(
+    [
+        new CharacterInventoryItem(DurableId: 1, SlotIndex: 0, 1201, 1, 0x000002, true, 0, 0, 0), // Knife, equipped
+        new CharacterInventoryItem(DurableId: 2, SlotIndex: 1, 2301, 1, 0x000010, true, 0, 0, 0), // Cotton Shirt, equipped
+        new CharacterInventoryItem(DurableId: 3, SlotIndex: 2, 23484, 1, 0, true, 0, 0, 0), // First Aid Box, unequipped - clientIndex 4
+        new CharacterInventoryItem(DurableId: 4, SlotIndex: 3, 6008, 5, 0, true, 0, 0, 0), // Wood, unequipped - clientIndex 5
     ]);
 
     private async Task<(TcpClient Client, NetworkStream Stream, MapClientSession Session, Task RunTask, RecordingInventoryPersistence Persistence)> SetupAsync(
@@ -170,7 +178,7 @@ public sealed class MapClientSessionUseItemTests
         }
 
         Assert.Single(persistence.ConsumeCalls);
-        Assert.Equal((2u, 1u), persistence.ConsumeCalls[0]);
+        Assert.Equal((3u, 1u), persistence.ConsumeCalls[0]); // First Aid Box's DurableId=3
         Assert.Equal(5, persistence.AddCalls.Count);
 
         client.Close();
@@ -201,6 +209,102 @@ public sealed class MapClientSessionUseItemTests
         Assert.Equal(0u, session.Inventory.Items.Single(i => i.ItemId == 1201).SlotIndex);
         Assert.Equal(1u, session.Inventory.Items.Single(i => i.ItemId == 2301).SlotIndex);
         Assert.Equal(1201, session.Equipment!.RightHandItemId);
+
+        client.Close();
+        await run.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    // Live-verified evidence this test proves: consuming the First Aid Box (durable row at slot
+    // 2) must leave a HOLE at slot 2 - Wood (already occupying slot 3) must NOT be renumbered
+    // down to slot 2. The first getitem grant (11518) must then reuse that exact hole at slot 2/
+    // clientIndex 4, and Wood must still report slot 3/clientIndex 5 afterward. This is the
+    // pinned pc_delitem/pc_additem behavior (array slot zeroed in place, first-empty-slot reuse)
+    // this architecture exists to mirror - never CharServer row-position renumbering.
+    [Fact]
+    public async Task UseFirstAidBox_WithWoodAlreadyPastIt_LeavesHoleAtSlotTwo_FirstGrantReusesHole_WoodStaysAtSlotThree()
+    {
+        var (client, stream, session, run, persistence) = await SetupAsync(FourStarterRowsPlusFirstAidBoxAndWood());
+        using var _ = client;
+
+        // Setup check: four starting rows at the expected server slots before consuming anything.
+        Assert.Equal(4, session.Inventory!.Items.Count);
+        Assert.Equal(0u, session.Inventory.Items.Single(i => i.ItemId == 1201).SlotIndex);
+        Assert.Equal(1u, session.Inventory.Items.Single(i => i.ItemId == 2301).SlotIndex);
+        Assert.Equal(2u, session.Inventory.Items.Single(i => i.ItemId == 23484).SlotIndex);
+        Assert.Equal(3u, session.Inventory.Items.Single(i => i.ItemId == 6008).SlotIndex);
+
+        await stream.WriteAsync(UseItemRequestPacket(4, AccountId)); // clientIndex 4 -> slotIndex 2 -> First Aid Box
+
+        var ack = await ReadExact(stream, 15);
+        Assert.Equal((short)0x01c8, BinaryPrimitives.ReadInt16LittleEndian(ack));
+        Assert.Equal((byte)1, ack[14]); // success
+
+        // Immediately after the consume (before any grant is applied), the First Aid Box row is
+        // gone and Wood remains EXACTLY at slot 3 - the hole at slot 2 has not been backfilled by
+        // renumbering.
+        Assert.DoesNotContain(session.Inventory!.Items, i => i.ItemId == 23484);
+        Assert.Equal(3u, session.Inventory.Items.Single(i => i.ItemId == 6008).SlotIndex);
+
+        // First grant (11518) must reuse the hole at slot 2 / clientIndex 4.
+        var firstGrantPickup = await ReadExact(stream, PacketConstants.ZcItemPickupAckLength);
+        Assert.Equal((short)PacketConstants.ZcItemPickupAck, BinaryPrimitives.ReadInt16LittleEndian(firstGrantPickup));
+        var firstGrantClientIndex = BinaryPrimitives.ReadUInt16LittleEndian(firstGrantPickup.AsSpan(2));
+        Assert.Equal((ushort)4, firstGrantClientIndex); // slot 2 + 2
+        Assert.Equal(11518u, BinaryPrimitives.ReadUInt32LittleEndian(firstGrantPickup.AsSpan(6)));
+        Assert.Equal(2u, session.Inventory.Items.Single(i => i.ItemId == 11518).SlotIndex);
+        Assert.Equal(3u, session.Inventory.Items.Single(i => i.ItemId == 6008).SlotIndex); // Wood still slot 3
+
+        // Remaining four grants continue using subsequent first-free slots (4, 5, 6, 7 - none of
+        // which collide with Wood's slot 3).
+        var expectedRemainingGrants = new (int ItemId, ushort Count, uint ExpectedSlot)[]
+        {
+            (11614, 20, 4),
+            (12325, 15, 5),
+            (22542, 1, 6),
+            (23485, 1, 7),
+        };
+        foreach (var (itemId, count, expectedSlot) in expectedRemainingGrants)
+        {
+            var pickup = await ReadExact(stream, PacketConstants.ZcItemPickupAckLength);
+            Assert.Equal((short)PacketConstants.ZcItemPickupAck, BinaryPrimitives.ReadInt16LittleEndian(pickup));
+            Assert.Equal(count, BinaryPrimitives.ReadUInt16LittleEndian(pickup.AsSpan(4)));
+            Assert.Equal((uint)itemId, BinaryPrimitives.ReadUInt32LittleEndian(pickup.AsSpan(6)));
+            Assert.Equal((ushort)(expectedSlot + 2), BinaryPrimitives.ReadUInt16LittleEndian(pickup.AsSpan(2)));
+            Assert.Equal(expectedSlot, session.Inventory.Items.Single(i => i.ItemId == itemId).SlotIndex);
+        }
+
+        // Wood's slot/clientIndex is unaffected by the entire hole/reuse sequence.
+        Assert.Equal(3u, session.Inventory.Items.Single(i => i.ItemId == 6008).SlotIndex);
+
+        client.Close();
+        await run.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    // Proves that after the hole/reuse sequence, using/equipping an EXISTING item (the Knife,
+    // never touched by the consume/grant sequence) still resolves to the same authoritative
+    // durable row and works exactly as before - the durable-id/runtime-slot split does not break
+    // ordinary equip/unequip for unrelated rows.
+    [Fact]
+    public async Task AfterHoleReuseSequence_EquippingExistingItem_ResolvesSameAuthoritativeRow()
+    {
+        var (client, stream, session, run, persistence) = await SetupAsync(FourStarterRowsPlusFirstAidBoxAndWood());
+        using var _ = client;
+
+        await stream.WriteAsync(UseItemRequestPacket(4, AccountId));
+        await ReadExact(stream, 15); // ack
+        for (var i = 0; i < 5; i++) await ReadExact(stream, PacketConstants.ZcItemPickupAckLength);
+
+        // Knife (slot 0, clientIndex 2) was never touched by the hole/reuse sequence - unequip
+        // must still succeed against the SAME durable row it always referenced.
+        var unequipPacket = new byte[PacketConstants.IroCzReqTakeoffEquipLength];
+        BinaryPrimitives.WriteInt16LittleEndian(unequipPacket, PacketConstants.IroCzReqTakeoffEquip);
+        BinaryPrimitives.WriteUInt16LittleEndian(unequipPacket.AsSpan(2), 2);
+        await stream.WriteAsync(unequipPacket);
+
+        await ReadExact(stream, 15); // 0x01D7 appearance refresh (unarmed)
+        var unequipAck = await ReadExact(stream, PacketConstants.IroZcReqTakeoffEquipAckLength);
+        Assert.Equal((short)PacketConstants.IroZcReqTakeoffEquipAck, BinaryPrimitives.ReadInt16LittleEndian(unequipAck));
+        Assert.Null(session.Equipment!.RightHandItemId);
 
         client.Close();
         await run.WaitAsync(TimeSpan.FromSeconds(5));
@@ -268,7 +372,7 @@ public sealed class MapClientSessionUseItemTests
     {
         // A Usable item with no Grants (no source-backed effect implemented) must be rejected,
         // not silently treated as a no-op success.
-        var inventory = new CharacterInventorySnapshot([new CharacterInventoryItem(0, 22542, 1, 0, true, 0, 0, 0)]); // Concentration Potion
+        var inventory = new CharacterInventorySnapshot([new CharacterInventoryItem(DurableId: 1, SlotIndex: 0, 22542, 1, 0, true, 0, 0, 0)]); // Concentration Potion
         var (client, stream, session, run, persistence) = await SetupAsync(inventory);
         using var _ = client;
 

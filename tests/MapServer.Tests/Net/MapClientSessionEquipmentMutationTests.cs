@@ -19,17 +19,17 @@ public sealed class MapClientSessionEquipmentMutationTests
     private sealed class RecordingInventoryListPersistence(CharacterInventorySnapshot initial) : ICharacterInventoryListPersistence
     {
         private CharacterInventorySnapshot _current = initial;
-        public List<(uint SlotIndex, uint Equip)> Calls { get; } = [];
+        public List<(uint DurableId, uint Equip)> Calls { get; } = [];
         public bool NextSetResult { get; set; } = true;
 
         public Task<CharacterInventoryReadResult> GetInventoryAsync(uint a, uint c, CancellationToken t) =>
             Task.FromResult(CharacterInventoryReadResult.Success(_current));
 
-        public Task<bool> SetItemEquipAsync(uint accountId, uint characterId, uint slotIndex, uint equip, CancellationToken cancellationToken)
+        public Task<bool> SetItemEquipAsync(uint accountId, uint characterId, uint durableId, uint equip, CancellationToken cancellationToken)
         {
-            Calls.Add((slotIndex, equip));
+            Calls.Add((durableId, equip));
             if (!NextSetResult) return Task.FromResult(false);
-            var items = _current.Items.Select(i => i.SlotIndex == slotIndex ? i with { Equip = equip } : i).ToList();
+            var items = _current.Items.Select(i => i.DurableId == durableId ? i with { Equip = equip } : i).ToList();
             _current = new CharacterInventorySnapshot(items);
             return Task.FromResult(true);
         }
@@ -101,7 +101,7 @@ public sealed class MapClientSessionEquipmentMutationTests
     [Fact]
     public async Task UnequipEquippedKnife_PersistsAppearanceUpdatesAndAcks()
     {
-        var initial = new CharacterInventorySnapshot([new CharacterInventoryItem(0, 1201, 1, 0x000002, true, 0, 0, 0)]);
+        var initial = new CharacterInventorySnapshot([new CharacterInventoryItem(DurableId: 1, SlotIndex: 0, 1201, 1, 0x000002, true, 0, 0, 0)]);
         var (client, stream, session, run, persistence) = await SetupAsync(initial);
         using var _ = client;
 
@@ -119,7 +119,7 @@ public sealed class MapClientSessionEquipmentMutationTests
         Assert.Equal((byte)0, ack[8]); // success, inverted flag
 
         Assert.Single(persistence.Calls);
-        Assert.Equal((0u, 0u), persistence.Calls[0]);
+        Assert.Equal((1u, 0u), persistence.Calls[0]);
         Assert.Null(session.Equipment!.RightHandItemId);
 
         await client.GetStream().DisposeAsync();
@@ -129,7 +129,7 @@ public sealed class MapClientSessionEquipmentMutationTests
     [Fact]
     public async Task EquipUnequippedKnife_PersistsAppearanceUpdatesAndAcks()
     {
-        var initial = new CharacterInventorySnapshot([new CharacterInventoryItem(0, 1201, 1, 0, true, 0, 0, 0)]);
+        var initial = new CharacterInventorySnapshot([new CharacterInventoryItem(DurableId: 1, SlotIndex: 0, 1201, 1, 0, true, 0, 0, 0)]);
         var (client, stream, session, run, persistence) = await SetupAsync(initial);
         using var _ = client;
 
@@ -147,7 +147,7 @@ public sealed class MapClientSessionEquipmentMutationTests
         Assert.Equal(1201u, BinaryPrimitives.ReadUInt32LittleEndian(appearance.AsSpan(7))); // Knife.ClientViewId
 
         Assert.Single(persistence.Calls);
-        Assert.Equal((0u, 0x000002u), persistence.Calls[0]);
+        Assert.Equal((1u, 0x000002u), persistence.Calls[0]);
         Assert.Equal(1201, session.Equipment!.RightHandItemId);
 
         await client.GetStream().DisposeAsync();
@@ -157,7 +157,7 @@ public sealed class MapClientSessionEquipmentMutationTests
     [Fact]
     public async Task UnequipAlreadyUnequippedItem_SendsFailureAckWithoutMutatingState()
     {
-        var initial = new CharacterInventorySnapshot([new CharacterInventoryItem(0, 1201, 1, 0, true, 0, 0, 0)]);
+        var initial = new CharacterInventorySnapshot([new CharacterInventoryItem(DurableId: 1, SlotIndex: 0, 1201, 1, 0, true, 0, 0, 0)]);
         var (client, stream, session, run, persistence) = await SetupAsync(initial);
         using var _ = client;
 
@@ -177,7 +177,7 @@ public sealed class MapClientSessionEquipmentMutationTests
     [Fact]
     public async Task EquipPersistenceFailure_SendsFailureAckWithoutMutatingState()
     {
-        var initial = new CharacterInventorySnapshot([new CharacterInventoryItem(0, 1201, 1, 0, true, 0, 0, 0)]);
+        var initial = new CharacterInventorySnapshot([new CharacterInventoryItem(DurableId: 1, SlotIndex: 0, 1201, 1, 0, true, 0, 0, 0)]);
         var (client, stream, session, run, persistence) = await SetupAsync(initial);
         using var _ = client;
         persistence.NextSetResult = false;

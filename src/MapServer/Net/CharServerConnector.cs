@@ -33,9 +33,9 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
     private readonly ConcurrentDictionary<uint, TaskCompletionSource<CharacterGameplayState?>> _pendingGameplayReads = new();
     private readonly ConcurrentDictionary<uint, TaskCompletionSource<CharacterGameplayState?>> _pendingGameplayUpdates = new();
     private readonly ConcurrentDictionary<(uint CharId, int ItemId), TaskCompletionSource<InventoryAddPersistenceResult>> _pendingInventoryAdds = new();
-    private readonly ConcurrentDictionary<(uint CharId, uint SlotIndex), TaskCompletionSource<InventoryConsumePersistenceResult>> _pendingInventoryConsumes = new();
+    private readonly ConcurrentDictionary<(uint CharId, uint DurableId), TaskCompletionSource<InventoryConsumePersistenceResult>> _pendingInventoryConsumes = new();
     private readonly ConcurrentDictionary<uint, TaskCompletionSource<CharacterInventoryReadResult>> _pendingInventoryReads = new();
-    private readonly ConcurrentDictionary<(uint CharId, uint SlotIndex), TaskCompletionSource<bool>> _pendingEquipUpdates = new();
+    private readonly ConcurrentDictionary<(uint CharId, uint DurableId), TaskCompletionSource<bool>> _pendingEquipUpdates = new();
     private CharServerConnectionState? _connection;
 
     public CharServerConnector(MapConfigStore configStore)
@@ -147,14 +147,14 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
         finally { _pendingInventoryReads.TryRemove(characterId, out _); }
     }
 
-    public async Task<bool> SetItemEquipAsync(uint accountId, uint characterId, uint slotIndex, uint equip, CancellationToken cancellationToken)
+    public async Task<bool> SetItemEquipAsync(uint accountId, uint characterId, uint durableId, uint equip, CancellationToken cancellationToken)
     {
         var connection = _connection; if (connection is null) return false;
-        var key = (characterId, slotIndex);
+        var key = (characterId, durableId);
         var pending = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         if (!_pendingEquipUpdates.TryAdd(key, pending)) return false;
         using var registration = cancellationToken.Register(() => pending.TrySetCanceled(cancellationToken));
-        try { await connection.WriteAsync(MapInventoryEquipUpdateProtocol.BuildRequest(accountId, characterId, slotIndex, equip), cancellationToken); return await pending.Task; }
+        try { await connection.WriteAsync(MapInventoryEquipUpdateProtocol.BuildRequest(accountId, characterId, durableId, equip), cancellationToken); return await pending.Task; }
         finally { _pendingEquipUpdates.TryRemove(key, out _); }
     }
 
@@ -174,17 +174,17 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
         finally { _pendingInventoryAdds.TryRemove(key, out _); }
     }
 
-    public async Task<InventoryConsumePersistenceResult> ConsumeItemAsync(uint accountId, uint charId, uint slotIndex, uint amount, CancellationToken cancellationToken)
+    public async Task<InventoryConsumePersistenceResult> ConsumeItemAsync(uint accountId, uint charId, uint durableId, uint amount, CancellationToken cancellationToken)
     {
         var connection = _connection;
         if (connection is null || amount == 0) return InventoryConsumePersistenceResult.Failed();
-        var key = (charId, slotIndex);
+        var key = (charId, durableId);
         var pending = new TaskCompletionSource<InventoryConsumePersistenceResult>(TaskCreationOptions.RunContinuationsAsynchronously);
         if (!_pendingInventoryConsumes.TryAdd(key, pending)) return InventoryConsumePersistenceResult.Failed();
         using var registration = cancellationToken.Register(() => pending.TrySetCanceled(cancellationToken));
         try
         {
-            await connection.WriteAsync(MapInventoryConsumeProtocol.BuildRequest(accountId, charId, slotIndex, amount), cancellationToken);
+            await connection.WriteAsync(MapInventoryConsumeProtocol.BuildRequest(accountId, charId, durableId, amount), cancellationToken);
             return await pending.Task;
         }
         finally { _pendingInventoryConsumes.TryRemove(key, out _); }
@@ -409,12 +409,12 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
     private bool HandleInventoryAddResponse(byte[] packet)
     {
         if (!MapInventoryAddProtocol.TryParseResponse(
-                packet, out var charId, out var itemId, out var newAmount, out var slotIndex,
-                out var equip, out var identified, out var refine, out var favorite, out var bound, out var success))
+                packet, out var charId, out var itemId, out var newAmount, out var durableId,
+                out var equip, out var identified, out var refine, out var favorite, out var bound, out var isNewRow, out var success))
             return false;
         if (_pendingInventoryAdds.TryRemove((charId, itemId), out var pending))
-            pending.TrySetResult(new InventoryAddPersistenceResult(success, newAmount, slotIndex, equip, identified, refine, favorite, bound));
-        if (success) MapLogger.Info($"Inventory-add succeeded charId={charId} itemId={itemId} newAmount={newAmount} slotIndex={slotIndex}.");
+            pending.TrySetResult(new InventoryAddPersistenceResult(success, newAmount, durableId, equip, identified, refine, favorite, bound, isNewRow));
+        if (success) MapLogger.Info($"Inventory-add succeeded charId={charId} itemId={itemId} newAmount={newAmount} durableId={durableId} isNewRow={isNewRow}.");
         else MapLogger.Warning($"Inventory-add failed charId={charId} itemId={itemId}.");
         return true;
     }
@@ -445,18 +445,18 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
 
     private bool HandleInventoryEquipUpdateResponse(byte[] packet)
     {
-        if (!MapInventoryEquipUpdateProtocol.TryParseResponse(packet, out var success, out var charId, out var slotIndex)) return false;
-        if (_pendingEquipUpdates.TryRemove((charId, slotIndex), out var pending)) pending.TrySetResult(success);
+        if (!MapInventoryEquipUpdateProtocol.TryParseResponse(packet, out var success, out var charId, out var durableId)) return false;
+        if (_pendingEquipUpdates.TryRemove((charId, durableId), out var pending)) pending.TrySetResult(success);
         return true;
     }
 
     private bool HandleInventoryConsumeResponse(byte[] packet)
     {
-        if (!MapInventoryConsumeProtocol.TryParseResponse(packet, out var success, out var charId, out var slotIndex, out var newAmount, out var rowDeleted)) return false;
-        if (_pendingInventoryConsumes.TryRemove((charId, slotIndex), out var pending))
+        if (!MapInventoryConsumeProtocol.TryParseResponse(packet, out var success, out var charId, out var durableId, out var newAmount, out var rowDeleted)) return false;
+        if (_pendingInventoryConsumes.TryRemove((charId, durableId), out var pending))
             pending.TrySetResult(new InventoryConsumePersistenceResult(success, newAmount, rowDeleted));
-        if (success) MapLogger.Info($"Inventory-consume succeeded charId={charId} slotIndex={slotIndex} newAmount={newAmount} rowDeleted={rowDeleted}.");
-        else MapLogger.Warning($"Inventory-consume failed charId={charId} slotIndex={slotIndex}.");
+        if (success) MapLogger.Info($"Inventory-consume succeeded charId={charId} durableId={durableId} newAmount={newAmount} rowDeleted={rowDeleted}.");
+        else MapLogger.Warning($"Inventory-consume failed charId={charId} durableId={durableId}.");
         return true;
     }
 

@@ -9,23 +9,26 @@ internal static class MapInventoryListProtocol
 {
     internal const int GetRequestLength = 10;
     internal const int ResponseHeaderLength = 11;
+    // durableId.L(4) itemId.L(4) amount.L(4) equip.L(4) identified.B(1) refine.B(1)
+    // favorite.B(1) bound.B(1) = 20. CharServer's rows carry NO runtime SlotIndex at all -
+    // MapServer assigns the initial dense slot mapping from list ORDER via
+    // CharacterInventorySnapshot.FromLogin, never from a wire field.
     internal const int ItemLength = 20;
 
-    // slotIndex.L itemId.L amount.L equip.L identified.B refine.B favorite.B bound.B
-    private static void WriteItem(Span<byte> span, CharacterInventoryItem item)
+    private static void WriteRow(Span<byte> span, uint durableId, int itemId, uint amount, uint equip, bool identified, byte refine, byte favorite, byte bound)
     {
-        BinaryPrimitives.WriteUInt32LittleEndian(span, item.SlotIndex);
-        BinaryPrimitives.WriteUInt32LittleEndian(span[4..], (uint)item.ItemId);
-        BinaryPrimitives.WriteUInt32LittleEndian(span[8..], item.Amount);
-        BinaryPrimitives.WriteUInt32LittleEndian(span[12..], item.Equip);
-        span[16] = item.Identified ? (byte)1 : (byte)0;
-        span[17] = item.Refine;
-        span[18] = item.Favorite;
-        span[19] = item.Bound;
+        BinaryPrimitives.WriteUInt32LittleEndian(span, durableId);
+        BinaryPrimitives.WriteUInt32LittleEndian(span[4..], (uint)itemId);
+        BinaryPrimitives.WriteUInt32LittleEndian(span[8..], amount);
+        BinaryPrimitives.WriteUInt32LittleEndian(span[12..], equip);
+        span[16] = identified ? (byte)1 : (byte)0;
+        span[17] = refine;
+        span[18] = favorite;
+        span[19] = bound;
     }
 
-    private static CharacterInventoryItem ReadItem(ReadOnlySpan<byte> span) => new(
-        SlotIndex: BinaryPrimitives.ReadUInt32LittleEndian(span),
+    private static (uint DurableId, int ItemId, uint Amount, uint Equip, bool Identified, byte Refine, byte Favorite, byte Bound) ReadRow(ReadOnlySpan<byte> span) => (
+        DurableId: BinaryPrimitives.ReadUInt32LittleEndian(span),
         ItemId: (int)BinaryPrimitives.ReadUInt32LittleEndian(span[4..]),
         Amount: BinaryPrimitives.ReadUInt32LittleEndian(span[8..]),
         Equip: BinaryPrimitives.ReadUInt32LittleEndian(span[12..]),
@@ -43,10 +46,11 @@ internal static class MapInventoryListProtocol
         return packet;
     }
 
-    // Returns false (malformed/truncated packet) if: the declared length doesn't match the
-    // actual packet size, itemCount doesn't agree with the payload length actually present, or
-    // any two items declare the same SlotIndex (a real load pass never produces duplicates -
-    // treated as a data/protocol invariant violation, not a case to silently resolve).
+    // Returns false (malformed/truncated packet) if the declared length doesn't match the
+    // actual packet size, or itemCount doesn't agree with the payload length actually present.
+    // Rows may not declare a duplicate DurableId - a real load pass never produces duplicates
+    // (each row's DurableId is a unique primary key) - treated as a data/protocol invariant
+    // violation, not a case to silently resolve.
     internal static bool TryParseResponse(byte[] packet, out byte result, out uint charId, out CharacterInventoryReadResult inventory)
     {
         result = 1;
@@ -65,16 +69,16 @@ internal static class MapInventoryListProtocol
         var expectedLength = ResponseHeaderLength + itemCount * ItemLength;
         if (expectedLength != packet.Length) return false;
 
-        var items = new CharacterInventoryItem[itemCount];
-        var seenSlots = new HashSet<uint>();
+        var rows = new (uint DurableId, int ItemId, uint Amount, uint Equip, bool Identified, byte Refine, byte Favorite, byte Bound)[itemCount];
+        var seenIds = new HashSet<uint>();
         for (var i = 0; i < itemCount; i++)
         {
-            var item = ReadItem(packet.AsSpan(ResponseHeaderLength + i * ItemLength, ItemLength));
-            if (!seenSlots.Add(item.SlotIndex)) return false;
-            items[i] = item;
+            var row = ReadRow(packet.AsSpan(ResponseHeaderLength + i * ItemLength, ItemLength));
+            if (!seenIds.Add(row.DurableId)) return false;
+            rows[i] = row;
         }
 
-        inventory = CharacterInventoryReadResult.Success(new CharacterInventorySnapshot(items));
+        inventory = CharacterInventoryReadResult.Success(CharacterInventorySnapshot.FromLogin(rows));
         return true;
     }
 
@@ -95,7 +99,10 @@ internal static class MapInventoryListProtocol
         if (inventory is not null)
         {
             for (var i = 0; i < inventory.Items.Count; i++)
-                WriteItem(packet.AsSpan(ResponseHeaderLength + i * ItemLength, ItemLength), inventory.Items[i]);
+            {
+                var item = inventory.Items[i];
+                WriteRow(packet.AsSpan(ResponseHeaderLength + i * ItemLength, ItemLength), item.DurableId, item.ItemId, item.Amount, item.Equip, item.Identified, item.Refine, item.Favorite, item.Bound);
+            }
         }
         return packet;
     }

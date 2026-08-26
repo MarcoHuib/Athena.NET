@@ -44,7 +44,7 @@ public sealed class IroInventoryListPacketsTests
     [Fact]
     public void BuildItemListNormal_StackableItem_MatchesTracedLayout()
     {
-        var item = new CharacterInventoryItem(0, 6008, 5, 0, true, 0, 0, 0);
+        var item = new CharacterInventoryItem(DurableId: 1, SlotIndex: 0, 6008, 5, 0, true, 0, 0, 0);
         var packet = IroInventoryListPackets.BuildItemListNormal([(2, item, Wood)]);
 
         Assert.Equal(5 + 34, packet.Length);
@@ -63,7 +63,7 @@ public sealed class IroInventoryListPacketsTests
     [Fact]
     public void BuildItemListEquip_EquippedWeapon_MatchesTracedLayout()
     {
-        var item = new CharacterInventoryItem(0, 1201, 1, 0x000002, true, 3, 0, 0);
+        var item = new CharacterInventoryItem(DurableId: 1, SlotIndex: 0, 1201, 1, 0x000002, true, 3, 0, 0);
         var packet = IroInventoryListPackets.BuildItemListEquip([(2, item, Knife)]);
 
         Assert.Equal(5 + 68, packet.Length);
@@ -89,7 +89,7 @@ public sealed class IroInventoryListPacketsTests
     [Fact]
     public void BuildItemListEquip_UnidentifiedItem_FlagIsIdentifiedIsZero()
     {
-        var item = new CharacterInventoryItem(0, 1201, 1, 0, false, 0, 0, 0);
+        var item = new CharacterInventoryItem(DurableId: 1, SlotIndex: 0, 1201, 1, 0, false, 0, 0, 0);
         var packet = IroInventoryListPackets.BuildItemListEquip([(2, item, Knife)]);
 
         var entry = packet.AsSpan(5);
@@ -99,10 +99,10 @@ public sealed class IroInventoryListPacketsTests
     [Fact]
     public void BuildItemListEquip_MultipleItems_AssignsSequentialClientIndices()
     {
-        var knifeItem = new CharacterInventoryItem(0, 1201, 1, 0x000002, true, 0, 0, 0);
+        var knifeItem = new CharacterInventoryItem(DurableId: 1, SlotIndex: 0, 1201, 1, 0x000002, true, 0, 0, 0);
         var armor = new ArmorItemDefinition(2301, "Cotton_Shirt", "Cotton Shirt", Stackable: false, ClientViewId: 2301, EquipLocation: 0x000010,
             new WorldSourceInfo("rAthena", "abc", "db/re/item_db_equip.yml", 1));
-        var armorItem = new CharacterInventoryItem(1, 2301, 1, 0x000010, true, 0, 0, 0);
+        var armorItem = new CharacterInventoryItem(DurableId: 2, SlotIndex: 1, 2301, 1, 0x000010, true, 0, 0, 0);
 
         var packet = IroInventoryListPackets.BuildItemListEquip([(2, knifeItem, Knife), (3, armorItem, armor)]);
 

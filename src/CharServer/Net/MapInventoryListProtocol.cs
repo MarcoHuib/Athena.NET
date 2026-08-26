@@ -4,6 +4,8 @@ internal static class MapInventoryListProtocol
 {
     internal const int GetRequestLength = 10;
     internal const int ResponseHeaderLength = 11;
+    // durableId.L(4) itemId.L(4) amount.L(4) equip.L(4) identified.B(1) refine.B(1)
+    // favorite.B(1) bound.B(1) = 20.
     internal const int ItemLength = 20;
 
     internal static bool TryParseGet(ReadOnlySpan<byte> p, out uint a, out uint c)
@@ -15,9 +17,10 @@ internal static class MapInventoryListProtocol
         return true;
     }
 
-    // Row order in `rows` IS the stable server-side slot order (see
-    // MapServerSession.HandleInventoryListGetAsync's OrderBy(i => i.Id)) - SlotIndex is each
-    // row's position in the list, written here rather than stored on the DTO.
+    // Row order in `rows` is CharServer's stable enumeration order (CharInventoryOrdering.
+    // InStableOrder) - used ONLY as the initial dense runtime-slot assignment MapServer performs
+    // at login; DurableId (each row's real, never-changing CharInventory.Id), not list position,
+    // is the row's actual authoritative identity, carried explicitly per item below.
     internal static byte[] BuildResponse(byte result, uint charId, IReadOnlyList<CharacterInventoryRowDto>? rows)
     {
         var itemCount = rows?.Count ?? 0;
@@ -34,7 +37,7 @@ internal static class MapInventoryListProtocol
             {
                 var span = packet.AsSpan(ResponseHeaderLength + i * ItemLength, ItemLength);
                 var row = rows[i];
-                BinaryPrimitives.WriteUInt32LittleEndian(span, (uint)i);
+                BinaryPrimitives.WriteUInt32LittleEndian(span, row.DurableId);
                 BinaryPrimitives.WriteUInt32LittleEndian(span[4..], (uint)row.ItemId);
                 BinaryPrimitives.WriteUInt32LittleEndian(span[8..], row.Amount);
                 BinaryPrimitives.WriteUInt32LittleEndian(span[12..], row.Equip);

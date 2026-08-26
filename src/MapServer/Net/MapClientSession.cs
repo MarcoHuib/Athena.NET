@@ -1087,7 +1087,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
 
             var inventorySession = new CharacterInventorySession(_accountId, _charId, _inventoryPersistence);
             var addResult = await inventorySession.AddItemAsync(itemDefinition, (uint)drop.Count, cancellationToken);
-            if (!addResult.Success || addResult.Item is not { } addedItem)
+            if (!addResult.Success || addResult.Item is not { } addedRow || _inventory is not { } inventory)
             {
                 MapLogger.Warning($"[iRO MAP DEBUG] Inventory persistence failed for itemId={drop.ItemId}; not notifying client.");
                 continue;
@@ -1095,20 +1095,24 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
 
             // Persistence succeeded - update the authoritative MapServer runtime snapshot with the
             // CharServer-confirmed row BEFORE notifying the client (never the other way around: a
-            // client-visible 0x0B41 must never be sent while _inventory is left stale). _inventory
-            // is guaranteed non-null once authenticated (same invariant HandleEquipRequestAsync/
-            // HandleUnequipRequestAsync already rely on). _equipment is re-derived from the SAME
-            // updated snapshot for consistency, even though an ordinary Etc/Usable drop like Wood
-            // never changes the right-hand slot - there is exactly one place _equipment is derived
-            // from _inventory, never a second independently-maintained copy.
-            if (_inventory is { } inventory)
-            {
-                _inventory = inventory.WithItem(addedItem);
-                _equipment = CharacterEquipmentSnapshot.FromInventory(_inventory);
-            }
+            // client-visible 0x0B41 must never be sent while _inventory is left stale). IsNewRow
+            // decides slot assignment: a brand-new row gets the first free runtime slot (reusing
+            // a hole left by an earlier consume, mirroring pinned pc_additem); an existing stack's
+            // amount update preserves whatever slot its DurableId already occupies. _equipment is
+            // re-derived from the SAME updated snapshot for consistency, even though an ordinary
+            // Etc/Usable drop like Wood never changes the right-hand slot - there is exactly one
+            // place _equipment is derived from _inventory, never a second independently-maintained
+            // copy.
+            _inventory = addResult.IsNewRow
+                ? inventory.WithNewItem(addResult.DurableId, addedRow.ItemId, addedRow.Amount, addedRow.Equip, addedRow.Identified, addedRow.Refine, addedRow.Favorite, addedRow.Bound)
+                : inventory.WithUpdatedItem(addResult.DurableId, addedRow.ItemId, addedRow.Amount, addedRow.Equip, addedRow.Identified, addedRow.Refine, addedRow.Favorite, addedRow.Bound);
+            _equipment = CharacterEquipmentSnapshot.FromInventory(_inventory);
 
-            // client_index(): server-side array position + 2 (clif.cpp:122-124).
-            var clientIndex = (ushort)(addResult.SlotIndex + 2);
+            // client_index(): server-side runtime array position + 2 (clif.cpp:122-124). Read
+            // back from the snapshot by DurableId - the authoritative source of truth for this
+            // row's CURRENT runtime slot, never re-derived from anything CharServer returned.
+            var slotIndex = _inventory.Items.Single(i => i.DurableId == addResult.DurableId).SlotIndex;
+            var clientIndex = (ushort)(slotIndex + 2);
             var pickupPacket = IroMonsterCombatPackets.BuildItemPickupAck(clientIndex, (ushort)drop.Count, itemDefinition.Id, itemType: 3);
             MapLogger.Info($"[iRO MAP DEBUG] Sending 0x0B41 itemId={itemDefinition.Id} count={drop.Count} clientIndex={clientIndex}");
             await WriteAsync(pickupPacket, cancellationToken);
@@ -1160,31 +1164,38 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
         }
 
         var inventorySession = new CharacterInventorySession(_accountId, _charId, _inventoryPersistence);
-        var consumeResult = await inventorySession.ConsumeItemAsync(slotIndex, 1, cancellationToken);
+        var consumeResult = await inventorySession.ConsumeItemAsync(row.DurableId, 1, cancellationToken);
         if (!consumeResult.Success)
         {
-            MapLogger.Warning($"[iRO MAP DEBUG] Item-use persistence failed for itemId={row.ItemId} slotIndex={slotIndex}; not notifying client.");
+            MapLogger.Warning($"[iRO MAP DEBUG] Item-use persistence failed for itemId={row.ItemId} durableId={row.DurableId}; not notifying client.");
             return;
         }
 
         // Persistence succeeded - update the authoritative runtime snapshot BEFORE granting the
         // container's items or notifying the client (same rule the reward path already follows).
-        _inventory = consumeResult.RowDeleted ? inventory.WithoutSlot(slotIndex) : inventory.WithItem(row with { Amount = consumeResult.NewAmount });
+        // RowDeleted leaves a HOLE at this row's former runtime slot (WithoutDurableId) - it does
+        // NOT compact/renumber later rows, mirroring pinned pc_delitem exactly; a later grant may
+        // reuse that exact hole via WithNewItem.
+        _inventory = consumeResult.RowDeleted
+            ? inventory.WithoutDurableId(row.DurableId)
+            : inventory.WithUpdatedItem(row.DurableId, row.ItemId, consumeResult.NewAmount, row.Equip, row.Identified, row.Refine, row.Favorite, row.Bound);
         _equipment = CharacterEquipmentSnapshot.FromInventory(_inventory);
 
         MapLogger.Info(
-            $"[iRO MAP DEBUG] Item-use consumed itemId={row.ItemId} slotIndex={slotIndex} newAmount={consumeResult.NewAmount} rowDeleted={consumeResult.RowDeleted}.");
+            $"[iRO MAP DEBUG] Item-use consumed itemId={row.ItemId} durableId={row.DurableId} newAmount={consumeResult.NewAmount} rowDeleted={consumeResult.RowDeleted}.");
 
         var ackPacket = IroUseItemPackets.BuildUseItemAck(request.ClientIndex, itemDefinition.ClientViewId, _accountId, consumeResult.NewAmount, success: true);
         await WriteAsync(ackPacket, cancellationToken);
 
         // Execute the source-backed getitem grants (script.cpp BUILDIN_FUNC(getitem)) - each
         // grant is a normal authoritative inventory add through the SAME CharacterInventorySession/
-        // runtime-snapshot-update path the quest-drop reward loop already uses. A grant referencing
-        // an item id absent from the generated registry is a data/generation gap, logged and
-        // skipped rather than guessed at (matching the existing quest-drop convention) - it does
-        // NOT abort the remaining grants, since each is an independent getitem call in the pinned
-        // script, not a single atomic operation.
+        // runtime-snapshot-update path the quest-drop reward loop already uses, including the
+        // SAME IsNewRow-driven slot assignment (first free slot - reusing the hole just left by
+        // this same consume, mirroring pinned pc_additem's own array-search behavior). A grant
+        // referencing an item id absent from the generated registry is a data/generation gap,
+        // logged and skipped rather than guessed at (matching the existing quest-drop convention)
+        // - it does NOT abort the remaining grants, since each is an independent getitem call in
+        // the pinned script, not a single atomic operation.
         foreach (var grant in usable.Grants)
         {
             if (!GeneratedItems.ById.TryGetValue(grant.ItemId, out var grantedItem))
@@ -1200,10 +1211,13 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
                 continue;
             }
 
-            _inventory = _inventory.WithItem(grantedRow);
+            _inventory = grantResult.IsNewRow
+                ? _inventory.WithNewItem(grantResult.DurableId, grantedRow.ItemId, grantedRow.Amount, grantedRow.Equip, grantedRow.Identified, grantedRow.Refine, grantedRow.Favorite, grantedRow.Bound)
+                : _inventory.WithUpdatedItem(grantResult.DurableId, grantedRow.ItemId, grantedRow.Amount, grantedRow.Equip, grantedRow.Identified, grantedRow.Refine, grantedRow.Favorite, grantedRow.Bound);
             _equipment = CharacterEquipmentSnapshot.FromInventory(_inventory);
 
-            var grantClientIndex = (ushort)(grantResult.SlotIndex + 2);
+            var grantSlotIndex = _inventory.Items.Single(i => i.DurableId == grantResult.DurableId).SlotIndex;
+            var grantClientIndex = (ushort)(grantSlotIndex + 2);
             var grantPickupPacket = IroMonsterCombatPackets.BuildItemPickupAck(grantClientIndex, (ushort)grant.Amount, grantedItem.Id, itemType: 3);
             MapLogger.Info($"[iRO MAP DEBUG] Sending 0x0B41 for item-use grant itemId={grant.ItemId} count={grant.Amount} clientIndex={grantClientIndex}");
             await WriteAsync(grantPickupPacket, cancellationToken);

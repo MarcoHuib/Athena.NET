@@ -26,13 +26,13 @@ public sealed class CharacterEquipmentMutationServiceTests
     private sealed class RecordingPersistence : ICharacterInventoryListPersistence
     {
         public bool NextResult { get; set; } = true;
-        public List<(uint SlotIndex, uint Equip)> Calls { get; } = [];
+        public List<(uint DurableId, uint Equip)> Calls { get; } = [];
 
         public Task<CharacterInventoryReadResult> GetInventoryAsync(uint a, uint c, CancellationToken t) => throw new NotSupportedException();
 
-        public Task<bool> SetItemEquipAsync(uint accountId, uint characterId, uint slotIndex, uint equip, CancellationToken cancellationToken)
+        public Task<bool> SetItemEquipAsync(uint accountId, uint characterId, uint durableId, uint equip, CancellationToken cancellationToken)
         {
-            Calls.Add((slotIndex, equip));
+            Calls.Add((durableId, equip));
             return Task.FromResult(NextResult);
         }
     }
@@ -40,7 +40,7 @@ public sealed class CharacterEquipmentMutationServiceTests
     [Fact]
     public async Task EquipAsync_UnequippedKnife_PersistsRightHandAndReturnsSuccess()
     {
-        var inventory = new CharacterInventorySnapshot([new CharacterInventoryItem(0, 1201, 1, 0, true, 0, 0, 0)]);
+        var inventory = new CharacterInventorySnapshot([new CharacterInventoryItem(DurableId: 1, SlotIndex: 0, 1201, 1, 0, true, 0, 0, 0)]);
         var persistence = new RecordingPersistence();
         var service = new CharacterEquipmentMutationService(AccountId, CharId, persistence);
 
@@ -50,13 +50,13 @@ public sealed class CharacterEquipmentMutationServiceTests
         Assert.Equal(0x000002u, outcome.Value.WearLocation);
         Assert.Equal(0x000002u, updated!.Items[0].Equip);
         Assert.Single(persistence.Calls);
-        Assert.Equal((0u, 0x000002u), persistence.Calls[0]);
+        Assert.Equal((1u, 0x000002u), persistence.Calls[0]);
     }
 
     [Fact]
     public async Task EquipAsync_AlreadyEquippedItem_ReturnsFailWithoutPersisting()
     {
-        var inventory = new CharacterInventorySnapshot([new CharacterInventoryItem(0, 1201, 1, 0x000002, true, 0, 0, 0)]);
+        var inventory = new CharacterInventorySnapshot([new CharacterInventoryItem(DurableId: 1, SlotIndex: 0, 1201, 1, 0x000002, true, 0, 0, 0)]);
         var persistence = new RecordingPersistence();
         var service = new CharacterEquipmentMutationService(AccountId, CharId, persistence);
 
@@ -71,7 +71,7 @@ public sealed class CharacterEquipmentMutationServiceTests
     public async Task EquipAsync_PositionNotInEquipLocation_ReturnsFail()
     {
         // Armor's EquipLocation is EQP_ARMOR (0x10); requesting EQP_HAND_R (0x2) should fail.
-        var inventory = new CharacterInventorySnapshot([new CharacterInventoryItem(0, 2301, 1, 0, true, 0, 0, 0)]);
+        var inventory = new CharacterInventorySnapshot([new CharacterInventoryItem(DurableId: 1, SlotIndex: 0, 2301, 1, 0, true, 0, 0, 0)]);
         var persistence = new RecordingPersistence();
         var service = new CharacterEquipmentMutationService(AccountId, CharId, persistence);
 
@@ -84,7 +84,7 @@ public sealed class CharacterEquipmentMutationServiceTests
     [Fact]
     public async Task EquipAsync_NonEquippableItem_ReturnsFail()
     {
-        var inventory = new CharacterInventorySnapshot([new CharacterInventoryItem(0, 6008, 1, 0, true, 0, 0, 0)]);
+        var inventory = new CharacterInventorySnapshot([new CharacterInventoryItem(DurableId: 1, SlotIndex: 0, 6008, 1, 0, true, 0, 0, 0)]);
         var persistence = new RecordingPersistence();
         var service = new CharacterEquipmentMutationService(AccountId, CharId, persistence);
 
@@ -112,8 +112,8 @@ public sealed class CharacterEquipmentMutationServiceTests
         // Two knives; slot 0 already equipped, equip slot 1 into the same right hand.
         var inventory = new CharacterInventorySnapshot(
         [
-            new CharacterInventoryItem(0, 1201, 1, 0x000002, true, 0, 0, 0),
-            new CharacterInventoryItem(1, 1201, 1, 0, true, 0, 0, 0),
+            new CharacterInventoryItem(DurableId: 1, SlotIndex: 0, 1201, 1, 0x000002, true, 0, 0, 0),
+            new CharacterInventoryItem(DurableId: 2, SlotIndex: 1, 1201, 1, 0, true, 0, 0, 0),
         ]);
         var persistence = new RecordingPersistence();
         var service = new CharacterEquipmentMutationService(AccountId, CharId, persistence);
@@ -124,14 +124,14 @@ public sealed class CharacterEquipmentMutationServiceTests
         Assert.Equal(0u, updated!.Items[0].Equip); // old slot unequipped
         Assert.Equal(0x000002u, updated.Items[1].Equip); // new slot equipped
         Assert.Equal(2, persistence.Calls.Count);
-        Assert.Equal((0u, 0u), persistence.Calls[0]); // unequip old first
-        Assert.Equal((1u, 0x000002u), persistence.Calls[1]); // then equip new
+        Assert.Equal((1u, 0u), persistence.Calls[0]); // unequip old first
+        Assert.Equal((2u, 0x000002u), persistence.Calls[1]); // then equip new
     }
 
     [Fact]
     public async Task EquipAsync_PersistenceFailure_ReturnsFailWithoutMutatingSnapshot()
     {
-        var inventory = new CharacterInventorySnapshot([new CharacterInventoryItem(0, 1201, 1, 0, true, 0, 0, 0)]);
+        var inventory = new CharacterInventorySnapshot([new CharacterInventoryItem(DurableId: 1, SlotIndex: 0, 1201, 1, 0, true, 0, 0, 0)]);
         var persistence = new RecordingPersistence { NextResult = false };
         var service = new CharacterEquipmentMutationService(AccountId, CharId, persistence);
 
@@ -144,7 +144,7 @@ public sealed class CharacterEquipmentMutationServiceTests
     [Fact]
     public async Task UnequipAsync_EquippedKnife_PersistsZeroAndReturnsSuccess()
     {
-        var inventory = new CharacterInventorySnapshot([new CharacterInventoryItem(0, 1201, 1, 0x000002, true, 0, 0, 0)]);
+        var inventory = new CharacterInventorySnapshot([new CharacterInventoryItem(DurableId: 1, SlotIndex: 0, 1201, 1, 0x000002, true, 0, 0, 0)]);
         var persistence = new RecordingPersistence();
         var service = new CharacterEquipmentMutationService(AccountId, CharId, persistence);
 
@@ -154,13 +154,13 @@ public sealed class CharacterEquipmentMutationServiceTests
         Assert.Equal(0x000002u, outcome.Value.WearLocation); // reports what WAS equipped
         Assert.Equal(0u, updated!.Items[0].Equip);
         Assert.Single(persistence.Calls);
-        Assert.Equal((0u, 0u), persistence.Calls[0]);
+        Assert.Equal((1u, 0u), persistence.Calls[0]);
     }
 
     [Fact]
     public async Task UnequipAsync_AlreadyUnequippedItem_ReturnsFailureWithoutPersisting()
     {
-        var inventory = new CharacterInventorySnapshot([new CharacterInventoryItem(0, 1201, 1, 0, true, 0, 0, 0)]);
+        var inventory = new CharacterInventorySnapshot([new CharacterInventoryItem(DurableId: 1, SlotIndex: 0, 1201, 1, 0, true, 0, 0, 0)]);
         var persistence = new RecordingPersistence();
         var service = new CharacterEquipmentMutationService(AccountId, CharId, persistence);
 
@@ -188,7 +188,7 @@ public sealed class CharacterEquipmentMutationServiceTests
     [Fact]
     public async Task UnequipAsync_PersistenceFailure_ReturnsFailureWithoutMutatingSnapshot()
     {
-        var inventory = new CharacterInventorySnapshot([new CharacterInventoryItem(0, 1201, 1, 0x000002, true, 0, 0, 0)]);
+        var inventory = new CharacterInventorySnapshot([new CharacterInventoryItem(DurableId: 1, SlotIndex: 0, 1201, 1, 0x000002, true, 0, 0, 0)]);
         var persistence = new RecordingPersistence { NextResult = false };
         var service = new CharacterEquipmentMutationService(AccountId, CharId, persistence);
 

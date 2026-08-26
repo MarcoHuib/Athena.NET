@@ -2,19 +2,20 @@ using Athena.Net.MapServer.Net;
 
 namespace Athena.Net.MapServer.World;
 
-// SlotIndex is the SERVER-side inventory array position (0-based), matching
-// pinned rAthena's sd->inventory.u.items_inventory[n] - the caller building a
-// wire packet must apply the pinned client_index() transform (n + 2,
-// clif.cpp:122-124) before placing it into ZC_ITEM_PICKUP_ACK.Index.
-//
-// Item carries the exact authoritative CharacterInventoryItem this add produced or
-// updated (null when Success is false) - CharServer is the only side that knows the
-// persisted row's real Equip/Identified/Refine/Favorite/Bound values (see
-// InventoryAddPersistenceResult's own doc comment), so this type forwards them
-// rather than making the caller reconstruct/guess them. Callers MUST use this to
-// update their own authoritative runtime CharacterInventorySnapshot before
-// notifying the client - see MapClientSession's reward-path doc comment.
-public readonly record struct InventoryAddResult(bool Success, uint NewAmount, uint SlotIndex, CharacterInventoryItem? Item);
+// DurableId is the row's stable CharInventory.Id - CharServer's own real, never-changing
+// primary key. This result deliberately does NOT include a SlotIndex: CharServer has no
+// runtime-slot concept at all (see CharacterInventoryItem's own doc comment), so ONLY the
+// caller - which owns the current CharacterInventorySnapshot for this session - can correctly
+// decide the resulting runtime slot: IsNewRow=true means "assign the first free slot" (via
+// CharacterInventorySnapshot.WithNewItem, reusing a hole if one exists); IsNewRow=false means
+// "preserve whatever slot this DurableId already occupies" (via
+// CharacterInventorySnapshot.WithUpdatedItem). Item is null when Success is false - callers
+// must not synchronize the client or treat the drop as granted when Success is false.
+public readonly record struct InventoryAddResult(bool Success, uint NewAmount, uint DurableId, bool IsNewRow, InventoryAddResultItem? Item);
+
+// The persisted row's own authoritative fields this add produced/updated (not yet placed into a
+// runtime slot - see InventoryAddResult's own doc comment for why SlotIndex isn't here).
+public readonly record struct InventoryAddResultItem(int ItemId, uint Amount, uint Equip, bool Identified, byte Refine, byte Favorite, byte Bound);
 
 // Generic "add a stackable item to this character's real persistent
 // inventory" capability, following the same success rule already used by
@@ -30,18 +31,18 @@ public sealed class CharacterInventorySession(uint accountId, uint charId, IChar
     {
         if (!item.Stackable && amount > 1) throw new ArgumentException($"Item '{item.AegisName}' is not stackable; amount must be 1.", nameof(amount));
         var result = await persistence.AddStackableItemAsync(accountId, charId, item.Id, amount, cancellationToken);
-        if (!result.Success) return new InventoryAddResult(false, 0, 0, null);
+        if (!result.Success) return new InventoryAddResult(false, 0, 0, false, null);
 
-        var row = new CharacterInventoryItem(
-            result.SlotIndex, item.Id, result.NewAmount, result.Equip, result.Identified, result.Refine, result.Favorite, result.Bound);
-        return new InventoryAddResult(true, result.NewAmount, result.SlotIndex, row);
+        var row = new InventoryAddResultItem(item.Id, result.NewAmount, result.Equip, result.Identified, result.Refine, result.Favorite, result.Bound);
+        return new InventoryAddResult(true, result.NewAmount, result.DurableId, result.IsNewRow, row);
     }
 
     // Pinned pc_delitem (pc.cpp:6103-6128) - consumes `amount` from an already-resolved
-    // authoritative SlotIndex (never an item id: the caller must have already resolved this
-    // slot from its own CharacterInventorySnapshot). See InventoryConsumePersistenceResult's own
-    // doc comment for RowDeleted's meaning and CharacterInventorySnapshot's own row-removal
-    // helper for how a caller applies a deleted row to its runtime snapshot.
-    public Task<InventoryConsumePersistenceResult> ConsumeItemAsync(uint slotIndex, uint amount, CancellationToken cancellationToken) =>
-        persistence.ConsumeItemAsync(accountId, charId, slotIndex, amount, cancellationToken);
+    // authoritative row (never a runtime slot or an item id: the caller must have already
+    // resolved this row's DurableId from its own CharacterInventorySnapshot). See
+    // InventoryConsumePersistenceResult's own doc comment for RowDeleted's meaning and
+    // CharacterInventorySnapshot's own row-removal helper for how a caller applies a deleted
+    // row to its runtime snapshot.
+    public Task<InventoryConsumePersistenceResult> ConsumeItemAsync(uint durableId, uint amount, CancellationToken cancellationToken) =>
+        persistence.ConsumeItemAsync(accountId, charId, durableId, amount, cancellationToken);
 }

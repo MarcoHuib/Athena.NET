@@ -16,8 +16,8 @@ public sealed class MapClientSessionEquipmentTests
         var gameplayState = new CharacterGameplayState(9, 3, 0, 2, 4, 123, 456, 30, 8, 45, 11, 51, 3, 2, 3, 4, 5, 6, 7);
         var inventory = new CharacterInventorySnapshot(
         [
-            new CharacterInventoryItem(0, 1201, 1, 0x000002, true, 0, 0, 0), // equipped Knife
-            new CharacterInventoryItem(1, 2301, 1, 0x000010, true, 0, 0, 0), // equipped armor
+            new CharacterInventoryItem(DurableId: 1, SlotIndex: 0, 1201, 1, 0x000002, true, 0, 0, 0), // equipped Knife
+            new CharacterInventoryItem(DurableId: 2, SlotIndex: 1, 2301, 1, 0x000010, true, 0, 0, 0), // equipped armor
         ]);
         var gameplayPersistence = new StubGameplayStatePersistence(gameplayState);
         var inventoryPersistence = new StubInventoryListPersistence(CharacterInventoryReadResult.Success(inventory));
@@ -80,6 +80,6 @@ public sealed class MapClientSessionEquipmentTests
     private sealed class StubInventoryListPersistence(CharacterInventoryReadResult result) : ICharacterInventoryListPersistence
     {
         public Task<CharacterInventoryReadResult> GetInventoryAsync(uint a, uint c, CancellationToken t) => Task.FromResult(result);
-        public Task<bool> SetItemEquipAsync(uint a, uint c, uint slotIndex, uint equip, CancellationToken t) => Task.FromResult(false);
+        public Task<bool> SetItemEquipAsync(uint a, uint c, uint durableId, uint equip, CancellationToken t) => Task.FromResult(false);
     }
 }

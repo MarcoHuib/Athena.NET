@@ -7,7 +7,7 @@ public sealed class MapInventoryConsumeProtocolTests
     [Fact]
     public void Request_HasExplicitEighteenByteLayout()
     {
-        var packet = MapInventoryConsumeProtocol.BuildRequest(accountId: 2_000_000, charId: 9, slotIndex: 2, amount: 1);
+        var packet = MapInventoryConsumeProtocol.BuildRequest(accountId: 2_000_000, charId: 9, durableId: 2, amount: 1);
 
         Assert.Equal(18, packet.Length);
         Assert.Equal(new byte[] { 0x37, 0x2b, 0x80, 0x84, 0x1e, 0x00, 9, 0, 0, 0, 2, 0, 0, 0, 1, 0, 0, 0 }, packet);
@@ -18,10 +18,10 @@ public sealed class MapInventoryConsumeProtocolTests
     {
         byte[] packet = [0x38, 0x2b, 1, 9, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 1];
 
-        Assert.True(MapInventoryConsumeProtocol.TryParseResponse(packet, out var success, out var charId, out var slotIndex, out var newAmount, out var rowDeleted));
+        Assert.True(MapInventoryConsumeProtocol.TryParseResponse(packet, out var success, out var charId, out var durableId, out var newAmount, out var rowDeleted));
         Assert.True(success);
         Assert.Equal(9u, charId);
-        Assert.Equal(2u, slotIndex);
+        Assert.Equal(2u, durableId);
         Assert.Equal(0u, newAmount);
         Assert.True(rowDeleted);
     }

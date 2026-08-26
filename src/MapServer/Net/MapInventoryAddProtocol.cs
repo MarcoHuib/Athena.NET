@@ -6,19 +6,20 @@ namespace Athena.Net.MapServer.Net;
 // MapQuestStateProtocol's shape (opcode, accountId, charId, payload,
 // success flag). MapServer never touches CharInventory rows directly.
 //
-// The response carries the persisted row's own authoritative Equip/Identified/
-// Refine/Favorite/Bound fields alongside newAmount/slotIndex - CharServer is the
-// only side that knows these values (set at insert time, e.g. Identify=1, or
-// already persisted on an existing stack row), so MapServer must never invent or
-// assume them when reconstructing the authoritative CharacterInventoryItem this
-// add produced/updated (see MapClientSession's reward-path runtime-snapshot
-// update, which consumes exactly these fields).
+// The response carries the persisted row's own authoritative DurableId (CharInventory.Id, the
+// stable identity that never changes for this row's lifetime) plus its Equip/Identified/
+// Refine/Favorite/Bound fields - CharServer is the only side that knows these values (set at
+// insert time, e.g. Identify=1, or already persisted on an existing stack row), so MapServer
+// must never invent or assume them. IsNewRow tells MapServer whether to assign a fresh runtime
+// slot (a brand-new DurableId - reusing a hole if one exists, else appending) or reuse the
+// EXISTING runtime slot already tracked for this DurableId (an existing stack's amount simply
+// changed) - CharServer has no runtime-slot concept at all and never computes or returns one.
 internal static class MapInventoryAddProtocol
 {
     internal const int RequestLength = 18;
-    // opcode.W(2) charId.L(4) itemId.l(4) newAmount.L(4) slotIndex.L(4) equip.L(4)
-    // identified.B(1) refine.B(1) favorite.B(1) bound.B(1) success.B(1) = 27.
-    internal const int ResponseLength = 27;
+    // opcode.W(2) charId.L(4) itemId.l(4) newAmount.L(4) durableId.L(4) equip.L(4)
+    // identified.B(1) refine.B(1) favorite.B(1) bound.B(1) isNewRow.B(1) success.B(1) = 28.
+    internal const int ResponseLength = 28;
 
     internal static byte[] BuildRequest(uint accountId, uint charId, int itemId, uint amount)
     {
@@ -33,13 +34,13 @@ internal static class MapInventoryAddProtocol
 
     internal static bool TryParseResponse(
         ReadOnlySpan<byte> packet,
-        out uint charId, out int itemId, out uint newAmount, out uint slotIndex,
+        out uint charId, out int itemId, out uint newAmount, out uint durableId,
         out uint equip, out bool identified, out byte refine, out byte favorite, out byte bound,
-        out bool success)
+        out bool isNewRow, out bool success)
     {
-        charId = 0; itemId = 0; newAmount = 0; slotIndex = 0;
+        charId = 0; itemId = 0; newAmount = 0; durableId = 0;
         equip = 0; identified = false; refine = 0; favorite = 0; bound = 0;
-        success = false;
+        isNewRow = false; success = false;
         if (packet.Length != ResponseLength || BinaryPrimitives.ReadInt16LittleEndian(packet) != PacketConstants.MapInventoryAddResponse)
         {
             return false;
@@ -47,13 +48,14 @@ internal static class MapInventoryAddProtocol
         charId = BinaryPrimitives.ReadUInt32LittleEndian(packet[2..]);
         itemId = BinaryPrimitives.ReadInt32LittleEndian(packet[6..]);
         newAmount = BinaryPrimitives.ReadUInt32LittleEndian(packet[10..]);
-        slotIndex = BinaryPrimitives.ReadUInt32LittleEndian(packet[14..]);
+        durableId = BinaryPrimitives.ReadUInt32LittleEndian(packet[14..]);
         equip = BinaryPrimitives.ReadUInt32LittleEndian(packet[18..]);
         identified = packet[22] != 0;
         refine = packet[23];
         favorite = packet[24];
         bound = packet[25];
-        success = packet[26] == 1;
+        isNewRow = packet[26] == 1;
+        success = packet[27] == 1;
         return true;
     }
 }

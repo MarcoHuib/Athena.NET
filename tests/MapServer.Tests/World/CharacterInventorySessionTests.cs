@@ -6,7 +6,8 @@ namespace Athena.Net.MapServer.Tests.World;
 internal sealed class FakeInventoryPersistence : ICharacterInventoryPersistence
 {
     private readonly Dictionary<(uint CharId, int ItemId), uint> _stacks = new();
-    private readonly Dictionary<uint, List<int>> _slotOrderByChar = new();
+    private readonly Dictionary<uint, List<int>> _rowOrderByChar = new();
+    private uint _nextDurableId = 1;
     public bool FailNextCall { get; set; }
     public int CallCount { get; private set; }
 
@@ -23,25 +24,30 @@ internal sealed class FakeInventoryPersistence : ICharacterInventoryPersistence
         var updated = current + amount;
         _stacks[key] = updated;
 
-        var order = _slotOrderByChar.TryGetValue(charId, out var existing) ? existing : (_slotOrderByChar[charId] = []);
-        var slotIndex = order.IndexOf(itemId);
-        if (slotIndex < 0)
+        var order = _rowOrderByChar.TryGetValue(charId, out var existing) ? existing : (_rowOrderByChar[charId] = []);
+        var rowIndex = order.IndexOf(itemId);
+        var isNewRow = rowIndex < 0;
+        if (isNewRow)
         {
-            slotIndex = order.Count;
+            rowIndex = order.Count;
             order.Add(itemId);
         }
+        var durableId = _durableIdByRow.TryGetValue((charId, rowIndex), out var existingDurableId) ? existingDurableId : _durableIdByRow[(charId, rowIndex)] = _nextDurableId++;
 
-        return Task.FromResult(new InventoryAddPersistenceResult(true, updated, (uint)slotIndex, Equip: 0, Identified: true, Refine: 0, Favorite: 0, Bound: 0));
+        return Task.FromResult(new InventoryAddPersistenceResult(true, updated, durableId, Equip: 0, Identified: true, Refine: 0, Favorite: 0, Bound: 0, isNewRow));
     }
+
+    private readonly Dictionary<(uint CharId, int RowIndex), uint> _durableIdByRow = new();
 
     public uint Persisted(uint charId, int itemId) => _stacks.GetValueOrDefault((charId, itemId));
 
-    public Task<InventoryConsumePersistenceResult> ConsumeItemAsync(uint accountId, uint charId, uint slotIndex, uint amount, CancellationToken cancellationToken)
+    public Task<InventoryConsumePersistenceResult> ConsumeItemAsync(uint accountId, uint charId, uint durableId, uint amount, CancellationToken cancellationToken)
     {
-        if (!_slotOrderByChar.TryGetValue(charId, out var order) || slotIndex >= order.Count)
-            return Task.FromResult(InventoryConsumePersistenceResult.Failed());
+        if (!_rowOrderByChar.TryGetValue(charId, out var order)) return Task.FromResult(InventoryConsumePersistenceResult.Failed());
+        var rowIndex = _durableIdByRow.Where(kv => kv.Key.CharId == charId && kv.Value == durableId).Select(kv => (int?)kv.Key.RowIndex).FirstOrDefault();
+        if (rowIndex is null || rowIndex.Value >= order.Count) return Task.FromResult(InventoryConsumePersistenceResult.Failed());
 
-        var itemId = order[(int)slotIndex];
+        var itemId = order[rowIndex.Value];
         var key = (charId, itemId);
         var current = _stacks.GetValueOrDefault(key);
         if (current < amount) return Task.FromResult(InventoryConsumePersistenceResult.Failed());
@@ -49,7 +55,7 @@ internal sealed class FakeInventoryPersistence : ICharacterInventoryPersistence
         var updated = current - amount;
         _stacks[key] = updated;
         var rowDeleted = updated == 0;
-        if (rowDeleted) order.RemoveAt((int)slotIndex);
+        if (rowDeleted) order.RemoveAt(rowIndex.Value);
         return Task.FromResult(new InventoryConsumePersistenceResult(true, updated, rowDeleted));
     }
 }
@@ -119,10 +125,12 @@ public sealed class CharacterInventorySessionTests
         Assert.Equal(2u, result.NewAmount); // Picks up the persisted 1, not starting over from 0.
     }
 
-    // The authoritative CharacterInventoryItem this method returns is what callers (e.g.
-    // MapClientSession's reward path) must use to update their own runtime
+    // The authoritative InventoryAddResultItem/DurableId this method returns is what callers
+    // (e.g. MapClientSession's reward path) must use to update their own runtime
     // CharacterInventorySnapshot - it must carry the real persisted field values, not
-    // invented/assumed ones.
+    // invented/assumed ones. Runtime SlotIndex is NOT part of this result - only the caller,
+    // which owns the live CharacterInventorySnapshot, can decide it (see InventoryAddResult's
+    // own doc comment).
     [Fact]
     public async Task AddItemAsync_Success_ReturnsAuthoritativeItemMatchingPersistedFields()
     {
@@ -132,15 +140,15 @@ public sealed class CharacterInventorySessionTests
         var result = await session.AddItemAsync(Wood, 1, CancellationToken.None);
 
         Assert.NotNull(result.Item);
-        Assert.Equal(Wood.Id, result.Item!.ItemId);
-        Assert.Equal(1u, result.Item.Amount);
-        Assert.Equal(0u, result.Item.SlotIndex);
-        Assert.Equal(0u, result.Item.Equip);
-        Assert.True(result.Item.Identified);
+        Assert.True(result.IsNewRow);
+        Assert.Equal(Wood.Id, result.Item!.Value.ItemId);
+        Assert.Equal(1u, result.Item.Value.Amount);
+        Assert.Equal(0u, result.Item.Value.Equip);
+        Assert.True(result.Item.Value.Identified);
     }
 
     [Fact]
-    public async Task AddItemAsync_SecondAward_ReturnsSameSlotIndex_WithUpdatedAmount()
+    public async Task AddItemAsync_SecondAward_ReturnsSameDurableId_IsNewRowFalse_WithUpdatedAmount()
     {
         var persistence = new FakeInventoryPersistence();
         var session = new CharacterInventorySession(1, 100, persistence);
@@ -148,8 +156,9 @@ public sealed class CharacterInventorySessionTests
         var first = await session.AddItemAsync(Wood, 1, CancellationToken.None);
         var second = await session.AddItemAsync(Wood, 1, CancellationToken.None);
 
-        Assert.Equal(first.Item!.SlotIndex, second.Item!.SlotIndex);
-        Assert.Equal(2u, second.Item.Amount);
+        Assert.Equal(first.DurableId, second.DurableId);
+        Assert.False(second.IsNewRow);
+        Assert.Equal(2u, second.Item!.Value.Amount);
     }
 
     [Fact]
@@ -168,9 +177,9 @@ public sealed class CharacterInventorySessionTests
     {
         var persistence = new FakeInventoryPersistence();
         var session = new CharacterInventorySession(1, 100, persistence);
-        await session.AddItemAsync(Wood, 5, CancellationToken.None); // slot 0, amount 5
+        var added = await session.AddItemAsync(Wood, 5, CancellationToken.None);
 
-        var result = await session.ConsumeItemAsync(0, 1, CancellationToken.None);
+        var result = await session.ConsumeItemAsync(added.DurableId, 1, CancellationToken.None);
 
         Assert.True(result.Success);
         Assert.Equal(4u, result.NewAmount);
@@ -183,9 +192,9 @@ public sealed class CharacterInventorySessionTests
     {
         var persistence = new FakeInventoryPersistence();
         var session = new CharacterInventorySession(1, 100, persistence);
-        await session.AddItemAsync(Wood, 1, CancellationToken.None); // slot 0, amount 1
+        var added = await session.AddItemAsync(Wood, 1, CancellationToken.None);
 
-        var result = await session.ConsumeItemAsync(0, 1, CancellationToken.None);
+        var result = await session.ConsumeItemAsync(added.DurableId, 1, CancellationToken.None);
 
         Assert.True(result.Success);
         Assert.Equal(0u, result.NewAmount);
@@ -194,12 +203,12 @@ public sealed class CharacterInventorySessionTests
     }
 
     [Fact]
-    public async Task ConsumeItemAsync_InvalidSlot_ReportsFailure_NotFakeSuccess()
+    public async Task ConsumeItemAsync_InvalidDurableId_ReportsFailure_NotFakeSuccess()
     {
         var persistence = new FakeInventoryPersistence();
         var session = new CharacterInventorySession(1, 100, persistence);
 
-        var result = await session.ConsumeItemAsync(5, 1, CancellationToken.None);
+        var result = await session.ConsumeItemAsync(999, 1, CancellationToken.None);
 
         Assert.False(result.Success);
     }

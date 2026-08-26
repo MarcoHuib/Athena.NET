@@ -7,12 +7,27 @@ namespace Athena.Net.MapServer.Net;
 // them (the tutorial starter rows carry none), matching the shallow-extension convention used
 // throughout this domain model.
 //
-// SlotIndex is the stable server-side array position (0-based) this row would occupy in a real
-// rAthena `sd->inventory.u.items_inventory[]` load pass - see CharacterInventorySession's own
-// SlotIndex doc comment for the identical convention already used by the 0x0B41 pickup path.
-// client_index() (clif.cpp:122) adds +2 to this at wire-serialization time; callers must never
-// apply that offset themselves before this point.
+// DurableId vs SlotIndex - the two are DELIBERATELY separate concepts, never conflated:
+//   DurableId is CharInventory's own real primary key (CharInventory.Id) - the ONE stable
+//   identity a row keeps for its entire persisted lifetime. CharServer is the sole authority
+//   over it; MapServer never invents or reassigns it.
+//
+//   SlotIndex is the CURRENT SESSION's runtime inventory-array position (0-based), matching
+//   pinned rAthena's sd->inventory.u.items_inventory[n] - entirely a MapServer-owned, in-memory
+//   concept for THIS session. Pinned pc_delitem (pc.cpp:6103-6128) proves the real client-facing
+//   behavior this must mirror: deleting a row does NOT compact/renumber later array positions -
+//   it leaves a hole at that exact index, and pinned pc_additem (pc.cpp:...) proves a later add
+//   searches the array for the first empty slot and reuses it, rather than always appending.
+//   CharServer has no runtime-slot concept at all: it is never asked for one and never computes
+//   one - see ai/map-server.md "Durable row identity vs runtime SlotIndex" for the full
+//   architecture rationale and CharacterInventorySnapshot's own mutation-helper doc comments for
+//   how MapServer maintains this session-local assignment (initial dense login mapping, hole
+//   creation on delete, hole reuse on add, unchanged-slot preservation on stack/equip updates).
+//
+// client_index() (clif.cpp:122) adds +2 to SlotIndex at wire-serialization time; callers must
+// never apply that offset themselves before this point.
 public sealed record CharacterInventoryItem(
+    uint DurableId,
     uint SlotIndex,
     int ItemId,
     uint Amount,
@@ -22,75 +37,93 @@ public sealed record CharacterInventoryItem(
     byte Favorite,
     byte Bound);
 
-// Every persisted CharInventory row for one character, in stable load order (matches
-// CharacterInventoryItem.SlotIndex). This is the ONE authoritative read - both the right-hand
+// Every persisted CharInventory row for one character, carrying MapServer's own runtime
+// SlotIndex assignment for the active session (see CharacterInventoryItem's own doc comment for
+// the DurableId/SlotIndex split). This is the ONE authoritative snapshot - both the right-hand
 // weapon-appearance/combat path (CharacterEquipmentSnapshot, derived from this) and the full
 // client inventory/equip-list projection (0x0B09/0x0B39) originate from the same fetch, never
 // two independent CharServer reads of the same persisted state.
 public sealed record CharacterInventorySnapshot(IReadOnlyList<CharacterInventoryItem> Items)
 {
-    // The ONE place a caller applies a single confirmed-persisted row mutation to its own copy
-    // of the authoritative runtime snapshot - shared by CharacterEquipmentMutationService
-    // (equip/unequip, always a replace: the row already exists, ItemId unchanged) and
-    // MapClientSession's inventory-reward path (an add, which is a replace for an existing
-    // stack or an append for a brand-new row). Never mutates in place; always returns a new
-    // snapshot, matching this record's own immutability.
-    //
-    // Enforces the ONE authoritative slot-ordering invariant rather than guessing/repairing a
-    // violation of it:
-    //   - replacement.SlotIndex < Items.Count: that slot must already hold a row with the SAME
-    //     ItemId (a legitimate in-place update - stack amount change, Equip flip, etc.).
-    //   - replacement.SlotIndex == Items.Count: appended as the newly persisted row (the only
-    //     way a brand-new row may enter the snapshot).
-    //   - anything else (SlotIndex > Items.Count, or < Items.Count with a DIFFERENT ItemId) is
-    //     an authoritative-state invariant violation - CharServer's response disagrees with this
-    //     session's own runtime snapshot - and must never be silently guessed at or repaired.
-    public CharacterInventorySnapshot WithItem(CharacterInventoryItem replacement)
+    // The initial dense runtime-slot assignment performed once, right after a successful
+    // CharServer inventory read (login or reconnect) - CharServer's own stable enumeration
+    // order (CharInventoryOrdering.InStableOrder) becomes slots 0..N-1. This is the ONLY place
+    // runtime slots are assigned from CharServer's row order; every later mutation (add/
+    // consume/equip) maintains the assignment purely in MapServer's own runtime state via
+    // WithUpdatedItem/WithNewItem/WithoutDurableId below - CharServer is never asked to
+    // recompute a slot again for the lifetime of this session.
+    public static CharacterInventorySnapshot FromLogin(IReadOnlyList<(uint DurableId, int ItemId, uint Amount, uint Equip, bool Identified, byte Refine, byte Favorite, byte Bound)> rows)
     {
-        if (replacement.SlotIndex > Items.Count)
+        var items = new List<CharacterInventoryItem>(rows.Count);
+        for (var slot = 0; slot < rows.Count; slot++)
         {
-            throw new InvalidOperationException(
-                $"Inventory slot invariant violation: SlotIndex={replacement.SlotIndex} exceeds current row count={Items.Count}.");
+            var row = rows[slot];
+            items.Add(new CharacterInventoryItem(row.DurableId, (uint)slot, row.ItemId, row.Amount, row.Equip, row.Identified, row.Refine, row.Favorite, row.Bound));
         }
-
-        if (replacement.SlotIndex == Items.Count) return new CharacterInventorySnapshot([.. Items, replacement]);
-
-        var items = Items.ToList();
-        var existing = items[(int)replacement.SlotIndex];
-        if (existing.ItemId != replacement.ItemId)
-        {
-            throw new InvalidOperationException(
-                $"Inventory slot invariant violation: SlotIndex={replacement.SlotIndex} holds itemId={existing.ItemId}, " +
-                $"but the authoritative mutation targets itemId={replacement.ItemId}.");
-        }
-
-        items[(int)replacement.SlotIndex] = replacement;
         return new CharacterInventorySnapshot(items);
     }
 
-    // Applies a CharServer-confirmed row deletion (InventoryConsumePersistenceResult.RowDeleted
-    // - the row's Amount reached zero and CharServer removed it from durable storage) to this
-    // runtime snapshot. Because Athena's SlotIndex is derived from stable row-Id ordering
-    // (CharInventoryOrdering.InStableSlotOrder) rather than a persisted array-slot column, a
-    // deleted row's later siblings shift down by one - this reproduces exactly the same
-    // renumbering a fresh full inventory reload would produce, so a future reconnect and this
-    // runtime snapshot always agree. Every row after the removed one has its SlotIndex
-    // decremented by one to match.
-    public CharacterInventorySnapshot WithoutSlot(uint slotIndex)
+    // Applies a confirmed-persisted mutation to an EXISTING row, identified by its DurableId -
+    // used by CharacterEquipmentMutationService (equip/unequip: the row already exists, ItemId/
+    // slot unchanged) and by a stack-amount update for an item the caller already knows is not
+    // new (CharServer's own IsNewRow=false response). The row's CURRENT runtime SlotIndex is
+    // looked up by DurableId and preserved unconditionally - this is the exact mechanism that
+    // keeps a later, unrelated row's slot stable across an earlier row's deletion/replacement.
+    // Throws if no row with this DurableId exists in the current snapshot - CharServer's
+    // response disagreeing with this session's own runtime state is an authoritative-state
+    // invariant violation, never silently guessed at or repaired.
+    public CharacterInventorySnapshot WithUpdatedItem(uint durableId, int itemId, uint amount, uint equip, bool identified, byte refine, byte favorite, byte bound)
     {
-        if (slotIndex >= Items.Count)
+        var index = Items.ToList().FindIndex(i => i.DurableId == durableId);
+        if (index < 0)
         {
             throw new InvalidOperationException(
-                $"Inventory slot invariant violation: cannot remove SlotIndex={slotIndex}, current row count={Items.Count}.");
+                $"Inventory invariant violation: no runtime row exists for DurableId={durableId} to update.");
         }
 
-        var items = new List<CharacterInventoryItem>(Items.Count - 1);
-        foreach (var item in Items)
-        {
-            if (item.SlotIndex == slotIndex) continue;
-            items.Add(item.SlotIndex > slotIndex ? item with { SlotIndex = item.SlotIndex - 1 } : item);
-        }
+        var items = Items.ToList();
+        items[index] = items[index] with { ItemId = itemId, Amount = amount, Equip = equip, Identified = identified, Refine = refine, Favorite = favorite, Bound = bound };
         return new CharacterInventorySnapshot(items);
+    }
+
+    // Applies a confirmed-persisted BRAND-NEW row (CharServer's own IsNewRow=true response) -
+    // assigns it the first FREE runtime slot: mirrors pinned pc_additem's own "search the array
+    // for the first empty slot and reuse it" behavior (a hole left by an earlier WithoutDurableId
+    // call), falling back to appending a new slot only when there is no hole to reuse. Throws if
+    // a row with this DurableId already exists - a "new row" response for an already-tracked
+    // DurableId is an authoritative-state invariant violation (CharServer and this session's
+    // runtime state disagree on whether the row is new), never silently repaired.
+    public CharacterInventorySnapshot WithNewItem(uint durableId, int itemId, uint amount, uint equip, bool identified, byte refine, byte favorite, byte bound)
+    {
+        if (Items.Any(i => i.DurableId == durableId))
+        {
+            throw new InvalidOperationException(
+                $"Inventory invariant violation: DurableId={durableId} was reported as a new row, but a runtime row for it already exists.");
+        }
+
+        var occupiedSlots = Items.Select(i => i.SlotIndex).ToHashSet();
+        uint slot = 0;
+        while (occupiedSlots.Contains(slot)) slot++;
+
+        var newItem = new CharacterInventoryItem(durableId, slot, itemId, amount, equip, identified, refine, favorite, bound);
+        return new CharacterInventorySnapshot([.. Items, newItem]);
+    }
+
+    // Removes the row identified by its DurableId (a confirmed CharServer row deletion -
+    // InventoryConsumePersistenceResult.RowDeleted). Deliberately leaves a HOLE at that row's
+    // runtime SlotIndex rather than compacting/renumbering later rows - this is the pinned
+    // pc_delitem behavior this architecture exists to mirror (pc.cpp:6114-6119: the array slot
+    // is zeroed in place, never shifted). A later WithNewItem call may reuse this exact hole.
+    // Throws if no row with this DurableId exists in the current snapshot.
+    public CharacterInventorySnapshot WithoutDurableId(uint durableId)
+    {
+        if (!Items.Any(i => i.DurableId == durableId))
+        {
+            throw new InvalidOperationException(
+                $"Inventory invariant violation: no runtime row exists for DurableId={durableId} to remove.");
+        }
+
+        return new CharacterInventorySnapshot([.. Items.Where(i => i.DurableId != durableId)]);
     }
 }
 
@@ -129,10 +162,10 @@ public interface ICharacterInventoryListPersistence
 {
     Task<CharacterInventoryReadResult> GetInventoryAsync(uint accountId, uint characterId, CancellationToken cancellationToken);
 
-    // Persists a single CharInventory row's Equip bitmask by its stable SlotIndex - CharServer
+    // Persists a single CharInventory row's Equip bitmask by its stable DurableId - CharServer
     // remains the durable owner of CharInventory.Equip (see CharacterEquipmentMutationService).
     // Returns false on any failure (row not found for this character, DB error, disconnected
     // CharServer) - callers must never assume success and must never report success to the
     // client before this returns true.
-    Task<bool> SetItemEquipAsync(uint accountId, uint characterId, uint slotIndex, uint equip, CancellationToken cancellationToken);
+    Task<bool> SetItemEquipAsync(uint accountId, uint characterId, uint durableId, uint equip, CancellationToken cancellationToken);
 }

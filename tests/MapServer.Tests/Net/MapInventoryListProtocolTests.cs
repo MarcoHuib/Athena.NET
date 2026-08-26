@@ -21,8 +21,8 @@ public sealed class MapInventoryListProtocolTests
     {
         var inventory = new CharacterInventorySnapshot(
         [
-            new CharacterInventoryItem(0, 1201, 1, 0x000002, true, 0, 0, 0),
-            new CharacterInventoryItem(1, 2301, 1, 0x000010, true, 0, 0, 0),
+            new CharacterInventoryItem(DurableId: 1, SlotIndex: 0, 1201, 1, 0x000002, true, 0, 0, 0),
+            new CharacterInventoryItem(DurableId: 2, SlotIndex: 1, 2301, 1, 0x000010, true, 0, 0, 0),
         ]);
         var packet = MapInventoryListProtocol.BuildResponse(0, 100, inventory);
 
@@ -70,19 +70,19 @@ public sealed class MapInventoryListProtocolTests
     public void TryParseResponse_ItemCountMismatchWithPayload_ReturnsFalse()
     {
         var packet = MapInventoryListProtocol.BuildResponse(0, 100, new CharacterInventorySnapshot(
-            [new CharacterInventoryItem(0, 1201, 1, 0, true, 0, 0, 0)]));
+            [new CharacterInventoryItem(DurableId: 1, SlotIndex: 0, 1201, 1, 0, true, 0, 0, 0)]));
         BinaryPrimitives.WriteUInt16LittleEndian(packet.AsSpan(9), 5); // claims 5 items but payload only has 1
 
         Assert.False(MapInventoryListProtocol.TryParseResponse(packet, out _, out _, out _));
     }
 
     [Fact]
-    public void TryParseResponse_DuplicateSlotIndices_ReturnsFalse()
+    public void TryParseResponse_DuplicateDurableIds_ReturnsFalse()
     {
         var packet = MapInventoryListProtocol.BuildResponse(0, 100, new CharacterInventorySnapshot(
         [
-            new CharacterInventoryItem(0, 1201, 1, 0, true, 0, 0, 0),
-            new CharacterInventoryItem(0, 6008, 1, 0, true, 0, 0, 0), // duplicate slot 0
+            new CharacterInventoryItem(DurableId: 1, SlotIndex: 0, 1201, 1, 0, true, 0, 0, 0),
+            new CharacterInventoryItem(DurableId: 1, SlotIndex: 1, 6008, 1, 0, true, 0, 0, 0), // duplicate durableId 1
         ]));
 
         Assert.False(MapInventoryListProtocol.TryParseResponse(packet, out _, out _, out _));

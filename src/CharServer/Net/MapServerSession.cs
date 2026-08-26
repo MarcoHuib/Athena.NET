@@ -368,12 +368,13 @@ public sealed class MapServerSession : IDisposable, ISession
         }
 
         uint newAmount = 0;
-        uint slotIndex = 0;
+        uint durableId = 0;
         uint equip = 0;
         var identified = false;
         byte refine = 0;
         byte favorite = 0;
         byte bound = 0;
+        var isNewRow = false;
         var success = false;
         if (!IsInventoryAddRequestAuthorized(_authenticated, _ownedCharacters, request.AccountId, request.CharId, request.ItemId, request.Amount))
         {
@@ -398,12 +399,21 @@ public sealed class MapServerSession : IDisposable, ISession
                     {
                         row = new() { CharId = request.CharId, NameId = (uint)request.ItemId, Amount = request.Amount, Identify = 1 };
                         db.Inventory.Add(row);
+                        isNewRow = true;
                     }
                     else
                     {
                         row.Amount += request.Amount;
                     }
                     await db.SaveChangesAsync(cancellationToken);
+                    // DurableId (row.Id) is CharInventory's own real primary key - CharServer no
+                    // longer computes or returns any kind of runtime array position. MapServer
+                    // owns runtime SlotIndex entirely: for isNewRow it assigns a fresh slot
+                    // (reusing a hole if one exists); for an existing stack it looks up this
+                    // DurableId's CURRENT runtime slot in its own tracking and reuses it
+                    // unchanged - see ai/map-server.md "Durable row identity vs runtime
+                    // SlotIndex".
+                    durableId = row.Id;
                     newAmount = row.Amount;
                     success = true;
                     equip = row.Equip;
@@ -411,17 +421,8 @@ public sealed class MapServerSession : IDisposable, ISession
                     refine = row.Refine;
                     favorite = row.Favorite;
                     bound = row.Bound;
-                    // SlotIndex is this row's position in the ONE authoritative stable ordering
-                    // (CharInventoryOrdering.InStableSlotOrder) - equipped and unequipped rows
-                    // share that same namespace. Must NOT reuse the item.Equip == 0 filter above
-                    // (that filter exists only to find/avoid matching an EQUIPPED row when
-                    // searching for a stackable item's existing stack - it has no bearing on slot
-                    // position, which was the previously-diverging bug: counting only unequipped
-                    // rows produced a different, incompatible namespace from the inventory-list
-                    // read's/equip-update's full-row ordering).
-                    slotIndex = (uint)await db.Inventory.InStableSlotOrder(request.CharId).CountAsync(item => item.Id < row.Id, cancellationToken);
                     CharLogger.Info(
-                        $"Inventory-add succeeded charId={request.CharId} itemId={request.ItemId} newAmount={newAmount} slotIndex={slotIndex}.");
+                        $"Inventory-add succeeded charId={request.CharId} itemId={request.ItemId} newAmount={newAmount} durableId={durableId} isNewRow={isNewRow}.");
                 }
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
@@ -433,7 +434,7 @@ public sealed class MapServerSession : IDisposable, ISession
         }
 
         await WriteAsync(
-            MapInventoryAddProtocol.BuildResponse(request.CharId, request.ItemId, newAmount, slotIndex, equip, identified, refine, favorite, bound, success),
+            MapInventoryAddProtocol.BuildResponse(request.CharId, request.ItemId, newAmount, durableId, equip, identified, refine, favorite, bound, isNewRow, success),
             cancellationToken);
     }
 
@@ -474,12 +475,12 @@ public sealed class MapServerSession : IDisposable, ISession
                 await using var db = _dbFactory();
                 if (db is not null)
                 {
-                    // ONE authoritative stable server-side array order - see
-                    // CharInventoryOrdering.InStableSlotOrder's own doc comment. Equipped and
-                    // unequipped rows share this same namespace.
+                    // Stable enumeration order (CharInventoryOrdering.InStableOrder) used only as
+                    // the sequence MapServer assigns its initial dense runtime SlotIndex from at
+                    // login - DurableId (i.Id) is each row's real, authoritative identity.
                     rows = await db.Inventory.AsNoTracking()
-                        .InStableSlotOrder(charId)
-                        .Select(i => new CharacterInventoryRowDto((int)i.NameId, i.Amount, i.Equip, i.Identify != 0, i.Refine, i.Favorite, i.Bound))
+                        .InStableOrder(charId)
+                        .Select(i => new CharacterInventoryRowDto(i.Id, (int)i.NameId, i.Amount, i.Equip, i.Identify != 0, i.Refine, i.Favorite, i.Bound))
                         .ToListAsync(cancellationToken);
                     result = 0;
                 }
@@ -496,7 +497,7 @@ public sealed class MapServerSession : IDisposable, ISession
 
     private async Task HandleInventoryEquipUpdateAsync(byte[] packet, CancellationToken cancellationToken)
     {
-        if (!MapInventoryEquipUpdateProtocol.TryParseRequest(packet, out var accountId, out var charId, out var slotIndex, out var equip)) return;
+        if (!MapInventoryEquipUpdateProtocol.TryParseRequest(packet, out var accountId, out var charId, out var durableId, out var equip)) return;
         var success = false;
         if (IsGameplayStateRequestAuthorized(_authenticated, _ownedCharacters, accountId, charId))
         {
@@ -505,12 +506,8 @@ public sealed class MapServerSession : IDisposable, ISession
                 await using var db = _dbFactory();
                 if (db is not null)
                 {
-                    // ONE authoritative stable server-side array order - see
-                    // CharInventoryOrdering.InStableSlotOrder's own doc comment.
-                    var row = await db.Inventory
-                        .InStableSlotOrder(charId)
-                        .Skip((int)slotIndex)
-                        .FirstOrDefaultAsync(cancellationToken);
+                    // Resolved directly by its own real primary key - never a runtime slot.
+                    var row = await db.Inventory.FirstOrDefaultAsync(i => i.CharId == charId && i.Id == durableId, cancellationToken);
                     if (row is not null)
                     {
                         row.Equip = equip;
@@ -523,32 +520,26 @@ public sealed class MapServerSession : IDisposable, ISession
             {
                 CharLogger.Warning(
                     $"Character inventory equip update rejected reason=database-error charId={charId} " +
-                    $"slotIndex={slotIndex} error={ex.GetType().Name}.");
+                    $"durableId={durableId} error={ex.GetType().Name}.");
             }
         }
-        await WriteAsync(MapInventoryEquipUpdateProtocol.BuildResponse(success, charId, slotIndex), cancellationToken);
+        await WriteAsync(MapInventoryEquipUpdateProtocol.BuildResponse(success, charId, durableId), cancellationToken);
     }
 
     // Pinned pc_delitem (pc.cpp:6103-6128), restricted to this service's modeled checks: rejects
-    // if the row doesn't exist at this SlotIndex or its Amount is less than the requested
+    // if the row doesn't exist (by its own DurableId) or its Amount is less than the requested
     // consume amount (pc.cpp:6107 - `sd->inventory...amount < amount` -> return 1/failure).
     //
     // Pinned pc_delitem does NOT shift/renumber later array positions - it `memset`s the row to
     // zero in place, leaving that array index empty but still occupying it (pc.cpp:6114-6119).
-    // Athena's SlotIndex is derived from stable row-Id ordering, not a fixed persisted array
-    // slot, so there is no equivalent "zeroed placeholder row" to leave behind - deleting the
-    // row when Amount reaches zero is the smallest correct translation: a subsequent full
-    // inventory reload naturally renumbers later rows down by one, exactly mirroring what a
-    // real rAthena client would see after any inventory slot becomes permanently empty and
-    // items above it are eventually reindexed by the next authoritative load. This project has
-    // no live-verified evidence of what a real client expects mid-session when a LOWER slot is
-    // deleted while un-reloaded higher slots keep stale indices; the narrow case this task
-    // targets (consuming the character's only First Aid Box, the LAST occupied slot at the time
-    // of use) never exercises that gap, so it is deliberately left unaddressed rather than
-    // guessed at - see ai/map-server.md for the explicit disclosure.
+    // CharServer mirrors the durable-storage side of that exactly: deleting the row when Amount
+    // reaches zero, with NO reindexing of any kind - CharServer has no runtime slot concept to
+    // reindex in the first place. MapServer owns the resulting hole in ITS OWN runtime
+    // SlotIndex tracking and decides independently whether/when to reuse it - see
+    // ai/map-server.md "Durable row identity vs runtime SlotIndex".
     private async Task HandleInventoryConsumeAsync(byte[] packet, CancellationToken cancellationToken)
     {
-        if (!MapInventoryConsumeProtocol.TryParseRequest(packet, out var accountId, out var charId, out var slotIndex, out var amount)) return;
+        if (!MapInventoryConsumeProtocol.TryParseRequest(packet, out var accountId, out var charId, out var durableId, out var amount)) return;
         var success = false;
         uint newAmount = 0;
         var rowDeleted = false;
@@ -559,10 +550,7 @@ public sealed class MapServerSession : IDisposable, ISession
                 await using var db = _dbFactory();
                 if (db is not null)
                 {
-                    var row = await db.Inventory
-                        .InStableSlotOrder(charId)
-                        .Skip((int)slotIndex)
-                        .FirstOrDefaultAsync(cancellationToken);
+                    var row = await db.Inventory.FirstOrDefaultAsync(i => i.CharId == charId && i.Id == durableId, cancellationToken);
                     if (row is not null && row.Amount >= amount)
                     {
                         row.Amount -= amount;
@@ -575,17 +563,17 @@ public sealed class MapServerSession : IDisposable, ISession
                         newAmount = row.Amount;
                         success = true;
                         CharLogger.Info(
-                            $"Inventory-consume succeeded charId={charId} slotIndex={slotIndex} amount={amount} newAmount={newAmount} rowDeleted={rowDeleted}.");
+                            $"Inventory-consume succeeded charId={charId} durableId={durableId} amount={amount} newAmount={newAmount} rowDeleted={rowDeleted}.");
                     }
                 }
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 CharLogger.Warning(
-                    $"Inventory-consume rejected reason=database-error charId={charId} slotIndex={slotIndex} error={ex.GetType().Name}.");
+                    $"Inventory-consume rejected reason=database-error charId={charId} durableId={durableId} error={ex.GetType().Name}.");
             }
         }
-        await WriteAsync(MapInventoryConsumeProtocol.BuildResponse(success, charId, slotIndex, newAmount, rowDeleted), cancellationToken);
+        await WriteAsync(MapInventoryConsumeProtocol.BuildResponse(success, charId, durableId, newAmount, rowDeleted), cancellationToken);
     }
 
     private async Task HandleGameplayStateUpdateAsync(byte[] packet, CancellationToken cancellationToken)

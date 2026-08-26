@@ -125,6 +125,8 @@ public sealed class CharacterEquipmentMutationService(
 
         // Slot conflict: unequip whatever currently occupies any EQI slot `pos` maps to
         // (pinned pc.cpp:12147-12157 - `if(sd->equip_index[i] >= 0) pc_unequipitem(...)`).
+        // Persistence targets each row's stable DurableId - never its runtime SlotIndex, which
+        // CharServer has no concept of at all.
         var working = inventory;
         foreach (var slot in EquipSlots.Bitmask)
         {
@@ -132,15 +134,15 @@ public sealed class CharacterEquipmentMutationService(
             var occupying = working.Items.FirstOrDefault(i => i.SlotIndex != slotIndex && (i.Equip & slot.Value) != 0);
             if (occupying is null) continue;
 
-            var unequipped = await persistence.SetItemEquipAsync(accountId, characterId, occupying.SlotIndex, 0, cancellationToken);
+            var unequipped = await persistence.SetItemEquipAsync(accountId, characterId, occupying.DurableId, 0, cancellationToken);
             if (!unequipped) return (new EquipOutcome(EquipMutationResult.Fail, 0), null);
-            working = working.WithItem(occupying with { Equip = 0 });
+            working = working.WithUpdatedItem(occupying.DurableId, occupying.ItemId, occupying.Amount, 0, occupying.Identified, occupying.Refine, occupying.Favorite, occupying.Bound);
         }
 
-        var persisted = await persistence.SetItemEquipAsync(accountId, characterId, slotIndex, pos, cancellationToken);
+        var persisted = await persistence.SetItemEquipAsync(accountId, characterId, target.DurableId, pos, cancellationToken);
         if (!persisted) return (new EquipOutcome(EquipMutationResult.Fail, 0), null);
 
-        var updated = working.WithItem(target with { Equip = pos });
+        var updated = working.WithUpdatedItem(target.DurableId, target.ItemId, target.Amount, pos, target.Identified, target.Refine, target.Favorite, target.Bound);
         return (new EquipOutcome(EquipMutationResult.Success, pos), updated);
     }
 
@@ -159,10 +161,10 @@ public sealed class CharacterEquipmentMutationService(
             return (new UnequipOutcome(false, 0), null);
 
         var pos = target.Equip;
-        var persisted = await persistence.SetItemEquipAsync(accountId, characterId, slotIndex, 0, cancellationToken);
+        var persisted = await persistence.SetItemEquipAsync(accountId, characterId, target.DurableId, 0, cancellationToken);
         if (!persisted) return (new UnequipOutcome(false, 0), null);
 
-        var updated = inventory.WithItem(target with { Equip = 0 });
+        var updated = inventory.WithUpdatedItem(target.DurableId, target.ItemId, target.Amount, 0, target.Identified, target.Refine, target.Favorite, target.Bound);
         return (new UnequipOutcome(true, pos), updated);
     }
 }

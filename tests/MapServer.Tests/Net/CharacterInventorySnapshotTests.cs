@@ -2,128 +2,147 @@ using Athena.Net.MapServer.Net;
 
 namespace Athena.Net.MapServer.Tests.Net;
 
-// Proves CharacterInventorySnapshot.WithItem - the ONE place a caller applies a single
-// confirmed-persisted row mutation to its own runtime snapshot copy - enforces the
-// authoritative slot-ordering invariant rather than silently guessing/repairing a violation:
-// SlotIndex < count requires the same ItemId already at that slot (in-place update);
-// SlotIndex == count appends a brand-new row; anything else is a hard failure.
+// Proves the durable-row-identity/runtime-SlotIndex split: FromLogin (initial dense assignment
+// from CharServer's stable row order), WithUpdatedItem (in-place update, slot preserved),
+// WithNewItem (first-free-slot reuse - pinned pc_additem's own "search for first empty slot"
+// behavior), and WithoutDurableId (row removal that leaves a HOLE, never renumbers later rows -
+// pinned pc_delitem, pc.cpp:6103-6128, zeroes the array slot in place).
 public sealed class CharacterInventorySnapshotTests
 {
-    private static CharacterInventoryItem Item(uint slotIndex, int itemId, uint amount = 1, uint equip = 0) =>
-        new(slotIndex, itemId, amount, equip, Identified: true, Refine: 0, Favorite: 0, Bound: 0);
+    private static CharacterInventoryItem Item(uint slotIndex, uint durableId, int itemId, uint amount = 1, uint equip = 0) =>
+        new(durableId, slotIndex, itemId, amount, equip, Identified: true, Refine: 0, Favorite: 0, Bound: 0);
 
     [Fact]
-    public void WithItem_SlotIndexEqualsCount_AppendsNewRow()
+    public void FromLogin_AssignsDenseSlotsInCharServerRowOrder()
     {
-        var snapshot = new CharacterInventorySnapshot([Item(0, 1201), Item(1, 2301), Item(2, 23484)]);
+        var rows = new List<(uint DurableId, int ItemId, uint Amount, uint Equip, bool Identified, byte Refine, byte Favorite, byte Bound)>
+        {
+            (1, 1201, 1, 0x000002, true, 0, 0, 0),
+            (2, 2301, 1, 0x000010, true, 0, 0, 0),
+            (3, 23484, 1, 0, true, 0, 0, 0),
+        };
 
-        var updated = snapshot.WithItem(Item(3, 6008, amount: 1));
+        var snapshot = CharacterInventorySnapshot.FromLogin(rows);
 
-        Assert.Equal(4, updated.Items.Count);
-        Assert.Equal(6008, updated.Items[3].ItemId);
-        Assert.Equal(3u, updated.Items[3].SlotIndex);
+        Assert.Equal(3, snapshot.Items.Count);
+        Assert.Equal(0u, snapshot.Items[0].SlotIndex);
+        Assert.Equal(1u, snapshot.Items[0].DurableId);
+        Assert.Equal(1u, snapshot.Items[1].SlotIndex);
+        Assert.Equal(2u, snapshot.Items[1].DurableId);
+        Assert.Equal(2u, snapshot.Items[2].SlotIndex);
+        Assert.Equal(3u, snapshot.Items[2].DurableId);
     }
 
     [Fact]
-    public void WithItem_SlotIndexLessThanCount_SameItemId_ReplacesInPlace_NoNewRow()
+    public void WithUpdatedItem_PreservesCurrentSlot_UpdatesFields()
     {
-        var snapshot = new CharacterInventorySnapshot([Item(0, 1201), Item(1, 6008, amount: 1)]);
+        var snapshot = new CharacterInventorySnapshot([Item(0, 1, 1201), Item(1, 2, 6008, amount: 1)]);
 
-        var updated = snapshot.WithItem(Item(1, 6008, amount: 2));
+        var updated = snapshot.WithUpdatedItem(durableId: 2, itemId: 6008, amount: 2, equip: 0, identified: true, refine: 0, favorite: 0, bound: 0);
 
-        Assert.Equal(2, updated.Items.Count); // No new row created.
-        Assert.Equal(2u, updated.Items[1].Amount);
-        Assert.Equal(1u, updated.Items[1].SlotIndex);
+        Assert.Equal(2, updated.Items.Count);
+        var row = updated.Items.Single(i => i.DurableId == 2);
+        Assert.Equal(2u, row.Amount);
+        Assert.Equal(1u, row.SlotIndex); // slot unchanged
     }
 
     [Fact]
-    public void WithItem_SlotIndexLessThanCount_DifferentItemId_ThrowsInvariantViolation()
+    public void WithUpdatedItem_UnknownDurableId_ThrowsInvariantViolation()
     {
-        var snapshot = new CharacterInventorySnapshot([Item(0, 1201), Item(1, 2301)]);
+        var snapshot = new CharacterInventorySnapshot([Item(0, 1, 1201)]);
 
-        Assert.Throws<InvalidOperationException>(() => snapshot.WithItem(Item(1, 6008)));
+        Assert.Throws<InvalidOperationException>(() =>
+            snapshot.WithUpdatedItem(durableId: 99, itemId: 6008, amount: 1, equip: 0, identified: true, refine: 0, favorite: 0, bound: 0));
     }
 
     [Fact]
-    public void WithItem_SlotIndexGreaterThanCount_ThrowsInvariantViolation_DoesNotGuessOrRepair()
+    public void WithNewItem_NoHoles_AppendsAtNextSlot()
     {
-        var snapshot = new CharacterInventorySnapshot([Item(0, 1201)]);
+        var snapshot = new CharacterInventorySnapshot([Item(0, 1, 1201), Item(1, 2, 2301)]);
 
-        Assert.Throws<InvalidOperationException>(() => snapshot.WithItem(Item(5, 6008)));
+        var updated = snapshot.WithNewItem(durableId: 3, itemId: 6008, amount: 1, equip: 0, identified: true, refine: 0, favorite: 0, bound: 0);
+
+        Assert.Equal(3, updated.Items.Count);
+        Assert.Equal(2u, updated.Items.Single(i => i.DurableId == 3).SlotIndex);
     }
 
     [Fact]
-    public void WithItem_EquippedRowsParticipateInSameOrdering_ReplacingUnequippedThirdRowDoesNotDisturbEquippedSlots()
+    public void WithNewItem_DuplicateDurableId_ThrowsInvariantViolation()
+    {
+        var snapshot = new CharacterInventorySnapshot([Item(0, 1, 1201)]);
+
+        Assert.Throws<InvalidOperationException>(() =>
+            snapshot.WithNewItem(durableId: 1, itemId: 1201, amount: 1, equip: 0, identified: true, refine: 0, favorite: 0, bound: 0));
+    }
+
+    [Fact]
+    public void WithoutDurableId_RemovesRow_LeavesHole_LaterSlotsUnchanged()
     {
         var snapshot = new CharacterInventorySnapshot(
         [
-            Item(0, 1201, equip: 0x000002), // Knife, equipped
-            Item(1, 2301, equip: 0x000010), // Cotton Shirt, equipped
-            Item(2, 23484), // First Aid Box, unequipped
+            Item(0, 1, 1201, equip: 0x000002),
+            Item(1, 2, 2301, equip: 0x000010),
+            Item(2, 3, 23484), // First Aid Box
+            Item(3, 4, 6008),  // Wood
         ]);
 
-        var updated = snapshot.WithItem(Item(2, 23484, amount: 2));
-
-        Assert.Equal(0x000002u, updated.Items[0].Equip);
-        Assert.Equal(0x000010u, updated.Items[1].Equip);
-        Assert.Equal(0u, updated.Items[0].SlotIndex);
-        Assert.Equal(1u, updated.Items[1].SlotIndex);
-    }
-
-    [Fact]
-    public void WithItem_NeverMutatesOriginalSnapshot()
-    {
-        var original = new CharacterInventorySnapshot([Item(0, 1201)]);
-
-        var updated = original.WithItem(Item(1, 6008));
-
-        Assert.Single(original.Items); // Original unchanged.
-        Assert.Equal(2, updated.Items.Count);
-    }
-
-    // WithoutSlot applies a CharServer-confirmed row deletion (InventoryConsumePersistenceResult.
-    // RowDeleted) - mirrors pinned pc_delitem's row-removal decision, and renumbers later rows
-    // down by one to match what a fresh full inventory reload would produce.
-    [Fact]
-    public void WithoutSlot_RemovesLastRow_EarlierSlotsUnaffected()
-    {
-        var snapshot = new CharacterInventorySnapshot([Item(0, 1201, equip: 0x000002), Item(1, 2301, equip: 0x000010), Item(2, 23484)]);
-
-        var updated = snapshot.WithoutSlot(2);
-
-        Assert.Equal(2, updated.Items.Count);
-        Assert.Equal(0u, updated.Items.Single(i => i.ItemId == 1201).SlotIndex);
-        Assert.Equal(1u, updated.Items.Single(i => i.ItemId == 2301).SlotIndex);
-        Assert.DoesNotContain(updated.Items, i => i.ItemId == 23484);
-    }
-
-    [Fact]
-    public void WithoutSlot_RemovesMiddleRow_LaterRowsRenumberDownByOne()
-    {
-        var snapshot = new CharacterInventorySnapshot([Item(0, 1201), Item(1, 2301), Item(2, 23484), Item(3, 6008)]);
-
-        var updated = snapshot.WithoutSlot(1);
+        var updated = snapshot.WithoutDurableId(3);
 
         Assert.Equal(3, updated.Items.Count);
-        Assert.Equal(0u, updated.Items.Single(i => i.ItemId == 1201).SlotIndex);
-        Assert.Equal(1u, updated.Items.Single(i => i.ItemId == 23484).SlotIndex); // was 2, now 1
-        Assert.Equal(2u, updated.Items.Single(i => i.ItemId == 6008).SlotIndex); // was 3, now 2
+        Assert.DoesNotContain(updated.Items, i => i.DurableId == 3);
+        var wood = updated.Items.Single(i => i.DurableId == 4);
+        Assert.Equal(3u, wood.SlotIndex); // unaffected by the deletion - no renumbering.
     }
 
     [Fact]
-    public void WithoutSlot_OutOfRange_ThrowsInvariantViolation()
+    public void WithoutDurableId_UnknownDurableId_ThrowsInvariantViolation()
     {
-        var snapshot = new CharacterInventorySnapshot([Item(0, 1201)]);
+        var snapshot = new CharacterInventorySnapshot([Item(0, 1, 1201)]);
 
-        Assert.Throws<InvalidOperationException>(() => snapshot.WithoutSlot(5));
+        Assert.Throws<InvalidOperationException>(() => snapshot.WithoutDurableId(99));
+    }
+
+    // The user's exact required scenario: slot 0 Knife, slot 1 Cotton Shirt, slot 2 FirstAidBox,
+    // slot 3 Wood. Consuming FirstAidBox (slot 2) must leave a hole; Wood must remain slot 3.
+    // Granting a new item must reuse the hole at slot 2, and Wood must still be slot 3.
+    [Fact]
+    public void HoleThenReuse_MatchesLiveFirstAidBoxSequence()
+    {
+        var snapshot = new CharacterInventorySnapshot(
+        [
+            Item(0, 1, 1201),  // Knife
+            Item(1, 2, 2301),  // Cotton Shirt
+            Item(2, 3, 23484), // First Aid Box
+            Item(3, 4, 6008),  // Wood
+        ]);
+
+        var afterConsume = snapshot.WithoutDurableId(3);
+        Assert.Equal(3, afterConsume.Items.Count);
+        Assert.Equal(3u, afterConsume.Items.Single(i => i.DurableId == 4).SlotIndex); // Wood still slot 3
+
+        var afterGrant = afterConsume.WithNewItem(durableId: 5, itemId: 11518, amount: 1, equip: 0, identified: true, refine: 0, favorite: 0, bound: 0);
+
+        Assert.Equal(2u, afterGrant.Items.Single(i => i.DurableId == 5).SlotIndex); // reuses the hole
+        Assert.Equal(3u, afterGrant.Items.Single(i => i.DurableId == 4).SlotIndex); // Wood unaffected
     }
 
     [Fact]
-    public void WithoutSlot_NeverMutatesOriginalSnapshot()
+    public void WithUpdatedItem_NeverMutatesOriginalSnapshot()
     {
-        var original = new CharacterInventorySnapshot([Item(0, 1201), Item(1, 23484)]);
+        var original = new CharacterInventorySnapshot([Item(0, 1, 1201, amount: 1)]);
 
-        var updated = original.WithoutSlot(1);
+        var updated = original.WithUpdatedItem(durableId: 1, itemId: 1201, amount: 5, equip: 0, identified: true, refine: 0, favorite: 0, bound: 0);
+
+        Assert.Equal(1u, original.Items.Single().Amount);
+        Assert.Equal(5u, updated.Items.Single().Amount);
+    }
+
+    [Fact]
+    public void WithoutDurableId_NeverMutatesOriginalSnapshot()
+    {
+        var original = new CharacterInventorySnapshot([Item(0, 1, 1201), Item(1, 2, 23484)]);
+
+        var updated = original.WithoutDurableId(2);
 
         Assert.Equal(2, original.Items.Count);
         Assert.Single(updated.Items);

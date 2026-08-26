@@ -35,14 +35,16 @@ public sealed class MapClientSessionMonsterCombatTests
         public Task<CharacterGameplayState?> UpdateAsync(uint accountId, CharacterGameplayState expected, CharacterGameplayState updated, CancellationToken cancellationToken) => Task.FromResult<CharacterGameplayState?>(updated);
     }
 
-    // `existingRowCount` simulates however many rows already occupy the front of the ONE
-    // authoritative slot namespace (e.g. the starter Knife/Cotton Shirt/First Aid Box in
-    // FixedInventoryListPersistence) - a brand-new stack must land at existingRowCount, existingRowCount+1,
-    // ... in first-added order, matching CharServer's real InStableSlotOrder behavior, never
-    // hardcoded to 0 regardless of what else is already in the inventory.
+    // `existingRowCount` simulates however many DURABLE rows already exist in CharServer's own
+    // row-id space (e.g. the starter Knife/Cotton Shirt/First Aid Box in
+    // FixedInventoryListPersistence) - a brand-new stack is assigned the next DurableId after
+    // those, in first-added order. DurableId is CharServer's row identity, never a runtime slot -
+    // the caller (CharacterInventorySession/MapClientSession) is solely responsible for turning
+    // IsNewRow+DurableId into a runtime SlotIndex via CharacterInventorySnapshot.WithNewItem.
     private sealed class RecordingInventoryPersistence(uint existingRowCount = 0) : ICharacterInventoryPersistence
     {
         private readonly Dictionary<int, uint> _amounts = new();
+        private readonly Dictionary<int, uint> _durableIds = new();
         private readonly List<int> _newRowOrder = [];
         public bool FailNextCall { get; set; }
 
@@ -59,19 +61,24 @@ public sealed class MapClientSessionMonsterCombatTests
             _amounts[itemId] = updated;
 
             var newRowIndex = _newRowOrder.IndexOf(itemId);
-            if (newRowIndex < 0)
+            var isNewRow = newRowIndex < 0;
+            if (isNewRow)
             {
                 newRowIndex = _newRowOrder.Count;
                 _newRowOrder.Add(itemId);
             }
-            var slotIndex = existingRowCount + (uint)newRowIndex;
+            if (!_durableIds.TryGetValue(itemId, out var durableId))
+            {
+                durableId = existingRowCount + (uint)newRowIndex + 1;
+                _durableIds[itemId] = durableId;
+            }
 
-            return Task.FromResult(new InventoryAddPersistenceResult(true, updated, slotIndex, Equip: 0, Identified: true, Refine: 0, Favorite: 0, Bound: 0));
+            return Task.FromResult(new InventoryAddPersistenceResult(true, updated, durableId, Equip: 0, Identified: true, Refine: 0, Favorite: 0, Bound: 0, isNewRow));
         }
 
         // Not exercised by this file's reward-path tests (they only ever add items) - a minimal
         // stub is sufficient here, matching this fixture's existing narrow scope.
-        public Task<InventoryConsumePersistenceResult> ConsumeItemAsync(uint accountId, uint charId, uint slotIndex, uint amount, CancellationToken cancellationToken) =>
+        public Task<InventoryConsumePersistenceResult> ConsumeItemAsync(uint accountId, uint charId, uint durableId, uint amount, CancellationToken cancellationToken) =>
             Task.FromResult(InventoryConsumePersistenceResult.Failed());
     }
 
@@ -157,9 +164,9 @@ public sealed class MapClientSessionMonsterCombatTests
     {
         private CharacterInventorySnapshot _current = initial;
         public Task<CharacterInventoryReadResult> GetInventoryAsync(uint a, uint c, CancellationToken t) => Task.FromResult(CharacterInventoryReadResult.Success(_current));
-        public Task<bool> SetItemEquipAsync(uint a, uint c, uint slotIndex, uint equip, CancellationToken t)
+        public Task<bool> SetItemEquipAsync(uint a, uint c, uint durableId, uint equip, CancellationToken t)
         {
-            var items = _current.Items.Select(i => i.SlotIndex == slotIndex ? i with { Equip = equip } : i).ToList();
+            var items = _current.Items.Select(i => i.DurableId == durableId ? i with { Equip = equip } : i).ToList();
             _current = new CharacterInventorySnapshot(items);
             return Task.FromResult(true);
         }
@@ -335,7 +342,7 @@ public sealed class MapClientSessionMonsterCombatTests
     public async Task Attack_WithEquippedKnife_KillsMonster_UsingWeaponAwareDamage()
     {
         var inventoryPersistence = new RecordingInventoryPersistence(existingRowCount: 1); // Knife already occupies slot 0.
-        var knifeInventory = new CharacterInventorySnapshot([new CharacterInventoryItem(0, 1201, 1, 0x000002, true, 0, 0, 0)]);
+        var knifeInventory = new CharacterInventorySnapshot([new CharacterInventoryItem(DurableId: 1, SlotIndex: 0, 1201, 1, 0x000002, true, 0, 0, 0)]);
         var inventoryListPersistence = new FixedInventoryListPersistence(knifeInventory);
         var (client, stream, session, run, target) = await SetupAsync(inventoryPersistence, CharacterQuestStatus.Active, inventoryListPersistence);
         using var _ = client;
@@ -373,7 +380,7 @@ public sealed class MapClientSessionMonsterCombatTests
     public async Task Attack_UnequipKnifeMidSession_ReturnsToUnarmedCombat_WithoutReconnecting()
     {
         var inventoryPersistence = new RecordingInventoryPersistence();
-        var knifeInventory = new CharacterInventorySnapshot([new CharacterInventoryItem(0, 1201, 1, 0x000002, true, 0, 0, 0)]);
+        var knifeInventory = new CharacterInventorySnapshot([new CharacterInventoryItem(DurableId: 1, SlotIndex: 0, 1201, 1, 0x000002, true, 0, 0, 0)]);
         var inventoryListPersistence = new FixedInventoryListPersistence(knifeInventory);
         var (client, stream, session, run, target) = await SetupAsync(inventoryPersistence, CharacterQuestStatus.Absent, inventoryListPersistence, WeakFreshNovice());
         using var _ = client;
@@ -412,7 +419,7 @@ public sealed class MapClientSessionMonsterCombatTests
     public async Task Attack_ReequipKnifeMidSession_ReturnsToWeaponAwareCombat_WithoutReconnecting()
     {
         var inventoryPersistence = new RecordingInventoryPersistence(existingRowCount: 1); // Knife already occupies slot 0.
-        var knifeInventory = new CharacterInventorySnapshot([new CharacterInventoryItem(0, 1201, 1, 0x000002, true, 0, 0, 0)]);
+        var knifeInventory = new CharacterInventorySnapshot([new CharacterInventoryItem(DurableId: 1, SlotIndex: 0, 1201, 1, 0x000002, true, 0, 0, 0)]);
         var inventoryListPersistence = new FixedInventoryListPersistence(knifeInventory);
         var (client, stream, session, run, target) = await SetupAsync(inventoryPersistence, CharacterQuestStatus.Active, inventoryListPersistence);
         using var _ = client;
@@ -463,7 +470,7 @@ public sealed class MapClientSessionMonsterCombatTests
         // Wood (6008, EtcItemDefinition) is never equippable in real pinned item_db data; a row
         // carrying Equip=EQP_HAND_R for it can only represent corrupted/invariant-violating
         // authoritative state, which is exactly the case this test exercises.
-        var invalidInventory = new CharacterInventorySnapshot([new CharacterInventoryItem(0, 6008, 1, 0x000002, true, 0, 0, 0)]);
+        var invalidInventory = new CharacterInventorySnapshot([new CharacterInventoryItem(DurableId: 1, SlotIndex: 0, 6008, 1, 0x000002, true, 0, 0, 0)]);
         var inventoryListPersistence = new FixedInventoryListPersistence(invalidInventory);
         var (client, stream, session, run, target) = await SetupAsync(inventoryPersistence, CharacterQuestStatus.Active, inventoryListPersistence);
         using var _ = client;
@@ -507,9 +514,9 @@ public sealed class MapClientSessionMonsterCombatTests
         var inventoryPersistence = new RecordingInventoryPersistence(existingRowCount: 3);
         var startingInventory = new CharacterInventorySnapshot(
         [
-            new CharacterInventoryItem(0, 1201, 1, 0x000002, true, 0, 0, 0), // Knife, equipped (slot 0)
-            new CharacterInventoryItem(1, 2301, 1, 0x000010, true, 0, 0, 0), // Cotton Shirt, equipped (slot 1)
-            new CharacterInventoryItem(2, 23484, 1, 0, true, 0, 0, 0), // First Aid Box, unequipped (slot 2)
+            new CharacterInventoryItem(DurableId: 1, SlotIndex: 0, 1201, 1, 0x000002, true, 0, 0, 0), // Knife, equipped (slot 0)
+            new CharacterInventoryItem(DurableId: 2, SlotIndex: 1, 2301, 1, 0x000010, true, 0, 0, 0), // Cotton Shirt, equipped (slot 1)
+            new CharacterInventoryItem(DurableId: 3, SlotIndex: 2, 23484, 1, 0, true, 0, 0, 0), // First Aid Box, unequipped (slot 2)
         ]);
         var inventoryListPersistence = new FixedInventoryListPersistence(startingInventory);
         var (client, stream, session, run, target) = await SetupAsync(inventoryPersistence, CharacterQuestStatus.Active, inventoryListPersistence);
@@ -583,11 +590,13 @@ public sealed class MapClientSessionMonsterCombatTests
         // than a second monster kill - this test's single MonsterRegistry instance has already
         // died and real respawn/second-instance timing is unrelated to the inventory-consistency
         // fix under test (requirement 5/9: stack increment preserves slot, no new row).
+        var woodDurableId = session.Inventory!.Items.Single(i => i.ItemId == 6008).DurableId;
         var secondAddResult = await new CharacterInventorySession(AccountId, CharId, inventoryPersistence)
             .AddItemAsync(GeneratedItems.Wood, 1, CancellationToken.None);
         Assert.True(secondAddResult.Success);
-        Assert.Equal(3u, secondAddResult.Item!.SlotIndex); // Same slot, not a new row.
-        Assert.Equal(2u, secondAddResult.Item.Amount);
+        Assert.False(secondAddResult.IsNewRow); // Same durable row, not a new one.
+        Assert.Equal(woodDurableId, secondAddResult.DurableId);
+        Assert.Equal(2u, secondAddResult.Item!.Value.Amount);
 
         client.Close();
         await run.WaitAsync(TimeSpan.FromSeconds(5));
