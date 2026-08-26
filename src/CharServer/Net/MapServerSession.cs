@@ -365,6 +365,11 @@ public sealed class MapServerSession : IDisposable, ISession
 
         uint newAmount = 0;
         uint slotIndex = 0;
+        uint equip = 0;
+        var identified = false;
+        byte refine = 0;
+        byte favorite = 0;
+        byte bound = 0;
         var success = false;
         if (!IsInventoryAddRequestAuthorized(_authenticated, _ownedCharacters, request.AccountId, request.CharId, request.ItemId, request.Amount))
         {
@@ -397,17 +402,20 @@ public sealed class MapServerSession : IDisposable, ISession
                     await db.SaveChangesAsync(cancellationToken);
                     newAmount = row.Amount;
                     success = true;
-                    // pinned rAthena builds sd->inventory.u.items_inventory[] by loading a
-                    // character's rows in a stable order (client_index() then adds a fixed +2
-                    // wire offset - clif.cpp:122). Real rAthena's own `inventory` table has no
-                    // persisted slot/position column either (sql-files/main.sql) - the server-side
-                    // array index is derived purely from load order, not stored state. Mirror that
-                    // here: the row's own primary key already reflects (and never changes) its
-                    // relative insertion order among this character's rows, so counting rows with
-                    // a smaller Id reproduces the same stable 0-based array position a real load
-                    // pass would assign, without inventing a new persisted column.
-                    slotIndex = (uint)await db.Inventory.CountAsync(
-                        item => item.CharId == request.CharId && item.Equip == 0 && item.Id < row.Id, cancellationToken);
+                    equip = row.Equip;
+                    identified = row.Identify != 0;
+                    refine = row.Refine;
+                    favorite = row.Favorite;
+                    bound = row.Bound;
+                    // SlotIndex is this row's position in the ONE authoritative stable ordering
+                    // (CharInventoryOrdering.InStableSlotOrder) - equipped and unequipped rows
+                    // share that same namespace. Must NOT reuse the item.Equip == 0 filter above
+                    // (that filter exists only to find/avoid matching an EQUIPPED row when
+                    // searching for a stackable item's existing stack - it has no bearing on slot
+                    // position, which was the previously-diverging bug: counting only unequipped
+                    // rows produced a different, incompatible namespace from the inventory-list
+                    // read's/equip-update's full-row ordering).
+                    slotIndex = (uint)await db.Inventory.InStableSlotOrder(request.CharId).CountAsync(item => item.Id < row.Id, cancellationToken);
                     CharLogger.Info(
                         $"Inventory-add succeeded charId={request.CharId} itemId={request.ItemId} newAmount={newAmount} slotIndex={slotIndex}.");
                 }
@@ -420,7 +428,9 @@ public sealed class MapServerSession : IDisposable, ISession
             }
         }
 
-        await WriteAsync(MapInventoryAddProtocol.BuildResponse(request.CharId, request.ItemId, newAmount, slotIndex, success), cancellationToken);
+        await WriteAsync(
+            MapInventoryAddProtocol.BuildResponse(request.CharId, request.ItemId, newAmount, slotIndex, equip, identified, refine, favorite, bound, success),
+            cancellationToken);
     }
 
     private async Task HandleGameplayStateGetAsync(byte[] packet, CancellationToken cancellationToken)
@@ -460,13 +470,11 @@ public sealed class MapServerSession : IDisposable, ISession
                 await using var db = _dbFactory();
                 if (db is not null)
                 {
-                    // Stable server-side array order (matches a real rAthena load pass building
-                    // sd->inventory.u.items_inventory[]) - the row's own primary key already
-                    // reflects insertion order and never changes, same convention already used
-                    // by the 0x0B41/MapInventoryAddProtocol SlotIndex computation.
+                    // ONE authoritative stable server-side array order - see
+                    // CharInventoryOrdering.InStableSlotOrder's own doc comment. Equipped and
+                    // unequipped rows share this same namespace.
                     rows = await db.Inventory.AsNoTracking()
-                        .Where(i => i.CharId == charId)
-                        .OrderBy(i => i.Id)
+                        .InStableSlotOrder(charId)
                         .Select(i => new CharacterInventoryRowDto((int)i.NameId, i.Amount, i.Equip, i.Identify != 0, i.Refine, i.Favorite, i.Bound))
                         .ToListAsync(cancellationToken);
                     result = 0;
@@ -493,12 +501,10 @@ public sealed class MapServerSession : IDisposable, ISession
                 await using var db = _dbFactory();
                 if (db is not null)
                 {
-                    // Same stable server-side array order as HandleInventoryListGetAsync -
-                    // SlotIndex is this row's position in that exact ordering, never a stored
-                    // column.
+                    // ONE authoritative stable server-side array order - see
+                    // CharInventoryOrdering.InStableSlotOrder's own doc comment.
                     var row = await db.Inventory
-                        .Where(i => i.CharId == charId)
-                        .OrderBy(i => i.Id)
+                        .InStableSlotOrder(charId)
                         .Skip((int)slotIndex)
                         .FirstOrDefaultAsync(cancellationToken);
                     if (row is not null)

@@ -61,6 +61,18 @@ public static class PacketConstants
     public const short IroCzAttackRequest = 0x0437;
     public const int IroCzAttackRequestLength = 8;
 
+    // NOT YET REGISTERED in PacketLengths / PacketConstants' verified section - live runtime
+    // observed this opcode arrive at the exact moment a starter consumable was activated from
+    // inventory, but its packet length is unproven (see MapClientSession's temporary
+    // LogSuspectedUseItemDiagnosticBytesAsync diagnostic, and ai/map-server.md). Pinned rAthena's
+    // generic clif_packetdb.hpp table is genuinely ambiguous for 0x00A7 across PACKETVER
+    // branches - it has been clif_parse_UseItem (CZ_USE_ITEM, 8 bytes), clif_parse_SolveCharName,
+    // clif_parse_UseSkillToPos, and clif_parse_WalkToXY in different historical branches, so the
+    // generic table alone cannot prove current-iRO semantics. This constant exists only to name
+    // the opcode for the diagnostic capture; do not add it to PacketLengths until the real
+    // length is proven.
+    public const short IroCzUseItemSuspected = 0x00a7;
+
     public const short ZcAcceptEnter = 0x2eb;
     public const short ZcNotifyPlayerMove = 0x0087;
     public const short ZcNpcAckMapMove = 0x0091;

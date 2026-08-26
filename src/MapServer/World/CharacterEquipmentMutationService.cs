@@ -134,13 +134,13 @@ public sealed class CharacterEquipmentMutationService(
 
             var unequipped = await persistence.SetItemEquipAsync(accountId, characterId, occupying.SlotIndex, 0, cancellationToken);
             if (!unequipped) return (new EquipOutcome(EquipMutationResult.Fail, 0), null);
-            working = ReplaceItem(working, occupying with { Equip = 0 });
+            working = working.WithItem(occupying with { Equip = 0 });
         }
 
         var persisted = await persistence.SetItemEquipAsync(accountId, characterId, slotIndex, pos, cancellationToken);
         if (!persisted) return (new EquipOutcome(EquipMutationResult.Fail, 0), null);
 
-        var updated = ReplaceItem(working, target with { Equip = pos });
+        var updated = working.WithItem(target with { Equip = pos });
         return (new EquipOutcome(EquipMutationResult.Success, pos), updated);
     }
 
@@ -162,13 +162,7 @@ public sealed class CharacterEquipmentMutationService(
         var persisted = await persistence.SetItemEquipAsync(accountId, characterId, slotIndex, 0, cancellationToken);
         if (!persisted) return (new UnequipOutcome(false, 0), null);
 
-        var updated = ReplaceItem(inventory, target with { Equip = 0 });
+        var updated = inventory.WithItem(target with { Equip = 0 });
         return (new UnequipOutcome(true, pos), updated);
-    }
-
-    private static CharacterInventorySnapshot ReplaceItem(CharacterInventorySnapshot inventory, CharacterInventoryItem replacement)
-    {
-        var items = inventory.Items.Select(i => i.SlotIndex == replacement.SlotIndex ? replacement : i).ToList();
-        return new CharacterInventorySnapshot(items);
     }
 }

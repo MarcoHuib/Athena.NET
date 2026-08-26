@@ -138,6 +138,33 @@ public sealed class IroMapPacketFramingTests
         Assert.Equal(changeDirection, await MapClientSession.ReadNextPacketAsync(stream, CancellationToken.None));
     }
 
+    // Suspected item-use diagnostic path: 0x00A7 is not yet registered in PacketLengths (its
+    // real current-iRO length is unproven - see PacketConstants.IroCzUseItemSuspected), so
+    // ReadNextPacketAsync must return an empty packet (safe session termination, matching every
+    // other unregistered opcode) rather than throwing or hanging, regardless of how many
+    // trailing bytes the client already queued.
+    [Fact]
+    public async Task ReadNextPacketAsync_UnregisteredSuspectedUseItemOpcode_ReturnsEmptyWithoutThrowing()
+    {
+        var packet = new byte[] { 0xa7, 0x00, 0x02, 0x00, 0x07, 0x00, 0x00, 0x00, 0xff };
+        await using var stream = new MemoryStream(packet);
+
+        var actual = await MapClientSession.ReadNextPacketAsync(stream, CancellationToken.None);
+
+        Assert.Empty(actual);
+    }
+
+    [Fact]
+    public async Task ReadNextPacketAsync_UnregisteredSuspectedUseItemOpcode_NoTrailingBytes_ReturnsEmptyWithoutThrowing()
+    {
+        var packet = new byte[] { 0xa7, 0x00 };
+        await using var stream = new MemoryStream(packet);
+
+        var actual = await MapClientSession.ReadNextPacketAsync(stream, CancellationToken.None);
+
+        Assert.Empty(actual);
+    }
+
     private sealed class ChunkedReadStream : Stream
     {
         private readonly Queue<ReadOnlyMemory<byte>> _chunks;

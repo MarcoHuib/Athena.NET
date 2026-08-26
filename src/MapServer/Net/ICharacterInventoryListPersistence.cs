@@ -27,7 +27,47 @@ public sealed record CharacterInventoryItem(
 // weapon-appearance/combat path (CharacterEquipmentSnapshot, derived from this) and the full
 // client inventory/equip-list projection (0x0B09/0x0B39) originate from the same fetch, never
 // two independent CharServer reads of the same persisted state.
-public sealed record CharacterInventorySnapshot(IReadOnlyList<CharacterInventoryItem> Items);
+public sealed record CharacterInventorySnapshot(IReadOnlyList<CharacterInventoryItem> Items)
+{
+    // The ONE place a caller applies a single confirmed-persisted row mutation to its own copy
+    // of the authoritative runtime snapshot - shared by CharacterEquipmentMutationService
+    // (equip/unequip, always a replace: the row already exists, ItemId unchanged) and
+    // MapClientSession's inventory-reward path (an add, which is a replace for an existing
+    // stack or an append for a brand-new row). Never mutates in place; always returns a new
+    // snapshot, matching this record's own immutability.
+    //
+    // Enforces the ONE authoritative slot-ordering invariant rather than guessing/repairing a
+    // violation of it:
+    //   - replacement.SlotIndex < Items.Count: that slot must already hold a row with the SAME
+    //     ItemId (a legitimate in-place update - stack amount change, Equip flip, etc.).
+    //   - replacement.SlotIndex == Items.Count: appended as the newly persisted row (the only
+    //     way a brand-new row may enter the snapshot).
+    //   - anything else (SlotIndex > Items.Count, or < Items.Count with a DIFFERENT ItemId) is
+    //     an authoritative-state invariant violation - CharServer's response disagrees with this
+    //     session's own runtime snapshot - and must never be silently guessed at or repaired.
+    public CharacterInventorySnapshot WithItem(CharacterInventoryItem replacement)
+    {
+        if (replacement.SlotIndex > Items.Count)
+        {
+            throw new InvalidOperationException(
+                $"Inventory slot invariant violation: SlotIndex={replacement.SlotIndex} exceeds current row count={Items.Count}.");
+        }
+
+        if (replacement.SlotIndex == Items.Count) return new CharacterInventorySnapshot([.. Items, replacement]);
+
+        var items = Items.ToList();
+        var existing = items[(int)replacement.SlotIndex];
+        if (existing.ItemId != replacement.ItemId)
+        {
+            throw new InvalidOperationException(
+                $"Inventory slot invariant violation: SlotIndex={replacement.SlotIndex} holds itemId={existing.ItemId}, " +
+                $"but the authoritative mutation targets itemId={replacement.ItemId}.");
+        }
+
+        items[(int)replacement.SlotIndex] = replacement;
+        return new CharacterInventorySnapshot(items);
+    }
+}
 
 // Pinned EQP_HAND_R = 0x000002 (mmo.hpp:340) - the only equip slot the weapon-appearance/combat
 // path needs. RightHandItemId == null means "confirmed no right-hand item equipped" - derived

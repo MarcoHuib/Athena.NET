@@ -3,6 +3,7 @@ using System.Net;
 using System.Net.Sockets;
 using Athena.Net.MapServer.Config;
 using Athena.Net.MapServer.Gameplay.Rules.Renewal;
+using Athena.Net.MapServer.Generated.GameData.Items;
 using Athena.Net.MapServer.Generated.GameData.Mobs;
 using Athena.Net.MapServer.Net;
 using Athena.Net.MapServer.World;
@@ -34,15 +35,38 @@ public sealed class MapClientSessionMonsterCombatTests
         public Task<CharacterGameplayState?> UpdateAsync(uint accountId, CharacterGameplayState expected, CharacterGameplayState updated, CancellationToken cancellationToken) => Task.FromResult<CharacterGameplayState?>(updated);
     }
 
-    private sealed class RecordingInventoryPersistence : ICharacterInventoryPersistence
+    // `existingRowCount` simulates however many rows already occupy the front of the ONE
+    // authoritative slot namespace (e.g. the starter Knife/Cotton Shirt/First Aid Box in
+    // FixedInventoryListPersistence) - a brand-new stack must land at existingRowCount, existingRowCount+1,
+    // ... in first-added order, matching CharServer's real InStableSlotOrder behavior, never
+    // hardcoded to 0 regardless of what else is already in the inventory.
+    private sealed class RecordingInventoryPersistence(uint existingRowCount = 0) : ICharacterInventoryPersistence
     {
         private readonly Dictionary<int, uint> _amounts = new();
-        public Task<(bool Success, uint NewAmount, uint SlotIndex)> AddStackableItemAsync(uint accountId, uint charId, int itemId, uint amount, CancellationToken cancellationToken)
+        private readonly List<int> _newRowOrder = [];
+        public bool FailNextCall { get; set; }
+
+        public Task<InventoryAddPersistenceResult> AddStackableItemAsync(uint accountId, uint charId, int itemId, uint amount, CancellationToken cancellationToken)
         {
+            if (FailNextCall)
+            {
+                FailNextCall = false;
+                return Task.FromResult(InventoryAddPersistenceResult.Failed());
+            }
+
             _amounts.TryGetValue(itemId, out var current);
             var updated = current + amount;
             _amounts[itemId] = updated;
-            return Task.FromResult((true, updated, 0u));
+
+            var newRowIndex = _newRowOrder.IndexOf(itemId);
+            if (newRowIndex < 0)
+            {
+                newRowIndex = _newRowOrder.Count;
+                _newRowOrder.Add(itemId);
+            }
+            var slotIndex = existingRowCount + (uint)newRowIndex;
+
+            return Task.FromResult(new InventoryAddPersistenceResult(true, updated, slotIndex, Equip: 0, Identified: true, Refine: 0, Favorite: 0, Bound: 0));
         }
     }
 
@@ -305,7 +329,7 @@ public sealed class MapClientSessionMonsterCombatTests
     [Fact]
     public async Task Attack_WithEquippedKnife_KillsMonster_UsingWeaponAwareDamage()
     {
-        var inventoryPersistence = new RecordingInventoryPersistence();
+        var inventoryPersistence = new RecordingInventoryPersistence(existingRowCount: 1); // Knife already occupies slot 0.
         var knifeInventory = new CharacterInventorySnapshot([new CharacterInventoryItem(0, 1201, 1, 0x000002, true, 0, 0, 0)]);
         var inventoryListPersistence = new FixedInventoryListPersistence(knifeInventory);
         var (client, stream, session, run, target) = await SetupAsync(inventoryPersistence, CharacterQuestStatus.Active, inventoryListPersistence);
@@ -382,7 +406,7 @@ public sealed class MapClientSessionMonsterCombatTests
     [Fact]
     public async Task Attack_ReequipKnifeMidSession_ReturnsToWeaponAwareCombat_WithoutReconnecting()
     {
-        var inventoryPersistence = new RecordingInventoryPersistence();
+        var inventoryPersistence = new RecordingInventoryPersistence(existingRowCount: 1); // Knife already occupies slot 0.
         var knifeInventory = new CharacterInventorySnapshot([new CharacterInventoryItem(0, 1201, 1, 0x000002, true, 0, 0, 0)]);
         var inventoryListPersistence = new FixedInventoryListPersistence(knifeInventory);
         var (client, stream, session, run, target) = await SetupAsync(inventoryPersistence, CharacterQuestStatus.Active, inventoryListPersistence);
@@ -459,6 +483,147 @@ public sealed class MapClientSessionMonsterCombatTests
 
         Assert.Equal(target.Spawn.Mob.MaxHp, target.CurrentHp); // Monster HP must be completely untouched.
         Assert.True(target.IsAlive);
+
+        client.Close();
+        await run.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    // Inventory-consistency fix: proves requirements 7-12 end-to-end over the real wire path
+    // with the exact three-row starter inventory shape this task describes (Knife equipped,
+    // Cotton Shirt equipped, First Aid Box unequipped - three server slots 0/1/2 regardless of
+    // equip state). A first Wood reward must land at slot 3 (client index 5), immediately be
+    // visible in MapClientSession.Inventory/Equipment without reconnecting, and must not disturb
+    // the existing equipped items' slots - proven by successfully unequipping the Knife by its
+    // ORIGINAL slot-derived client index afterward. A second reward for the same stack must
+    // increment the SAME slot's amount rather than creating a fourth row.
+    [Fact]
+    public async Task Attack_KillsTwoMonsters_WoodStacksInStableFourthSlot_RuntimeSnapshotUpdatesImmediately_ExistingEquipmentSlotsUnaffected()
+    {
+        var inventoryPersistence = new RecordingInventoryPersistence(existingRowCount: 3);
+        var startingInventory = new CharacterInventorySnapshot(
+        [
+            new CharacterInventoryItem(0, 1201, 1, 0x000002, true, 0, 0, 0), // Knife, equipped (slot 0)
+            new CharacterInventoryItem(1, 2301, 1, 0x000010, true, 0, 0, 0), // Cotton Shirt, equipped (slot 1)
+            new CharacterInventoryItem(2, 23484, 1, 0, true, 0, 0, 0), // First Aid Box, unequipped (slot 2)
+        ]);
+        var inventoryListPersistence = new FixedInventoryListPersistence(startingInventory);
+        var (client, stream, session, run, target) = await SetupAsync(inventoryPersistence, CharacterQuestStatus.Active, inventoryListPersistence);
+        using var _ = client;
+
+        await stream.WriteAsync(new byte[] { 0x7d, 0x00, 0xaa });
+        await ReadExact(stream, 15); // 0x01D7 self weapon look
+        await ReadExact(stream, 6); // 0x0B08 inventoryStart
+        await ReadDynamic(stream); // 0x0B09 normal list (First Aid Box)
+        await ReadDynamic(stream); // 0x0B39 equip list (Knife, Cotton Shirt)
+        await ReadExact(stream, 4); // 0x0B0B inventoryEnd
+        var spawn = await ReadDynamic(stream);
+        var actorId = BinaryPrimitives.ReadUInt32LittleEndian(spawn.AsSpan(5));
+
+        // Requirement 1-6 setup check: three starting rows at the expected server slots, matching
+        // the same InStableSlotOrder ordering the CharServer-side fix now uses.
+        Assert.Equal(3, session.Inventory!.Items.Count);
+        Assert.Equal(0u, session.Inventory.Items.Single(i => i.ItemId == 1201).SlotIndex);
+        Assert.Equal(1u, session.Inventory.Items.Single(i => i.ItemId == 2301).SlotIndex);
+        Assert.Equal(2u, session.Inventory.Items.Single(i => i.ItemId == 23484).SlotIndex);
+
+        // --- First kill: Wood lands at slot 3 / client index 5, runtime snapshot updates immediately ---
+        for (var i = 0; i < 20 && target.IsAlive; i++)
+        {
+            await stream.WriteAsync(AttackPacket(actorId));
+            await ReadExact(stream, PacketConstants.ZcNotifyAct3Length);
+            if (!target.IsAlive)
+            {
+                await ReadExact(stream, PacketConstants.ZcNotifyVanishLength);
+                var pickup = await ReadExact(stream, PacketConstants.ZcItemPickupAckLength);
+                var clientIndex = BinaryPrimitives.ReadUInt16LittleEndian(pickup.AsSpan(2));
+                Assert.Equal((ushort)5, clientIndex); // server slot 3 + 2.
+                break;
+            }
+        }
+        Assert.False(target.IsAlive);
+
+        // Requirement 7: MapClientSession.Inventory immediately contains the new item in the
+        // correct slot without reconnecting.
+        Assert.Equal(4, session.Inventory!.Items.Count);
+        var wood = session.Inventory.Items.Single(i => i.ItemId == 6008);
+        Assert.Equal(3u, wood.SlotIndex);
+        Assert.Equal(1u, wood.Amount);
+
+        // Requirement 11: existing equipped Knife/Cotton Shirt server indices remain stable.
+        Assert.Equal(0u, session.Inventory.Items.Single(i => i.ItemId == 1201).SlotIndex);
+        Assert.Equal(1u, session.Inventory.Items.Single(i => i.ItemId == 2301).SlotIndex);
+
+        // Requirement 10: CharacterEquipmentSnapshot remains correctly derived from the updated
+        // inventory snapshot (Knife is still the resolved right-hand item).
+        Assert.Equal(1201, session.Equipment!.RightHandItemId);
+
+        // Requirement 12: same-session equip/unequip using the ORIGINAL (unaffected) Knife slot
+        // remains valid after the inventory add - clientIndex = server slotIndex(0) + 2.
+        await stream.WriteAsync(UnequipRequestPacket(2));
+        await ReadExact(stream, 15); // 0x01D7 appearance refresh (unarmed)
+        var unequipAck = await ReadExact(stream, PacketConstants.IroZcReqTakeoffEquipAckLength);
+        Assert.Equal((short)PacketConstants.IroZcReqTakeoffEquipAck, BinaryPrimitives.ReadInt16LittleEndian(unequipAck));
+        Assert.Null(session.Equipment!.RightHandItemId); // Unequip actually succeeded.
+        // Wood must still be exactly where it was - unrelated equip mutation must not disturb it.
+        Assert.Equal(3u, session.Inventory!.Items.Single(i => i.ItemId == 6008).SlotIndex);
+
+        // Re-equip so the second kill again uses weapon-aware damage - not required by the
+        // consistency fix itself, but keeps the second kill fast/deterministic like the first.
+        await stream.WriteAsync(EquipRequestPacket(2, 0x000002));
+        await ReadExact(stream, PacketConstants.IroZcReqWearEquipAckLength);
+        await ReadExact(stream, 15);
+
+        // --- Second reward: the SAME Wood stack increments in the SAME slot, no fifth row ---
+        // Exercised directly through a second CharacterInventorySession.AddItemAsync call rather
+        // than a second monster kill - this test's single MonsterRegistry instance has already
+        // died and real respawn/second-instance timing is unrelated to the inventory-consistency
+        // fix under test (requirement 5/9: stack increment preserves slot, no new row).
+        var secondAddResult = await new CharacterInventorySession(AccountId, CharId, inventoryPersistence)
+            .AddItemAsync(GeneratedItems.Wood, 1, CancellationToken.None);
+        Assert.True(secondAddResult.Success);
+        Assert.Equal(3u, secondAddResult.Item!.SlotIndex); // Same slot, not a new row.
+        Assert.Equal(2u, secondAddResult.Item.Amount);
+
+        client.Close();
+        await run.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    // Requirement 13: a failed CharServer persistence must not mutate the MapServer runtime
+    // inventory snapshot and must not notify the client - proven directly against
+    // MapClientSession's reward path without depending on monster-kill timing.
+    [Fact]
+    public async Task Attack_KillsMonster_PersistenceFailure_DoesNotMutateRuntimeSnapshot_DoesNotNotifyClient()
+    {
+        var inventoryPersistence = new RecordingInventoryPersistence { FailNextCall = true };
+        var (client, stream, session, run, target) = await SetupAsync(inventoryPersistence, CharacterQuestStatus.Active);
+        using var _ = client;
+
+        await stream.WriteAsync(new byte[] { 0x7d, 0x00, 0xaa });
+        await ReadExact(stream, 15); // 0x01D7 self weapon look
+        await ReadExact(stream, 6); // 0x0B08 inventoryStart (empty test-default inventory)
+        await ReadExact(stream, 4); // 0x0B0B inventoryEnd
+        var spawn = await ReadDynamic(stream);
+        var actorId = BinaryPrimitives.ReadUInt32LittleEndian(spawn.AsSpan(5));
+
+        var inventoryCountBefore = session.Inventory!.Items.Count;
+
+        for (var i = 0; i < 20 && target.IsAlive; i++)
+        {
+            await stream.WriteAsync(AttackPacket(actorId));
+            await ReadExact(stream, PacketConstants.ZcNotifyAct3Length);
+            if (!target.IsAlive)
+            {
+                await ReadExact(stream, PacketConstants.ZcNotifyVanishLength);
+                break; // No 0x0B41 must follow - checked below via the ping probe.
+            }
+        }
+        Assert.False(target.IsAlive);
+
+        Assert.Equal(inventoryCountBefore, session.Inventory!.Items.Count); // Runtime snapshot untouched.
+
+        await stream.WriteAsync(new byte[] { 0x1c, 0x0b });
+        var next = await ReadExact(stream, 2);
+        Assert.Equal((short)PacketConstants.ZcPingLive, BinaryPrimitives.ReadInt16LittleEndian(next)); // No pickup ack was sent.
 
         client.Close();
         await run.WaitAsync(TimeSpan.FromSeconds(5));

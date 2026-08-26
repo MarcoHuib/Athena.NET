@@ -789,6 +789,112 @@ an optional `Func<int,int,int> rollWeaponAtk`, forwarded into
 `WeaponAttackCalculator`, same pattern as `QuestDropResolver`'s injectable RNG)
 so tests can pin it deterministically; production defaults to `Random.Shared`.
 
-Live stock-iRO validation (equipped Knife vs G_PORING; unequip mid-session
-returning to unarmed) remains the next live-test step - the capture's observed 37
-damage/hit remains validation evidence only, not an input to the implementation.
+Live stock-iRO validation is now PROVEN: equipped starter Knife vs G_PORING dealt
+19/18/18 damage across three consecutive live hits, the target's HP reached 0,
+death notification and quest Wood reward/persistence/0x0B41 pickup all worked.
+Unequipping the Knife during the same MapServer session immediately returned
+subsequent attacks to the genuine unarmed RENEWAL calculation (observed damage
+0 for this character/target state); re-equipping immediately restored
+weapon-aware damage (18/19) without reconnecting, and a second G_PORING died
+with the Wood stack amount increasing. The stock capture's originally observed
+37/36 damage remains validation evidence only, not an input to the
+implementation - the stock capture and this Athena run are not yet proven to
+share identical runtime status/buff state, so that exact-value comparison is
+separate future work.
+
+## Authoritative inventory SlotIndex consistency
+
+The live weapon-combat validation above also exposed a genuine authoritative-
+state consistency bug in the inventory pipeline, now fixed. This section
+documents the resulting invariants.
+
+### The bug
+
+There is exactly ONE authoritative server-side inventory `SlotIndex` namespace:
+a character's own `CharInventory` rows, ordered stably by `Id` ascending
+(`CharInventoryOrdering.InStableSlotOrder`, `src/CharServer/Db/
+CharInventoryOrdering.cs`) - matching pinned rAthena's own load-order-derived
+`sd->inventory.u.items_inventory[]` array position, since neither Athena's
+schema nor real rAthena's own `inventory` SQL table persists a slot column at
+all. **Equipped and unequipped rows share this same namespace** - equip state
+is not a slot-partitioning concern.
+
+`MapServerSession.HandleInventoryListGetAsync` and `HandleInventoryEquipUpdateAsync`
+always used this full ordering. `HandleInventoryAddRequestAsync` previously
+computed its returned `SlotIndex` via `CountAsync(item.Equip == 0 && item.Id <
+row.Id)` - filtering OUT equipped rows - producing a second, incompatible
+namespace: a character with a Knife and Cotton Shirt equipped (2 rows) plus an
+unequipped First Aid Box (1 row) would see the inventory-list read assign
+slots 0/1/2, while an inventory-add for a new Wood row would undercount by the
+2 equipped rows and return the wrong slot. All three handlers now share the
+same `InStableSlotOrder` extension method - there is exactly one place this
+ordering is defined.
+
+Separately, `MapClientSession`'s quest-drop reward path computed the client-facing
+`0x0B41` index from the returned `SlotIndex` but never updated the session's own
+authoritative `_inventory`/`_equipment` runtime state, so the MapServer runtime
+snapshot stayed stale (still reflecting login-time state) after a successful
+pickup, even though CharServer's database was correctly updated and the client
+had already been told the pickup succeeded.
+
+### Fixed invariants
+
+- **One stable server-side inventory `SlotIndex` namespace.** Equipped and
+  unequipped rows occupy the same ordering; equip state never partitions or
+  removes a row from it.
+- **`client_index = server SlotIndex + 2`** is applied ONLY at the wire
+  serialization boundary (pinned `clif.cpp:122-124`), never earlier.
+- **CharServer owns durable inventory state**; MapServer owns the confirmed
+  runtime snapshot of that state (`CharacterInventorySnapshot`, held in
+  `MapClientSession._inventory`).
+- **`CharacterEquipmentSnapshot` is always derived from `CharacterInventorySnapshot`**
+  (`CharacterEquipmentSnapshot.FromInventory`) - never a second, independently
+  mutable copy.
+- **Persisted mutations update MapServer's runtime inventory snapshot BEFORE
+  client notification.** `MapClientSession`'s reward path now calls
+  `_inventory = inventory.WithItem(addedItem)` and re-derives `_equipment`
+  immediately after a successful `CharacterInventorySession.AddItemAsync`,
+  before sending `0x0B41` - matching the same
+  validate -> persist -> update runtime state -> notify ordering
+  `HandleEquipRequestAsync`/`HandleUnequipRequestAsync` already used.
+- **A failed persistence never mutates the runtime snapshot and never notifies
+  the client** (no fake pickup success).
+
+### Internal CharServer <-> MapServer protocol extension
+
+`MapInventoryAddProtocol`'s response (both `CharServer.Net` and `MapServer.Net`
+copies) now carries the persisted row's own authoritative `Equip`/`Identified`/
+`Refine`/`Favorite`/`Bound` fields alongside `newAmount`/`slotIndex` (27 bytes,
+up from 19) - CharServer is the only side that knows these values (e.g.
+`Identify=1` is set at insert time), so MapServer never invents, assumes, or
+duplicates CharServer's persistence rules to reconstruct the authoritative
+`CharacterInventoryItem` this add produced or updated. No `IsNewRow` flag was
+added: `CharacterInventorySnapshot.WithItem` derives new-row-vs-replace purely
+from the returned `SlotIndex` compared against the runtime snapshot's own
+current row count (`SlotIndex == Items.Count` -> append; `SlotIndex <
+Items.Count` -> require the same `ItemId` already at that slot, then replace).
+Any other case - `SlotIndex > Items.Count`, or a slot occupied by a different
+`ItemId` - is treated as an authoritative-state invariant violation and throws
+rather than guessing/repairing, matching this codebase's existing "never
+silently resolve a data invariant violation" convention.
+
+The full chain: `ICharacterInventoryPersistence.AddStackableItemAsync` returns
+a single named `InventoryAddPersistenceResult` record (not a growing tuple) ->
+`CharacterInventorySession.AddItemAsync` builds the authoritative
+`CharacterInventoryItem` from it and returns it via `InventoryAddResult.Item` ->
+`MapClientSession` applies it through `CharacterInventorySnapshot.WithItem`.
+
+### DMG_REPEAT (documented future work, not implemented)
+
+The stock iRO capture strongly suggests one `0x0437` request carrying
+`actionType=DMG_REPEAT` starts a continuing attack sequence from which multiple
+server-side damage events can follow. Athena currently performs exactly one hit
+per `0x0437` request. Implementing a continuing auto-attack loop is a separate
+future combat capability, out of scope for the inventory-consistency fix.
+
+### Quest-state logging (documented cleanup, not addressed)
+
+Some existing quest-state logging describes a `GetQuestStateAsync` read
+operation in terms that read similarly to a persistence mutation. This is a
+pre-existing logging-clarity issue, unrelated to the inventory fix; noted here
+as future cleanup rather than addressed in this task.

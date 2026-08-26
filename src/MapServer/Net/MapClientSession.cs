@@ -1083,10 +1083,24 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
 
             var inventorySession = new CharacterInventorySession(_accountId, _charId, _inventoryPersistence);
             var addResult = await inventorySession.AddItemAsync(itemDefinition, (uint)drop.Count, cancellationToken);
-            if (!addResult.Success)
+            if (!addResult.Success || addResult.Item is not { } addedItem)
             {
                 MapLogger.Warning($"[iRO MAP DEBUG] Inventory persistence failed for itemId={drop.ItemId}; not notifying client.");
                 continue;
+            }
+
+            // Persistence succeeded - update the authoritative MapServer runtime snapshot with the
+            // CharServer-confirmed row BEFORE notifying the client (never the other way around: a
+            // client-visible 0x0B41 must never be sent while _inventory is left stale). _inventory
+            // is guaranteed non-null once authenticated (same invariant HandleEquipRequestAsync/
+            // HandleUnequipRequestAsync already rely on). _equipment is re-derived from the SAME
+            // updated snapshot for consistency, even though an ordinary Etc/Usable drop like Wood
+            // never changes the right-hand slot - there is exactly one place _equipment is derived
+            // from _inventory, never a second independently-maintained copy.
+            if (_inventory is { } inventory)
+            {
+                _inventory = inventory.WithItem(addedItem);
+                _equipment = CharacterEquipmentSnapshot.FromInventory(_inventory);
             }
 
             // client_index(): server-side array position + 2 (clif.cpp:122-124).
@@ -1956,7 +1970,24 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
     {
         if (!PacketLengths.TryGetValue(packetType, out var length))
         {
-            LogUnsupportedPacket(packetType, header);
+            // TEMPORARY diagnostic capture, scoped to only 0x00A7 (suspected current-iRO
+            // item-use request under investigation - see ai/map-server.md). An unregistered
+            // packet type's payload length is genuinely unknown, so Athena cannot safely
+            // continue framing this connection (the alternative - consuming a guessed length -
+            // risks desyncing every subsequent packet). The session already terminates safely
+            // right after this (RunAsync treats an empty packet as EOF), so opportunistically
+            // draining and logging whatever bytes the client already queued causes no
+            // additional harm and is the only way to observe the real wire bytes without a
+            // separate raw-socket capture tool. Remove once 0x00A7's exact current-iRO length
+            // is proven and registered in PacketLengths.
+            if (packetType == PacketConstants.IroCzUseItemSuspected)
+            {
+                await LogSuspectedUseItemDiagnosticBytesAsync(stream, header, cancellationToken);
+            }
+            else
+            {
+                LogUnsupportedPacket(packetType, header);
+            }
             return Array.Empty<byte>();
         }
 
@@ -2013,6 +2044,43 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
     {
         MapLogger.Warning(
             $"[iRO MAP DEBUG] Unsupported map client packet=0x{packetType:X4} len={packet.Length}");
+    }
+
+    // TEMPORARY diagnostic helper - see its one call site's doc comment. Drains whatever bytes
+    // the client already sent immediately after the opaque 2-byte header (bounded by a short
+    // grace window, since the TCP segment carrying the full packet may already be fully
+    // buffered, or may still be in flight) and logs them as hex so the exact current-iRO
+    // 0x00A7 payload length/fields can be read directly from server logs. Never claims this is
+    // the complete packet - only reports what was actually observed.
+    private static async Task LogSuspectedUseItemDiagnosticBytesAsync(Stream stream, byte[] header, CancellationToken cancellationToken)
+    {
+        using var graceWindow = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        graceWindow.CancelAfter(TimeSpan.FromMilliseconds(200));
+
+        var buffer = new byte[64];
+        var read = 0;
+        try
+        {
+            while (read < buffer.Length)
+            {
+                var bytes = await stream.ReadAsync(buffer.AsMemory(read, buffer.Length - read), graceWindow.Token);
+                if (bytes == 0) break;
+                read += bytes;
+            }
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            // Grace window elapsed with no further bytes queued - expected once the full
+            // packet (header + payload) has already been drained.
+        }
+
+        var observed = new byte[2 + read];
+        Buffer.BlockCopy(header, 0, observed, 0, 2);
+        Buffer.BlockCopy(buffer, 0, observed, 2, read);
+        MapLogger.Warning(
+            $"[iRO MAP DEBUG][DIAGNOSTIC] Suspected item-use packet=0x{BinaryPrimitives.ReadInt16LittleEndian(header):X4} " +
+            $"headerPlusObservedTrailingBytes={Convert.ToHexString(observed)} observedTrailingByteCount={read} " +
+            "(length NOT yet proven - this may not be the complete packet).");
     }
 
     private async Task WriteAsync(byte[] payload, CancellationToken cancellationToken)
