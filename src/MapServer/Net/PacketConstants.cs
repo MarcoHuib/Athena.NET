@@ -27,6 +27,8 @@ public static class PacketConstants
     // character, not just the right-hand slot (see CharacterInventorySnapshot).
     public const short MapInventoryListGetRequest = 0x2b33;
     public const short MapInventoryListGetResponse = 0x2b34;
+    public const short MapInventoryEquipUpdateRequest = 0x2b35;
+    public const short MapInventoryEquipUpdateResponse = 0x2b36;
 
     public const short CzEnter = 0x72;
     public const short CzEnter2 = 0x436;
@@ -112,4 +114,44 @@ public static class PacketConstants
     public const int ZcSpriteChangeLength = 15;
     // Pinned enum _look (map.hpp:594-596): LOOK_BASE=0, LOOK_HAIR=1, LOOK_WEAPON=2.
     public const byte ZcSpriteChangeTypeWeapon = 2;
+
+    // Pinned rAthena CZ_REQ_WEAR_EQUIP_V5 (packets.hpp:1502-1509, gated PACKETVER >= 20120925):
+    // packetType.W index.W position.L = 8 bytes. VERIFIED STOCK-iRO CAPTURE DIVERGES: current
+    // iRO sends 9 bytes (frames 388/449: "98 09 02 00 02 00 00 00 5B" /
+    // "98 09 03 00 10 00 00 00 88") - one trailing opaque byte beyond the pinned shape. Per
+    // evidence-priority rules, the capture overrides pinned source for this iRO-specific wire
+    // length. The 9th byte's semantics are unverified and intentionally left opaque/uninterpreted
+    // - do not invent a checksum/token/anti-cheat meaning for it.
+    public const short IroCzReqWearEquip = 0x0998;
+    public const int IroCzReqWearEquipLength = 9;
+    // ZC_ACK_WEAR_EQUIP_V5 (packets_struct.hpp:1268-1274, gated PACKETVER_RE_NUM >= 20121107,
+    // pinned build satisfies this): PacketType.W index.W wearLocation.L wItemSpriteNumber.W
+    // result.B = 11 bytes.
+    public const short IroZcReqWearEquipAck = 0x0999;
+    public const int IroZcReqWearEquipAckLength = 11;
+    // Pinned clif_equipitemack doc comment (clif.cpp:4301-4303) + enum clif_equipitemack_flag
+    // (clif.hpp:522-533, gated PACKETVER_RE_NUM >= 20121107, pinned build satisfies this):
+    // OK=0, FAILLEVEL=1, FAIL=2. NOT inverted for the equip ack (only the unequip ack is).
+    public const byte EquipAckResultOk = 0;
+    public const byte EquipAckResultFailLevel = 1;
+    public const byte EquipAckResultFail = 2;
+
+    // Pinned rAthena CZ_REQ_TAKEOFF_EQUIP (clif_packetdb.hpp:59): unconditionally 0x00AB,
+    // 4 bytes, not PACKETVER-gated. packetType.W index.W. VERIFIED STOCK-iRO CAPTURE DIVERGES:
+    // current iRO sends 5 bytes (frames 370/395: "AB 00 02 00 4F" / "AB 00 03 00 85") - one
+    // trailing opaque byte beyond the pinned shape, same divergence pattern as 0x0998. Per
+    // evidence-priority rules, the capture overrides pinned source for this iRO-specific wire
+    // length. The 5th byte's semantics are unverified and intentionally left opaque/
+    // uninterpreted.
+    public const short IroCzReqTakeoffEquip = 0x00ab;
+    public const int IroCzReqTakeoffEquipLength = 5;
+    // ZC_ACK_TAKEOFF_EQUIP_V5 (packets.hpp:1006-1013, gated PACKETVER >= 20130000, pinned
+    // build satisfies this): packetType.W index.W wearLocation.L flag.B = 9 bytes.
+    public const short IroZcReqTakeoffEquipAck = 0x099a;
+    public const int IroZcReqTakeoffEquipAckLength = 9;
+    // Pinned clif_unequipitemack (clif.cpp:4338-4341): `success = !success` for
+    // PACKETVER >= 20110824 (pinned build satisfies this) - the wire flag is INVERTED
+    // relative to the equip ack: 0 = success, 1 = failure (opposite of EquipAckResultOk/Fail).
+    public const byte UnequipAckFlagSuccess = 0;
+    public const byte UnequipAckFlagFailure = 1;
 }

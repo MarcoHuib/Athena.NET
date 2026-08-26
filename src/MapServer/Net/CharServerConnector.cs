@@ -20,6 +20,7 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
         [PacketConstants.MapGameplayStateGetResponse] = MapCharacterGameplayStateProtocol.ResponseLength,
         [PacketConstants.MapGameplayStateUpdateResponse] = MapCharacterGameplayStateProtocol.ResponseLength,
         [PacketConstants.MapInventoryAddResponse] = MapInventoryAddProtocol.ResponseLength,
+        [PacketConstants.MapInventoryEquipUpdateResponse] = MapInventoryEquipUpdateProtocol.ResponseLength,
         // MapInventoryListGetResponse is variable-length - see VariableLengthMinLength below.
     };
 
@@ -32,6 +33,7 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
     private readonly ConcurrentDictionary<uint, TaskCompletionSource<CharacterGameplayState?>> _pendingGameplayUpdates = new();
     private readonly ConcurrentDictionary<(uint CharId, int ItemId), TaskCompletionSource<(bool Success, uint NewAmount, uint SlotIndex)>> _pendingInventoryAdds = new();
     private readonly ConcurrentDictionary<uint, TaskCompletionSource<CharacterInventoryReadResult>> _pendingInventoryReads = new();
+    private readonly ConcurrentDictionary<(uint CharId, uint SlotIndex), TaskCompletionSource<bool>> _pendingEquipUpdates = new();
     private CharServerConnectionState? _connection;
 
     public CharServerConnector(MapConfigStore configStore)
@@ -143,6 +145,17 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
         finally { _pendingInventoryReads.TryRemove(characterId, out _); }
     }
 
+    public async Task<bool> SetItemEquipAsync(uint accountId, uint characterId, uint slotIndex, uint equip, CancellationToken cancellationToken)
+    {
+        var connection = _connection; if (connection is null) return false;
+        var key = (characterId, slotIndex);
+        var pending = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (!_pendingEquipUpdates.TryAdd(key, pending)) return false;
+        using var registration = cancellationToken.Register(() => pending.TrySetCanceled(cancellationToken));
+        try { await connection.WriteAsync(MapInventoryEquipUpdateProtocol.BuildRequest(accountId, characterId, slotIndex, equip), cancellationToken); return await pending.Task; }
+        finally { _pendingEquipUpdates.TryRemove(key, out _); }
+    }
+
     public async Task<(bool Success, uint NewAmount, uint SlotIndex)> AddStackableItemAsync(uint accountId, uint charId, int itemId, uint amount, CancellationToken cancellationToken)
     {
         var connection = _connection;
@@ -235,6 +248,7 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
             FailPendingGameplayStates();
             FailPendingInventoryAdds();
             FailPendingInventoryReads();
+            FailPendingEquipUpdates();
 
             MapLogger.Warning("Char server connection closed. Reconnecting.");
             return false;
@@ -308,6 +322,8 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
                 return HandleInventoryAddResponse(packet);
             case PacketConstants.MapInventoryListGetResponse:
                 return HandleInventoryListGetResponse(packet);
+            case PacketConstants.MapInventoryEquipUpdateResponse:
+                return HandleInventoryEquipUpdateResponse(packet);
             default:
                 MapLogger.Warning($"Unknown char server packet 0x{packetType:X4}, disconnecting.");
                 return false;
@@ -400,6 +416,13 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
     {
         if (!MapInventoryListProtocol.TryParseResponse(packet, out _, out var charId, out var inventory)) return false;
         if (_pendingInventoryReads.TryRemove(charId, out var pending)) pending.TrySetResult(inventory);
+        return true;
+    }
+
+    private bool HandleInventoryEquipUpdateResponse(byte[] packet)
+    {
+        if (!MapInventoryEquipUpdateProtocol.TryParseResponse(packet, out var success, out var charId, out var slotIndex)) return false;
+        if (_pendingEquipUpdates.TryRemove((charId, slotIndex), out var pending)) pending.TrySetResult(success);
         return true;
     }
 
@@ -511,6 +534,12 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
     {
         foreach (var pending in _pendingInventoryReads.Values) pending.TrySetResult(CharacterInventoryReadResult.Failed());
         _pendingInventoryReads.Clear();
+    }
+
+    private void FailPendingEquipUpdates()
+    {
+        foreach (var pending in _pendingEquipUpdates.Values) pending.TrySetResult(false);
+        _pendingEquipUpdates.Clear();
     }
 
     // Opcodes framed as [opcode.W][length.W][payload], where `length` is the TOTAL packet

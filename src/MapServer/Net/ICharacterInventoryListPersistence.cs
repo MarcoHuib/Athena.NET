@@ -63,4 +63,11 @@ public readonly record struct CharacterInventoryReadResult(bool Succeeded, Chara
 public interface ICharacterInventoryListPersistence
 {
     Task<CharacterInventoryReadResult> GetInventoryAsync(uint accountId, uint characterId, CancellationToken cancellationToken);
+
+    // Persists a single CharInventory row's Equip bitmask by its stable SlotIndex - CharServer
+    // remains the durable owner of CharInventory.Equip (see CharacterEquipmentMutationService).
+    // Returns false on any failure (row not found for this character, DB error, disconnected
+    // CharServer) - callers must never assume success and must never report success to the
+    // client before this returns true.
+    Task<bool> SetItemEquipAsync(uint accountId, uint characterId, uint slotIndex, uint equip, CancellationToken cancellationToken);
 }

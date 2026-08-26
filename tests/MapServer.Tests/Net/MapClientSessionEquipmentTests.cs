@@ -80,5 +80,6 @@ public sealed class MapClientSessionEquipmentTests
     private sealed class StubInventoryListPersistence(CharacterInventoryReadResult result) : ICharacterInventoryListPersistence
     {
         public Task<CharacterInventoryReadResult> GetInventoryAsync(uint a, uint c, CancellationToken t) => Task.FromResult(result);
+        public Task<bool> SetItemEquipAsync(uint a, uint c, uint slotIndex, uint equip, CancellationToken t) => Task.FromResult(false);
     }
 }

@@ -20,5 +20,16 @@ Evidence rule:
 Client rule:
 - Do not patch or modify the official client to make Athena.NET work. Keep client compatibility server-side.
 
+Authoritative gameplay rule:
+
+- Treat all client-supplied gameplay data as untrusted intent, never as authoritative state.
+- The client may request an action; Athena.NET must resolve and validate the actual state and outcome server-side.
+- Never create, modify, award, equip, consume, move, trade, drop, or persist gameplay state solely because the client claims that state.
+- Resolve referenced entities, inventory slots, items, amounts, equipment positions, actors, skills, quests, currencies, and other gameplay state from Athena.NET's authoritative server-side state.
+- When implementing a client action using `legacy/rathena/` as reference, trace and preserve the relevant server-side validation/failure path as well as the success path. Do not port only the happy path.
+- Invalid, stale, duplicated, forged, out-of-range, or conflicting client requests must fail safely without creating authoritative state.
+- For durable mutations, prefer validate -> persist -> update authoritative runtime state -> notify the client. Do not report success to the client before required persistence succeeds.
+- Client-visible state is a projection of authoritative server state. If the client locally displays a different state, Athena.NET's state remains authoritative and subsequent synchronization must restore the server truth.
+
 Security rule:
 - Never log or commit passwords, PINs, bearer/JWT/session/auth tokens, or unsanitized packet captures.

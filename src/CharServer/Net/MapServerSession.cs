@@ -22,6 +22,7 @@ public sealed class MapServerSession : IDisposable, ISession
         [PacketConstants.MapGameplayStateUpdateRequest] = MapCharacterGameplayStateProtocol.UpdateRequestLength,
         [PacketConstants.MapInventoryAddRequest] = MapInventoryAddProtocol.RequestLength,
         [PacketConstants.MapInventoryListGetRequest] = MapInventoryListProtocol.GetRequestLength,
+        [PacketConstants.MapInventoryEquipUpdateRequest] = MapInventoryEquipUpdateProtocol.RequestLength,
     };
 
     private readonly TcpClient _client;
@@ -120,6 +121,9 @@ public sealed class MapServerSession : IDisposable, ISession
                 break;
             case PacketConstants.MapInventoryListGetRequest:
                 await HandleInventoryListGetAsync(packet, cancellationToken);
+                break;
+            case PacketConstants.MapInventoryEquipUpdateRequest:
+                await HandleInventoryEquipUpdateAsync(packet, cancellationToken);
                 break;
             default:
                 CharLogger.Warning($"Unknown map server packet 0x{packetType:X4}, disconnecting.");
@@ -476,6 +480,43 @@ public sealed class MapServerSession : IDisposable, ISession
             }
         }
         await WriteAsync(MapInventoryListProtocol.BuildResponse(result, charId, rows), cancellationToken);
+    }
+
+    private async Task HandleInventoryEquipUpdateAsync(byte[] packet, CancellationToken cancellationToken)
+    {
+        if (!MapInventoryEquipUpdateProtocol.TryParseRequest(packet, out var accountId, out var charId, out var slotIndex, out var equip)) return;
+        var success = false;
+        if (IsGameplayStateRequestAuthorized(_authenticated, _ownedCharacters, accountId, charId))
+        {
+            try
+            {
+                await using var db = _dbFactory();
+                if (db is not null)
+                {
+                    // Same stable server-side array order as HandleInventoryListGetAsync -
+                    // SlotIndex is this row's position in that exact ordering, never a stored
+                    // column.
+                    var row = await db.Inventory
+                        .Where(i => i.CharId == charId)
+                        .OrderBy(i => i.Id)
+                        .Skip((int)slotIndex)
+                        .FirstOrDefaultAsync(cancellationToken);
+                    if (row is not null)
+                    {
+                        row.Equip = equip;
+                        await db.SaveChangesAsync(cancellationToken);
+                        success = true;
+                    }
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                CharLogger.Warning(
+                    $"Character inventory equip update rejected reason=database-error charId={charId} " +
+                    $"slotIndex={slotIndex} error={ex.GetType().Name}.");
+            }
+        }
+        await WriteAsync(MapInventoryEquipUpdateProtocol.BuildResponse(success, charId, slotIndex), cancellationToken);
     }
 
     private async Task HandleGameplayStateUpdateAsync(byte[] packet, CancellationToken cancellationToken)

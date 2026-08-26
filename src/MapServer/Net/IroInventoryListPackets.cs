@@ -84,15 +84,37 @@ internal static class IroInventoryListPackets
 
     // ZC_EQUIPMENT_ITEMLIST (0x0B39, PACKETVER_RE_NUM >= 20200723 branch): envelope
     // packetType.W packetLength.W invType.B, then EQUIPITEM_INFO entries (68 bytes each,
-    // packets_struct.hpp:457-503, clif_item_equip, clif.cpp:2932-2960):
-    //   index.W ITID.L type.B location.L wearState.L slot.card[4].L(x4) hireExpireDate.L
-    //   bindOnEquipType.W wItemSpriteNumber.W refiningLevel.B grade.B flag.B
+    // packets_struct.hpp:457-503, clif_item_equip, clif.cpp:2932-2960). Full field/offset
+    // list for this exact pinned branch (every earlier PACKETVER-gated field before it is
+    // also active, so nothing is skipped - verified by re-summing all offsets to 68):
+    //   0  index.W
+    //   2  ITID.L
+    //   6  type.B
+    //   7  location.L
+    //   11 WearState.L
+    //   15 slot.card[4].L (x4, 16 bytes)
+    //   31 HireExpireDate.L
+    //   35 bindOnEquipType.W
+    //   37 wItemSpriteNumber.W
+    //   39 option_count.B          (PACKETVER >= 20150226 - previously MISSING from this
+    //   40 option_data[5] (25 B)    builder, which wrote RefiningLevel/grade/Flag directly
+    //                               into these offsets instead, leaving the REAL 65-67
+    //                               offsets zero - so the client always read
+    //                               Flag.IsIdentified=0 (unidentified), which pinned
+    //                               client-side equip eligibility silently refuses to
+    //                               interact with: this is why 0x0998 was never observed.)
+    //   65 RefiningLevel.B
+    //   66 grade.B
+    //   67 Flag (IsIdentified:1 IsDamaged:1 PlaceETCTab:1 SpareBits:5).B
     // location is the item_db's possible-equip-location (pc_equippoint) - here always the
     // same value as EquipLocation since this slice never models AliasName-shadowed equip
     // rules. wearState is the ROW's persisted Equip bitmask (it->equip) - the currently-worn
-    // location, distinct from location. wItemSpriteNumber is left 0: EQP_VISIBLE covers only
-    // helm/garment/costume slots (pc.hpp:1143-1145), which this slice's starter rows never
-    // occupy.
+    // location, distinct from location; MUST stay 0 for an unequipped item and MUST NOT be
+    // set equal to location merely to make the client treat it as interactable - the real
+    // gating field was Flag.IsIdentified, not WearState. wItemSpriteNumber is left 0:
+    // EQP_VISIBLE covers only helm/garment/costume slots (pc.hpp:1143-1145), which this
+    // slice's starter rows never occupy. option_count is left 0 (no random options on any
+    // currently generated item) with option_data left zeroed to match.
     private const short ItemListEquipType = 0x0b39;
     private const int EquipItemLength = 68;
 
@@ -118,9 +140,10 @@ internal static class IroInventoryListPackets
             // offsets 31..34: HireExpireDate - zero
             // offsets 35..36: bindOnEquipType - zero (not bound, not a bind-on-equip item)
             // offsets 37..38: wItemSpriteNumber - zero (see doc comment above)
-            span[39] = item.Refine;
-            span[40] = 0; // grade
-            span[41] = (byte)((item.Identified ? 1 : 0) | (item.Favorite != 0 ? 4 : 0)); // Flag.IsIdentified/PlaceETCTab bitfield
+            // offsets 39..64: option_count + option_data[5] - zero (no random options)
+            span[65] = item.Refine;
+            span[66] = 0; // grade
+            span[67] = (byte)((item.Identified ? 1 : 0) | (item.Favorite != 0 ? 4 : 0)); // Flag.IsIdentified/PlaceETCTab bitfield
         }
         return packet;
     }

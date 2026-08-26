@@ -425,5 +425,34 @@ transcription of frame 566 dropped one 16-byte all-zero row, producing a false a
 self-consistent 90-byte `0x09FF` immediately followed by a 96-byte `0x09FD`, summing exactly to
 the captured 186-byte TCP payload. There is no length-field anomaly in the real capture.
 
+## Verified equip/unequip request framing (0x0998, 0x00AB)
+
+Live stock-iRO client session, map flow `192.168.178.55 -> 128.241.92.42:4506`. **These two
+C->S request lengths intentionally diverge from pinned rAthena** and are the current
+authoritative shape per the evidence-priority rule (capture overrides pinned source for
+current-client wire behavior).
+
+| Frame | Direction | Packet | Pinned rAthena length | Actual stock-iRO length | Bytes |
+|---:|:---:|:---:|---:|---:|---|
+| 388 | C->S | `0x0998` (`CZ_REQ_WEAR_EQUIP_V5`) | 8 (`packets.hpp:1502-1509`) | **9** | `98 09 02 00 02 00 00 00 5B` |
+| 449 | C->S | `0x0998` | 8 | **9** | `98 09 03 00 10 00 00 00 88` |
+| 370 | C->S | `0x00AB` (`CZ_REQ_TAKEOFF_EQUIP`) | 4 (`clif_packetdb.hpp:59`) | **5** | `AB 00 02 00 4F` |
+| 395 | C->S | `0x00AB` | 4 | **5** | `AB 00 03 00 85` |
+
+Known fields (both packets): `packetType.W`, `index.W` (client inventory index,
+`client_index()` = server slot + 2). `0x0998` additionally carries `position.L` (the requested
+equip-position bitmask) per pinned source, matching the captured `02 00 00 00`=`EQP_HAND_R` and
+`10 00 00 00`=`EQP_ARMOR` values exactly. Each packet's final byte (offset 8 for `0x0998`,
+offset 4 for `0x00AB`) is **not present in pinned rAthena's struct at all** and its semantics
+are unverified - it is consumed (required for correct framing of the next packet) but left
+explicitly opaque, never assigned an invented meaning (checksum/token/anti-cheat, etc.).
+
+**Impact if unmodeled**: parsing these packets at the pinned 8/4-byte lengths leaves exactly
+one real payload byte unconsumed in the receive stream. That byte becomes the leading byte of
+the next packet's 2-byte opcode header, producing a corrupted opcode - live-observed as
+`0xAB98` (leftover `0x98` from an under-read `0x0998` + leading `0xAB` of the following
+`0x00AB`) and `0x6025` (a further cascading desync). Athena now reads
+`IroCzReqWearEquipLength=9` / `IroCzReqTakeoffEquipLength=5`, eliminating the residue.
+
 ## Capture handling
 Official captures can contain credentials, account/session identifiers, bearer/JWT-like tokens, and other sensitive authentication material. Never commit unsanitized PCAPs or raw token dumps to the repository.

@@ -76,7 +76,24 @@ public sealed class IroInventoryListPacketsTests
         Assert.Equal(5, entry[6]); // IT_WEAPON
         Assert.Equal(0x000002u, BinaryPrimitives.ReadUInt32LittleEndian(entry[7..]));  // location (possible)
         Assert.Equal(0x000002u, BinaryPrimitives.ReadUInt32LittleEndian(entry[11..])); // wearState (actual)
-        Assert.Equal((byte)3, entry[39]); // RefiningLevel
+        // option_count + option_data[5] (offsets 39-64) must stay zero - verifies RefiningLevel/
+        // grade/Flag were NOT accidentally written into these offsets (the real bug this test
+        // now guards against: they collided here, leaving 65-67 zero, which the client read as
+        // Flag.IsIdentified=0 - unidentified - silently blocking all equip interaction).
+        Assert.All(entry[39..65].ToArray(), b => Assert.Equal(0, b));
+        Assert.Equal((byte)3, entry[65]); // RefiningLevel
+        Assert.Equal((byte)0, entry[66]); // grade
+        Assert.Equal((byte)1, entry[67]); // Flag.IsIdentified=1 (item.Identified=true)
+    }
+
+    [Fact]
+    public void BuildItemListEquip_UnidentifiedItem_FlagIsIdentifiedIsZero()
+    {
+        var item = new CharacterInventoryItem(0, 1201, 1, 0, false, 0, 0, 0);
+        var packet = IroInventoryListPackets.BuildItemListEquip([(2, item, Knife)]);
+
+        var entry = packet.AsSpan(5);
+        Assert.Equal((byte)0, entry[67] & 0b1); // Flag.IsIdentified=0
     }
 
     [Fact]

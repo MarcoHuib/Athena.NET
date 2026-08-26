@@ -41,6 +41,11 @@ public static class PacketConstants
     // side).
     public const short MapInventoryListGetRequest = 0x2b33;
     public const short MapInventoryListGetResponse = 0x2b34;
+    // Persists a single CharInventory row's Equip bitmask (runtime equip/unequip mutation,
+    // CZ_REQ_WEAR_EQUIP/CZ_REQ_TAKEOFF_EQUIP). CharServer remains the durable owner of
+    // CharInventory.Equip - MapServer never mutates its own snapshot without a confirmed write.
+    public const short MapInventoryEquipUpdateRequest = 0x2b35;
+    public const short MapInventoryEquipUpdateResponse = 0x2b36;
 
     public const short ChReqConnect = 0x65;
     public const short ChSelectChar = 0x66;

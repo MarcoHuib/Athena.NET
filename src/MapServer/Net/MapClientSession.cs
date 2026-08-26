@@ -32,6 +32,8 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
         [PacketConstants.IroCzNpcClose] = PacketConstants.IroCzNpcCloseLength,
         [PacketConstants.IroCzNpcSelection] = PacketConstants.IroCzNpcSelectionLength,
         [PacketConstants.IroCzAttackRequest] = PacketConstants.IroCzAttackRequestLength,
+        [PacketConstants.IroCzReqWearEquip] = PacketConstants.IroCzReqWearEquipLength,
+        [PacketConstants.IroCzReqTakeoffEquip] = PacketConstants.IroCzReqTakeoffEquipLength,
     };
 
     private readonly TcpClient _client;
@@ -759,6 +761,12 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
             case PacketConstants.IroCzAttackRequest when _iroAuthRequested:
                 await HandleIroAttackRequestAsync(packet, cancellationToken);
                 break;
+            case PacketConstants.IroCzReqWearEquip when _iroAuthRequested:
+                await HandleEquipRequestAsync(packet, cancellationToken);
+                break;
+            case PacketConstants.IroCzReqTakeoffEquip when _iroAuthRequested:
+                await HandleUnequipRequestAsync(packet, cancellationToken);
+                break;
             default:
                 LogUnsupportedPacket(packetType, packet);
                 RequestClose();
@@ -1048,6 +1056,80 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
             MapLogger.Info($"[iRO MAP DEBUG] Sending 0x0B41 itemId={itemDefinition.Id} count={drop.Count} clientIndex={clientIndex}");
             await WriteAsync(pickupPacket, cancellationToken);
         }
+    }
+
+    // Pinned clif_parse_EquipItem (clif.cpp:12113-12159): index = server_index(p->index)
+    // (client index - 2, clif.cpp:127-129) - never an item id. _inventory is guaranteed
+    // non-null once authenticated (CompleteIroAuthenticationAsync fails auth outright on an
+    // unsuccessful inventory read).
+    //
+    // Ordering matches pinned pc_equipitem exactly for the client-visible packets (ACK before
+    // appearance, clif.cpp:12168-12178) - the ONLY difference from rAthena is that Athena
+    // persists to CharServer and confirms success BEFORE sending either packet, whereas
+    // real rAthena's single in-memory process technically assigns the field after sending both
+    // (see CharacterEquipmentMutationService's own doc comment). Athena never reports success
+    // before the durable write is confirmed.
+    private async Task HandleEquipRequestAsync(byte[] packet, CancellationToken cancellationToken)
+    {
+        if (!IroEquipRequestPacket.TryParse(packet, out var request)) return;
+        if (_inventory is not { } inventory || request.ClientIndex < 2) return;
+        var slotIndex = (uint)(request.ClientIndex - 2);
+
+        var service = new CharacterEquipmentMutationService(_accountId, _charId, _inventoryListPersistence);
+        var (outcome, updated) = await service.EquipAsync(inventory, slotIndex, request.Position, GeneratedItems.ById, cancellationToken);
+        if (outcome is not { } equipOutcome) return; // invalid slot/index - pc_equipitem sends no ack either (clif.cpp:12154-12156 early-out)
+
+        var result = equipOutcome.Result switch
+        {
+            EquipMutationResult.Success => PacketConstants.EquipAckResultOk,
+            EquipMutationResult.FailLevel => PacketConstants.EquipAckResultFailLevel,
+            _ => PacketConstants.EquipAckResultFail,
+        };
+        await WriteAsync(IroEquipmentMutationPackets.BuildEquipAck(request.ClientIndex, equipOutcome.WearLocation, result), cancellationToken);
+
+        if (equipOutcome.Result != EquipMutationResult.Success || updated is null) return;
+
+        _inventory = updated;
+        _equipment = CharacterEquipmentSnapshot.FromInventory(updated);
+        await SendSelfWeaponAppearanceAsync(cancellationToken);
+    }
+
+    // Pinned clif_parse_UnequipItem (clif.cpp:12166-12189): index = server_index(p->index).
+    // Ordering matches pinned pc_unequipitem exactly for the client-visible packets
+    // (appearance BEFORE ACK, clif.cpp:12426-12452) - the reverse of the equip path. See
+    // HandleEquipRequestAsync's doc comment for the persist-before-report rationale.
+    private async Task HandleUnequipRequestAsync(byte[] packet, CancellationToken cancellationToken)
+    {
+        if (!IroUnequipRequestPacket.TryParse(packet, out var request)) return;
+        if (_inventory is not { } inventory || request.ClientIndex < 2) return;
+        var slotIndex = (uint)(request.ClientIndex - 2);
+
+        var targetItemId = inventory.Items.FirstOrDefault(i => i.SlotIndex == slotIndex)?.ItemId;
+        var oldEquip = inventory.Items.FirstOrDefault(i => i.SlotIndex == slotIndex)?.Equip;
+        var service = new CharacterEquipmentMutationService(_accountId, _charId, _inventoryListPersistence);
+        var (outcome, updated) = await service.UnequipAsync(inventory, slotIndex, cancellationToken);
+        if (outcome is not { } unequipOutcome)
+        {
+            MapLogger.Warning($"[iRO MAP DEBUG] Unequip rejected (unknown slotIndex={slotIndex}); no ack sent.");
+            return;
+        }
+
+        MapLogger.Info(
+            $"[iRO MAP DEBUG] Unequip persisted slotIndex={slotIndex} itemId={targetItemId} oldEquip={oldEquip} newEquip=0 success={unequipOutcome.Success}");
+
+        if (unequipOutcome.Success && updated is not null)
+        {
+            _inventory = updated;
+            _equipment = CharacterEquipmentSnapshot.FromInventory(updated);
+            MapLogger.Info("[iRO MAP DEBUG] Sending 0x01D7 (post-unequip appearance update).");
+            await SendSelfWeaponAppearanceAsync(cancellationToken);
+        }
+
+        var ackPacket = IroEquipmentMutationPackets.BuildUnequipAck(request.ClientIndex, unequipOutcome.WearLocation, unequipOutcome.Success);
+        MapLogger.Info(
+            $"[iRO MAP DEBUG] Sending 0x099A unequip ack bytes={Convert.ToHexString(ackPacket)} clientIndex={request.ClientIndex} wearLocation={unequipOutcome.WearLocation} success={unequipOutcome.Success}");
+        await WriteAsync(ackPacket, cancellationToken);
+        MapLogger.Info("[iRO MAP DEBUG] 0x099A unequip ack write completed.");
     }
 
     private async Task HandleNpcInteractionAsync(byte[] packet, CancellationToken cancellationToken)
@@ -1855,6 +1937,15 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
             Buffer.BlockCopy(payload, 0, packet, 2, payloadLength);
         }
 
+        // TEMPORARY framing-investigation instrumentation, scoped to only the equip/unequip
+        // opcodes under investigation - never logs auth/session traffic. Remove once the
+        // 0x0998 length question is resolved.
+        if (packetType is PacketConstants.IroCzReqWearEquip or PacketConstants.IroCzReqTakeoffEquip)
+        {
+            MapLogger.Info(
+                $"[iRO MAP DEBUG][FRAMING] Consumed packetType=0x{packetType:X4} declaredLength={length} bytes={Convert.ToHexString(packet)}");
+        }
+
         return packet;
     }
 
@@ -1925,5 +2016,8 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
 
         public Task<CharacterInventoryReadResult> GetInventoryAsync(uint accountId, uint characterId, CancellationToken cancellationToken)
             => Task.FromResult(Empty);
+
+        public Task<bool> SetItemEquipAsync(uint accountId, uint characterId, uint slotIndex, uint equip, CancellationToken cancellationToken)
+            => Task.FromResult(false);
     }
 }
