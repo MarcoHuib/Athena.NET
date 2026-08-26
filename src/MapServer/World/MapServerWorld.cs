@@ -1,3 +1,4 @@
+using Athena.Net.MapServer.Gameplay.Rules;
 using Athena.Net.MapServer.Generated.GameData.Quests;
 using Athena.Net.MapServer.World.GeneratedScripts;
 
@@ -23,7 +24,11 @@ public sealed record MapServerWorld(WorldMapRegistry Maps, MonsterRegistry Monst
     // data gap, not a shortcut: monster POSITIONS placed this way are a
     // documented placeholder, not real rAthena spawn-cell parity, and callers
     // must not describe them as authoritative until real GAT data exists.
-    public static MapServerWorld Build(IMobSpawnCellSelector? cellSelector = null, TimeProvider? timeProvider = null)
+    // `gameplayOptions` defaults to Renewal (GameplayOptions' own default) because
+    // that is the only ruleset MapConfig can currently select and the only one
+    // GameplayRulesFactory implements - see GameplayRulesFactory's own doc comment
+    // for why selecting PreRenewal throws instead of silently falling back.
+    public static MapServerWorld Build(IMobSpawnCellSelector? cellSelector = null, TimeProvider? timeProvider = null, GameplayOptions? gameplayOptions = null)
     {
         var allocator = new WorldActorIdAllocator();
         var maps = WorldMapRegistry.LoadGenerated(allocator);
@@ -33,7 +38,8 @@ public sealed record MapServerWorld(WorldMapRegistry Maps, MonsterRegistry Monst
             cellSelector ?? new UnverifiedFallbackMobSpawnCellSelector(),
             timeProvider ?? TimeProvider.System);
         var questDrops = new QuestDropResolver(GeneratedQuestDrops.All);
-        var combat = new MonsterCombatCoordinator(monsters, questDrops);
+        var basicAttackRules = GameplayRulesFactory.Create(gameplayOptions ?? new GameplayOptions());
+        var combat = new MonsterCombatCoordinator(monsters, questDrops, basicAttackRules);
         return new MapServerWorld(maps, monsters, combat);
     }
 }

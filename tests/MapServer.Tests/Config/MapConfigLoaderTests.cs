@@ -1,5 +1,6 @@
 using System.Net;
 using Athena.Net.MapServer.Config;
+using Athena.Net.MapServer.Gameplay.Rules;
 
 namespace Athena.Net.MapServer.Tests.Config;
 
@@ -17,6 +18,55 @@ public sealed class MapConfigLoaderTests
         Assert.Equal(6121, config.CharPort);
         Assert.Equal(IPAddress.Loopback, config.MapIp);
         Assert.Equal(5121, config.MapPort);
+        Assert.Equal(RagnarokRuleSet.Renewal, config.GameplayRuleSet);
+    }
+
+    [Fact]
+    public void Load_ConfigPresentWithoutGameplayRuleSetKey_DefaultsToRenewal()
+    {
+        var tempDir = CreateTempDir();
+        var path = Path.Combine(tempDir, "map_athena.conf");
+        File.WriteAllText(path, "char_ip: 10.0.0.5\n");
+
+        var config = MapConfigLoader.Load(path);
+
+        Assert.Equal(RagnarokRuleSet.Renewal, config.GameplayRuleSet);
+    }
+
+    [Fact]
+    public void Load_ParsesExplicitGameplayRuleSet_Renewal()
+    {
+        var tempDir = CreateTempDir();
+        var path = Path.Combine(tempDir, "map_athena.conf");
+        File.WriteAllText(path, "gameplay_ruleset: Renewal\n");
+
+        var config = MapConfigLoader.Load(path);
+
+        Assert.Equal(RagnarokRuleSet.Renewal, config.GameplayRuleSet);
+    }
+
+    [Fact]
+    public void Load_ParsesExplicitGameplayRuleSet_PreRenewal()
+    {
+        var tempDir = CreateTempDir();
+        var path = Path.Combine(tempDir, "map_athena.conf");
+        File.WriteAllText(path, "gameplay_ruleset: PreRenewal\n");
+
+        var config = MapConfigLoader.Load(path);
+
+        Assert.Equal(RagnarokRuleSet.PreRenewal, config.GameplayRuleSet);
+    }
+
+    [Fact]
+    public void Load_UnrecognizedGameplayRuleSetValue_FallsBackToDefault_NotAnException()
+    {
+        var tempDir = CreateTempDir();
+        var path = Path.Combine(tempDir, "map_athena.conf");
+        File.WriteAllText(path, "gameplay_ruleset: SomeFutureRuleSet\n");
+
+        var config = MapConfigLoader.Load(path);
+
+        Assert.Equal(RagnarokRuleSet.Renewal, config.GameplayRuleSet);
     }
 
     [Fact]
@@ -50,6 +100,17 @@ public sealed class MapConfigLoaderTests
         Assert.Equal(IPAddress.Parse("10.0.0.8"), config.CharIp);
         Assert.Equal(IPAddress.Parse("9.9.9.9"), config.MapIp);
         Assert.Equal(5000, config.MapPort);
+    }
+
+    [Fact]
+    public void SecretConfig_ApplyTo_PreservesGameplayRuleSet()
+    {
+        var secrets = new SecretConfig();
+        var config = new MapConfig { GameplayRuleSet = RagnarokRuleSet.PreRenewal };
+
+        var merged = secrets.ApplyTo(config);
+
+        Assert.Equal(RagnarokRuleSet.PreRenewal, merged.GameplayRuleSet);
     }
 
     [Fact]

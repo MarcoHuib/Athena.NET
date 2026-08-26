@@ -1,4 +1,5 @@
 using System.Net;
+using Athena.Net.MapServer.Gameplay.Rules;
 
 namespace Athena.Net.MapServer.Config;
 
@@ -16,4 +17,10 @@ public sealed class MapConfig
     public int ConsoleMsgLog { get; init; }
     public int ConsoleSilent { get; init; }
     public string TimestampFormat { get; init; } = string.Empty;
+    // Athena.NET currently targets the current official iRO client, which is
+    // RENEWAL-only - see ai/map-server.md's "Gameplay ruleset selection" section.
+    // "gameplay_ruleset" in map_athena.conf; defaults to Renewal (GameplayOptions'
+    // own default) when unset or unrecognized, matching MapConfigLoader's existing
+    // "use the field default on a bad/missing value" convention for every other key.
+    public RagnarokRuleSet GameplayRuleSet { get; init; } = RagnarokRuleSet.Renewal;
 }

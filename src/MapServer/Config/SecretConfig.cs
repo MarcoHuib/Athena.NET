@@ -62,6 +62,7 @@ public sealed class SecretConfig
             ConsoleSilent = config.ConsoleSilent,
             ConsoleLogFilePath = config.ConsoleLogFilePath,
             TimestampFormat = config.TimestampFormat,
+            GameplayRuleSet = config.GameplayRuleSet,
         };
     }
 

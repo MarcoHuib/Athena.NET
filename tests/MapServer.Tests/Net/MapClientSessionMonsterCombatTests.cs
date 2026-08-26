@@ -2,6 +2,7 @@ using System.Buffers.Binary;
 using System.Net;
 using System.Net.Sockets;
 using Athena.Net.MapServer.Config;
+using Athena.Net.MapServer.Gameplay.Rules.Renewal;
 using Athena.Net.MapServer.Generated.GameData.Mobs;
 using Athena.Net.MapServer.Net;
 using Athena.Net.MapServer.World;
@@ -70,13 +71,13 @@ public sealed class MapClientSessionMonsterCombatTests
     }
 
     // Strong enough to kill G_PORING's 55 HP in very few hits, keeping the test fast and
-    // deterministic without depending on the exact BasicAttackCalculator formula's per-hit value.
+    // deterministic without depending on the exact RenewalBasicAttackRules formula's per-hit value.
     private static CharacterGameplayState StrongNovice() => new(
         CharacterId: CharId, Version: 1, JobClass: 0, BaseLevel: 99, JobLevel: 10,
         BaseExperience: 0, JobExperience: 0, CurrentHp: 100, CurrentSp: 100, MaxHp: 100, MaxSp: 100,
         StatPoints: 0, SkillPoints: 0, Strength: 99, Agility: 1, Vitality: 1, Intelligence: 1, Dexterity: 99, Luck: 99);
 
-    // Deliberately weak (canonical fresh-Novice 9/9/9/9/9/9, matching BasicAttackCalculatorTests/
+    // Deliberately weak (canonical fresh-Novice 9/9/9/9/9/9, matching
     // WeaponAttackCalculatorTests' own FreshNovice fixture) so a single unarmed hit against
     // G_PORING's 55 HP does not one-shot it - needed to observe an unarmed hit's damage
     // distinctly from an armed hit's, rather than both instantly killing the target.
@@ -102,7 +103,7 @@ public sealed class MapClientSessionMonsterCombatTests
         var spawnDefinition = new MobSpawnDefinition(GeneratedMobs.GPoring, "int_land03", 1, 5000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "test", 0));
         var registry = new MonsterRegistry([spawnDefinition], allocator, new FixedCellSelector(75, 51), TimeProvider.System);
         var questDrops = new QuestDropResolver(Generated.GameData.Quests.GeneratedQuestDrops.All);
-        var combat = new MonsterCombatCoordinator(registry, questDrops);
+        var combat = new MonsterCombatCoordinator(registry, questDrops, new RenewalBasicAttackRules());
         var target = registry.AllInstances[0];
 
         var questPersistence = new RecordingQuestPersistence(Quest21008, questState);
@@ -338,7 +339,7 @@ public sealed class MapClientSessionMonsterCombatTests
     // The architecture requirement: unequipping mid-session must return combat to the genuine
     // unarmed path WITHOUT reconnecting - MonsterCombatCoordinator never caches the weapon
     // resolution, so the very next attack after a successful 0x00AB unequip must dispatch to
-    // BasicAttackCalculator again.
+    // the unarmed RenewalBasicAttackRules path again.
     [Fact]
     public async Task Attack_UnequipKnifeMidSession_ReturnsToUnarmedCombat_WithoutReconnecting()
     {

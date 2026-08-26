@@ -1,3 +1,4 @@
+using Athena.Net.MapServer.Gameplay.Rules.Renewal;
 using Athena.Net.MapServer.Generated.GameData.Items;
 using Athena.Net.MapServer.Generated.GameData.Mobs;
 using Athena.Net.MapServer.Generated.GameData.Quests;
@@ -81,7 +82,7 @@ public sealed class PoringQuestDropIntegrationTests
             new FixedCellSelector(50, 50),
             clock);
         var questDrops = new QuestDropResolver(GeneratedQuestDrops.All);
-        var combat = new MonsterCombatCoordinator(registry, questDrops);
+        var combat = new MonsterCombatCoordinator(registry, questDrops, new RenewalBasicAttackRules());
         var inventoryPersistence = new FakeInventoryPersistence();
         var inventorySession = new CharacterInventorySession(AccountId, CharId, inventoryPersistence);
         var questPersistence = new RecordingQuestPersistence(Quest21008, CharacterQuestStatus.Active);
@@ -136,7 +137,7 @@ public sealed class PoringQuestDropIntegrationTests
             new WorldActorIdAllocator(),
             new FixedCellSelector(50, 50),
             clock);
-        var combat = new MonsterCombatCoordinator(registry, new QuestDropResolver(GeneratedQuestDrops.All));
+        var combat = new MonsterCombatCoordinator(registry, new QuestDropResolver(GeneratedQuestDrops.All), new RenewalBasicAttackRules());
         var target = registry.AllInstances[0];
         var noQuests = new RecordingQuestPersistence(Quest21008, CharacterQuestStatus.Absent);
         var questStatus = await BuildQuestStatusLookupAsync(noQuests, GeneratedQuestDrops.All.Select(rule => rule.QuestId));
@@ -155,7 +156,7 @@ public sealed class PoringQuestDropIntegrationTests
     public async Task RealisticPostTutorialNoviceState_CanCompleteTheSupportedCombatSlice()
     {
         // Proves the ACTUAL supported tutorial character (not synthetic stats) can kill G_PORING
-        // and receive Wood - i.e. that the real BasicAttackCalculator formula, applied to the real
+        // and receive Wood - i.e. that the real RenewalBasicAttackRules formula, applied to the real
         // post-Captain-Carocc-buffs stat state, is sufficient to complete this content within a
         // reasonable number of attacks, not merely that the surrounding plumbing works.
         var clock = new FakeTimeProvider();
@@ -164,7 +165,7 @@ public sealed class PoringQuestDropIntegrationTests
             new WorldActorIdAllocator(),
             new FixedCellSelector(50, 50),
             clock);
-        var combat = new MonsterCombatCoordinator(registry, new QuestDropResolver(GeneratedQuestDrops.All));
+        var combat = new MonsterCombatCoordinator(registry, new QuestDropResolver(GeneratedQuestDrops.All), new RenewalBasicAttackRules());
         var inventorySession = new CharacterInventorySession(AccountId, CharId, new FakeInventoryPersistence());
         var questPersistence = new RecordingQuestPersistence(Quest21008, CharacterQuestStatus.Active);
         var questStatus = await BuildQuestStatusLookupAsync(questPersistence, GeneratedQuestDrops.All.Select(rule => rule.QuestId));
@@ -173,7 +174,8 @@ public sealed class PoringQuestDropIntegrationTests
         MonsterAttackOutcome outcome = default;
         var attackCount = 0;
         // G_PORING has 55 HP; a fresh post-tutorial Novice's single-digit-per-hit damage
-        // (see BasicAttackCalculatorTests for the exact traced formula) needs several hits, not one.
+        // (see Gameplay/Rules/Renewal/WeaponAttackCalculatorTests for the exact traced formula)
+        // needs several hits, not one.
         for (var i = 0; i < 55 && target.IsAlive; i++, attackCount++)
         {
             outcome = combat.Attack(target, RealisticPostTutorialNovice(), RealisticNoviceBaseLevel, null, questStatus);

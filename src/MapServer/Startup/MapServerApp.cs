@@ -1,4 +1,5 @@
 using Athena.Net.MapServer.Config;
+using Athena.Net.MapServer.Gameplay.Rules;
 using Athena.Net.MapServer.Logging;
 using Athena.Net.MapServer.Net;
 using Athena.Net.MapServer.Telemetry;
@@ -28,7 +29,12 @@ public static class MapServerApp
             cts.Cancel();
         };
 
-        var world = MapServerWorld.Build();
+        // Gameplay.RuleSet is selected ONCE here, at the composition root - see
+        // GameplayRulesFactory's own doc comment for why an unsupported ruleset must
+        // fail startup loudly instead of being silently downgraded to Renewal.
+        var gameplayOptions = new GameplayOptions { RuleSet = mergedConfig.GameplayRuleSet };
+        MapLogger.Status($"Gameplay ruleset: {gameplayOptions.RuleSet}");
+        var world = MapServerWorld.Build(gameplayOptions: gameplayOptions);
         var connector = new CharServerConnector(configStore);
         var mapServer = new MapTcpServer(configStore, connector, world);
 

@@ -626,37 +626,46 @@ A supported unmodified stock iRO client selects a character, connects to Athena.
 
 ## Weapon-aware basic melee combat (Knife vs G_PORING)
 
-The prior unarmed-only `BasicAttackCalculator` covered a genuinely unarmed Novice.
 The starter tutorial character is not actually unarmed - it has a persisted Knife
 (itemId 1201, Attack 17, WeaponLevel 1, WeaponType Dagger) equipped in the right
-hand by default. Live 0x0437 attacks against G_PORING were resolving through the
-unarmed path regardless of equipment, which is not the pinned RENEWAL PC combat
-path a real client-observed attack takes.
+hand by default. Live 0x0437 attacks against G_PORING must resolve through the
+pinned RENEWAL PC combat path, using whatever is CURRENTLY equipped in the
+right hand, not a hardcoded unarmed assumption.
 
-### Pinned source trace
+### Pinned source trace: armed and unarmed share ONE PC pipeline
 
-The unarmed calculator's own `battle_calc_base_damage` (`battle.cpp:2515`) is
-**not** the function a real PC normal attack executes in RENEWAL. The actual path,
-traced field-by-field in `WeaponAttackCalculator`'s own doc comment
-(`src/MapServer/World/WeaponAttackCalculator.cs`), is:
+`battle.cpp:4140-4142` - `if (sd) battle_calc_damage_parts(...) else
+battle_calc_base_damage(...)`. This branch is gated purely on "is the attacker a
+PC" (`sd`), **never** on whether a weapon is equipped. `battle_calc_base_damage`
+is exclusively the non-PC/monster branch and is never reached by any PC normal
+attack in RENEWAL, armed or unarmed. An earlier implementation incorrectly used
+`battle_calc_base_damage` for the unarmed case (a distinct `BasicAttackCalculator`
+class, since removed) - that bug is now fixed as part of unifying armed/unarmed
+into one `RenewalBasicAttackRules`/`WeaponAttackCalculator` pipeline with an
+optional weapon term, per the pinned source's own structure.
 
-1. `status_base_atk` (`status.cpp:2424`) - same `batk` formula the unarmed
-   calculator already uses (Dagger is not a DEX-flagged weapon type).
+Full call chain, traced field-by-field in `RenewalBasicAttackRules`'s own doc
+comment (`src/MapServer/Gameplay/Rules/Renewal/RenewalBasicAttackRules.cs`):
+
+1. `status_base_atk` (`status.cpp:2424`) - `batk` formula (Dagger/fists are not
+   DEX-flagged weapon types).
 2. `battle_calc_damage_parts` (`battle.cpp:3889`) - `statusAtk = 2*batk`
-   (doubled), `weaponAtk` from `battle_calc_base_weapon_attack`, `equipAtk`/
-   `masteryAtk` both correctly 0 for a fresh Novice with no eatk-granting items
-   or weapon-mastery skills (not approximated as 0 - traced to specific
-   skill-level-gated no-ops in `battle_addmastery`, `battle.cpp:2277`).
-3. `battle_calc_base_weapon_attack` (`battle.cpp:2443`) - `atkmin/atkmax` from
-   `wa.atk` (= item Attack at refine 0) +/- variance (`5*atk*wlv/100`) +
-   STR-based `base_stat_bonus` (`atk*STR/200`), then `rnd_value(atkmin,atkmax)`,
-   then `battle_calc_sizefix` (`battle.cpp:2427`): `damage * atkmods[size] / 100`.
+   (doubled, unconditionally - unarmed included), `weaponAtk` from
+   `battle_calc_base_weapon_attack`, `equipAtk`/`masteryAtk` both correctly 0
+   for a fresh Novice with no eatk-granting items or weapon-mastery skills.
+3. `battle_calc_base_weapon_attack` (`battle.cpp:2443`) - when no weapon is
+   equipped, its own `if (sd && sd->equip_index[type] >= 0 ...)` guard
+   (`battle.cpp:2453`) is false, leaving `atkmin=atkmax=status->watk=0` (an
+   unarmed PC's `rhw.atk` is never populated by the equipment-parse loop) - so
+   `weaponAtk` collapses to exactly 0 through the SAME function, not a separate
+   code path. When a weapon IS equipped: `atkmin/atkmax` from `wa.atk` (= item
+   Attack at refine 0) +/- variance (`5*atk*wlv/100`) + STR-based
+   `base_stat_bonus` (`atk*STR/200`), then `rnd_value(atkmin,atkmax)`, then
+   `battle_calc_sizefix` (`battle.cpp:2427`): `damage * atkmods[size] / 100`.
 4. `wd.damage = statusAtk + weaponAtk + equipAtk + percentAtk`, `+= masteryAtk`.
-5. `battle_calc_defense_reduction` (`battle.cpp:4720`) - identical RE DEF formula
-   and monster soft-DEF (`def2 = floor((Level+Vit)/2)`) the unarmed calculator
-   already implements; reused unchanged.
-6. `battle_calc_attack` (`battle.cpp:6766`) - damage < 1 is a miss (0 damage),
-   same rule the unarmed calculator already implements.
+5. `battle_calc_defense_reduction` (`battle.cpp:4720`) - RE DEF formula and
+   monster soft-DEF (`def2 = floor((Level+Vit)/2)`), identical for both cases.
+6. `battle_calc_attack` (`battle.cpp:6766`) - damage < 1 is a miss (0 damage).
 
 **Size-fix ambiguity, resolved by pinned data default, not by capture-matching**:
 `db/re/size_fix.yml` has no `Dagger` row (only Knuckle/Whip carry entries). The
@@ -666,8 +675,7 @@ plumbing in the pinned snapshot; the YAML file's own header comment states the
 column default is 100 for every unlisted weapon/size pair, which is also the
 only value consistent with real gameplay (a Dagger dealing zero damage to every
 target of an unlisted size would be an obvious live-game bug). `atkmods[SZ_*]`
-is therefore treated as 100 (no-op) for Dagger against any target size,
-documented as a data-default resolution, not a capture-fitted constant -
+is therefore treated as 100 (no-op) for Dagger against any target size -
 `MobDefinition` gets no `Size` field for this slice since the modifier is a
 no-op regardless of target size for this weapon type.
 
@@ -677,28 +685,86 @@ Already present and reused unchanged: `EffectiveCharacterStats` (STR/AGI/VIT/
 INT/DEX/LUK), `MobDefinition.Defense/Level/Vit`, the RE DEF-reduction formula,
 `WeaponItemDefinition.Attack/WeaponLevel`, `CharacterEquipmentSnapshot`
 (live-maintained per session, rebuilt only after confirmed persistence),
-`EquippedWeaponResolver` (already existed, previously only consumed by
+`EquippedWeaponResolver` (previously only consumed by
 `SendSelfWeaponAppearanceAsync` for the 0x01D7 LOOK_WEAPON packet - now also
 consumed by the attack path). No new authoritative input was missing; this was
 purely a missing combat-formula/dispatch gap, not a data gap.
 
-### Architecture
+## Gameplay ruleset selection (Renewal / PreRenewal composition boundary)
 
-`WeaponAttackCalculator.CalculateWeaponNoviceAttack` (new file, sibling to
-`BasicAttackCalculator`) implements the traced RENEWAL PC weapon path.
-`MonsterCombatCoordinator.Attack` gained a `WeaponItemDefinition? equippedWeapon`
-parameter and dispatches to `WeaponAttackCalculator` when non-null, otherwise the
-existing `BasicAttackCalculator` - no parallel combat system, no itemId-specific
-branching. `MapClientSession.HandleIroAttackRequestAsync` resolves the CURRENT
-equipped weapon through the same `EquippedWeaponResolver` path
-`SendSelfWeaponAppearanceAsync` already used (never `ClientViewId`/LOOK_WEAPON,
-never cached across attacks), so a same-session equip/unequip changes the very
-next attack's calculation with no reconnect and no coordinator-side cache to
-invalidate. The weapon-ATK roll is injectable (`Func<int,int,int> rollWeaponAtk`,
-same pattern as `QuestDropResolver`'s injectable RNG) so tests can pin it
-deterministically; production defaults to `Random.Shared`.
+Athena.NET currently implements **RENEWAL gameplay only**, because the current
+official iRO client is the only live target combat mechanics can be validated
+against. Renewal-specific formulas must not leak into general MapServer
+orchestration (`MapClientSession`, `MonsterCombatCoordinator`, inventory/
+equipment ownership, monster HP/death handling, quest/drop handling) - those
+classes depend only on ruleset-agnostic interfaces under
+`src/MapServer/Gameplay/Rules/`.
+
+### Folder/namespace layout
+
+```text
+src/MapServer/Gameplay/Rules/
+    RagnarokRuleSet.cs        - enum { Renewal, PreRenewal } (domain value only)
+    GameplayOptions.cs        - RuleSet selection, sourced from MapConfig
+    GameplayRulesFactory.cs   - the ONE place ruleset -> implementations is decided
+    IBasicAttackRules.cs      - ruleset-agnostic basic-melee-attack contract
+    BasicAttackContext.cs     - authoritative inputs (attacker stats/level, optional
+                                 equipped weapon, target) - never client-supplied state
+    BasicAttackDamageResult.cs
+    Renewal/
+        RenewalBasicAttackRules.cs   - IBasicAttackRules impl; owns the pinned-source trace
+        WeaponAttackCalculator.cs    - internal pure-math helper RenewalBasicAttackRules uses
+    PreRenewal/                      - NOT created yet; see below
+```
+
+`PreRenewal/` is intentionally not created as an empty folder (git does not track
+empty directories, and an empty placeholder folder would need a stub file to force
+tracking, which the task explicitly forbids). The convention is documented here
+instead: any future Pre-Renewal implementation belongs under
+`src/MapServer/Gameplay/Rules/PreRenewal/`, registered from
+`GameplayRulesFactory.Create`'s `RagnarokRuleSet.PreRenewal` branch, without
+touching `IBasicAttackRules`, `MonsterCombatCoordinator`, or `MapClientSession`.
+
+### Composition root and configuration
+
+This codebase has no `Microsoft.Extensions.DependencyInjection` container -
+`MapServerApp.RunAsync` (`src/MapServer/Startup/MapServerApp.cs`) and
+`MapServerWorld.Build` (`src/MapServer/World/MapServerWorld.cs`) are the existing
+manual composition roots, matching the pattern the rest of MapServer startup
+already uses (`new X(...)` chains, not a service collection). `GameplayOptions.
+RuleSet` is selected once there and threaded down:
+
+```text
+map_athena.conf "gameplay_ruleset: Renewal"
+    -> MapConfigLoader (RagnarokRuleSet.TryParse; unrecognized/missing -> Renewal default)
+    -> MapConfig.GameplayRuleSet
+    -> MapServerApp.RunAsync builds GameplayOptions { RuleSet = mergedConfig.GameplayRuleSet }
+    -> MapServerWorld.Build(gameplayOptions: ...)
+    -> GameplayRulesFactory.Create(options) -> IBasicAttackRules
+    -> new MonsterCombatCoordinator(monsters, questDrops, basicAttackRules)
+```
+
+`GameplayRulesFactory.Create` is a plain `switch` on `RagnarokRuleSet`:
+`Renewal` returns `new RenewalBasicAttackRules()`; `PreRenewal` throws
+`NotSupportedException("Pre-Renewal gameplay rules are not implemented.")`. There
+is no silent fallback - selecting an unimplemented ruleset fails MapServer startup
+loudly (composition happens before the TCP listener starts accepting connections).
+
+`MonsterCombatCoordinator` depends on `IBasicAttackRules` only and forwards a
+`BasicAttackContext` (attacker stats/level, the CURRENT authoritative equipped
+weapon or null, target) into `Calculate` - it never asks which ruleset is active.
+`MapClientSession.HandleIroAttackRequestAsync` resolves the equipped weapon
+through the same `EquippedWeaponResolver` path `SendSelfWeaponAppearanceAsync`
+already used (never `ClientViewId`/LOOK_WEAPON, never cached across attacks), so
+a same-session equip/unequip changes the very next attack's calculation with no
+reconnect and no coordinator-side cache to invalidate - `MapClientSession` itself
+selects nothing Renewal-specific.
+
+The weapon-ATK roll is injectable (`RenewalBasicAttackRules`'s constructor takes
+an optional `Func<int,int,int> rollWeaponAtk`, forwarded into
+`WeaponAttackCalculator`, same pattern as `QuestDropResolver`'s injectable RNG)
+so tests can pin it deterministically; production defaults to `Random.Shared`.
 
 Live stock-iRO validation (equipped Knife vs G_PORING; unequip mid-session
-returning to unarmed) is the next step, pending a live test session - the
-capture's observed 37 damage/hit remains validation evidence only, not an input
-to the implementation.
+returning to unarmed) remains the next live-test step - the capture's observed 37
+damage/hit remains validation evidence only, not an input to the implementation.

@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Net;
 using System.Net.Sockets;
+using Athena.Net.MapServer.Gameplay.Rules;
 using Athena.Net.MapServer.Logging;
 
 namespace Athena.Net.MapServer.Config;
@@ -21,6 +22,7 @@ public static class MapConfigLoader
         var consoleSilent = 0;
         var consoleLogFilePath = "./log/map-msg_log.log";
         var timestampFormat = string.Empty;
+        var gameplayRuleSet = RagnarokRuleSet.Renewal;
 
         if (!File.Exists(path))
         {
@@ -39,6 +41,7 @@ public static class MapConfigLoader
                 ConsoleSilent = consoleSilent,
                 ConsoleLogFilePath = consoleLogFilePath,
                 TimestampFormat = timestampFormat,
+                GameplayRuleSet = gameplayRuleSet,
             };
         }
 
@@ -128,6 +131,17 @@ public static class MapConfigLoader
             {
                 timestampFormat = value;
             }
+            else if (key.Equals("gameplay_ruleset", StringComparison.OrdinalIgnoreCase))
+            {
+                if (Enum.TryParse<RagnarokRuleSet>(value, ignoreCase: true, out var parsed))
+                {
+                    gameplayRuleSet = parsed;
+                }
+                else
+                {
+                    MapLogger.Warning($"Unrecognized gameplay_ruleset value '{value}'; using default ({gameplayRuleSet}).");
+                }
+            }
         }
 
         return new MapConfig
@@ -144,6 +158,7 @@ public static class MapConfigLoader
             ConsoleSilent = consoleSilent,
             ConsoleLogFilePath = consoleLogFilePath,
             TimestampFormat = timestampFormat,
+            GameplayRuleSet = gameplayRuleSet,
         };
     }
 
