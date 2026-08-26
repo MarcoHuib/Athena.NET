@@ -19,12 +19,32 @@ public sealed class MapClientSessionUseItemTests
     private const uint AccountId = 2_000_000;
     private const uint CharId = 9;
 
+    // Persists equip/unequip mutations against the DurableIds present at setup time, matching
+    // the established RecordingInventoryListPersistence pattern in
+    // MapClientSessionEquipmentMutationTests/MapClientSessionMonsterCombatTests. Must succeed
+    // for a DurableId that legitimately existed in the initial snapshot - returning false
+    // unconditionally (the prior state of this fake) makes CharacterEquipmentMutationService.
+    // UnequipAsync fail, so MapClientSession sends the 9-byte failure ACK instead of the 15-byte
+    // 0x01D7 appearance packet a test may be waiting on, which then hangs on ReadExactlyAsync
+    // waiting for bytes the server never sends.
     private sealed class RecordingInventoryListPersistence(CharacterInventorySnapshot initial) : ICharacterInventoryListPersistence
     {
+        private readonly HashSet<uint> _knownDurableIds = [.. initial.Items.Select(i => i.DurableId)];
         private CharacterInventorySnapshot _current = initial;
+        public List<(uint DurableId, uint Equip)> EquipCalls { get; } = [];
+
         public Task<CharacterInventoryReadResult> GetInventoryAsync(uint a, uint c, CancellationToken t) =>
             Task.FromResult(CharacterInventoryReadResult.Success(_current));
-        public Task<bool> SetItemEquipAsync(uint a, uint c, uint durableId, uint equip, CancellationToken t) => Task.FromResult(false);
+
+        public Task<bool> SetItemEquipAsync(uint a, uint c, uint durableId, uint equip, CancellationToken t)
+        {
+            EquipCalls.Add((durableId, equip));
+            if (!_knownDurableIds.Contains(durableId)) return Task.FromResult(false);
+
+            var items = _current.Items.Select(i => i.DurableId == durableId ? i with { Equip = equip } : i).ToList();
+            _current = new CharacterInventorySnapshot(items);
+            return Task.FromResult(true);
+        }
     }
 
     // Simulates CharServer's real durable-row behavior: consuming decrements (or deletes,
@@ -94,6 +114,13 @@ public sealed class MapClientSessionUseItemTests
         var buffer = new byte[length];
         await stream.ReadExactlyAsync(buffer);
         return buffer;
+    }
+
+    private static async Task<byte[]> ReadDynamic(Stream stream)
+    {
+        var header = await ReadExact(stream, 4);
+        var length = BinaryPrimitives.ReadUInt16LittleEndian(header.AsSpan(2));
+        return [.. header, .. await ReadExact(stream, length - 4)];
     }
 
     private static CharacterInventorySnapshot ThreeStarterRowsPlusFirstAidBox() => new(
@@ -305,6 +332,54 @@ public sealed class MapClientSessionUseItemTests
         var unequipAck = await ReadExact(stream, PacketConstants.IroZcReqTakeoffEquipAckLength);
         Assert.Equal((short)PacketConstants.IroZcReqTakeoffEquipAck, BinaryPrimitives.ReadInt16LittleEndian(unequipAck));
         Assert.Null(session.Equipment!.RightHandItemId);
+
+        client.Close();
+        await run.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    // Proves that after opening a First Aid Box, the newly modeled item types it grants
+    // (HealingItemDefinition: BluePotion/FreshMilk, DelayConsumeItemDefinition: NoviceMagnifier)
+    // survive a reconnect/full inventory serialization (0x0B08/0x0B09/0x0B0B, the SAME
+    // SendSelfInventoryAsync path a real reconnect exercises) without throwing and with the
+    // correct pinned item_type byte - IT_HEALING=0, IT_DELAYCONSUME=11 - never the
+    // NotSupportedException ItemType() previously threw for these two types.
+    [Fact]
+    public async Task ReconnectFullInventorySerialization_HealingAndDelayConsumeItemsSerializeWithCorrectItemType()
+    {
+        var reconnectInventory = new CharacterInventorySnapshot(
+        [
+            new CharacterInventoryItem(DurableId: 1, SlotIndex: 0, 11518, 10, 0, true, 0, 0, 0), // BluePotion (Healing)
+            new CharacterInventoryItem(DurableId: 2, SlotIndex: 1, 11614, 20, 0, true, 0, 0, 0), // FreshMilk (Healing)
+            new CharacterInventoryItem(DurableId: 3, SlotIndex: 2, 12325, 15, 0, true, 0, 0, 0), // NoviceMagnifier (DelayConsume)
+        ]);
+        var (client, stream, session, run, persistence) = await SetupAsync(reconnectInventory);
+        using var _ = client;
+
+        // Trigger the SAME full inventory-list burst a reconnect sends (0x007D map-loaded).
+        await stream.WriteAsync(new byte[] { 0x7d, 0x00, 0xaa });
+
+        await ReadExact(stream, 15); // 0x01D7 self weapon look (unarmed - nothing equipped)
+        await ReadExact(stream, 6); // 0x0B08 inventoryStart
+        var normalList = await ReadDynamic(stream); // 0x0B09 normal list (all three rows - none is equippable)
+        await ReadExact(stream, 4); // 0x0B0B inventoryEnd (no 0x0B39 - nothing equippable)
+
+        Assert.Equal((short)0x0b09, BinaryPrimitives.ReadInt16LittleEndian(normalList));
+        const int NormalItemLength = 34;
+        const int NormalListHeaderLength = 5;
+        Assert.Equal(NormalListHeaderLength + 3 * NormalItemLength, normalList.Length);
+
+        var entries = new (uint ItemId, byte ItemType)[3];
+        for (var i = 0; i < 3; i++)
+        {
+            var entry = normalList.AsSpan(NormalListHeaderLength + i * NormalItemLength);
+            entries[i] = (BinaryPrimitives.ReadUInt32LittleEndian(entry[2..]), entry[6]);
+        }
+
+        Assert.Contains(entries, e => e.ItemId == 11518 && e.ItemType == 0);  // BluePotion, IT_HEALING
+        Assert.Contains(entries, e => e.ItemId == 11614 && e.ItemType == 0);  // FreshMilk, IT_HEALING
+        Assert.Contains(entries, e => e.ItemId == 12325 && e.ItemType == 11); // NoviceMagnifier, IT_DELAYCONSUME
+
+        Assert.Equal(3, session.Inventory!.Items.Count); // Full reload succeeded - nothing dropped.
 
         client.Close();
         await run.WaitAsync(TimeSpan.FromSeconds(5));

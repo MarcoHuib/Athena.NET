@@ -1163,6 +1163,24 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
             return;
         }
 
+        // Fail closed on an incomplete container implementation: FirstaidBox10 (23485), for
+        // example, has a pinned getitem grant for 23486 ("Firstaid_Box_15"), which is
+        // intentionally not yet generated. Consuming the container and granting only the
+        // resolvable subset would silently destroy the source item and leave the character
+        // short the ungrantable one - never acceptable. Every grant must resolve BEFORE any
+        // consume/persist/notify happens, so an unimplemented container is rejected outright
+        // (no consume, no ack, no partial grants) while a fully-generated container (e.g.
+        // FirstAidBox/23484) remains fully executable.
+        foreach (var grant in usable.Grants)
+        {
+            if (!GeneratedItems.ById.ContainsKey(grant.ItemId))
+            {
+                MapLogger.Warning(
+                    $"[iRO MAP DEBUG] Item-use rejected: itemId={row.ItemId} has an unimplemented grant itemId={grant.ItemId}; container use is out of scope until all grants are generated.");
+                return;
+            }
+        }
+
         var inventorySession = new CharacterInventorySession(_accountId, _charId, _inventoryPersistence);
         var consumeResult = await inventorySession.ConsumeItemAsync(row.DurableId, 1, cancellationToken);
         if (!consumeResult.Success)
@@ -1218,7 +1236,11 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
 
             var grantSlotIndex = _inventory.Items.Single(i => i.DurableId == grantResult.DurableId).SlotIndex;
             var grantClientIndex = (ushort)(grantSlotIndex + 2);
-            var grantPickupPacket = IroMonsterCombatPackets.BuildItemPickupAck(grantClientIndex, (ushort)grant.Amount, grantedItem.Id, itemType: 3);
+            // Pinned clif_additem (clif.cpp): p.nameid = client_nameid(actual item), p.type =
+            // itemtype(actual item) - never a hardcoded constant. Uses the SAME item-type mapper
+            // IroInventoryListPackets uses for full-inventory serialization, so a grant's pickup
+            // packet and its later reconnect/full-list packet can never disagree on item type.
+            var grantPickupPacket = IroMonsterCombatPackets.BuildItemPickupAck(grantClientIndex, (ushort)grant.Amount, grantedItem.ClientViewId, IroInventoryListPackets.ItemType(grantedItem));
             MapLogger.Info($"[iRO MAP DEBUG] Sending 0x0B41 for item-use grant itemId={grant.ItemId} count={grant.Amount} clientIndex={grantClientIndex}");
             await WriteAsync(grantPickupPacket, cancellationToken);
         }

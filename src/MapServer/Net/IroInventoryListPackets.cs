@@ -150,14 +150,19 @@ internal static class IroInventoryListPackets
 
     // itemtype() (clif.cpp:109-118): the item_db type enum, with two remapped special cases
     // this domain model does not yet represent (IT_SHADOWGEAR, IT_PETEGG) - neither applies to
-    // any currently-generated item, so only the direct Weapon/Armor/Etc/Usable mapping is
-    // implemented; extend when a traced item needs the remapped cases.
-    private static byte ItemType(ItemDefinition definition) => definition switch
+    // any currently-generated item, so only the direct Weapon/Armor/Etc/Usable/Healing/
+    // DelayConsume mapping is implemented; extend when a traced item needs the remapped cases.
+    // Internal (not private): shared with any other packet builder that must report a real
+    // item's pinned item_type byte (e.g. IroMonsterCombatPackets.BuildItemPickupAck callers) -
+    // one mapping, never duplicated into a second switch that could silently diverge from this one.
+    internal static byte ItemType(ItemDefinition definition) => definition switch
     {
-        WeaponItemDefinition => 5, // IT_WEAPON (mmo.hpp:228)
-        ArmorItemDefinition => 4,  // IT_ARMOR (mmo.hpp:227)
-        UsableItemDefinition => 2, // IT_USABLE (mmo.hpp:225)
-        EtcItemDefinition => 3,    // IT_ETC (mmo.hpp:226)
+        HealingItemDefinition => 0,      // IT_HEALING (mmo.hpp:224)
+        WeaponItemDefinition => 5,       // IT_WEAPON (mmo.hpp:228)
+        ArmorItemDefinition => 4,        // IT_ARMOR (mmo.hpp:227)
+        UsableItemDefinition => 2,       // IT_USABLE (mmo.hpp:225)
+        EtcItemDefinition => 3,          // IT_ETC (mmo.hpp:226)
+        DelayConsumeItemDefinition => 11, // IT_DELAYCONSUME (mmo.hpp:234)
         _ => throw new NotSupportedException($"{definition.GetType().Name} has no modeled itemtype() mapping."),
     };
 }
