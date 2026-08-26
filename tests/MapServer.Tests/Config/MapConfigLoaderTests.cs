@@ -57,16 +57,29 @@ public sealed class MapConfigLoaderTests
         Assert.Equal(RagnarokRuleSet.PreRenewal, config.GameplayRuleSet);
     }
 
+    // Unlike every other key in this loader, an explicitly present but unrecognized
+    // gameplay_ruleset value must FAIL config loading, not silently fall back to
+    // the default - a typo'd value must never quietly run as Renewal (masking the
+    // mistake) or as some other unintended enum value.
     [Fact]
-    public void Load_UnrecognizedGameplayRuleSetValue_FallsBackToDefault_NotAnException()
+    public void Load_UnrecognizedGameplayRuleSetValue_Throws()
     {
         var tempDir = CreateTempDir();
         var path = Path.Combine(tempDir, "map_athena.conf");
         File.WriteAllText(path, "gameplay_ruleset: SomeFutureRuleSet\n");
 
-        var config = MapConfigLoader.Load(path);
+        var ex = Assert.Throws<InvalidOperationException>(() => MapConfigLoader.Load(path));
+        Assert.Contains("SomeFutureRuleSet", ex.Message);
+    }
 
-        Assert.Equal(RagnarokRuleSet.Renewal, config.GameplayRuleSet);
+    [Fact]
+    public void Load_EmptyGameplayRuleSetValue_Throws()
+    {
+        var tempDir = CreateTempDir();
+        var path = Path.Combine(tempDir, "map_athena.conf");
+        File.WriteAllText(path, "gameplay_ruleset: \n");
+
+        Assert.Throws<InvalidOperationException>(() => MapConfigLoader.Load(path));
     }
 
     [Fact]

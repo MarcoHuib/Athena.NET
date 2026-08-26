@@ -707,6 +707,10 @@ src/MapServer/Gameplay/Rules/
     RagnarokRuleSet.cs        - enum { Renewal, PreRenewal } (domain value only)
     GameplayOptions.cs        - RuleSet selection, sourced from MapConfig
     GameplayRulesFactory.cs   - the ONE place ruleset -> implementations is decided
+    GameplayRuleServices.cs   - the composed bundle MapServerWorld.Build receives
+                                 (currently just BasicAttackRules; future independently
+                                 scoped rule interfaces are added here, not folded into
+                                 one giant IGameRules interface)
     IBasicAttackRules.cs      - ruleset-agnostic basic-melee-attack contract
     BasicAttackContext.cs     - authoritative inputs (attacker stats/level, optional
                                  equipped weapon, target) - never client-supplied state
@@ -714,41 +718,54 @@ src/MapServer/Gameplay/Rules/
     Renewal/
         RenewalBasicAttackRules.cs   - IBasicAttackRules impl; owns the pinned-source trace
         WeaponAttackCalculator.cs    - internal pure-math helper RenewalBasicAttackRules uses
-    PreRenewal/                      - NOT created yet; see below
+    PreRenewal/
+        README.md                    - documents the convention; NO C# implementation yet
 ```
 
-`PreRenewal/` is intentionally not created as an empty folder (git does not track
-empty directories, and an empty placeholder folder would need a stub file to force
-tracking, which the task explicitly forbids). The convention is documented here
-instead: any future Pre-Renewal implementation belongs under
-`src/MapServer/Gameplay/Rules/PreRenewal/`, registered from
-`GameplayRulesFactory.Create`'s `RagnarokRuleSet.PreRenewal` branch, without
-touching `IBasicAttackRules`, `MonsterCombatCoordinator`, or `MapClientSession`.
+`PreRenewal/` holds only a `README.md` - git does not track empty directories,
+and an empty placeholder folder would need a stub C# file to force tracking,
+which is explicitly not wanted. The README documents that any future Pre-Renewal
+implementation belongs there, registered from `GameplayRulesFactory.Create`'s
+`RagnarokRuleSet.PreRenewal` branch, without touching `IBasicAttackRules`,
+`GameplayRuleServices`, `MonsterCombatCoordinator`, or `MapClientSession`.
 
 ### Composition root and configuration
 
 This codebase has no `Microsoft.Extensions.DependencyInjection` container -
-`MapServerApp.RunAsync` (`src/MapServer/Startup/MapServerApp.cs`) and
-`MapServerWorld.Build` (`src/MapServer/World/MapServerWorld.cs`) are the existing
-manual composition roots, matching the pattern the rest of MapServer startup
-already uses (`new X(...)` chains, not a service collection). `GameplayOptions.
-RuleSet` is selected once there and threaded down:
+`MapServerApp.RunAsync` (`src/MapServer/Startup/MapServerApp.cs`) is the ONE
+composition root that decides gameplay ruleset selection. `MapServerWorld.Build`
+(`src/MapServer/World/MapServerWorld.cs`) receives an already-composed
+`GameplayRuleServices` bundle as a **required** parameter - it never constructs
+`GameplayOptions`, never references `RagnarokRuleSet`, and never calls
+`GameplayRulesFactory.Create` itself, so it stays entirely unaware of which
+ruleset produced the bundle it was handed:
 
 ```text
 map_athena.conf "gameplay_ruleset: Renewal"
-    -> MapConfigLoader (RagnarokRuleSet.TryParse; unrecognized/missing -> Renewal default)
+    -> MapConfigLoader (RagnarokRuleSet.TryParse; key ABSENT -> Renewal default;
+       key PRESENT but unrecognized -> throws InvalidOperationException, config load fails)
     -> MapConfig.GameplayRuleSet
     -> MapServerApp.RunAsync builds GameplayOptions { RuleSet = mergedConfig.GameplayRuleSet }
-    -> MapServerWorld.Build(gameplayOptions: ...)
-    -> GameplayRulesFactory.Create(options) -> IBasicAttackRules
-    -> new MonsterCombatCoordinator(monsters, questDrops, basicAttackRules)
+    -> GameplayRulesFactory.Create(options) -> GameplayRuleServices
+    -> MapServerWorld.Build(gameplayRules: services)
+    -> new MonsterCombatCoordinator(monsters, questDrops, gameplayRules.BasicAttackRules)
 ```
 
 `GameplayRulesFactory.Create` is a plain `switch` on `RagnarokRuleSet`:
-`Renewal` returns `new RenewalBasicAttackRules()`; `PreRenewal` throws
-`NotSupportedException("Pre-Renewal gameplay rules are not implemented.")`. There
-is no silent fallback - selecting an unimplemented ruleset fails MapServer startup
-loudly (composition happens before the TCP listener starts accepting connections).
+`Renewal` returns `new GameplayRuleServices(new RenewalBasicAttackRules())`;
+`PreRenewal` throws `NotSupportedException("Pre-Renewal gameplay rules are not
+implemented.")`. `PreRenewal` DOES parse successfully as a config value (it is a
+real, valid `RagnarokRuleSet` member) - the failure happens at composition, not
+at config-parse time. There is no silent fallback anywhere in this chain:
+- An absent `gameplay_ruleset` key defaults to Renewal (the same "use the field
+  default" convention every other optional key in `map_athena.conf` follows).
+- A PRESENT but unrecognized value (a typo, or a future enum member the running
+  binary doesn't know about) throws `InvalidOperationException` out of
+  `MapConfigLoader.Load` itself - config loading fails outright, it does not
+  quietly resolve to Renewal or any other value.
+- Selecting the real, valid `PreRenewal` value fails MapServer composition
+  loudly via `GameplayRulesFactory.Create`'s `NotSupportedException` (composition
+  happens before the TCP listener starts accepting connections).
 
 `MonsterCombatCoordinator` depends on `IBasicAttackRules` only and forwards a
 `BasicAttackContext` (attacker stats/level, the CURRENT authoritative equipped
@@ -758,7 +775,14 @@ through the same `EquippedWeaponResolver` path `SendSelfWeaponAppearanceAsync`
 already used (never `ClientViewId`/LOOK_WEAPON, never cached across attacks), so
 a same-session equip/unequip changes the very next attack's calculation with no
 reconnect and no coordinator-side cache to invalidate - `MapClientSession` itself
-selects nothing Renewal-specific.
+selects nothing Renewal-specific. `EquippedWeaponResolution.UnknownItem` and
+`NonWeaponInWeaponSlot` are authoritative-state/data invariant FAILURES (an
+equipped item id absent from the generated item registry, or a non-weapon item
+resolved into the weapon slot) - `HandleIroAttackRequestAsync` treats either as
+grounds to reject/abort the attack outright (logged, no combat calculation runs,
+no wire response is sent at all), never as a legitimate unarmed state. Only
+`EquippedWeaponResolution.Unarmed` may enter the unarmed `RenewalBasicAttackRules`
+path.
 
 The weapon-ATK roll is injectable (`RenewalBasicAttackRules`'s constructor takes
 an optional `Func<int,int,int> rollWeaponAtk`, forwarded into

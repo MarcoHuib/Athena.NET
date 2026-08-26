@@ -32,9 +32,13 @@ public static class MapServerApp
         // Gameplay.RuleSet is selected ONCE here, at the composition root - see
         // GameplayRulesFactory's own doc comment for why an unsupported ruleset must
         // fail startup loudly instead of being silently downgraded to Renewal.
+        // MapServerWorld.Build receives the already-composed GameplayRuleServices
+        // bundle and never itself inspects GameplayOptions/RagnarokRuleSet or calls
+        // GameplayRulesFactory - this is the one and only place that decision is made.
         var gameplayOptions = new GameplayOptions { RuleSet = mergedConfig.GameplayRuleSet };
         MapLogger.Status($"Gameplay ruleset: {gameplayOptions.RuleSet}");
-        var world = MapServerWorld.Build(gameplayOptions: gameplayOptions);
+        var gameplayRules = GameplayRulesFactory.Create(gameplayOptions);
+        var world = MapServerWorld.Build(gameplayRules);
         var connector = new CharServerConnector(configStore);
         var mapServer = new MapTcpServer(configStore, connector, world);
 

@@ -133,13 +133,18 @@ public static class MapConfigLoader
             }
             else if (key.Equals("gameplay_ruleset", StringComparison.OrdinalIgnoreCase))
             {
-                if (Enum.TryParse<RagnarokRuleSet>(value, ignoreCase: true, out var parsed))
+                // Unlike every other key in this loader, an explicitly present but
+                // unrecognized value here must NOT silently fall back to the default -
+                // a typo'd "gameplay_ruleset: Renewel" must never quietly run as Renewal
+                // (masking the operator's mistake) and must never quietly resolve to
+                // PreRenewal (which is a real enum value but architecturally
+                // unimplemented - see GameplayRulesFactory). PreRenewal itself DOES parse
+                // successfully here; it fails later at composition (GameplayRulesFactory),
+                // not at config-parse time.
+                if (!Enum.TryParse<RagnarokRuleSet>(value, ignoreCase: true, out gameplayRuleSet))
                 {
-                    gameplayRuleSet = parsed;
-                }
-                else
-                {
-                    MapLogger.Warning($"Unrecognized gameplay_ruleset value '{value}'; using default ({gameplayRuleSet}).");
+                    throw new InvalidOperationException(
+                        $"Invalid gameplay_ruleset value '{value}' in '{path}'. Valid values: {string.Join(", ", Enum.GetNames<RagnarokRuleSet>())}.");
                 }
             }
         }

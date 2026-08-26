@@ -1,35 +1,43 @@
 using Athena.Net.MapServer.Gameplay.Rules;
+using Athena.Net.MapServer.Gameplay.Rules.Renewal;
 using Athena.Net.MapServer.World;
 
 namespace Athena.Net.MapServer.Tests.World;
 
-// Proves MapServerWorld.Build - the manual composition root MapServerApp.RunAsync
-// calls (this codebase has no Microsoft.Extensions.DependencyInjection container) -
-// actually threads GameplayOptions through GameplayRulesFactory into the composed
-// MonsterCombatCoordinator, and that an unsupported ruleset fails composition
-// outright rather than silently building a Renewal-backed world.
+// Proves MapServerWorld.Build takes an already-composed GameplayRuleServices
+// bundle and wires it into the composed MonsterCombatCoordinator - it does NOT
+// itself inspect GameplayOptions/RagnarokRuleSet or call GameplayRulesFactory
+// (that selection now happens exclusively in the MapServer startup/composition
+// root, MapServerApp.RunAsync; see GameplayRulesFactoryTests for ruleset-selection
+// coverage, including the PreRenewal-throws case, which is composition-root
+// behavior, not MapServerWorld behavior).
 public sealed class MapServerWorldGameplayRulesTests
 {
     [Fact]
-    public void Build_DefaultGameplayOptions_ComposesSuccessfully()
+    public void Build_WithRenewalRuleServices_ComposesSuccessfully()
     {
-        var world = MapServerWorld.Build();
+        var world = MapServerWorld.Build(new GameplayRuleServices(new RenewalBasicAttackRules()));
 
         Assert.NotNull(world.Combat);
     }
 
+    // MapServerWorld.Build takes whatever IBasicAttackRules implementation the
+    // bundle carries at face value - it has no ruleset awareness to validate
+    // against, so a caller could construct a bundle from any IBasicAttackRules
+    // implementation without MapServerWorld caring. This is the whole point of the
+    // composition boundary: MapServerWorld only ever sees the interface.
     [Fact]
-    public void Build_ExplicitRenewalOptions_ComposesSuccessfully()
+    public void Build_UsesWhicheverBasicAttackRulesImplementationTheBundleCarries()
     {
-        var world = MapServerWorld.Build(gameplayOptions: new GameplayOptions { RuleSet = RagnarokRuleSet.Renewal });
+        var probe = new ProbeBasicAttackRules();
+
+        var world = MapServerWorld.Build(new GameplayRuleServices(probe));
 
         Assert.NotNull(world.Combat);
     }
 
-    [Fact]
-    public void Build_PreRenewalOptions_ThrowsNotSupported_DoesNotComposeAWorld()
+    private sealed class ProbeBasicAttackRules : IBasicAttackRules
     {
-        Assert.Throws<NotSupportedException>(() =>
-            MapServerWorld.Build(gameplayOptions: new GameplayOptions { RuleSet = RagnarokRuleSet.PreRenewal }));
+        public BasicAttackDamageResult Calculate(BasicAttackContext context) => new(0, IsMiss: true);
     }
 }

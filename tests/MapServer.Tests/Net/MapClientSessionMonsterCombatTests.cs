@@ -421,4 +421,46 @@ public sealed class MapClientSessionMonsterCombatTests
         client.Close();
         await run.WaitAsync(TimeSpan.FromSeconds(5));
     }
+
+    // Architecture-hardening requirement: EquippedWeaponResolution.NonWeaponInWeaponSlot (and,
+    // by the same reasoning, UnknownItem) is an authoritative-state/data invariant FAILURE, not a
+    // legitimate unarmed state. This proves the attack is rejected/aborted outright over the real
+    // wire path - no combat calculation runs and no wire response is sent at all, exactly like an
+    // unresolvable target - rather than silently degrading into an unarmed attack.
+    [Fact]
+    public async Task Attack_NonWeaponItemInRightHandSlot_RejectsAttack_NoWireResponseAtAll()
+    {
+        var inventoryPersistence = new RecordingInventoryPersistence();
+        // Wood (6008, EtcItemDefinition) is never equippable in real pinned item_db data; a row
+        // carrying Equip=EQP_HAND_R for it can only represent corrupted/invariant-violating
+        // authoritative state, which is exactly the case this test exercises.
+        var invalidInventory = new CharacterInventorySnapshot([new CharacterInventoryItem(0, 6008, 1, 0x000002, true, 0, 0, 0)]);
+        var inventoryListPersistence = new FixedInventoryListPersistence(invalidInventory);
+        var (client, stream, session, run, target) = await SetupAsync(inventoryPersistence, CharacterQuestStatus.Active, inventoryListPersistence);
+        using var _ = client;
+
+        await stream.WriteAsync(new byte[] { 0x7d, 0x00, 0xaa });
+        // No 0x01D7 is sent (SendSelfWeaponAppearanceAsync skips it for the same
+        // NonWeaponInWeaponSlot resolution), only the inventory burst and monster spawn.
+        await ReadExact(stream, 6); // 0x0B08 inventoryStart
+        await ReadDynamic(stream); // 0x0B09 normal list (one Wood entry, since Wood is not IEquippableItemDefinition)
+        await ReadExact(stream, 4); // 0x0B0B inventoryEnd
+        var spawn = await ReadDynamic(stream);
+        var actorId = BinaryPrimitives.ReadUInt32LittleEndian(spawn.AsSpan(5));
+
+        await stream.WriteAsync(AttackPacket(actorId));
+
+        // No damage/vanish/pickup packet must ever arrive for the rejected attack. Confirm by
+        // sending a harmless ping the server always answers, and observing THAT next instead of
+        // any combat-result packet.
+        await stream.WriteAsync(new byte[] { 0x1c, 0x0b });
+        var next = await ReadExact(stream, 2);
+        Assert.Equal((short)PacketConstants.ZcPingLive, BinaryPrimitives.ReadInt16LittleEndian(next));
+
+        Assert.Equal(target.Spawn.Mob.MaxHp, target.CurrentHp); // Monster HP must be completely untouched.
+        Assert.True(target.IsAlive);
+
+        client.Close();
+        await run.WaitAsync(TimeSpan.FromSeconds(5));
+    }
 }

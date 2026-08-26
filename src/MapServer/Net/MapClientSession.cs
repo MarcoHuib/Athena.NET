@@ -1003,23 +1003,17 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
         if (_monsters is null || _combat is null || _gameplayState is null) return;
         if (!_monsters.TryGetInstance(targetActorId, _mapName, out var target) || !target.IsAlive) return;
 
-        // QuestDropResolver requires each distinct QuestId its generated rules mention to be
-        // resolved beforehand through the real persistence interface (see its own doc comment) -
-        // Athena has no materialized "all active quests" concept anywhere else either.
-        var questStates = new Dictionary<uint, CharacterQuestStatus>();
-        foreach (var rule in GeneratedQuestDrops.All)
-        {
-            if (questStates.ContainsKey(rule.QuestId)) continue;
-            questStates[rule.QuestId] = await _questPersistence.GetQuestStateAsync(_accountId, _charId, rule.QuestId, cancellationToken) ?? CharacterQuestStatus.Absent;
-        }
-
         // Resolve the CURRENT authoritative right-hand weapon through the same shared
         // EquippedWeaponResolver path SendSelfWeaponAppearanceAsync uses - never the
         // client-facing LOOK_WEAPON/ClientViewId, and never cached across attacks, so
         // a same-session equip/unequip changes the very next attack's calculation.
-        // UnknownItem/NonWeaponInWeaponSlot are data/generation invariant violations,
-        // not legitimate unarmed states - logged and treated as unarmed rather than
-        // silently guessed at (matching SendSelfWeaponAppearanceAsync's own precedent).
+        // UnknownItem/NonWeaponInWeaponSlot are authoritative-state/data invariant
+        // FAILURES (an equipped item id that isn't in the pinned item_db, or a
+        // non-weapon item resolved into the weapon slot), never legitimate unarmed
+        // states - they must never silently degrade into an unarmed attack. This
+        // attack is rejected/aborted outright: no combat calculation runs, no wire
+        // response is sent, matching this handler's existing "never fake a result"
+        // rule for an unresolvable target.
         WeaponItemDefinition? equippedWeapon = null;
         if (_equipment is { } equipment)
         {
@@ -1032,9 +1026,19 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
                 case EquippedWeaponResolution.Unarmed:
                     break;
                 default:
-                    MapLogger.Warning($"[iRO MAP DEBUG] Equipped right-hand item did not resolve to a weapon (resolution={weaponResolution.Resolution}); attacking unarmed.");
-                    break;
+                    MapLogger.Warning($"[iRO MAP DEBUG] Equipped right-hand item did not resolve to a weapon (resolution={weaponResolution.Resolution}); rejecting attack.");
+                    return;
             }
+        }
+
+        // QuestDropResolver requires each distinct QuestId its generated rules mention to be
+        // resolved beforehand through the real persistence interface (see its own doc comment) -
+        // Athena has no materialized "all active quests" concept anywhere else either.
+        var questStates = new Dictionary<uint, CharacterQuestStatus>();
+        foreach (var rule in GeneratedQuestDrops.All)
+        {
+            if (questStates.ContainsKey(rule.QuestId)) continue;
+            questStates[rule.QuestId] = await _questPersistence.GetQuestStateAsync(_accountId, _charId, rule.QuestId, cancellationToken) ?? CharacterQuestStatus.Absent;
         }
 
         var effectiveStats = _statusEffects.Recalculate(_gameplayState.State);

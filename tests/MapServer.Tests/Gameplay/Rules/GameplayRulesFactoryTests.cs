@@ -15,9 +15,9 @@ public sealed class GameplayRulesFactoryTests
     [Fact]
     public void Create_Renewal_RegistersRenewalBasicAttackRules()
     {
-        var rules = GameplayRulesFactory.Create(new GameplayOptions { RuleSet = RagnarokRuleSet.Renewal });
+        var services = GameplayRulesFactory.Create(new GameplayOptions { RuleSet = RagnarokRuleSet.Renewal });
 
-        Assert.IsType<RenewalBasicAttackRules>(rules);
+        Assert.IsType<RenewalBasicAttackRules>(services.BasicAttackRules);
     }
 
     [Fact]

@@ -24,11 +24,17 @@ public sealed record MapServerWorld(WorldMapRegistry Maps, MonsterRegistry Monst
     // data gap, not a shortcut: monster POSITIONS placed this way are a
     // documented placeholder, not real rAthena spawn-cell parity, and callers
     // must not describe them as authoritative until real GAT data exists.
-    // `gameplayOptions` defaults to Renewal (GameplayOptions' own default) because
-    // that is the only ruleset MapConfig can currently select and the only one
-    // GameplayRulesFactory implements - see GameplayRulesFactory's own doc comment
-    // for why selecting PreRenewal throws instead of silently falling back.
-    public static MapServerWorld Build(IMobSpawnCellSelector? cellSelector = null, TimeProvider? timeProvider = null, GameplayOptions? gameplayOptions = null)
+    // `gameplayRules` is an ALREADY-COMPOSED bundle from the startup/composition
+    // root (MapServerApp.RunAsync -> GameplayRulesFactory.Create). This method never
+    // inspects GameplayOptions/RagnarokRuleSet and never calls GameplayRulesFactory
+    // itself - ruleset selection has already happened by the time a
+    // GameplayRuleServices value reaches here, so this class stays entirely unaware
+    // of which ruleset is active. Required (not optional/defaulted) precisely so
+    // this method cannot quietly re-introduce a ruleset decision of its own; callers
+    // that don't care about ruleset selection (most existing tests) construct
+    // `new GameplayRuleServices(new RenewalBasicAttackRules())` directly, the same
+    // way they already construct every other dependency this method takes.
+    public static MapServerWorld Build(GameplayRuleServices gameplayRules, IMobSpawnCellSelector? cellSelector = null, TimeProvider? timeProvider = null)
     {
         var allocator = new WorldActorIdAllocator();
         var maps = WorldMapRegistry.LoadGenerated(allocator);
@@ -38,8 +44,7 @@ public sealed record MapServerWorld(WorldMapRegistry Maps, MonsterRegistry Monst
             cellSelector ?? new UnverifiedFallbackMobSpawnCellSelector(),
             timeProvider ?? TimeProvider.System);
         var questDrops = new QuestDropResolver(GeneratedQuestDrops.All);
-        var basicAttackRules = GameplayRulesFactory.Create(gameplayOptions ?? new GameplayOptions());
-        var combat = new MonsterCombatCoordinator(monsters, questDrops, basicAttackRules);
+        var combat = new MonsterCombatCoordinator(monsters, questDrops, gameplayRules.BasicAttackRules);
         return new MapServerWorld(maps, monsters, combat);
     }
 }
