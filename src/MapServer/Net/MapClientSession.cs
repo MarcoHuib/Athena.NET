@@ -419,6 +419,16 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
         }
     }
 
+    // KNOWN FUTURE CONCURRENCY-HARDENING ITEM (not addressed here - CharacterStatusEffectState's
+    // internal dictionary race was the target of this fix, and is now closed: every _statuses
+    // access is synchronized, ExpireDue's identify+remove is atomic, and Recalculate/
+    // RecalculateBeforeExpiration each read one coherent snapshot). This method itself still
+    // calls RecalculateBeforeExpiration -> ExpireDue -> Recalculate as three SEPARATELY
+    // synchronized operations with no lock spanning all three. A concurrent Start() landing
+    // between ExpireDue and the final Recalculate could theoretically produce a semantic
+    // expiration/reapply ordering race (e.g. "after" observing a status that started after
+    // "before" was captured) even though the dictionary itself can no longer throw. Revisit if
+    // this becomes observable; not changing the status architecture as part of this PR.
     private async Task ProcessDueStatusExpirationsAsync(CancellationToken cancellationToken)
     {
         var before = _gameplayState is null ? default : _statusEffects.RecalculateBeforeExpiration(_gameplayState.State);

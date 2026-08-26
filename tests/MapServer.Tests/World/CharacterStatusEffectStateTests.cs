@@ -168,4 +168,53 @@ public sealed class CharacterStatusEffectStateTests
     }
 
     private static CharacterGameplayState BaseState() => new(9, 0, 0, 1, 1, 0, 0, 40, 11, 40, 11, 48, 0, 1, 2, 3, 4, 5, 6);
+
+    // Regression test for the CI race: RunStatusExpirationLoopAsync repeatedly reads
+    // NextExpiration/ExpireDue on a background task while generated NPC scripts concurrently
+    // call Start on other async paths of the same session - both against the same
+    // CharacterStatusEffectState instance. Uses TimeProvider.System (real time) with genuinely
+    // parallel Task.Run workers, since a shared FakeTimeProvider gives no real interleaving
+    // across threads. Before the CharacterStatusEffectState fix, this reliably threw
+    // InvalidOperationException ("Collection was modified") within a few hundred milliseconds.
+    [Fact]
+    public async Task ConcurrentStartAndSchedulerReads_NeverThrowsCollectionModified()
+    {
+        var state = new CharacterStatusEffectState(TimeProvider.System);
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        var exceptions = new System.Collections.Concurrent.ConcurrentBag<Exception>();
+
+        var writers = Enumerable.Range(0, 4).Select(i => Task.Run(() =>
+        {
+            try
+            {
+                while (!cts.IsCancellationRequested)
+                {
+                    var statusId = i % 2 == 0 ? CharacterStatusEffectState.StatusIds.Blessing : CharacterStatusEffectState.StatusIds.IncreaseAgi;
+                    state.Start(statusId, 5, 10);
+                }
+            }
+            catch (Exception ex) { exceptions.Add(ex); }
+        }));
+
+        var readers = Enumerable.Range(0, 4).Select(readerIndex => Task.Run(() =>
+        {
+            try
+            {
+                while (!cts.IsCancellationRequested)
+                {
+                    _ = state.NextExpiration;
+                    _ = state.ExpireDue(TimeProvider.System.GetUtcNow());
+                    _ = state.ActiveStatuses;
+                    _ = state.Recalculate(BaseState());
+                    _ = state.RecalculateBeforeExpiration(BaseState());
+                    _ = state.TryGet(CharacterStatusEffectState.StatusIds.Blessing, out _);
+                }
+            }
+            catch (Exception ex) { exceptions.Add(ex); }
+        }));
+
+        await Task.WhenAll(writers.Concat(readers));
+
+        Assert.Empty(exceptions);
+    }
 }
