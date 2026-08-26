@@ -14,6 +14,8 @@ public sealed class ItemDataCompilerTests
             Name: Knife
             Type: Weapon
             SubType: Dagger
+            Locations:
+              Right_Hand: true
             Attack: 17
             WeaponLevel: 1
           - Id: 1202
@@ -21,6 +23,8 @@ public sealed class ItemDataCompilerTests
             Name: Sword
             Type: Weapon
             SubType: 1hSword
+            Locations:
+              Right_Hand: true
             Attack: 10
           - Id: 501
             AegisName: Red_Potion
@@ -31,15 +35,29 @@ public sealed class ItemDataCompilerTests
             Name: Mystery Weapon
             Type: Weapon
             SubType: Nonexistent
+            Locations:
+              Right_Hand: true
             Attack: 5
           - Id: 1301
             AegisName: Novice_Knife
             Name: Novice Knife
             Type: Weapon
             SubType: Dagger
+            Locations:
+              Right_Hand: true
             AliasName: Knife
             Attack: 17
             WeaponLevel: 1
+          - Id: 2301
+            AegisName: Cotton_Shirt
+            Name: Cotton Shirt
+            Type: Armor
+            Locations:
+              Armor: true
+          - Id: 23484
+            AegisName: Firstaid_Box_5
+            Name: First Aid Box (5)
+            Type: Usable
         """;
 
     [Fact]
@@ -102,24 +120,33 @@ public sealed class ItemDataCompilerTests
         Assert.Contains("Attack: 17", generated);
         Assert.Contains("WeaponLevel: 1", generated);
         Assert.Contains("WeaponType: WeaponType.Dagger", generated);
-        Assert.Contains("WeaponViewId: 1201", generated);
+        Assert.Contains("ClientViewId: 1201", generated);
+        Assert.Contains("EquipLocation: 0x000002", generated);
     }
 
     [Fact]
-    public void ReadItemDefinition_WeaponWithoutAliasName_WeaponViewIdEqualsOwnId()
+    public void ReadItemDefinition_WeaponWithoutAliasName_ClientViewIdEqualsOwnId()
     {
-        // Pinned map_session_data::update_look (pc.cpp:623-647): falls back to the item's own
-        // nameid when it has no AliasName-resolved view_id. Verified against stock-iRO capture
+        // Pinned map_session_data::update_look / client_nameid() (pc.cpp:623-647,
+        // clif.cpp:144-151): falls back to the item's own nameid when it has no
+        // AliasName-resolved view_id. Verified against stock-iRO capture
         // (kill-poring-heal-jobup, frame 210): Knife 1201's LOOK_WEAPON wire value is 1201.
         var knife = ItemDataCompiler.ReadItemDefinition(ItemDbFixture, 1201);
-        Assert.Equal(1201, knife.WeaponViewId);
+        Assert.Equal(1201, knife.ClientViewId);
     }
 
     [Fact]
-    public void ReadItemDefinition_WeaponWithAliasName_WeaponViewIdResolvesToAliasedItemId()
+    public void ReadItemDefinition_WeaponWithAliasName_ClientViewIdResolvesToAliasedItemId()
     {
         var novice = ItemDataCompiler.ReadItemDefinition(ItemDbFixture, 1301);
-        Assert.Equal(1201, novice.WeaponViewId); // AliasName: Knife -> Id 1201
+        Assert.Equal(1201, novice.ClientViewId); // AliasName: Knife -> Id 1201
+    }
+
+    [Fact]
+    public void ReadItemDefinition_NonWeaponAlsoGetsClientViewId()
+    {
+        var wood = ItemDataCompiler.ReadItemDefinition(ItemDbFixture, 6008);
+        Assert.Equal(6008, wood.ClientViewId); // no AliasName -> own id, applies to every item type
     }
 
     [Fact]
@@ -142,10 +169,58 @@ public sealed class ItemDataCompilerTests
     }
 
     [Fact]
+    public void ReadItemDefinition_WeaponLocations_ResolvesToRightHandBitmask()
+    {
+        // Pinned EQP_HAND_R = 0x000002 (mmo.hpp:340).
+        var knife = ItemDataCompiler.ReadItemDefinition(ItemDbFixture, 1201);
+        Assert.Equal(0x000002u, knife.EquipLocation);
+    }
+
+    [Fact]
+    public void ReadItemDefinition_ArmorLocations_ResolvesToArmorBitmask()
+    {
+        // Pinned EQP_ARMOR = 0x000010 (mmo.hpp:342).
+        var shirt = ItemDataCompiler.ReadItemDefinition(ItemDbFixture, 2301);
+        Assert.Equal("Armor", shirt.Type);
+        Assert.Equal(0x000010u, shirt.EquipLocation);
+        Assert.Null(shirt.Attack);
+        Assert.Null(shirt.WeaponType);
+    }
+
+    [Fact]
+    public void Generate_Armor_EmitsArmorItemDefinitionWithEquipLocation()
+    {
+        var item = ItemDataCompiler.ReadItemDefinition(ItemDbFixture, 2301);
+        var generated = ItemDataCompiler.Generate(item, "abc123", "AcademyItems", "CottonShirt", "db/re/item_db_equip.yml", 9);
+
+        Assert.Contains("ArmorItemDefinition", generated);
+        Assert.Contains("EquipLocation: 0x000010", generated);
+        Assert.DoesNotContain("Attack:", generated);
+    }
+
+    [Fact]
+    public void ReadItemDefinition_UsableItemHasNoWeaponOrEquipFields()
+    {
+        var firstAidBox = ItemDataCompiler.ReadItemDefinition(ItemDbFixture, 23484);
+        Assert.Equal("Usable", firstAidBox.Type);
+        Assert.Null(firstAidBox.EquipLocation);
+        Assert.Null(firstAidBox.Attack);
+    }
+
+    [Fact]
+    public void Generate_Usable_EmitsUsableItemDefinition()
+    {
+        var item = ItemDataCompiler.ReadItemDefinition(ItemDbFixture, 23484);
+        var generated = ItemDataCompiler.Generate(item, "abc123", "AcademyItems", "FirstAidBox", "db/re/item_db_usable.yml", 11);
+
+        Assert.Contains("UsableItemDefinition", generated);
+    }
+
+    [Fact]
     public void Generate_UnsupportedType_ThrowsRatherThanCollapsingIntoEtc()
     {
         var item = ItemDataCompiler.ReadItemDefinition(ItemDbFixture, 501);
-        Assert.Throws<NotSupportedException>(() => ItemDataCompiler.Generate(item, "abc123", "AcademyItems", "RedPotion", "db/re/item_db_usable.yml", 3));
+        Assert.Throws<NotSupportedException>(() => ItemDataCompiler.Generate(item, "abc123", "AcademyItems", "RedPotion", "db/re/item_db_healing.yml", 3));
     }
 
     [Fact]

@@ -6,11 +6,11 @@ namespace Athena.Net.MapServer.Tests.World;
 public sealed class EquippedWeaponResolverTests
 {
     private static readonly WeaponItemDefinition Knife = new(
-        1201, "Knife", "Knife", Stackable: false, Attack: 17, WeaponLevel: 1, WeaponType.Dagger, WeaponViewId: 1201,
+        1201, "Knife", "Knife", Stackable: false, ClientViewId: 1201, Attack: 17, WeaponLevel: 1, WeaponType.Dagger, EquipLocation: 0x000002,
         new WorldSourceInfo("rAthena", "abc", "db/re/item_db_equip.yml", 1));
 
     private static readonly EtcItemDefinition Wood = new(
-        6008, "Wood", "Wood", Stackable: true,
+        6008, "Wood", "Wood", Stackable: true, ClientViewId: 6008,
         new WorldSourceInfo("rAthena", "abc", "db/re/item_db_etc.yml", 1));
 
     private static readonly IReadOnlyDictionary<int, ItemDefinition> Items =

@@ -15,6 +15,7 @@ internal static class GeneratedItems
         AegisName: "Wood",
         Name: "Wood",
         Stackable: true,
+        ClientViewId: 6008,
         Source: new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/re/item_db_etc.yml", 0));
 
     // Generated via `compile-item --item-id 1201 --item-db-file db/re/item_db_equip.yml`.
@@ -24,15 +25,37 @@ internal static class GeneratedItems
         AegisName: "Knife",
         Name: "Knife",
         Stackable: false,
+        ClientViewId: 1201,
         Attack: 17,
         WeaponLevel: 1,
         WeaponType: WeaponType.Dagger,
-        WeaponViewId: 1201,
+        EquipLocation: 0x000002,
         Source: new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/re/item_db_equip.yml", 0));
+
+    // Generated via `compile-item --item-id 2301 --item-db-file db/re/item_db_equip.yml`.
+    // Starter tutorial armor (char_athena.conf start_items: 2301,1,16 = EQP_ARMOR).
+    internal static readonly ArmorItemDefinition CottonShirt = new(
+        Id: 2301,
+        AegisName: "Cotton_Shirt",
+        Name: "Cotton Shirt",
+        Stackable: false,
+        ClientViewId: 2301,
+        EquipLocation: 0x000010,
+        Source: new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/re/item_db_equip.yml", 0));
+
+    // Generated via `compile-item --item-id 23484 --item-db-file db/re/item_db_usable.yml`.
+    // Starter tutorial usable (char_athena.conf start_items: 23484,1,0 = unequipped).
+    internal static readonly UsableItemDefinition FirstAidBox = new(
+        Id: 23484,
+        AegisName: "Firstaid_Box_5",
+        Name: "First aid Box (5)",
+        Stackable: true,
+        ClientViewId: 23484,
+        Source: new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/re/item_db_usable.yml", 0));
 
     // Hand-composed lookup (not compiler output) over the generated items above, mirroring
     // how AcademyMobSpawnRegistration.cs composes AcademyMobSpawns.GPoringSpawns outside the
     // NpcWorldEmitter's own deterministic-reproducibility guarantee. Extend by adding entries
     // here as more items are generated; do not regenerate this file to add lookup logic.
-    internal static readonly IReadOnlyDictionary<int, ItemDefinition> ById = new Dictionary<int, ItemDefinition> { [Wood.Id] = Wood, [Knife.Id] = Knife };
+    internal static readonly IReadOnlyDictionary<int, ItemDefinition> ById = new Dictionary<int, ItemDefinition> { [Wood.Id] = Wood, [Knife.Id] = Knife, [CottonShirt.Id] = CottonShirt, [FirstAidBox.Id] = FirstAidBox };
 }

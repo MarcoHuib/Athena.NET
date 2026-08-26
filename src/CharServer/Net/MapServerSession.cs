@@ -21,7 +21,7 @@ public sealed class MapServerSession : IDisposable, ISession
         [PacketConstants.MapGameplayStateGetRequest] = MapCharacterGameplayStateProtocol.GetRequestLength,
         [PacketConstants.MapGameplayStateUpdateRequest] = MapCharacterGameplayStateProtocol.UpdateRequestLength,
         [PacketConstants.MapInventoryAddRequest] = MapInventoryAddProtocol.RequestLength,
-        [PacketConstants.MapEquipmentGetRequest] = MapEquipmentProtocol.GetRequestLength,
+        [PacketConstants.MapInventoryListGetRequest] = MapInventoryListProtocol.GetRequestLength,
     };
 
     private readonly TcpClient _client;
@@ -118,8 +118,8 @@ public sealed class MapServerSession : IDisposable, ISession
             case PacketConstants.MapInventoryAddRequest:
                 await HandleInventoryAddRequestAsync(packet, cancellationToken);
                 break;
-            case PacketConstants.MapEquipmentGetRequest:
-                await HandleEquipmentGetAsync(packet, cancellationToken);
+            case PacketConstants.MapInventoryListGetRequest:
+                await HandleInventoryListGetAsync(packet, cancellationToken);
                 break;
             default:
                 CharLogger.Warning($"Unknown map server packet 0x{packetType:X4}, disconnecting.");
@@ -445,43 +445,37 @@ public sealed class MapServerSession : IDisposable, ISession
         await WriteAsync(MapCharacterGameplayStateProtocol.BuildResponse(PacketConstants.MapGameplayStateGetResponse, result, charId, state), cancellationToken);
     }
 
-    // Pinned EQP_HAND_R (mmo.hpp:340).
-    private const uint EquipPositionRightHand = 0x000002;
-
-    private async Task HandleEquipmentGetAsync(byte[] packet, CancellationToken cancellationToken)
+    private async Task HandleInventoryListGetAsync(byte[] packet, CancellationToken cancellationToken)
     {
-        if (!MapEquipmentProtocol.TryParseGet(packet, out var accountId, out var charId)) return;
-        CharacterEquipmentDto? equipment = null; byte result = 1;
+        if (!MapInventoryListProtocol.TryParseGet(packet, out var accountId, out var charId)) return;
+        List<CharacterInventoryRowDto>? rows = null; byte result = 1;
         if (IsGameplayStateRequestAuthorized(_authenticated, _ownedCharacters, accountId, charId))
         {
             try
             {
                 await using var db = _dbFactory();
-                // Pinned mmo.hpp:322: "equip; // location(s) where item is equipped (using enum
-                // equip_pos for bitmasking)" - real usage (pc.cpp:1582/12173/12427) always tests
-                // `equip & EQP_HAND_R`, never exact equality, since a single row's Equip can carry
-                // multiple simultaneous position bits (e.g. a two-handed weapon also setting
-                // EQP_HAND_L). More than one row matching this bit is an invariant violation, not
-                // a case to arbitrarily resolve - SingleOrDefaultAsync intentionally throws then,
-                // surfacing as a database-error read failure below rather than picking a row.
-                var rightHand = db is null
-                    ? null
-                    : await db.Inventory.AsNoTracking().SingleOrDefaultAsync(
-                        i => i.CharId == charId && (i.Equip & EquipPositionRightHand) != 0,
-                        cancellationToken);
-                equipment = rightHand is null
-                    ? new CharacterEquipmentDto(HasRightHand: false, RightHandItemId: 0, RightHandRefine: 0)
-                    : new CharacterEquipmentDto(HasRightHand: true, rightHand.NameId, rightHand.Refine);
-                result = 0;
+                if (db is not null)
+                {
+                    // Stable server-side array order (matches a real rAthena load pass building
+                    // sd->inventory.u.items_inventory[]) - the row's own primary key already
+                    // reflects insertion order and never changes, same convention already used
+                    // by the 0x0B41/MapInventoryAddProtocol SlotIndex computation.
+                    rows = await db.Inventory.AsNoTracking()
+                        .Where(i => i.CharId == charId)
+                        .OrderBy(i => i.Id)
+                        .Select(i => new CharacterInventoryRowDto((int)i.NameId, i.Amount, i.Equip, i.Identify != 0, i.Refine, i.Favorite, i.Bound))
+                        .ToListAsync(cancellationToken);
+                    result = 0;
+                }
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 CharLogger.Warning(
-                    $"Character equipment read rejected reason=database-error charId={charId} " +
+                    $"Character inventory read rejected reason=database-error charId={charId} " +
                     $"error={ex.GetType().Name}.");
             }
         }
-        await WriteAsync(MapEquipmentProtocol.BuildResponse(result, charId, equipment), cancellationToken);
+        await WriteAsync(MapInventoryListProtocol.BuildResponse(result, charId, rows), cancellationToken);
     }
 
     private async Task HandleGameplayStateUpdateAsync(byte[] packet, CancellationToken cancellationToken)

@@ -40,7 +40,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
     private readonly ICharacterPositionPersistence _positionPersistence;
     private readonly ICharacterQuestPersistence _questPersistence;
     private readonly ICharacterGameplayStatePersistence _gameplayStatePersistence;
-    private readonly ICharacterEquipmentPersistence _equipmentPersistence;
+    private readonly ICharacterInventoryListPersistence _inventoryListPersistence;
     private readonly ICharacterInventoryPersistence _inventoryPersistence;
     private readonly WorldMapRegistry _worldMapRegistry;
     // Null when no MapServerWorld was supplied (test-facing constructor default).
@@ -113,6 +113,9 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
     private readonly object _shutdownGate = new();
     private Task? _shutdownTask;
     private CharacterGameplayStateSession? _gameplayState;
+    // The one authoritative CharInventory read (see CharacterInventorySnapshot's own doc
+    // comment). Equipment is derived from this - never a second independent CharServer read.
+    private CharacterInventorySnapshot? _inventory;
     private CharacterEquipmentSnapshot? _equipment;
     private readonly CharacterStatusEffectState _statusEffects;
     private readonly TimeProvider _timeProvider;
@@ -146,7 +149,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
         IMovementPathProvider? movementPathProvider = null,
         MonsterCombatCoordinator? combat = null,
         ICharacterInventoryPersistence? inventoryPersistence = null,
-        ICharacterEquipmentPersistence? equipmentPersistence = null)
+        ICharacterInventoryListPersistence? inventoryListPersistence = null)
     {
         SessionId = sessionId;
         _client = client;
@@ -156,7 +159,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
         _questPersistence = questPersistence ?? charConnector;
         _gameplayStatePersistence = gameplayStatePersistence ?? charConnector;
         _inventoryPersistence = inventoryPersistence ?? charConnector;
-        _equipmentPersistence = equipmentPersistence ?? charConnector;
+        _inventoryListPersistence = inventoryListPersistence ?? charConnector;
         _worldMapRegistry = worldMapRegistry;
         _monsters = monsters;
         _combat = combat;
@@ -188,7 +191,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
         IMovementPathProvider? movementPathProvider = null,
         MonsterCombatCoordinator? combat = null,
         ICharacterInventoryPersistence? inventoryPersistence = null,
-        ICharacterEquipmentPersistence? equipmentPersistence = null)
+        ICharacterInventoryListPersistence? inventoryListPersistence = null)
         : this(
             sessionId,
             client,
@@ -202,13 +205,14 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
             movementPathProvider,
             combat,
             inventoryPersistence,
-            // Defaults to a successful "confirmed unarmed" read, NOT the production default
-            // (falling through to charConnector, a disconnected CharServerConnector in tests,
-            // whose GetEquipmentAsync always returns Failed() and would make
+            // Defaults to a successful "confirmed empty inventory" read, NOT the production
+            // default (falling through to charConnector, a disconnected CharServerConnector in
+            // tests, whose GetInventoryAsync always returns Failed() and would make
             // CompleteIroAuthenticationAsync fail auth for every test that doesn't care about
-            // equipment). Tests that need to exercise a specific equipped weapon or a failed
-            // read must pass equipmentPersistence explicitly, same as gameplayStatePersistence.
-            equipmentPersistence ?? AlwaysConfirmedUnarmedEquipmentPersistence.Instance)
+            // inventory/equipment). Tests that need to exercise specific inventory rows or a
+            // failed read must pass inventoryListPersistence explicitly, same as
+            // gameplayStatePersistence.
+            inventoryListPersistence ?? AlwaysEmptyInventoryListPersistence.Instance)
     {
         _iroAuthRequested = iroAuthenticated;
         _authRequested = iroAuthenticated;
@@ -232,6 +236,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
     internal ScriptExecutionState? ActiveScriptState => _scriptExecutionSession?.State;
     internal string? ActiveGeneratedScriptEntityId => _generatedScriptEntityId;
     internal CharacterGameplayStateSession? GameplayState => _gameplayState;
+    internal CharacterInventorySnapshot? Inventory => _inventory;
     internal CharacterEquipmentSnapshot? Equipment => _equipment;
     internal CharacterStatusEffectState StatusEffects => _statusEffects;
 
@@ -342,18 +347,21 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
         }
         _gameplayState = new CharacterGameplayStateSession(authOk.AccountId, state, _gameplayStatePersistence);
 
-        var equipmentRead = await _equipmentPersistence.GetEquipmentAsync(authOk.AccountId, authOk.CharId, _sessionCancellation.Token);
-        if (!equipmentRead.Succeeded)
+        var inventoryRead = await _inventoryListPersistence.GetInventoryAsync(authOk.AccountId, authOk.CharId, _sessionCancellation.Token);
+        if (!inventoryRead.Succeeded)
         {
-            MapLogger.Warning($"[iRO MAP DEBUG] Character equipment load failed accountId={authOk.AccountId} charId={authOk.CharId}.");
+            MapLogger.Warning($"[iRO MAP DEBUG] Character inventory load failed accountId={authOk.AccountId} charId={authOk.CharId}.");
             HandleAuthFail(); return;
         }
-        // Invariant: an authenticated session always has BOTH gameplay state and equipment state
-        // loaded. A failed/unavailable equipment read must never let a session become authenticated
-        // with unknown equipment state - future combat/appearance code must be able to trust that
-        // Equipment is non-null whenever the session is authenticated, and that a null
-        // Equipment.RightHandItemId means authoritatively unarmed, never "unknown".
-        _equipment = equipmentRead.Snapshot;
+        // Invariant: an authenticated session always has gameplay state AND inventory state
+        // loaded. A failed/unavailable inventory read must never let a session become
+        // authenticated with unknown inventory/equipment state - future combat/appearance code
+        // must be able to trust that Inventory/Equipment are non-null whenever the session is
+        // authenticated, and that a null Equipment.RightHandItemId means authoritatively
+        // unarmed, never "unknown". CharacterEquipmentSnapshot is derived from the SAME
+        // inventory read - never a second independent CharServer fetch.
+        _inventory = inventoryRead.Snapshot;
+        _equipment = CharacterEquipmentSnapshot.FromInventory(_inventory!);
         _authenticated = true; _positionDirty = false;
         MapLogger.Info($"[iRO MAP DEBUG] 0x0C1F MapAuthNode authentication succeeded accountId={authOk.AccountId} charId={authOk.CharId} sessionMatch=true gameplayStateVersion={state.Version}");
         EnsureRuntimeLoopsStarted();
@@ -669,10 +677,12 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
                     MapLogger.Info(
                         $"[iRO MAP DEBUG] Received stock iRO map-loaded packet=0x{packetType:X4} len={packet.Length}");
                     // Pinned ordering (clif_parse_LoadEndAck, clif.cpp:10748-10817): self weapon
-                    // look (clif_changelook, target=AREA which includes self) is sent BEFORE the
-                    // AREA_WOS spawn broadcast that other visible actors receive - so this goes
-                    // first, ahead of SendVisibleWarpActorsAsync/SendVisibleMonsterActorsAsync.
+                    // look (clif_changelook, target=AREA which includes self), THEN the self
+                    // inventory/equip-list projection (clif_inventorylist, target=SELF), both
+                    // BEFORE the AREA_WOS spawn broadcast that other visible actors receive - so
+                    // both go first, ahead of SendVisibleWarpActorsAsync/SendVisibleMonsterActorsAsync.
                     await SendSelfWeaponAppearanceAsync(cancellationToken);
+                    await SendSelfInventoryAsync(cancellationToken);
                     _visibleActorIds.Clear();
                     await SendVisibleWarpActorsAsync(cancellationToken);
                     await SendVisibleMonsterActorsAsync(cancellationToken);
@@ -1570,7 +1580,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
         var weaponViewId = resolution.Resolution switch
         {
             EquippedWeaponResolution.Unarmed => (uint?)0,
-            EquippedWeaponResolution.Weapon => (uint)resolution.Weapon!.WeaponViewId,
+            EquippedWeaponResolution.Weapon => (uint)resolution.Weapon!.ClientViewId,
             _ => null,
         };
         if (weaponViewId is null)
@@ -1582,6 +1592,50 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
         var packet = IroCharacterAppearancePackets.BuildSpriteChangeWeapon(_accountId, weaponViewId.Value);
         MapLogger.Info($"[iRO MAP DEBUG] Sending 0x01D7 self weapon look weaponViewId={weaponViewId.Value}");
         await WriteAsync(packet, cancellationToken);
+    }
+
+    // Pinned clif_inventorylist(sd) (clif.cpp:3062-3143): sends the full authoritative
+    // CharInventory snapshot to the client's own inventory/equip window - split into
+    // equippable (0x0B39) and stackable (0x0B09) lists, bracketed by inventoryStart/End.
+    // _inventory is guaranteed non-null once authenticated (CompleteIroAuthenticationAsync
+    // fails auth outright on an unsuccessful inventory read), so this never runs with unknown
+    // inventory state. An item id absent from GeneratedItems.ById is a data/generation gap
+    // (never silently dropped from combat correctness, since it also never reaches
+    // EquippedWeaponResolver's right-hand path any differently) - logged and excluded from
+    // the client-facing list rather than guessed at, matching the existing 0x0B41 convention.
+    private async Task SendSelfInventoryAsync(CancellationToken cancellationToken)
+    {
+        if (_inventory is not { } inventory) return;
+
+        var equip = new List<(ushort ClientIndex, CharacterInventoryItem Item, IEquippableItemDefinition Definition)>();
+        var normal = new List<(ushort ClientIndex, CharacterInventoryItem Item, ItemDefinition Definition)>();
+        foreach (var item in inventory.Items)
+        {
+            if (!GeneratedItems.ById.TryGetValue(item.ItemId, out var definition))
+            {
+                MapLogger.Warning($"[iRO MAP DEBUG] Inventory row references unregistered itemId={item.ItemId}; excluding from 0x0B09/0x0B39.");
+                continue;
+            }
+
+            // client_index(): server-side array position + 2 (clif.cpp:122-124) - same
+            // convention as the existing 0x0B41 pickup path.
+            var clientIndex = (ushort)(item.SlotIndex + 2);
+            if (definition is IEquippableItemDefinition equippable)
+                equip.Add((clientIndex, item, equippable));
+            else
+                normal.Add((clientIndex, item, definition));
+        }
+
+        MapLogger.Info($"[iRO MAP DEBUG] Sending self inventory/equip list equipCount={equip.Count} normalCount={normal.Count}");
+        await WriteAsync(IroInventoryListPackets.BuildInventoryStart(), cancellationToken);
+        // Pinned clif_inventorylist (clif.cpp:3112-3130): when neither batch fills mid-loop
+        // (this slice's starter inventory never does), the normal-item flush happens BEFORE
+        // the equip-item flush - order matters, do not swap.
+        if (normal.Count > 0)
+            await WriteAsync(IroInventoryListPackets.BuildItemListNormal(normal), cancellationToken);
+        if (equip.Count > 0)
+            await WriteAsync(IroInventoryListPackets.BuildItemListEquip(equip), cancellationToken);
+        await WriteAsync(IroInventoryListPackets.BuildInventoryEnd(), cancellationToken);
     }
 
     private async Task SendVisibleWarpActorsAsync(CancellationToken cancellationToken)
@@ -1859,16 +1913,17 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
         buffer[2] = (byte)((y << 4) | (direction & 0x0f));
     }
 
-    // Test-only default for the internal test-facing constructor (see its equipmentPersistence
-    // parameter). Always reports a successful read with no right-hand item equipped, so tests
-    // that never pass equipmentPersistence explicitly still authenticate successfully.
-    private sealed class AlwaysConfirmedUnarmedEquipmentPersistence : ICharacterEquipmentPersistence
+    // Test-only default for the internal test-facing constructor (see its
+    // inventoryListPersistence parameter). Always reports a successful read with an empty
+    // inventory (confirmed unarmed), so tests that never pass inventoryListPersistence
+    // explicitly still authenticate successfully.
+    private sealed class AlwaysEmptyInventoryListPersistence : ICharacterInventoryListPersistence
     {
-        internal static readonly AlwaysConfirmedUnarmedEquipmentPersistence Instance = new();
-        private static readonly CharacterEquipmentReadResult Unarmed =
-            CharacterEquipmentReadResult.Success(new CharacterEquipmentSnapshot(RightHandItemId: null, RightHandRefine: 0));
+        internal static readonly AlwaysEmptyInventoryListPersistence Instance = new();
+        private static readonly CharacterInventoryReadResult Empty =
+            CharacterInventoryReadResult.Success(new CharacterInventorySnapshot(Array.Empty<CharacterInventoryItem>()));
 
-        public Task<CharacterEquipmentReadResult> GetEquipmentAsync(uint accountId, uint characterId, CancellationToken cancellationToken)
-            => Task.FromResult(Unarmed);
+        public Task<CharacterInventoryReadResult> GetInventoryAsync(uint accountId, uint characterId, CancellationToken cancellationToken)
+            => Task.FromResult(Empty);
     }
 }

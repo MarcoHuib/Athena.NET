@@ -77,11 +77,31 @@ internal static class ItemDataCompiler
         ["2hStaff"] = WeaponType.TwoHandStaff,
     };
 
-    // Attack/WeaponLevel/SubType/AliasName are general item_db_equip.yml columns (see the
-    // file's own header comment: "WeaponLevel  Weapon level. (Default: 1 for Weapons)"), read
-    // only for Type: Weapon rows - matching pinned status.cpp:3940's own
+    // Pinned item_db `Locations` YAML key -> enum equip_pos bitmask value (mmo.hpp:335-353).
+    // Most keys map directly via "EQP_" + key (e.g. "Armor" -> EQP_ARMOR); a handful have an
+    // explicit alias registered in pinned script_constants.hpp:911-917 (e.g. "Right_Hand" ->
+    // EQP_HAND_R, not a literal EQP_RIGHT_HAND). Extend only as new Locations keys are needed.
+    private static readonly Dictionary<string, uint> EquipLocations = new(StringComparer.Ordinal)
+    {
+        ["Head_Low"] = 0x000001,
+        ["Right_Hand"] = 0x000002,
+        ["Garment"] = 0x000004,
+        ["Right_Accessory"] = 0x000008,
+        ["Armor"] = 0x000010,
+        ["Left_Hand"] = 0x000020,
+        ["Shoes"] = 0x000040,
+        ["Left_Accessory"] = 0x000080,
+        ["Head_Top"] = 0x000100,
+        ["Head_Mid"] = 0x000200,
+    };
+
+    // Attack/WeaponLevel/SubType/Locations/AliasName are general item_db_equip.yml columns (see
+    // the file's own header comment: "WeaponLevel  Weapon level. (Default: 1 for Weapons)"),
+    // read only for Type: Weapon/Armor rows - matching pinned status.cpp:3940's own
     // `sd->inventory_data[index]->type == IT_WEAPON` gate before reading atk/weapon_level.
-    internal sealed record ItemDefinitionData(int Id, string AegisName, string Name, string Type, bool Stackable, int? Attack, int? WeaponLevel, WeaponType? WeaponType, int? WeaponViewId);
+    // ClientViewId is read for every item, not just equip-capable ones - it is a general item_db
+    // concept (client_nameid(), clif.cpp:144-151).
+    internal sealed record ItemDefinitionData(int Id, string AegisName, string Name, string Type, bool Stackable, int ClientViewId, int? Attack, int? WeaponLevel, WeaponType? WeaponType, uint? EquipLocation);
 
     internal static ItemDefinitionData ReadItemDefinition(string itemDbYaml, int itemId)
     {
@@ -91,29 +111,57 @@ internal static class ItemDataCompiler
         var name = RequiredScalar(block, "Name");
         var type = RequiredScalar(block, "Type");
         var isWeapon = type == "Weapon";
+        var isArmor = type == "Armor";
+
+        // Pinned map_session_data::update_look / client_nameid() (pc.cpp:623-647,
+        // clif.cpp:144-151): the client-facing item identity is the AliasName-resolved
+        // view_id if the item_db row declares one, else the item's own nameid - applies to
+        // every item, not just weapons. Verified against stock-iRO capture
+        // (kill-poring-heal-jobup, frame 210): Knife 1201 has no AliasName, so its wire value
+        // is 1201, matching this fallback.
+        var clientViewId = OptionalScalar(block, "AliasName") is { } aliasName
+            ? FindBlockByAegisName(itemDbYaml, aliasName).Id
+            : itemId;
+
         // WeaponLevel defaults to 1 when the pinned YAML omits it for a weapon row (file header
         // comment: "Default: 1 for Weapons"), matching pinned rAthena's own item_db loader default.
         var attack = isWeapon ? int.Parse(RequiredScalar(block, "Attack"), CultureInfo.InvariantCulture) : (int?)null;
         var weaponLevel = isWeapon ? (OptionalScalar(block, "WeaponLevel") is { } wl ? int.Parse(wl, CultureInfo.InvariantCulture) : 1) : (int?)null;
         WeaponType? weaponType = null;
-        int? weaponViewId = null;
         if (isWeapon)
         {
             var subType = RequiredScalar(block, "SubType");
             if (!WeaponSubTypes.TryGetValue(subType, out var resolved))
                 throw new NotSupportedException($"Item SubType '{subType}' has no modeled WeaponType entry yet.");
             weaponType = resolved;
-
-            // Pinned map_session_data::update_look (pc.cpp:623-647): the client-facing
-            // LOOK_WEAPON value is the equipped item's AliasName-resolved view_id if the
-            // item_db row declares one, else the item's own nameid - never the weapon_type
-            // enum. Verified against stock-iRO capture (kill-poring-heal-jobup, frame 210):
-            // Knife 1201 has no AliasName, so its wire value is 1201, matching this fallback.
-            weaponViewId = OptionalScalar(block, "AliasName") is { } aliasName
-                ? FindBlockByAegisName(itemDbYaml, aliasName).Id
-                : itemId;
         }
-        return new ItemDefinitionData(itemId, aegisName, name, type, !NonStackableTypes.Contains(type), attack, weaponLevel, weaponType, weaponViewId);
+
+        uint? equipLocation = null;
+        if (isWeapon || isArmor)
+        {
+            equipLocation = ReadLocations(block);
+        }
+
+        return new ItemDefinitionData(itemId, aegisName, name, type, !NonStackableTypes.Contains(type), clientViewId, attack, weaponLevel, weaponType, equipLocation);
+    }
+
+    // Pinned item_db Locations block (itemdb.cpp:446-475): a set of `KeyName: true` entries at
+    // 6-space indent under a `    Locations:` header, OR'd together into the item's possible
+    // equip-position bitmask.
+    private static uint ReadLocations(string block)
+    {
+        var locationsMatch = Regex.Match(block, @"^    Locations:\n((?:      \S+: true\n?)+)", RegexOptions.Multiline);
+        if (!locationsMatch.Success) throw new ArgumentException("Pinned item block has no 'Locations' field.");
+
+        uint equip = 0;
+        foreach (Match entry in Regex.Matches(locationsMatch.Groups[1].Value, @"^      (\S+): true$", RegexOptions.Multiline))
+        {
+            var key = entry.Groups[1].Value;
+            if (!EquipLocations.TryGetValue(key, out var value))
+                throw new NotSupportedException($"Item Locations key '{key}' has no modeled equip_pos entry yet.");
+            equip |= value;
+        }
+        return equip;
     }
 
     private static string FindBlockById(string itemDbYaml, int itemId)
@@ -145,14 +193,16 @@ internal static class ItemDataCompiler
     }
 
     // Explicit discriminator: only pinned Types this compiler has actually modeled map to a
-    // concrete ItemDefinition subtype. Any other pinned Type (Usable, Healing, Armor, Card,
-    // Ammo, Cash, ShadowGear, PetEgg, PetArmor, ...) must fail generation loudly rather than
-    // silently collapsing into EtcItemDefinition - an unmodeled type is not "the same as Etc",
-    // it is simply not supported yet.
+    // concrete ItemDefinition subtype. Any other pinned Type (Healing, Card, Ammo, Cash,
+    // ShadowGear, PetEgg, PetArmor, ...) must fail generation loudly rather than silently
+    // collapsing into EtcItemDefinition - an unmodeled type is not "the same as Etc", it is
+    // simply not supported yet.
     private static string ResolveConcreteTypeName(string type) => type switch
     {
         "Weapon" => "WeaponItemDefinition",
+        "Armor" => "ArmorItemDefinition",
         "Etc" => "EtcItemDefinition",
+        "Usable" => "UsableItemDefinition",
         _ => throw new NotSupportedException($"Item Type '{type}' has no modeled ItemDefinition subtype yet."),
     };
 
@@ -160,6 +210,7 @@ internal static class ItemDataCompiler
     {
         var typeName = ResolveConcreteTypeName(item.Type);
         var isWeapon = item.Type == "Weapon";
+        var isArmor = item.Type == "Armor";
 
         var builder = new StringBuilder()
             .AppendLine("// <auto-generated>")
@@ -180,7 +231,8 @@ internal static class ItemDataCompiler
             .Append("        Id: ").Append(item.Id).AppendLine(",")
             .Append("        AegisName: \"").Append(item.AegisName).AppendLine("\",")
             .Append("        Name: \"").Append(item.Name).AppendLine("\",")
-            .Append("        Stackable: ").Append(item.Stackable ? "true" : "false").AppendLine(",");
+            .Append("        Stackable: ").Append(item.Stackable ? "true" : "false").AppendLine(",")
+            .Append("        ClientViewId: ").Append(item.ClientViewId.ToString(CultureInfo.InvariantCulture)).AppendLine(",");
 
         if (isWeapon)
         {
@@ -188,7 +240,12 @@ internal static class ItemDataCompiler
                 .Append("        Attack: ").Append(item.Attack!.Value.ToString(CultureInfo.InvariantCulture)).AppendLine(",")
                 .Append("        WeaponLevel: ").Append(item.WeaponLevel!.Value.ToString(CultureInfo.InvariantCulture)).AppendLine(",")
                 .Append("        WeaponType: WeaponType.").Append(item.WeaponType!.Value).AppendLine(",")
-                .Append("        WeaponViewId: ").Append(item.WeaponViewId!.Value.ToString(CultureInfo.InvariantCulture)).AppendLine(",");
+                .Append("        EquipLocation: 0x").Append(item.EquipLocation!.Value.ToString("X6", CultureInfo.InvariantCulture)).AppendLine(",");
+        }
+        else if (isArmor)
+        {
+            builder
+                .Append("        EquipLocation: 0x").Append(item.EquipLocation!.Value.ToString("X6", CultureInfo.InvariantCulture)).AppendLine(",");
         }
 
         builder

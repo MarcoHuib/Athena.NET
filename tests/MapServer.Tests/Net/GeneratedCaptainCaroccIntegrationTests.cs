@@ -39,6 +39,8 @@ public sealed class GeneratedCaptainCaroccIntegrationTests
         await stream.WriteAsync(new byte[] { 0x7d, 0x00, 0xaa });
         var selfWeaponLook = await ReadExact(stream, 15); // 0x01D7, sent before the spawn broadcast (clif_parse_LoadEndAck ordering)
         Assert.Equal((short)0x01d7, BinaryPrimitives.ReadInt16LittleEndian(selfWeaponLook));
+        await ReadExact(stream, 6); // 0x0B08 inventoryStart (empty test-default inventory, no 0x0B09/0x0B39 items)
+        await ReadExact(stream, 4); // 0x0B0B inventoryEnd
         var spawn = await ReadDynamic(stream);
         Assert.Equal(actor.ActorId, BinaryPrimitives.ReadUInt32LittleEndian(spawn.AsSpan(5)));
         Assert.Equal((ushort)873, BinaryPrimitives.ReadUInt16LittleEndian(spawn.AsSpan(23)));

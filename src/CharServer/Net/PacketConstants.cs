@@ -36,8 +36,11 @@ public static class PacketConstants
     public const short MapGameplayStateUpdateResponse = 0x2b30;
     public const short MapInventoryAddRequest = 0x2b31;
     public const short MapInventoryAddResponse = 0x2b32;
-    public const short MapEquipmentGetRequest = 0x2b33;
-    public const short MapEquipmentGetResponse = 0x2b34;
+    // Renamed from MapEquipmentGet*: this reads every persisted CharInventory row for the
+    // character, not just the right-hand slot (see CharacterInventorySnapshot on the MapServer
+    // side).
+    public const short MapInventoryListGetRequest = 0x2b33;
+    public const short MapInventoryListGetResponse = 0x2b34;
 
     public const short ChReqConnect = 0x65;
     public const short ChSelectChar = 0x66;

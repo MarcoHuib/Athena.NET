@@ -9,7 +9,7 @@ using Athena.Net.MapServer.World;
 
 namespace Athena.Net.MapServer.Net;
 
-public sealed class CharServerConnector : ICharacterPositionPersistence, ICharacterQuestPersistence, ICharacterGameplayStatePersistence, ICharacterInventoryPersistence, ICharacterEquipmentPersistence
+public sealed class CharServerConnector : ICharacterPositionPersistence, ICharacterQuestPersistence, ICharacterGameplayStatePersistence, ICharacterInventoryPersistence, ICharacterInventoryListPersistence
 {
     private static readonly Dictionary<short, int> PacketLengths = new()
     {
@@ -20,7 +20,7 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
         [PacketConstants.MapGameplayStateGetResponse] = MapCharacterGameplayStateProtocol.ResponseLength,
         [PacketConstants.MapGameplayStateUpdateResponse] = MapCharacterGameplayStateProtocol.ResponseLength,
         [PacketConstants.MapInventoryAddResponse] = MapInventoryAddProtocol.ResponseLength,
-        [PacketConstants.MapEquipmentGetResponse] = MapEquipmentProtocol.ResponseLength,
+        // MapInventoryListGetResponse is variable-length - see VariableLengthMinLength below.
     };
 
     private readonly MapConfigStore _configStore;
@@ -31,7 +31,7 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
     private readonly ConcurrentDictionary<uint, TaskCompletionSource<CharacterGameplayState?>> _pendingGameplayReads = new();
     private readonly ConcurrentDictionary<uint, TaskCompletionSource<CharacterGameplayState?>> _pendingGameplayUpdates = new();
     private readonly ConcurrentDictionary<(uint CharId, int ItemId), TaskCompletionSource<(bool Success, uint NewAmount, uint SlotIndex)>> _pendingInventoryAdds = new();
-    private readonly ConcurrentDictionary<uint, TaskCompletionSource<CharacterEquipmentReadResult>> _pendingEquipmentReads = new();
+    private readonly ConcurrentDictionary<uint, TaskCompletionSource<CharacterInventoryReadResult>> _pendingInventoryReads = new();
     private CharServerConnectionState? _connection;
 
     public CharServerConnector(MapConfigStore configStore)
@@ -133,14 +133,14 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
         finally { _pendingGameplayUpdates.TryRemove(expected.CharacterId,out _); }
     }
 
-    public async Task<CharacterEquipmentReadResult> GetEquipmentAsync(uint accountId, uint characterId, CancellationToken cancellationToken)
+    public async Task<CharacterInventoryReadResult> GetInventoryAsync(uint accountId, uint characterId, CancellationToken cancellationToken)
     {
-        var connection = _connection; if (connection is null) return CharacterEquipmentReadResult.Failed();
-        var pending = new TaskCompletionSource<CharacterEquipmentReadResult>(TaskCreationOptions.RunContinuationsAsynchronously);
-        if (!_pendingEquipmentReads.TryAdd(characterId, pending)) return CharacterEquipmentReadResult.Failed();
+        var connection = _connection; if (connection is null) return CharacterInventoryReadResult.Failed();
+        var pending = new TaskCompletionSource<CharacterInventoryReadResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (!_pendingInventoryReads.TryAdd(characterId, pending)) return CharacterInventoryReadResult.Failed();
         using var registration = cancellationToken.Register(() => pending.TrySetCanceled(cancellationToken));
-        try { await connection.WriteAsync(MapEquipmentProtocol.BuildGetRequest(accountId, characterId), cancellationToken); return await pending.Task; }
-        finally { _pendingEquipmentReads.TryRemove(characterId, out _); }
+        try { await connection.WriteAsync(MapInventoryListProtocol.BuildGetRequest(accountId, characterId), cancellationToken); return await pending.Task; }
+        finally { _pendingInventoryReads.TryRemove(characterId, out _); }
     }
 
     public async Task<(bool Success, uint NewAmount, uint SlotIndex)> AddStackableItemAsync(uint accountId, uint charId, int itemId, uint amount, CancellationToken cancellationToken)
@@ -234,7 +234,7 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
             FailPendingSavePoints();
             FailPendingGameplayStates();
             FailPendingInventoryAdds();
-            FailPendingEquipmentReads();
+            FailPendingInventoryReads();
 
             MapLogger.Warning("Char server connection closed. Reconnecting.");
             return false;
@@ -306,8 +306,8 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
                 return HandleGameplayStateResponse(packet, packetType, _pendingGameplayUpdates);
             case PacketConstants.MapInventoryAddResponse:
                 return HandleInventoryAddResponse(packet);
-            case PacketConstants.MapEquipmentGetResponse:
-                return HandleEquipmentGetResponse(packet);
+            case PacketConstants.MapInventoryListGetResponse:
+                return HandleInventoryListGetResponse(packet);
             default:
                 MapLogger.Warning($"Unknown char server packet 0x{packetType:X4}, disconnecting.");
                 return false;
@@ -396,10 +396,10 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
         return true;
     }
 
-    private bool HandleEquipmentGetResponse(byte[] packet)
+    private bool HandleInventoryListGetResponse(byte[] packet)
     {
-        if (!MapEquipmentProtocol.TryParseResponse(packet, out _, out var charId, out var equipment)) return false;
-        if (_pendingEquipmentReads.TryRemove(charId, out var pending)) pending.TrySetResult(equipment);
+        if (!MapInventoryListProtocol.TryParseResponse(packet, out _, out var charId, out var inventory)) return false;
+        if (_pendingInventoryReads.TryRemove(charId, out var pending)) pending.TrySetResult(inventory);
         return true;
     }
 
@@ -507,11 +507,27 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
         _pendingInventoryAdds.Clear();
     }
 
-    private void FailPendingEquipmentReads()
+    private void FailPendingInventoryReads()
     {
-        foreach (var pending in _pendingEquipmentReads.Values) pending.TrySetResult(CharacterEquipmentReadResult.Failed());
-        _pendingEquipmentReads.Clear();
+        foreach (var pending in _pendingInventoryReads.Values) pending.TrySetResult(CharacterInventoryReadResult.Failed());
+        _pendingInventoryReads.Clear();
     }
+
+    // Opcodes framed as [opcode.W][length.W][payload], where `length` is the TOTAL packet
+    // length (matching pinned rAthena's own variable-length packet convention) - i.e. payload
+    // is (length - 4) bytes. Contrast with PacketLengths, whose opcodes have a single fixed
+    // total length known upfront. Both MapAuthOk (a pinned-shaped internal packet carrying the
+    // map name string) and MapInventoryListGetResponse (an unbounded-count CharInventory row
+    // list - see ICharacterInventoryListPersistence) need this; VariableLengthMinLength is the
+    // smallest legal total length for each (below which the packet is malformed).
+    private static readonly Dictionary<short, int> VariableLengthMinLength = new()
+    {
+        [PacketConstants.MapAuthOk] = 4,
+        [PacketConstants.MapInventoryListGetResponse] = MapInventoryListProtocol.ResponseHeaderLength,
+    };
+
+    // The length field is a uint16 (BinaryPrimitives.ReadUInt16LittleEndian below), so its own
+    // max value is already the real ceiling - no separate cap needed.
 
     private static async Task<byte[]> ReadPacketAsync(NetworkStream stream, CancellationToken cancellationToken)
     {
@@ -522,7 +538,7 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
         }
 
         var packetType = BinaryPrimitives.ReadInt16LittleEndian(header.AsSpan(0, 2));
-        if (packetType == PacketConstants.MapAuthOk)
+        if (VariableLengthMinLength.TryGetValue(packetType, out var minLength))
         {
             var lengthBytes = await ReadExactAsync(stream, 2, cancellationToken);
             if (lengthBytes.Length == 0)
@@ -531,8 +547,9 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
             }
 
             var packetLength = BinaryPrimitives.ReadUInt16LittleEndian(lengthBytes.AsSpan(0, 2));
-            if (packetLength < 4)
+            if (packetLength < minLength)
             {
+                MapLogger.Warning($"Malformed variable-length char server packet 0x{packetType:X4} length={packetLength}, disconnecting.");
                 return Array.Empty<byte>();
             }
 
