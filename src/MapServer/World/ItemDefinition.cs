@@ -117,12 +117,59 @@ public sealed record EtcItemDefinition(
     WorldSourceInfo Source)
     : ItemDefinition(Id, AegisName, Name, Stackable, ClientViewId, Source);
 
-// Pinned Type: Usable items (consumables - potions, First Aid Box, etc.). No combat/heal
-// fields yet - extend only when a traced use case needs them. A distinct type from
-// EtcItemDefinition even though both are currently field-identical, matching the
-// no-catch-all discriminator convention: Usable and Etc are different pinned item_types
-// (mmo.hpp:223-238) and must not be conflated merely because neither has modeled fields yet.
+// One pinned `getitem <id>,<amount>;` statement from a Type: Usable item's item_db Script
+// block (script.cpp BUILDIN_FUNC(getitem)) - the ONLY script shape ItemDataCompiler currently
+// recognizes for a container/item-group-opening usable (see its own doc comment). Not a
+// general script AST node - this project has no script interpreter; a script that contains
+// anything other than a sequence of these fails generation loudly rather than being partially
+// represented.
+public sealed record ItemGrantDefinition(int ItemId, uint Amount);
+
+// Pinned Type: Usable items (consumables, container/item-group openers like First Aid Box,
+// etc.). Grants is empty for an ordinary usable with no item_db Script (or one this compiler's
+// getitem-only recognizer does not apply to) - a non-empty Grants list is exactly and only the
+// source-derived representation of a `getitem` sequence (see ItemGrantDefinition). This
+// project has no general item-effect/status/skill modeling yet - only the getitem-container
+// case is represented, matching the narrow traced use case (First Aid Box 23484). A distinct
+// type from EtcItemDefinition even where Grants is empty, matching the no-catch-all
+// discriminator convention: Usable and Etc are different pinned item_types (mmo.hpp:223-238).
 public sealed record UsableItemDefinition(
+    int Id,
+    string AegisName,
+    string Name,
+    bool Stackable,
+    int ClientViewId,
+    WorldSourceInfo Source,
+    IReadOnlyList<ItemGrantDefinition>? Grants = null)
+    : ItemDefinition(Id, AegisName, Name, Stackable, ClientViewId, Source)
+{
+    public IReadOnlyList<ItemGrantDefinition> Grants { get; init; } = Grants ?? [];
+}
+
+// Pinned Type: Healing items (mmo.hpp IT_HEALING - HP/SP-restoring consumables, e.g. potions).
+// Fields intentionally match UsableItemDefinition's own current shallow-extension state: only
+// the common source-backed identity fields are modeled. This type exists purely so pinned
+// Type: Healing rows are representable as authoritative inventory data (they can be granted by
+// a container's getitem script, or otherwise exist in a character's inventory) - their actual
+// healing effect (itemheal) is explicitly OUT OF SCOPE and unimplemented; using a healing item
+// is a separate future vertical slice. Never collapsed into UsableItemDefinition or
+// EtcItemDefinition - Healing is a distinct pinned item_type and must remain distinguishable by
+// C# type, matching every other concrete ItemDefinition in this file.
+public sealed record HealingItemDefinition(
+    int Id,
+    string AegisName,
+    string Name,
+    bool Stackable,
+    int ClientViewId,
+    WorldSourceInfo Source)
+    : ItemDefinition(Id, AegisName, Name, Stackable, ClientViewId, Source);
+
+// Pinned Type: DelayConsume items (mmo.hpp IT_DELAYCONSUME - consumption is deferred until the
+// item's associated skill/effect actually completes, e.g. Novice Magnifier's itemskill call).
+// Same shallow-extension rationale as HealingItemDefinition: modeled only so pinned
+// Type: DelayConsume rows are representable as authoritative inventory data; the actual
+// delay-consume/itemskill behavior is explicitly OUT OF SCOPE and unimplemented.
+public sealed record DelayConsumeItemDefinition(
     int Id,
     string AegisName,
     string Name,

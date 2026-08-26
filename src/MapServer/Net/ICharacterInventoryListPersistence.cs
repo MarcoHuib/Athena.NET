@@ -67,6 +67,31 @@ public sealed record CharacterInventorySnapshot(IReadOnlyList<CharacterInventory
         items[(int)replacement.SlotIndex] = replacement;
         return new CharacterInventorySnapshot(items);
     }
+
+    // Applies a CharServer-confirmed row deletion (InventoryConsumePersistenceResult.RowDeleted
+    // - the row's Amount reached zero and CharServer removed it from durable storage) to this
+    // runtime snapshot. Because Athena's SlotIndex is derived from stable row-Id ordering
+    // (CharInventoryOrdering.InStableSlotOrder) rather than a persisted array-slot column, a
+    // deleted row's later siblings shift down by one - this reproduces exactly the same
+    // renumbering a fresh full inventory reload would produce, so a future reconnect and this
+    // runtime snapshot always agree. Every row after the removed one has its SlotIndex
+    // decremented by one to match.
+    public CharacterInventorySnapshot WithoutSlot(uint slotIndex)
+    {
+        if (slotIndex >= Items.Count)
+        {
+            throw new InvalidOperationException(
+                $"Inventory slot invariant violation: cannot remove SlotIndex={slotIndex}, current row count={Items.Count}.");
+        }
+
+        var items = new List<CharacterInventoryItem>(Items.Count - 1);
+        foreach (var item in Items)
+        {
+            if (item.SlotIndex == slotIndex) continue;
+            items.Add(item.SlotIndex > slotIndex ? item with { SlotIndex = item.SlotIndex - 1 } : item);
+        }
+        return new CharacterInventorySnapshot(items);
+    }
 }
 
 // Pinned EQP_HAND_R = 0x000002 (mmo.hpp:340) - the only equip slot the weapon-appearance/combat

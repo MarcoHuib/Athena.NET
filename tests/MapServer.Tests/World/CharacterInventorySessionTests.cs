@@ -35,6 +35,23 @@ internal sealed class FakeInventoryPersistence : ICharacterInventoryPersistence
     }
 
     public uint Persisted(uint charId, int itemId) => _stacks.GetValueOrDefault((charId, itemId));
+
+    public Task<InventoryConsumePersistenceResult> ConsumeItemAsync(uint accountId, uint charId, uint slotIndex, uint amount, CancellationToken cancellationToken)
+    {
+        if (!_slotOrderByChar.TryGetValue(charId, out var order) || slotIndex >= order.Count)
+            return Task.FromResult(InventoryConsumePersistenceResult.Failed());
+
+        var itemId = order[(int)slotIndex];
+        var key = (charId, itemId);
+        var current = _stacks.GetValueOrDefault(key);
+        if (current < amount) return Task.FromResult(InventoryConsumePersistenceResult.Failed());
+
+        var updated = current - amount;
+        _stacks[key] = updated;
+        var rowDeleted = updated == 0;
+        if (rowDeleted) order.RemoveAt((int)slotIndex);
+        return Task.FromResult(new InventoryConsumePersistenceResult(true, updated, rowDeleted));
+    }
 }
 
 public sealed class CharacterInventorySessionTests
@@ -144,5 +161,46 @@ public sealed class CharacterInventorySessionTests
         var result = await session.AddItemAsync(Wood, 1, CancellationToken.None);
 
         Assert.Null(result.Item);
+    }
+
+    [Fact]
+    public async Task ConsumeItemAsync_StackGreaterThanOne_DecrementsAmount_RowNotDeleted()
+    {
+        var persistence = new FakeInventoryPersistence();
+        var session = new CharacterInventorySession(1, 100, persistence);
+        await session.AddItemAsync(Wood, 5, CancellationToken.None); // slot 0, amount 5
+
+        var result = await session.ConsumeItemAsync(0, 1, CancellationToken.None);
+
+        Assert.True(result.Success);
+        Assert.Equal(4u, result.NewAmount);
+        Assert.False(result.RowDeleted);
+        Assert.Equal(4u, persistence.Persisted(100, 6008));
+    }
+
+    [Fact]
+    public async Task ConsumeItemAsync_LastUnit_DeletesRow()
+    {
+        var persistence = new FakeInventoryPersistence();
+        var session = new CharacterInventorySession(1, 100, persistence);
+        await session.AddItemAsync(Wood, 1, CancellationToken.None); // slot 0, amount 1
+
+        var result = await session.ConsumeItemAsync(0, 1, CancellationToken.None);
+
+        Assert.True(result.Success);
+        Assert.Equal(0u, result.NewAmount);
+        Assert.True(result.RowDeleted);
+        Assert.Equal(0u, persistence.Persisted(100, 6008));
+    }
+
+    [Fact]
+    public async Task ConsumeItemAsync_InvalidSlot_ReportsFailure_NotFakeSuccess()
+    {
+        var persistence = new FakeInventoryPersistence();
+        var session = new CharacterInventorySession(1, 100, persistence);
+
+        var result = await session.ConsumeItemAsync(5, 1, CancellationToken.None);
+
+        Assert.False(result.Success);
     }
 }

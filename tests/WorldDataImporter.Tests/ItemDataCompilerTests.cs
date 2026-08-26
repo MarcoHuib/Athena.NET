@@ -30,6 +30,10 @@ public sealed class ItemDataCompilerTests
             AegisName: Red_Potion
             Name: Red Potion
             Type: Healing
+          - Id: 4001
+            AegisName: Poring_Card
+            Name: Poring Card
+            Type: Card
           - Id: 1203
             AegisName: Mystery_Weapon
             Name: Mystery Weapon
@@ -54,10 +58,34 @@ public sealed class ItemDataCompilerTests
             Type: Armor
             Locations:
               Armor: true
+          - Id: 12325
+            AegisName: N_Magnifier
+            Name: Novice Magnifier
+            Type: DelayConsume
           - Id: 23484
             AegisName: Firstaid_Box_5
             Name: First Aid Box (5)
             Type: Usable
+          - Id: 22542
+            AegisName: Center_Potion_B
+            Name: "[Not For Sale] Concentration Potion"
+            Type: Usable
+            Script: |
+              sc_start SC_ASPDPOTION0,1800000,4;
+          - Id: 23486
+            AegisName: Firstaid_Box_15
+            Name: First Aid Box (15)
+            Type: Usable
+            Script: |
+              getitem 11518,10;
+              getitem 11614,20;
+          - Id: 23487
+            AegisName: Mixed_Script_Box
+            Name: Mixed Script Box
+            Type: Usable
+            Script: |
+              getitem 11518,10;
+              sc_start SC_ASPDPOTION0,1800000,4;
         """;
 
     [Fact]
@@ -219,8 +247,74 @@ public sealed class ItemDataCompilerTests
     [Fact]
     public void Generate_UnsupportedType_ThrowsRatherThanCollapsingIntoEtc()
     {
+        var item = ItemDataCompiler.ReadItemDefinition(ItemDbFixture, 4001);
+        Assert.Throws<NotSupportedException>(() => ItemDataCompiler.Generate(item, "abc123", "AcademyItems", "PoringCard", "db/re/item_db_card.yml", 3));
+    }
+
+    [Fact]
+    public void Generate_Healing_EmitsHealingItemDefinition_DistinctFromUsable()
+    {
         var item = ItemDataCompiler.ReadItemDefinition(ItemDbFixture, 501);
-        Assert.Throws<NotSupportedException>(() => ItemDataCompiler.Generate(item, "abc123", "AcademyItems", "RedPotion", "db/re/item_db_healing.yml", 3));
+        var generated = ItemDataCompiler.Generate(item, "abc123", "AcademyItems", "RedPotion", "db/re/item_db_usable.yml", 3);
+
+        Assert.Contains("HealingItemDefinition", generated);
+        Assert.DoesNotContain("UsableItemDefinition", generated);
+    }
+
+    [Fact]
+    public void Generate_DelayConsume_EmitsDelayConsumeItemDefinition_DistinctFromUsable()
+    {
+        var item = ItemDataCompiler.ReadItemDefinition(ItemDbFixture, 12325);
+        var generated = ItemDataCompiler.Generate(item, "abc123", "AcademyItems", "NoviceMagnifier", "db/re/item_db_usable.yml", 3);
+
+        Assert.Contains("DelayConsumeItemDefinition", generated);
+        Assert.DoesNotContain("UsableItemDefinition", generated);
+    }
+
+    [Fact]
+    public void ReadItemDefinition_UsableWithNoScript_HasNullGrants()
+    {
+        var item = ItemDataCompiler.ReadItemDefinition(ItemDbFixture, 23484);
+        Assert.Null(item.Grants);
+    }
+
+    [Fact]
+    public void ReadItemDefinition_UsableWithGetItemScript_ParsesExactGrantList()
+    {
+        var item = ItemDataCompiler.ReadItemDefinition(ItemDbFixture, 23486);
+
+        Assert.NotNull(item.Grants);
+        Assert.Equal(2, item.Grants!.Count);
+        Assert.Equal((11518, 10u), item.Grants[0]);
+        Assert.Equal((11614, 20u), item.Grants[1]);
+    }
+
+    [Fact]
+    public void Generate_UsableWithGrants_EmitsGrantsArray()
+    {
+        var item = ItemDataCompiler.ReadItemDefinition(ItemDbFixture, 23486);
+        var generated = ItemDataCompiler.Generate(item, "abc123", "AcademyItems", "FirstAidBox", "db/re/item_db_usable.yml", 11);
+
+        Assert.Contains("Grants: [new ItemGrantDefinition(11518, 10), new ItemGrantDefinition(11614, 20)]", generated);
+    }
+
+    [Fact]
+    public void ReadItemDefinition_UsableWithNonGetItemScript_HasNullGrants_NotAnError()
+    {
+        // A Usable item whose script is some other, currently-unmodeled effect (not a getitem
+        // container) must not throw - it simply has no Grants, matching how Healing's itemheal
+        // effect is left unmodeled without failing generation.
+        var item = ItemDataCompiler.ReadItemDefinition(ItemDbFixture, 22542);
+        Assert.Null(item.Grants);
+    }
+
+    [Fact]
+    public void ReadItemDefinition_UsableWithMixedGetItemAndOtherScript_ThrowsRatherThanPartiallyParsing()
+    {
+        // Once a script commits to looking like a container (first statement IS getitem), every
+        // remaining statement must also be getitem - a trailing non-getitem statement must fail
+        // generation loudly rather than silently representing only the getitem prefix.
+        Assert.Throws<NotSupportedException>(() => ItemDataCompiler.ReadItemDefinition(ItemDbFixture, 23487));
     }
 
     [Fact]

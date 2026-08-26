@@ -34,6 +34,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
         [PacketConstants.IroCzAttackRequest] = PacketConstants.IroCzAttackRequestLength,
         [PacketConstants.IroCzReqWearEquip] = PacketConstants.IroCzReqWearEquipLength,
         [PacketConstants.IroCzReqTakeoffEquip] = PacketConstants.IroCzReqTakeoffEquipLength,
+        [PacketConstants.IroCzUseItem] = PacketConstants.IroCzUseItemLength,
     };
 
     private readonly TcpClient _client;
@@ -777,6 +778,9 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
             case PacketConstants.IroCzReqTakeoffEquip when _iroAuthRequested:
                 await HandleUnequipRequestAsync(packet, cancellationToken);
                 break;
+            case PacketConstants.IroCzUseItem when _iroAuthRequested:
+                await HandleIroUseItemRequestAsync(packet, cancellationToken);
+                break;
             default:
                 LogUnsupportedPacket(packetType, packet);
                 RequestClose();
@@ -1108,6 +1112,101 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
             var pickupPacket = IroMonsterCombatPackets.BuildItemPickupAck(clientIndex, (ushort)drop.Count, itemDefinition.Id, itemType: 3);
             MapLogger.Info($"[iRO MAP DEBUG] Sending 0x0B41 itemId={itemDefinition.Id} count={drop.Count} clientIndex={clientIndex}");
             await WriteAsync(pickupPacket, cancellationToken);
+        }
+    }
+
+    // Pinned clif_parse_UseItem (clif.cpp:12077-12106) -> pc_useitem (pc.cpp:6450-6576).
+    // n = server_index(index) (client index - 2, matching every other equip/unequip/pickup
+    // path's convention) - the client supplies intent only; the authoritative item is resolved
+    // from THIS session's own CharacterInventorySnapshot at that slot, never trusted from the
+    // client. AccountId is validated against the authenticated session (pinned clif_parse_UseItem
+    // itself never re-validates the field - the request is scoped to sd via fd - but Athena's
+    // packet still carries it, so it is checked defensively rather than ignored).
+    //
+    // This slice supports exactly one traced source-backed effect: a Type: Usable item whose
+    // pinned item_db Script is a getitem-only container (ItemDataCompiler.TryParseGetItemScript,
+    // e.g. First Aid Box 23484) - GeneratedItems.UsableItemDefinition.Grants is non-empty only
+    // for that narrow case. Any other resolved item (a different Usable with no Grants, a
+    // Healing/DelayConsume item, an unknown/non-usable slot) is rejected without mutation -
+    // implementing their real effects (itemheal, itemskill, status, etc.) is explicitly out of
+    // scope; this handler must never guess or fake a result for them.
+    //
+    // Ordering follows this project's own validate -> persist -> update runtime state -> notify
+    // rule (AGENTS.md), which is ALSO consistent with pinned pc_useitem's own real ordering for
+    // this exact case (clif_useitemack sent BEFORE pc_delitem at pc.cpp:6535-6536 - the ack must
+    // be constructed from the row's PRE-consume state/still-existing row, per clif_useitemack's
+    // own early-out at clif.cpp:4477 for a zeroed/absent row) - so persisting first and building
+    // the ack from the confirmed post-persist state produces the exact same wire values pinned
+    // source does for the amount-after-use case, without needing to special-case send-before-persist.
+    private async Task HandleIroUseItemRequestAsync(byte[] packet, CancellationToken cancellationToken)
+    {
+        if (!IroUseItemRequestPacket.TryParse(packet, out var request)) return;
+        if (request.AccountId != _accountId) return;
+        if (_inventory is not { } inventory || request.ClientIndex < 2) return;
+        var slotIndex = (uint)(request.ClientIndex - 2);
+
+        var row = inventory.Items.FirstOrDefault(i => i.SlotIndex == slotIndex);
+        if (row is null || !GeneratedItems.ById.TryGetValue(row.ItemId, out var itemDefinition))
+        {
+            MapLogger.Warning($"[iRO MAP DEBUG] Item-use rejected: no resolvable item at slotIndex={slotIndex}.");
+            return;
+        }
+
+        if (itemDefinition is not UsableItemDefinition { Grants.Count: > 0 } usable)
+        {
+            MapLogger.Warning(
+                $"[iRO MAP DEBUG] Item-use rejected: itemId={row.ItemId} has no source-backed use effect implemented in this slice.");
+            return;
+        }
+
+        var inventorySession = new CharacterInventorySession(_accountId, _charId, _inventoryPersistence);
+        var consumeResult = await inventorySession.ConsumeItemAsync(slotIndex, 1, cancellationToken);
+        if (!consumeResult.Success)
+        {
+            MapLogger.Warning($"[iRO MAP DEBUG] Item-use persistence failed for itemId={row.ItemId} slotIndex={slotIndex}; not notifying client.");
+            return;
+        }
+
+        // Persistence succeeded - update the authoritative runtime snapshot BEFORE granting the
+        // container's items or notifying the client (same rule the reward path already follows).
+        _inventory = consumeResult.RowDeleted ? inventory.WithoutSlot(slotIndex) : inventory.WithItem(row with { Amount = consumeResult.NewAmount });
+        _equipment = CharacterEquipmentSnapshot.FromInventory(_inventory);
+
+        MapLogger.Info(
+            $"[iRO MAP DEBUG] Item-use consumed itemId={row.ItemId} slotIndex={slotIndex} newAmount={consumeResult.NewAmount} rowDeleted={consumeResult.RowDeleted}.");
+
+        var ackPacket = IroUseItemPackets.BuildUseItemAck(request.ClientIndex, itemDefinition.ClientViewId, _accountId, consumeResult.NewAmount, success: true);
+        await WriteAsync(ackPacket, cancellationToken);
+
+        // Execute the source-backed getitem grants (script.cpp BUILDIN_FUNC(getitem)) - each
+        // grant is a normal authoritative inventory add through the SAME CharacterInventorySession/
+        // runtime-snapshot-update path the quest-drop reward loop already uses. A grant referencing
+        // an item id absent from the generated registry is a data/generation gap, logged and
+        // skipped rather than guessed at (matching the existing quest-drop convention) - it does
+        // NOT abort the remaining grants, since each is an independent getitem call in the pinned
+        // script, not a single atomic operation.
+        foreach (var grant in usable.Grants)
+        {
+            if (!GeneratedItems.ById.TryGetValue(grant.ItemId, out var grantedItem))
+            {
+                MapLogger.Warning($"[iRO MAP DEBUG] Item-use grant references unregistered itemId={grant.ItemId}; skipping.");
+                continue;
+            }
+
+            var grantResult = await inventorySession.AddItemAsync(grantedItem, grant.Amount, cancellationToken);
+            if (!grantResult.Success || grantResult.Item is not { } grantedRow)
+            {
+                MapLogger.Warning($"[iRO MAP DEBUG] Item-use grant persistence failed for itemId={grant.ItemId}; skipping.");
+                continue;
+            }
+
+            _inventory = _inventory.WithItem(grantedRow);
+            _equipment = CharacterEquipmentSnapshot.FromInventory(_inventory);
+
+            var grantClientIndex = (ushort)(grantResult.SlotIndex + 2);
+            var grantPickupPacket = IroMonsterCombatPackets.BuildItemPickupAck(grantClientIndex, (ushort)grant.Amount, grantedItem.Id, itemType: 3);
+            MapLogger.Info($"[iRO MAP DEBUG] Sending 0x0B41 for item-use grant itemId={grant.ItemId} count={grant.Amount} clientIndex={grantClientIndex}");
+            await WriteAsync(grantPickupPacket, cancellationToken);
         }
     }
 
@@ -1970,24 +2069,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
     {
         if (!PacketLengths.TryGetValue(packetType, out var length))
         {
-            // TEMPORARY diagnostic capture, scoped to only 0x00A7 (suspected current-iRO
-            // item-use request under investigation - see ai/map-server.md). An unregistered
-            // packet type's payload length is genuinely unknown, so Athena cannot safely
-            // continue framing this connection (the alternative - consuming a guessed length -
-            // risks desyncing every subsequent packet). The session already terminates safely
-            // right after this (RunAsync treats an empty packet as EOF), so opportunistically
-            // draining and logging whatever bytes the client already queued causes no
-            // additional harm and is the only way to observe the real wire bytes without a
-            // separate raw-socket capture tool. Remove once 0x00A7's exact current-iRO length
-            // is proven and registered in PacketLengths.
-            if (packetType == PacketConstants.IroCzUseItemSuspected)
-            {
-                await LogSuspectedUseItemDiagnosticBytesAsync(stream, header, cancellationToken);
-            }
-            else
-            {
-                LogUnsupportedPacket(packetType, header);
-            }
+            LogUnsupportedPacket(packetType, header);
             return Array.Empty<byte>();
         }
 
@@ -2046,42 +2128,6 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
             $"[iRO MAP DEBUG] Unsupported map client packet=0x{packetType:X4} len={packet.Length}");
     }
 
-    // TEMPORARY diagnostic helper - see its one call site's doc comment. Drains whatever bytes
-    // the client already sent immediately after the opaque 2-byte header (bounded by a short
-    // grace window, since the TCP segment carrying the full packet may already be fully
-    // buffered, or may still be in flight) and logs them as hex so the exact current-iRO
-    // 0x00A7 payload length/fields can be read directly from server logs. Never claims this is
-    // the complete packet - only reports what was actually observed.
-    private static async Task LogSuspectedUseItemDiagnosticBytesAsync(Stream stream, byte[] header, CancellationToken cancellationToken)
-    {
-        using var graceWindow = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        graceWindow.CancelAfter(TimeSpan.FromMilliseconds(200));
-
-        var buffer = new byte[64];
-        var read = 0;
-        try
-        {
-            while (read < buffer.Length)
-            {
-                var bytes = await stream.ReadAsync(buffer.AsMemory(read, buffer.Length - read), graceWindow.Token);
-                if (bytes == 0) break;
-                read += bytes;
-            }
-        }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-        {
-            // Grace window elapsed with no further bytes queued - expected once the full
-            // packet (header + payload) has already been drained.
-        }
-
-        var observed = new byte[2 + read];
-        Buffer.BlockCopy(header, 0, observed, 0, 2);
-        Buffer.BlockCopy(buffer, 0, observed, 2, read);
-        MapLogger.Warning(
-            $"[iRO MAP DEBUG][DIAGNOSTIC] Suspected item-use packet=0x{BinaryPrimitives.ReadInt16LittleEndian(header):X4} " +
-            $"headerPlusObservedTrailingBytes={Convert.ToHexString(observed)} observedTrailingByteCount={read} " +
-            "(length NOT yet proven - this may not be the complete packet).");
-    }
 
     private async Task WriteAsync(byte[] payload, CancellationToken cancellationToken)
     {

@@ -138,31 +138,34 @@ public sealed class IroMapPacketFramingTests
         Assert.Equal(changeDirection, await MapClientSession.ReadNextPacketAsync(stream, CancellationToken.None));
     }
 
-    // Suspected item-use diagnostic path: 0x00A7 is not yet registered in PacketLengths (its
-    // real current-iRO length is unproven - see PacketConstants.IroCzUseItemSuspected), so
-    // ReadNextPacketAsync must return an empty packet (safe session termination, matching every
-    // other unregistered opcode) rather than throwing or hanging, regardless of how many
-    // trailing bytes the client already queued.
+    // Converts the live-captured item-use evidence into an executable framing invariant: a real
+    // 9-byte 0x00A7 request (A7 00 04 00 80 84 1E 00 D2 - opcode, clientIndex=4, accountId=
+    // 2,000,000, one opaque trailing byte) immediately followed by a known valid packet must be
+    // read as two independent, correctly-framed packets - proving PacketLengths' registration
+    // consumes exactly 9 bytes, leaving no stray bytes to desynchronize the next packet.
     [Fact]
-    public async Task ReadNextPacketAsync_UnregisteredSuspectedUseItemOpcode_ReturnsEmptyWithoutThrowing()
+    public async Task ReadNextPacketAsync_FramesLiveCaptured0x00A7UseItemBeforeCoalescedNextPacket()
     {
-        var packet = new byte[] { 0xa7, 0x00, 0x02, 0x00, 0x07, 0x00, 0x00, 0x00, 0xff };
-        await using var stream = new MemoryStream(packet);
+        var useItem = new byte[] { 0xa7, 0x00, 0x04, 0x00, 0x80, 0x84, 0x1e, 0x00, 0xd2 };
+        var ping = new byte[] { 0x1c, 0x0b };
+        await using var stream = new MemoryStream([.. useItem, .. ping]);
 
-        var actual = await MapClientSession.ReadNextPacketAsync(stream, CancellationToken.None);
+        var first = await MapClientSession.ReadNextPacketAsync(stream, CancellationToken.None);
+        var second = await MapClientSession.ReadNextPacketAsync(stream, CancellationToken.None);
 
-        Assert.Empty(actual);
+        Assert.Equal(useItem, first);
+        Assert.Equal(ping, second);
     }
 
     [Fact]
-    public async Task ReadNextPacketAsync_UnregisteredSuspectedUseItemOpcode_NoTrailingBytes_ReturnsEmptyWithoutThrowing()
+    public async Task ReadNextPacketAsync_Reassembles0x00A7UseItemAcrossFragmentedReads()
     {
-        var packet = new byte[] { 0xa7, 0x00 };
-        await using var stream = new MemoryStream(packet);
+        var useItem = new byte[] { 0xa7, 0x00, 0x04, 0x00, 0x80, 0x84, 0x1e, 0x00, 0xd2 };
+        await using var stream = new ChunkedReadStream(useItem, 2, 3, 4);
 
         var actual = await MapClientSession.ReadNextPacketAsync(stream, CancellationToken.None);
 
-        Assert.Empty(actual);
+        Assert.Equal(useItem, actual);
     }
 
     private sealed class ChunkedReadStream : Stream

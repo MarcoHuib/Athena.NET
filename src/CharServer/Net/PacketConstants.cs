@@ -46,6 +46,8 @@ public static class PacketConstants
     // CharInventory.Equip - MapServer never mutates its own snapshot without a confirmed write.
     public const short MapInventoryEquipUpdateRequest = 0x2b35;
     public const short MapInventoryEquipUpdateResponse = 0x2b36;
+    public const short MapInventoryConsumeRequest = 0x2b37;
+    public const short MapInventoryConsumeResponse = 0x2b38;
 
     public const short ChReqConnect = 0x65;
     public const short ChSelectChar = 0x66;

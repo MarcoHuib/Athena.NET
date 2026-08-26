@@ -100,8 +100,11 @@ internal static class ItemDataCompiler
     // read only for Type: Weapon/Armor rows - matching pinned status.cpp:3940's own
     // `sd->inventory_data[index]->type == IT_WEAPON` gate before reading atk/weapon_level.
     // ClientViewId is read for every item, not just equip-capable ones - it is a general item_db
-    // concept (client_nameid(), clif.cpp:144-151).
-    internal sealed record ItemDefinitionData(int Id, string AegisName, string Name, string Type, bool Stackable, int ClientViewId, int? Attack, int? WeaponLevel, WeaponType? WeaponType, uint? EquipLocation);
+    // concept (client_nameid(), clif.cpp:144-151). Grants is read only for Type: Usable rows
+    // whose Script block matches the narrow getitem-only shape this compiler recognizes (see
+    // TryParseGetItemScript) - null for every other row, including a Usable row with no Script
+    // or with a script this compiler cannot represent (that case throws instead, see below).
+    internal sealed record ItemDefinitionData(int Id, string AegisName, string Name, string Type, bool Stackable, int ClientViewId, int? Attack, int? WeaponLevel, WeaponType? WeaponType, uint? EquipLocation, IReadOnlyList<(int ItemId, uint Amount)>? Grants);
 
     internal static ItemDefinitionData ReadItemDefinition(string itemDbYaml, int itemId)
     {
@@ -142,7 +145,54 @@ internal static class ItemDataCompiler
             equipLocation = ReadLocations(block);
         }
 
-        return new ItemDefinitionData(itemId, aegisName, name, type, !NonStackableTypes.Contains(type), clientViewId, attack, weaponLevel, weaponType, equipLocation);
+        // Only Type: Usable rows are examined for a getitem-shaped Script - Healing/DelayConsume/
+        // etc. rows never carry Grants (their Script, if any, is a different unmodeled effect
+        // entirely and must not be misread as a container).
+        var grants = type == "Usable" ? TryParseGetItemScript(block) : null;
+
+        return new ItemDefinitionData(itemId, aegisName, name, type, !NonStackableTypes.Contains(type), clientViewId, attack, weaponLevel, weaponType, equipLocation, grants);
+    }
+
+    // Recognizes ONLY the narrow script shape this project models: a Script block consisting
+    // entirely of one or more `getitem <constant item id>,<constant amount>;` statements
+    // (pinned script.cpp BUILDIN_FUNC(getitem), item_db.yml Script column) - a container/
+    // item-group-opening usable, e.g. First Aid Box. Returns null (no Grants) when the row has
+    // no Script block at all, OR when its Script's first statement is not `getitem` at all -
+    // that is simply a different, currently-unmodeled item effect (a heal/skill/status/etc.
+    // script), not a container this compiler misrepresented; leaving Grants empty is the
+    // correct "not implemented" representation for that case, matching how this compiler
+    // already leaves Healing's itemheal effect entirely unmodeled.
+    //
+    // Once a script commits to looking like a container (its first statement IS getitem), every
+    // remaining statement MUST also be a constant getitem - a mixed script (getitem followed by
+    // anything else) throws rather than silently parsing only the getitem lines and dropping
+    // the rest, because at that point representing only the getitem prefix WOULD misstate the
+    // item's real combined effect. This project has no general rAthena script interpreter.
+    private static IReadOnlyList<(int ItemId, uint Amount)>? TryParseGetItemScript(string block)
+    {
+        var scriptMatch = Regex.Match(block, @"^    Script: \|\n((?:      .*\n?)+)", RegexOptions.Multiline);
+        if (!scriptMatch.Success) return null;
+
+        var lines = scriptMatch.Groups[1].Value.Split('\n').Select(l => l.Trim()).Where(l => l.Length > 0).ToList();
+        if (lines.Count == 0) return null;
+        if (!Regex.IsMatch(lines[0], @"^getitem\s+\d+\s*,\s*\d+\s*;$")) return null;
+
+        var grants = new List<(int ItemId, uint Amount)>();
+        foreach (var line in lines)
+        {
+            var getItemMatch = Regex.Match(line, @"^getitem\s+(\d+)\s*,\s*(\d+)\s*;$");
+            if (!getItemMatch.Success)
+            {
+                throw new NotSupportedException(
+                    $"Item Script line '{line}' is not a recognized constant getitem statement; this compiler does not implement a general script interpreter.");
+            }
+
+            grants.Add((
+                int.Parse(getItemMatch.Groups[1].Value, CultureInfo.InvariantCulture),
+                uint.Parse(getItemMatch.Groups[2].Value, CultureInfo.InvariantCulture)));
+        }
+
+        return grants;
     }
 
     // Pinned item_db Locations block (itemdb.cpp:446-475): a set of `KeyName: true` entries at
@@ -203,6 +253,8 @@ internal static class ItemDataCompiler
         "Armor" => "ArmorItemDefinition",
         "Etc" => "EtcItemDefinition",
         "Usable" => "UsableItemDefinition",
+        "Healing" => "HealingItemDefinition",
+        "DelayConsume" => "DelayConsumeItemDefinition",
         _ => throw new NotSupportedException($"Item Type '{type}' has no modeled ItemDefinition subtype yet."),
     };
 
@@ -229,8 +281,8 @@ internal static class ItemDataCompiler
             .AppendLine("{")
             .Append("    internal static readonly ").Append(typeName).Append(' ').Append(constantName).AppendLine(" = new(")
             .Append("        Id: ").Append(item.Id).AppendLine(",")
-            .Append("        AegisName: \"").Append(item.AegisName).AppendLine("\",")
-            .Append("        Name: \"").Append(item.Name).AppendLine("\",")
+            .Append("        AegisName: \"").Append(EscapeForCSharpString(item.AegisName)).AppendLine("\",")
+            .Append("        Name: \"").Append(EscapeForCSharpString(item.Name)).AppendLine("\",")
             .Append("        Stackable: ").Append(item.Stackable ? "true" : "false").AppendLine(",")
             .Append("        ClientViewId: ").Append(item.ClientViewId.ToString(CultureInfo.InvariantCulture)).AppendLine(",");
 
@@ -249,8 +301,16 @@ internal static class ItemDataCompiler
         }
 
         builder
-            .Append("        Source: new WorldSourceInfo(\"rAthena\", \"").Append(commit).Append("\", \"").Append(sourceFile).Append("\", ").Append(sourceLine).AppendLine("));")
-            .AppendLine("}");
+            .Append("        Source: new WorldSourceInfo(\"rAthena\", \"").Append(commit).Append("\", \"").Append(sourceFile).Append("\", ").Append(sourceLine).Append(')');
+
+        if (item.Grants is { Count: > 0 } grants)
+        {
+            builder.AppendLine(",").Append("        Grants: [");
+            builder.Append(string.Join(", ", grants.Select(g => $"new ItemGrantDefinition({g.ItemId}, {g.Amount})")));
+            builder.Append(']');
+        }
+
+        builder.AppendLine(");").AppendLine("}");
         return builder.ToString();
     }
 
@@ -258,8 +318,18 @@ internal static class ItemDataCompiler
     {
         var match = Regex.Match(block, $@"^    {Regex.Escape(field)}: (.+)$", RegexOptions.Multiline);
         if (!match.Success) throw new ArgumentException($"Pinned item block has no '{field}' field.");
-        return match.Groups[1].Value;
+        return UnquoteYamlScalar(match.Groups[1].Value);
     }
+
+    // A pinned item_db YAML scalar is double-quoted only when its raw text would otherwise be
+    // ambiguous to the YAML parser (e.g. Center_Potion_B's Name: "[Not For Sale] ..." - a
+    // leading '[' would otherwise start a flow sequence). Strip that YAML-level quoting so
+    // downstream C# string-literal emission (see EscapeForCSharpString) works from the real
+    // display text, not the raw YAML token.
+    private static string UnquoteYamlScalar(string value) =>
+        value.Length >= 2 && value[0] == '"' && value[^1] == '"' ? value[1..^1] : value;
+
+    private static string EscapeForCSharpString(string value) => value.Replace("\\", "\\\\").Replace("\"", "\\\"");
 
     private static string? OptionalScalar(string block, string field)
     {

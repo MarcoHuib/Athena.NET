@@ -45,17 +45,96 @@ internal static class GeneratedItems
 
     // Generated via `compile-item --item-id 23484 --item-db-file db/re/item_db_usable.yml`.
     // Starter tutorial usable (char_athena.conf start_items: 23484,1,0 = unequipped).
+    // Grants is source-derived from this item's own pinned Script (five constant `getitem`
+    // statements, ItemDataCompiler.TryParseGetItemScript) - opening the box grants exactly
+    // these five items/amounts; using any of the five granted items is a separate,
+    // unimplemented future vertical slice (see BluePotion/FreshMilk/NoviceMagnifier/
+    // CenterPotionB/FirstaidBox10 below).
     internal static readonly UsableItemDefinition FirstAidBox = new(
         Id: 23484,
         AegisName: "Firstaid_Box_5",
         Name: "First aid Box (5)",
         Stackable: true,
         ClientViewId: 23484,
+        Source: new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/re/item_db_usable.yml", 0),
+        Grants: [new ItemGrantDefinition(11518, 10), new ItemGrantDefinition(11614, 20), new ItemGrantDefinition(12325, 15), new ItemGrantDefinition(22542, 1), new ItemGrantDefinition(23485, 1)]);
+
+    // Generated via `compile-item --item-id 11518 --item-db-file db/re/item_db_usable.yml`.
+    // Granted by FirstAidBox.Grants. Type: Healing (itemheal 0,5) - the pinned heal effect is
+    // explicitly NOT implemented in this slice; this item exists only so it can be an
+    // authoritative inventory row.
+    internal static readonly HealingItemDefinition BluePotion = new(
+        Id: 11518,
+        AegisName: "N_Blue_Potion",
+        Name: "Blue Potion",
+        Stackable: true,
+        ClientViewId: 11518,
         Source: new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/re/item_db_usable.yml", 0));
+
+    // Generated via `compile-item --item-id 11614 --item-db-file db/re/item_db_usable.yml`.
+    // Granted by FirstAidBox.Grants. Type: Healing (itemheal rand(27,37),0) - unimplemented, see
+    // BluePotion's own doc comment.
+    internal static readonly HealingItemDefinition FreshMilk = new(
+        Id: 11614,
+        AegisName: "Fresh_Milk",
+        Name: "Fresh Milk",
+        Stackable: true,
+        ClientViewId: 11614,
+        Source: new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/re/item_db_usable.yml", 0));
+
+    // Generated via `compile-item --item-id 12325 --item-db-file db/re/item_db_usable.yml`.
+    // Granted by FirstAidBox.Grants. Type: DelayConsume (itemskill "MC_IDENTIFY",1) - the pinned
+    // delay-consume/itemskill effect is explicitly NOT implemented in this slice.
+    internal static readonly DelayConsumeItemDefinition NoviceMagnifier = new(
+        Id: 12325,
+        AegisName: "N_Magnifier",
+        Name: "Novice Magnifier",
+        Stackable: true,
+        ClientViewId: 12325,
+        Source: new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/re/item_db_usable.yml", 0));
+
+    // Generated via `compile-item --item-id 22542 --item-db-file db/re/item_db_usable.yml`.
+    // Granted by FirstAidBox.Grants. Type: Usable but its Script is `sc_start SC_ASPDPOTION0,...`
+    // (a status effect), not a getitem container - ItemDataCompiler.TryParseGetItemScript
+    // correctly leaves Grants empty for this item since its first script statement is not
+    // getitem. The status effect itself is explicitly NOT implemented in this slice.
+    internal static readonly UsableItemDefinition CenterPotionB = new(
+        Id: 22542,
+        AegisName: "Center_Potion_B",
+        Name: "[Not For Sale] Concentration Potion",
+        Stackable: true,
+        ClientViewId: 22542,
+        Source: new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/re/item_db_usable.yml", 0));
+
+    // Generated via `compile-item --item-id 23485 --item-db-file db/re/item_db_usable.yml`.
+    // Granted by FirstAidBox.Grants. Itself a bigger First Aid Box container (same getitem
+    // pattern one tier up); its own Grants faithfully mirrors its pinned script (including a
+    // reference to item 23486, "Firstaid_Box_15", which is not itself generated - opening a
+    // (10) box is out of scope for this slice, so that unregistered reference is inert data,
+    // never resolved/executed).
+    internal static readonly UsableItemDefinition FirstaidBox10 = new(
+        Id: 23485,
+        AegisName: "Firstaid_Box_10",
+        Name: "First aid Box (10)",
+        Stackable: true,
+        ClientViewId: 23485,
+        Source: new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/re/item_db_usable.yml", 0),
+        Grants: [new ItemGrantDefinition(11518, 15), new ItemGrantDefinition(11614, 40), new ItemGrantDefinition(12325, 15), new ItemGrantDefinition(22542, 1), new ItemGrantDefinition(23486, 1)]);
 
     // Hand-composed lookup (not compiler output) over the generated items above, mirroring
     // how AcademyMobSpawnRegistration.cs composes AcademyMobSpawns.GPoringSpawns outside the
     // NpcWorldEmitter's own deterministic-reproducibility guarantee. Extend by adding entries
     // here as more items are generated; do not regenerate this file to add lookup logic.
-    internal static readonly IReadOnlyDictionary<int, ItemDefinition> ById = new Dictionary<int, ItemDefinition> { [Wood.Id] = Wood, [Knife.Id] = Knife, [CottonShirt.Id] = CottonShirt, [FirstAidBox.Id] = FirstAidBox };
+    internal static readonly IReadOnlyDictionary<int, ItemDefinition> ById = new Dictionary<int, ItemDefinition>
+    {
+        [Wood.Id] = Wood,
+        [Knife.Id] = Knife,
+        [CottonShirt.Id] = CottonShirt,
+        [FirstAidBox.Id] = FirstAidBox,
+        [BluePotion.Id] = BluePotion,
+        [FreshMilk.Id] = FreshMilk,
+        [NoviceMagnifier.Id] = NoviceMagnifier,
+        [CenterPotionB.Id] = CenterPotionB,
+        [FirstaidBox10.Id] = FirstaidBox10,
+    };
 }

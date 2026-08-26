@@ -23,6 +23,7 @@ public sealed class MapServerSession : IDisposable, ISession
         [PacketConstants.MapInventoryAddRequest] = MapInventoryAddProtocol.RequestLength,
         [PacketConstants.MapInventoryListGetRequest] = MapInventoryListProtocol.GetRequestLength,
         [PacketConstants.MapInventoryEquipUpdateRequest] = MapInventoryEquipUpdateProtocol.RequestLength,
+        [PacketConstants.MapInventoryConsumeRequest] = MapInventoryConsumeProtocol.RequestLength,
     };
 
     private readonly TcpClient _client;
@@ -124,6 +125,9 @@ public sealed class MapServerSession : IDisposable, ISession
                 break;
             case PacketConstants.MapInventoryEquipUpdateRequest:
                 await HandleInventoryEquipUpdateAsync(packet, cancellationToken);
+                break;
+            case PacketConstants.MapInventoryConsumeRequest:
+                await HandleInventoryConsumeAsync(packet, cancellationToken);
                 break;
             default:
                 CharLogger.Warning($"Unknown map server packet 0x{packetType:X4}, disconnecting.");
@@ -523,6 +527,65 @@ public sealed class MapServerSession : IDisposable, ISession
             }
         }
         await WriteAsync(MapInventoryEquipUpdateProtocol.BuildResponse(success, charId, slotIndex), cancellationToken);
+    }
+
+    // Pinned pc_delitem (pc.cpp:6103-6128), restricted to this service's modeled checks: rejects
+    // if the row doesn't exist at this SlotIndex or its Amount is less than the requested
+    // consume amount (pc.cpp:6107 - `sd->inventory...amount < amount` -> return 1/failure).
+    //
+    // Pinned pc_delitem does NOT shift/renumber later array positions - it `memset`s the row to
+    // zero in place, leaving that array index empty but still occupying it (pc.cpp:6114-6119).
+    // Athena's SlotIndex is derived from stable row-Id ordering, not a fixed persisted array
+    // slot, so there is no equivalent "zeroed placeholder row" to leave behind - deleting the
+    // row when Amount reaches zero is the smallest correct translation: a subsequent full
+    // inventory reload naturally renumbers later rows down by one, exactly mirroring what a
+    // real rAthena client would see after any inventory slot becomes permanently empty and
+    // items above it are eventually reindexed by the next authoritative load. This project has
+    // no live-verified evidence of what a real client expects mid-session when a LOWER slot is
+    // deleted while un-reloaded higher slots keep stale indices; the narrow case this task
+    // targets (consuming the character's only First Aid Box, the LAST occupied slot at the time
+    // of use) never exercises that gap, so it is deliberately left unaddressed rather than
+    // guessed at - see ai/map-server.md for the explicit disclosure.
+    private async Task HandleInventoryConsumeAsync(byte[] packet, CancellationToken cancellationToken)
+    {
+        if (!MapInventoryConsumeProtocol.TryParseRequest(packet, out var accountId, out var charId, out var slotIndex, out var amount)) return;
+        var success = false;
+        uint newAmount = 0;
+        var rowDeleted = false;
+        if (IsGameplayStateRequestAuthorized(_authenticated, _ownedCharacters, accountId, charId) && amount > 0)
+        {
+            try
+            {
+                await using var db = _dbFactory();
+                if (db is not null)
+                {
+                    var row = await db.Inventory
+                        .InStableSlotOrder(charId)
+                        .Skip((int)slotIndex)
+                        .FirstOrDefaultAsync(cancellationToken);
+                    if (row is not null && row.Amount >= amount)
+                    {
+                        row.Amount -= amount;
+                        if (row.Amount == 0)
+                        {
+                            db.Inventory.Remove(row);
+                            rowDeleted = true;
+                        }
+                        await db.SaveChangesAsync(cancellationToken);
+                        newAmount = row.Amount;
+                        success = true;
+                        CharLogger.Info(
+                            $"Inventory-consume succeeded charId={charId} slotIndex={slotIndex} amount={amount} newAmount={newAmount} rowDeleted={rowDeleted}.");
+                    }
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                CharLogger.Warning(
+                    $"Inventory-consume rejected reason=database-error charId={charId} slotIndex={slotIndex} error={ex.GetType().Name}.");
+            }
+        }
+        await WriteAsync(MapInventoryConsumeProtocol.BuildResponse(success, charId, slotIndex, newAmount, rowDeleted), cancellationToken);
     }
 
     private async Task HandleGameplayStateUpdateAsync(byte[] packet, CancellationToken cancellationToken)

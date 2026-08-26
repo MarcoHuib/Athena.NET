@@ -21,6 +21,7 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
         [PacketConstants.MapGameplayStateUpdateResponse] = MapCharacterGameplayStateProtocol.ResponseLength,
         [PacketConstants.MapInventoryAddResponse] = MapInventoryAddProtocol.ResponseLength,
         [PacketConstants.MapInventoryEquipUpdateResponse] = MapInventoryEquipUpdateProtocol.ResponseLength,
+        [PacketConstants.MapInventoryConsumeResponse] = MapInventoryConsumeProtocol.ResponseLength,
         // MapInventoryListGetResponse is variable-length - see VariableLengthMinLength below.
     };
 
@@ -32,6 +33,7 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
     private readonly ConcurrentDictionary<uint, TaskCompletionSource<CharacterGameplayState?>> _pendingGameplayReads = new();
     private readonly ConcurrentDictionary<uint, TaskCompletionSource<CharacterGameplayState?>> _pendingGameplayUpdates = new();
     private readonly ConcurrentDictionary<(uint CharId, int ItemId), TaskCompletionSource<InventoryAddPersistenceResult>> _pendingInventoryAdds = new();
+    private readonly ConcurrentDictionary<(uint CharId, uint SlotIndex), TaskCompletionSource<InventoryConsumePersistenceResult>> _pendingInventoryConsumes = new();
     private readonly ConcurrentDictionary<uint, TaskCompletionSource<CharacterInventoryReadResult>> _pendingInventoryReads = new();
     private readonly ConcurrentDictionary<(uint CharId, uint SlotIndex), TaskCompletionSource<bool>> _pendingEquipUpdates = new();
     private CharServerConnectionState? _connection;
@@ -172,6 +174,22 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
         finally { _pendingInventoryAdds.TryRemove(key, out _); }
     }
 
+    public async Task<InventoryConsumePersistenceResult> ConsumeItemAsync(uint accountId, uint charId, uint slotIndex, uint amount, CancellationToken cancellationToken)
+    {
+        var connection = _connection;
+        if (connection is null || amount == 0) return InventoryConsumePersistenceResult.Failed();
+        var key = (charId, slotIndex);
+        var pending = new TaskCompletionSource<InventoryConsumePersistenceResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (!_pendingInventoryConsumes.TryAdd(key, pending)) return InventoryConsumePersistenceResult.Failed();
+        using var registration = cancellationToken.Register(() => pending.TrySetCanceled(cancellationToken));
+        try
+        {
+            await connection.WriteAsync(MapInventoryConsumeProtocol.BuildRequest(accountId, charId, slotIndex, amount), cancellationToken);
+            return await pending.Task;
+        }
+        finally { _pendingInventoryConsumes.TryRemove(key, out _); }
+    }
+
     private async Task<CharacterQuestStatus?> SendQuestStateRequestAsync(uint accountId, uint charId, uint questId, CharacterQuestStatus operation, CancellationToken cancellationToken)
     {
         var connection = _connection;
@@ -249,6 +267,7 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
             FailPendingInventoryAdds();
             FailPendingInventoryReads();
             FailPendingEquipUpdates();
+            FailPendingInventoryConsumes();
 
             MapLogger.Warning("Char server connection closed. Reconnecting.");
             return false;
@@ -324,6 +343,8 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
                 return HandleInventoryListGetResponse(packet);
             case PacketConstants.MapInventoryEquipUpdateResponse:
                 return HandleInventoryEquipUpdateResponse(packet);
+            case PacketConstants.MapInventoryConsumeResponse:
+                return HandleInventoryConsumeResponse(packet);
             default:
                 MapLogger.Warning($"Unknown char server packet 0x{packetType:X4}, disconnecting.");
                 return false;
@@ -426,6 +447,16 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
     {
         if (!MapInventoryEquipUpdateProtocol.TryParseResponse(packet, out var success, out var charId, out var slotIndex)) return false;
         if (_pendingEquipUpdates.TryRemove((charId, slotIndex), out var pending)) pending.TrySetResult(success);
+        return true;
+    }
+
+    private bool HandleInventoryConsumeResponse(byte[] packet)
+    {
+        if (!MapInventoryConsumeProtocol.TryParseResponse(packet, out var success, out var charId, out var slotIndex, out var newAmount, out var rowDeleted)) return false;
+        if (_pendingInventoryConsumes.TryRemove((charId, slotIndex), out var pending))
+            pending.TrySetResult(new InventoryConsumePersistenceResult(success, newAmount, rowDeleted));
+        if (success) MapLogger.Info($"Inventory-consume succeeded charId={charId} slotIndex={slotIndex} newAmount={newAmount} rowDeleted={rowDeleted}.");
+        else MapLogger.Warning($"Inventory-consume failed charId={charId} slotIndex={slotIndex}.");
         return true;
     }
 
@@ -543,6 +574,12 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
     {
         foreach (var pending in _pendingEquipUpdates.Values) pending.TrySetResult(false);
         _pendingEquipUpdates.Clear();
+    }
+
+    private void FailPendingInventoryConsumes()
+    {
+        foreach (var pending in _pendingInventoryConsumes.Values) pending.TrySetResult(InventoryConsumePersistenceResult.Failed());
+        _pendingInventoryConsumes.Clear();
     }
 
     // Opcodes framed as [opcode.W][length.W][payload], where `length` is the TOTAL packet

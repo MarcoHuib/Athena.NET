@@ -68,6 +68,11 @@ public sealed class MapClientSessionMonsterCombatTests
 
             return Task.FromResult(new InventoryAddPersistenceResult(true, updated, slotIndex, Equip: 0, Identified: true, Refine: 0, Favorite: 0, Bound: 0));
         }
+
+        // Not exercised by this file's reward-path tests (they only ever add items) - a minimal
+        // stub is sufficient here, matching this fixture's existing narrow scope.
+        public Task<InventoryConsumePersistenceResult> ConsumeItemAsync(uint accountId, uint charId, uint slotIndex, uint amount, CancellationToken cancellationToken) =>
+            Task.FromResult(InventoryConsumePersistenceResult.Failed());
     }
 
     private static byte[] AttackPacket(uint targetActorId)

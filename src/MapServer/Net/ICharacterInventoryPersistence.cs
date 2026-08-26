@@ -23,6 +23,13 @@ namespace Athena.Net.MapServer.Net;
 public interface ICharacterInventoryPersistence
 {
     Task<InventoryAddPersistenceResult> AddStackableItemAsync(uint accountId, uint charId, int itemId, uint amount, CancellationToken cancellationToken);
+
+    // Consumes `amount` from the row at the given authoritative SlotIndex (pinned pc_delitem,
+    // pc.cpp:6103-6128) - targets an already-resolved row directly, never an item id (the
+    // caller already resolved SlotIndex from its own authoritative CharacterInventorySnapshot
+    // before calling this). RowDeleted mirrors CharServer's own row-removal decision when the
+    // row's amount reaches zero - see InventoryConsumePersistenceResult's own doc comment.
+    Task<InventoryConsumePersistenceResult> ConsumeItemAsync(uint accountId, uint charId, uint slotIndex, uint amount, CancellationToken cancellationToken);
 }
 
 public readonly record struct InventoryAddPersistenceResult(
@@ -30,4 +37,13 @@ public readonly record struct InventoryAddPersistenceResult(
     uint Equip, bool Identified, byte Refine, byte Favorite, byte Bound)
 {
     public static InventoryAddPersistenceResult Failed() => new(false, 0, 0, 0, false, 0, 0, 0);
+}
+
+// RowDeleted=true means the consumed row's Amount reached zero and CharServer removed it from
+// durable storage entirely - the caller MUST remove that SlotIndex from its own runtime
+// CharacterInventorySnapshot too, never leave a stale zero-amount row behind (see
+// CharacterInventorySnapshot's own row-removal helper).
+public readonly record struct InventoryConsumePersistenceResult(bool Success, uint NewAmount, bool RowDeleted)
+{
+    public static InventoryConsumePersistenceResult Failed() => new(false, 0, false);
 }

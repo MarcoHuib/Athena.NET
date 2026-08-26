@@ -898,3 +898,147 @@ Some existing quest-state logging describes a `GetQuestStateAsync` read
 operation in terms that read similarly to a persistence mutation. This is a
 pre-existing logging-clarity issue, unrelated to the inventory fix; noted here
 as future cleanup rather than addressed in this task.
+
+## Item-use request (0x00A7) and the First Aid Box container vertical slice
+
+### Live capture evidence
+
+Using the starter First Aid Box from the stock iRO client previously caused the
+session to disconnect: `[WARN] Unsupported map client packet=0x00A7 len=2`. The
+logged length (2) was an artifact of the framing bug below, not the real packet
+length - Athena had never registered `0x00A7` in `PacketLengths`, so
+`ReadPacketAsync` consumed only the 2-byte opcode and returned, and `RunAsync`
+treated that as EOF and disconnected.
+
+Pinned rAthena's generic `clif_packetdb.hpp` table is genuinely ambiguous for
+`0x00A7` across `PACKETVER` branches - it has been `clif_parse_UseItem`
+(`CZ_USE_ITEM`, 8 bytes), `clif_parse_SolveCharName`, `clif_parse_UseSkillToPos`,
+and `clif_parse_WalkToXY` in different historical branches, and the most recent
+branch in the pinned tree maps it to `WalkToXY` - so the generic table alone
+could not prove current-iRO semantics. A targeted, temporary diagnostic
+instrumentation (since removed) drained and logged whatever bytes the client had
+already queued immediately after the opaque 2-byte header, without guessing a
+length. The live capture proved:
+
+```text
+A7 00 04 00 80 84 1E 00 D2
+```
+
+`opcode.W(0x00A7) clientIndex.W(4) accountId.L(2,000,000) opaqueByte.B(0xD2)` -
+the classic `CZ_USE_ITEM` shape (`index.W accountId.L`, `clif.cpp:12077-12078`)
+plus one opaque trailing byte, matching the exact pattern already proven for
+attack/equip/unequip/movement/NPC packets. The `accountId` field exactly matched
+the authenticated session's own account, confirming field identity. Per this
+project's evidence-priority rule, this live capture wins over the ambiguous
+pinned generic table. `PacketConstants.IroCzUseItem = 0x00a7`,
+`IroCzUseItemLength = 9`, registered in `MapClientSession.PacketLengths` exactly
+like every other iRO packet.
+
+### Resolved item and pinned behavior
+
+`clientIndex 4` -> `SlotIndex = clientIndex - 2 = 2` (the same convention every
+other equip/unequip/pickup path already uses) -> the tutorial character's third
+starter row (`char_athena.conf start_items: 1201,1,2:2301,1,16:23484,1,0` -
+Knife equipped, Cotton Shirt equipped, First Aid Box unequipped) -> **ItemId
+23484, "Firstaid_Box_5"**, `GeneratedItems.FirstAidBox` (`UsableItemDefinition`).
+
+Its pinned `db/re/item_db_usable.yml` entry is a container/item-group opener,
+**not** a healing effect - its `Script` is five constant `getitem` statements:
+
+```text
+getitem 11518,10;   // N_Blue_Potion, Healing
+getitem 11614,20;   // Fresh_Milk, Healing
+getitem 12325,15;   // N_Magnifier, DelayConsume
+getitem 22542,1;    // Center_Potion_B, Usable (sc_start effect, not itself a container)
+getitem 23485,1;    // Firstaid_Box_10, Usable (a bigger box, same container pattern)
+```
+
+Traced call chain: `clif_parse_UseItem` (`clif.cpp:12077-12106`) resolves
+`n = server_index(index)` and calls `pc_useitem` (`pc.cpp:6450-6576`), which
+validates via `pc_isUseitem` (`pc.cpp:6276-...`, gate: `type == IT_HEALING ||
+IT_USABLE || IT_CASH` - First Aid Box's `IT_USABLE` passes trivially), then for
+an immediate-consume item (`delay_consume == 0`, no `expire_time`) sends
+`clif_useitemack(sd, n, amount-1, true)` **before** `pc_delitem(sd, n, 1, ...)`,
+then `run_script` executes the item's script. `pc_delitem` (`pc.cpp:6103-6128`)
+does **not** shift/renumber the in-memory array on removal - it `memset`s the
+row to zero in place, still occupying that array index.
+
+### `amount == 1` / row-removal semantics
+
+Athena's `SlotIndex` is derived from stable row-Id ordering
+(`CharInventoryOrdering.InStableSlotOrder`), not a fixed persisted array column,
+so there is no equivalent "zeroed placeholder row" to leave behind. The smallest
+correct translation: **CharServer deletes the row** when its amount reaches zero
+(`MapServerSession.HandleInventoryConsumeAsync`), and MapServer applies that via
+`CharacterInventorySnapshot.WithoutSlot`, which renumbers every later row's
+`SlotIndex` down by one - exactly reproducing what a fresh full inventory reload
+would produce, so a subsequent reconnect and the live runtime snapshot always
+agree. This project has no live-verified evidence of what a real client expects
+mid-session when a LOWER slot is deleted while un-reloaded higher-numbered UI
+elements keep stale indices; the narrow case this task targets (consuming the
+character's only First Aid Box, the LAST occupied slot at time of use) never
+exercises that gap, and it is deliberately left unaddressed rather than guessed
+at.
+
+### Container item data (source-derived, not hardcoded)
+
+`ItemDataCompiler` gained two new concrete `ItemDefinition` subtypes -
+`HealingItemDefinition` (`IT_HEALING`) and `DelayConsumeItemDefinition`
+(`IT_DELAYCONSUME`) - so pinned rows of those types are representable as
+authoritative inventory data without collapsing them into `UsableItemDefinition`
+or `EtcItemDefinition`. Neither type's real gameplay effect (`itemheal`,
+`itemskill`, etc.) is implemented - using any of the five granted items is a
+separate, unimplemented future vertical slice.
+
+`UsableItemDefinition` gained an optional `Grants` field
+(`IReadOnlyList<ItemGrantDefinition>`), populated only when
+`ItemDataCompiler.TryParseGetItemScript` recognizes the item's pinned `Script`
+as a sequence of constant `getitem <id>,<amount>;` statements - the ONLY script
+shape this project models; this project has no general rAthena script
+interpreter. The recognizer only commits to "this is a container" once the
+script's first statement is `getitem` - a Usable item whose script is something
+else entirely (e.g. Center_Potion_B's `sc_start`) simply has no `Grants` (that
+effect stays unmodeled, matching Healing's own unmodeled `itemheal`), but once a
+script DOES start with `getitem`, every remaining statement must also be a
+constant `getitem` or generation fails loudly - never silently representing
+only a getitem prefix and dropping an unrecognized suffix.
+
+`GeneratedItems.FirstAidBox.Grants` is generated data (`compile-item --item-id
+23484 --item-db-file db/re/item_db_usable.yml`) exactly matching the pinned
+script's five `getitem` calls. All five granted items (`BluePotion`,
+`FreshMilk`, `NoviceMagnifier`, `CenterPotionB`, `FirstaidBox10`) are likewise
+real generated item data, registered in `GeneratedItems.ById`, so they exist as
+authoritative inventory rows once granted - `MapClientSession` never invents a
+fake `ItemDefinition` for a granted item id.
+
+### Acknowledgement and architecture
+
+`ZC_USE_ITEM_ACK2` (`0x01C8`, pinned `clif.cpp:4468-4497` /
+`packets_struct.hpp:2577-2589`, `PACKETVER_RE_NUM >= 20180704` branch, 15 bytes:
+`index.W itemId.L accountId.L amount.W result.B`) is the pinned-source layout
+for the current `PACKETVER` branch - not yet independently capture-verified on
+the response side (only the request side has a live capture so far). Pinned
+`clif_useitemack` sends to `AREA` on success (`SELF` only on failure); Athena
+has no cross-session/multi-client broadcast infrastructure at all yet, so this
+slice sends to `SELF` only in both cases - a disclosed, real limitation, not an
+invented simplification.
+
+`MapClientSession.HandleIroUseItemRequestAsync` follows this project's
+validate -> persist -> update runtime state -> notify rule (`AGENTS.md`), which
+is also consistent with pinned `pc_useitem`'s own real ordering for this exact
+immediate-consume case (ack sent from the row's pre-delete state, before
+`pc_delitem` runs) - persisting first and building the ack from the confirmed
+post-persist state produces the same wire values without needing to
+special-case send-before-persist. After the ack, each `getitem` grant executes
+through the SAME `CharacterInventorySession`/runtime-snapshot-update path the
+quest-drop reward loop already uses, and each produces its own `0x0B41` pickup
+notification - matching the pinned script's five independent `getitem` calls,
+not one atomic operation (a grant referencing an unregistered item id is logged
+and skipped, not fatal to the remaining grants).
+
+The internal `MapInventoryConsumeRequest`/`Response` protocol
+(`0x2b37`/`0x2b38`) is new: CharServer resolves the target row from `SlotIndex`
+through the SAME `CharInventoryOrdering.InStableSlotOrder` the list/add/
+equip-update handlers already share, decrements or deletes it (pinned
+`pc_delitem`), and reports `RowDeleted` so MapServer knows whether to replace or
+remove that slot in its own runtime snapshot.

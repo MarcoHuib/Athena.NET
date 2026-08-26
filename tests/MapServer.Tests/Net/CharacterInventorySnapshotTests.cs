@@ -80,4 +80,52 @@ public sealed class CharacterInventorySnapshotTests
         Assert.Single(original.Items); // Original unchanged.
         Assert.Equal(2, updated.Items.Count);
     }
+
+    // WithoutSlot applies a CharServer-confirmed row deletion (InventoryConsumePersistenceResult.
+    // RowDeleted) - mirrors pinned pc_delitem's row-removal decision, and renumbers later rows
+    // down by one to match what a fresh full inventory reload would produce.
+    [Fact]
+    public void WithoutSlot_RemovesLastRow_EarlierSlotsUnaffected()
+    {
+        var snapshot = new CharacterInventorySnapshot([Item(0, 1201, equip: 0x000002), Item(1, 2301, equip: 0x000010), Item(2, 23484)]);
+
+        var updated = snapshot.WithoutSlot(2);
+
+        Assert.Equal(2, updated.Items.Count);
+        Assert.Equal(0u, updated.Items.Single(i => i.ItemId == 1201).SlotIndex);
+        Assert.Equal(1u, updated.Items.Single(i => i.ItemId == 2301).SlotIndex);
+        Assert.DoesNotContain(updated.Items, i => i.ItemId == 23484);
+    }
+
+    [Fact]
+    public void WithoutSlot_RemovesMiddleRow_LaterRowsRenumberDownByOne()
+    {
+        var snapshot = new CharacterInventorySnapshot([Item(0, 1201), Item(1, 2301), Item(2, 23484), Item(3, 6008)]);
+
+        var updated = snapshot.WithoutSlot(1);
+
+        Assert.Equal(3, updated.Items.Count);
+        Assert.Equal(0u, updated.Items.Single(i => i.ItemId == 1201).SlotIndex);
+        Assert.Equal(1u, updated.Items.Single(i => i.ItemId == 23484).SlotIndex); // was 2, now 1
+        Assert.Equal(2u, updated.Items.Single(i => i.ItemId == 6008).SlotIndex); // was 3, now 2
+    }
+
+    [Fact]
+    public void WithoutSlot_OutOfRange_ThrowsInvariantViolation()
+    {
+        var snapshot = new CharacterInventorySnapshot([Item(0, 1201)]);
+
+        Assert.Throws<InvalidOperationException>(() => snapshot.WithoutSlot(5));
+    }
+
+    [Fact]
+    public void WithoutSlot_NeverMutatesOriginalSnapshot()
+    {
+        var original = new CharacterInventorySnapshot([Item(0, 1201), Item(1, 23484)]);
+
+        var updated = original.WithoutSlot(1);
+
+        Assert.Equal(2, original.Items.Count);
+        Assert.Single(updated.Items);
+    }
 }

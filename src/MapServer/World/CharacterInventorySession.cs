@@ -36,4 +36,12 @@ public sealed class CharacterInventorySession(uint accountId, uint charId, IChar
             result.SlotIndex, item.Id, result.NewAmount, result.Equip, result.Identified, result.Refine, result.Favorite, result.Bound);
         return new InventoryAddResult(true, result.NewAmount, result.SlotIndex, row);
     }
+
+    // Pinned pc_delitem (pc.cpp:6103-6128) - consumes `amount` from an already-resolved
+    // authoritative SlotIndex (never an item id: the caller must have already resolved this
+    // slot from its own CharacterInventorySnapshot). See InventoryConsumePersistenceResult's own
+    // doc comment for RowDeleted's meaning and CharacterInventorySnapshot's own row-removal
+    // helper for how a caller applies a deleted row to its runtime snapshot.
+    public Task<InventoryConsumePersistenceResult> ConsumeItemAsync(uint slotIndex, uint amount, CancellationToken cancellationToken) =>
+        persistence.ConsumeItemAsync(accountId, charId, slotIndex, amount, cancellationToken);
 }

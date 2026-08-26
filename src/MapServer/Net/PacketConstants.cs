@@ -29,6 +29,12 @@ public static class PacketConstants
     public const short MapInventoryListGetResponse = 0x2b34;
     public const short MapInventoryEquipUpdateRequest = 0x2b35;
     public const short MapInventoryEquipUpdateResponse = 0x2b36;
+    // Consumes `amount` from the row at the given authoritative SlotIndex (pinned pc_delitem,
+    // pc.cpp:6103-6128) - used by item-use (First Aid Box etc.), not itemId-targeted like
+    // MapInventoryAddRequest, since consumption targets a specific already-resolved row, never
+    // "find or create a stack of this item".
+    public const short MapInventoryConsumeRequest = 0x2b37;
+    public const short MapInventoryConsumeResponse = 0x2b38;
 
     public const short CzEnter = 0x72;
     public const short CzEnter2 = 0x436;
@@ -61,17 +67,23 @@ public static class PacketConstants
     public const short IroCzAttackRequest = 0x0437;
     public const int IroCzAttackRequestLength = 8;
 
-    // NOT YET REGISTERED in PacketLengths / PacketConstants' verified section - live runtime
-    // observed this opcode arrive at the exact moment a starter consumable was activated from
-    // inventory, but its packet length is unproven (see MapClientSession's temporary
-    // LogSuspectedUseItemDiagnosticBytesAsync diagnostic, and ai/map-server.md). Pinned rAthena's
-    // generic clif_packetdb.hpp table is genuinely ambiguous for 0x00A7 across PACKETVER
-    // branches - it has been clif_parse_UseItem (CZ_USE_ITEM, 8 bytes), clif_parse_SolveCharName,
-    // clif_parse_UseSkillToPos, and clif_parse_WalkToXY in different historical branches, so the
-    // generic table alone cannot prove current-iRO semantics. This constant exists only to name
-    // the opcode for the diagnostic capture; do not add it to PacketLengths until the real
-    // length is proven.
-    public const short IroCzUseItemSuspected = 0x00a7;
+    // LIVE-VERIFIED via targeted diagnostic capture (see ai/map-server.md "Item-use request"):
+    // observed bytes A7 00 04 00 80 84 1E 00 D2 for a real stock-iRO item-use interaction -
+    // opcode.W(2) index.W(2) accountId.L(4) + one opaque trailing byte(1) = 9. The accountId
+    // field exactly matched the authenticated session's account, confirming field identity.
+    // Pinned rAthena's generic clif_packetdb.hpp table is ambiguous for 0x00A7 across PACKETVER
+    // branches (clif_parse_UseItem/SolveCharName/UseSkillToPos/WalkToXY in different historical
+    // branches) - per this project's evidence-priority rule, the live capture wins. Matches the
+    // same "+1 opaque trailing byte beyond pinned generic length" pattern already proven for
+    // attack/equip/unequip/movement/NPC packets.
+    public const short IroCzUseItem = 0x00a7;
+    public const int IroCzUseItemLength = 9;
+
+    // ZC_USE_ITEM_ACK2 (clif.cpp:4468-4497, packets_struct.hpp:2577-2589) - pinned-source
+    // layout for the current PACKETVER_RE_NUM >= 20180704 branch; not yet independently
+    // capture-verified on the response side (see IroUseItemPackets.BuildUseItemAck).
+    public const short ZcUseItemAck = 0x01c8;
+    public const int ZcUseItemAckLength = 15;
 
     public const short ZcAcceptEnter = 0x2eb;
     public const short ZcNotifyPlayerMove = 0x0087;
