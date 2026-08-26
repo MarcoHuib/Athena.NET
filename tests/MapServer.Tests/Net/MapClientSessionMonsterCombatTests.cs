@@ -6,9 +6,22 @@ using Athena.Net.MapServer.Gameplay.Rules.Renewal;
 using Athena.Net.MapServer.Generated.GameData.Items;
 using Athena.Net.MapServer.Generated.GameData.Mobs;
 using Athena.Net.MapServer.Net;
+using Athena.Net.MapServer.Tests.Testing;
 using Athena.Net.MapServer.World;
 
 namespace Athena.Net.MapServer.Tests.Net;
+
+// Confirmed empirically (start/end timestamps against a shared Stopwatch) that two [Fact]s in
+// this class fully overlap in wall-clock time under this project's xunit 2.9.3 +
+// xunit.runner.visualstudio 3.1.4 combination - contrary to xunit v2's classic "methods within
+// one class run sequentially" default. The repeat-attack tests added below are real-socket/
+// real-background-loop integration tests whose TCP read/write ordering is not safe under that
+// concurrency (observed as intermittent "Connection reset by peer" and spurious 5-second
+// WaitAsync timeouts once enough such tests exist in one file). DisableParallelization forces
+// this one class's tests back to sequential execution without touching any other test class or
+// global suite configuration.
+[CollectionDefinition(nameof(MapClientSessionMonsterCombatTests), DisableParallelization = true)]
+public sealed class MapClientSessionMonsterCombatTestsCollection;
 
 // Wire-level vertical-slice integration test using MapClientSession's real socket path
 // (RunAsync/HandlePacketAsync), the real production MonsterRegistry/MonsterCombatCoordinator/
@@ -16,6 +29,7 @@ namespace Athena.Net.MapServer.Tests.Net;
 // verified-capture packet layouts from IroMonsterActorPacketsTests/IroMonsterCombatPacketsTests/
 // IroAttackRequestPacketTests. Only the clock, quest/inventory persistence, and character stats
 // are test doubles - the same pattern GeneratedCaptainCaroccIntegrationTests already uses.
+[Collection(nameof(MapClientSessionMonsterCombatTests))]
 public sealed class MapClientSessionMonsterCombatTests
 {
     private const uint AccountId = 7;
@@ -122,9 +136,15 @@ public sealed class MapClientSessionMonsterCombatTests
         BaseExperience: 0, JobExperience: 0, CurrentHp: 40, CurrentSp: 10, MaxHp: 40, MaxSp: 10,
         StatPoints: 0, SkillPoints: 0, Strength: 9, Agility: 9, Vitality: 9, Intelligence: 9, Dexterity: 9, Luck: 9);
 
+    // Pins WeaponAttackCalculator's rnd_value(atkmin, atkmax) roll to its minimum - the
+    // repeat-attack tests below need EVERY hit's damage to be small and deterministic (never
+    // randomly lethal against G_PORING's 55 HP), not merely "usually non-lethal" as an
+    // unpinned Random.Shared roll would give.
+    private static int MinWeaponAtkRoll(int min, int max) => min;
+
     private async Task<(TcpClient Client, NetworkStream Stream, MapClientSession Session, Task RunTask, MobInstance Target)> SetupAsync(
         RecordingInventoryPersistence inventoryPersistence, CharacterQuestStatus questState, ICharacterInventoryListPersistence? inventoryListPersistence = null,
-        CharacterGameplayState? gameplayState = null)
+        CharacterGameplayState? gameplayState = null, TimeProvider? timeProvider = null, Func<int, int, int>? rollWeaponAtk = null)
     {
         var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
@@ -139,7 +159,7 @@ public sealed class MapClientSessionMonsterCombatTests
         var spawnDefinition = new MobSpawnDefinition(GeneratedMobs.GPoring, "int_land03", 1, 5000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "test", 0));
         var registry = new MonsterRegistry([spawnDefinition], allocator, new FixedCellSelector(75, 51), TimeProvider.System);
         var questDrops = new QuestDropResolver(Generated.GameData.Quests.GeneratedQuestDrops.All);
-        var combat = new MonsterCombatCoordinator(registry, questDrops, new RenewalBasicAttackRules());
+        var combat = new MonsterCombatCoordinator(registry, questDrops, new RenewalBasicAttackRules(rollWeaponAtk));
         var target = registry.AllInstances[0];
 
         var questPersistence = new RecordingQuestPersistence(Quest21008, questState);
@@ -150,7 +170,8 @@ public sealed class MapClientSessionMonsterCombatTests
             "int_land03", 75, 51, WorldMapRegistry.Tutorial,
             questPersistence: questPersistence, gameplayStatePersistence: gameplayPersistence,
             accountId: AccountId, charId: CharId, monsters: registry, combat: combat,
-            inventoryPersistence: inventoryPersistence, inventoryListPersistence: inventoryListPersistence);
+            inventoryPersistence: inventoryPersistence, inventoryListPersistence: inventoryListPersistence,
+            timeProvider: timeProvider);
         var run = session.RunAsync(CancellationToken.None);
         await session.CompleteIroAuthenticationAsync(new(AccountId, CharId, 1, 2, 0, 0, false, "int_land03", 75, 51, 0, 0, 0));
 
@@ -641,5 +662,373 @@ public sealed class MapClientSessionMonsterCombatTests
 
         client.Close();
         await run.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    // DMG_REPEAT server-owned attack repetition (ai/iro-2026-wire.md's documented future work,
+    // now implemented). This block proves: ONE 0x0437 request produces MULTIPLE authoritative
+    // hits over the source-backed attack-delay cadence with no further client packet, using a
+    // ControllableTimeProvider (never real-time sleep) to drive RunRepeatAttackLoopAsync
+    // deterministically - matching the task's "no unbounded/sleep-based test waits" rule.
+    //
+    // WeakFreshNovice (canonical 9/9/9/9/9/9) with the equipped starter Knife yields
+    // AttackDelayCalculator.AttackDelayMs = 1160ms, hand-derived the same way. Used wherever a
+    // test needs a non-lethal per-hit damage magnitude against G_PORING's 55 HP (matching the
+    // existing Attack_UnequipKnifeMidSession... test's own proven non-lethal single-hit behavior).
+    private const int WeakNoviceKnifeDelayMs = 1160;
+
+    // Advances the fake clock by exactly one source-backed attack-delay interval and reads the
+    // resulting damage packet. Deliberately does NOT wait for a fresh timer registration first
+    // (unlike MovementSchedulerTestHelpers.AdvanceEntireWalkAsync, which starts a walk from an
+    // otherwise-idle loop): by the time a test calls this, the repeat-attack loop has ALREADY
+    // rescheduled and re-armed its timer as part of processing the previous hit (synchronously,
+    // before that hit's damage packet was even written to the wire) - waiting for a NEW
+    // registration here would wait for the NEXT hit's reschedule, which cannot happen until this
+    // advance fires the ALREADY-armed one first (a real chicken-and-egg deadlock, not a flaky
+    // race). The very first call after an immediate (non-scheduled) hit is the one exception
+    // this helper is not used for - callers read that hit directly via ReadExact instead.
+    private static async Task<byte[]> WaitForNextDamagePacketAsync(Stream stream, ControllableTimeProvider clock, int delayMs)
+    {
+        await clock.AdvanceAsync(TimeSpan.FromMilliseconds(delayMs));
+        return await ReadExact(stream, PacketConstants.ZcNotifyAct3Length).WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
+    public async Task Attack_OneRepeatRequest_ProducesMultipleHits_WithoutAnotherClientPacket()
+    {
+        var inventoryPersistence = new RecordingInventoryPersistence(existingRowCount: 1);
+        var knifeInventory = new CharacterInventorySnapshot([new CharacterInventoryItem(DurableId: 1, SlotIndex: 0, 1201, 1, 0x000002, true, 0, 0, 0)]);
+        var inventoryListPersistence = new FixedInventoryListPersistence(knifeInventory);
+        var clock = new ControllableTimeProvider();
+        var (client, stream, session, run, target) = await SetupAsync(inventoryPersistence, CharacterQuestStatus.Absent, inventoryListPersistence, gameplayState: WeakFreshNovice(), timeProvider: clock, rollWeaponAtk: MinWeaponAtkRoll);
+        using var _ = client;
+
+        await stream.WriteAsync(new byte[] { 0x7d, 0x00, 0xaa });
+        await ConsumeSelfWeaponAndSingleEquipInventoryBurst(stream);
+        var spawn = await ReadDynamic(stream);
+        var actorId = BinaryPrimitives.ReadUInt32LittleEndian(spawn.AsSpan(5));
+
+        // Exactly ONE client attack request.
+        await stream.WriteAsync(AttackPacket(actorId));
+
+        // First hit fires immediately (pinned unit_attack: attackabletime already elapsed ->
+        // unit_attack_timer(INVALID_TIMER, ...) runs right away, unit.cpp:2971-2978) - no clock
+        // advance needed for it.
+        var firstHit = await ReadExact(stream, PacketConstants.ZcNotifyAct3Length);
+        Assert.True(BinaryPrimitives.ReadUInt32LittleEndian(firstHit.AsSpan(22)) > 0);
+        Assert.True(target.IsAlive, "WeakFreshNovice's Knife hit must not one-shot G_PORING for this test to observe a second hit.");
+
+        // Second and third hits arrive from the server-owned loop alone, one source-backed delay
+        // apart each, with NO further 0x0437 sent.
+        var secondHit = await WaitForNextDamagePacketAsync(stream, clock, WeakNoviceKnifeDelayMs);
+        Assert.True(BinaryPrimitives.ReadUInt32LittleEndian(secondHit.AsSpan(22)) > 0);
+
+        client.Close();
+        await run.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
+    public async Task Attack_RepeatedHits_RespectSourceBackedMinimumInterval()
+    {
+        var inventoryPersistence = new RecordingInventoryPersistence(existingRowCount: 1);
+        var knifeInventory = new CharacterInventorySnapshot([new CharacterInventoryItem(DurableId: 1, SlotIndex: 0, 1201, 1, 0x000002, true, 0, 0, 0)]);
+        var inventoryListPersistence = new FixedInventoryListPersistence(knifeInventory);
+        var clock = new ControllableTimeProvider();
+        var (client, stream, session, run, target) = await SetupAsync(inventoryPersistence, CharacterQuestStatus.Absent, inventoryListPersistence, gameplayState: WeakFreshNovice(), timeProvider: clock, rollWeaponAtk: MinWeaponAtkRoll);
+        using var _ = client;
+
+        await stream.WriteAsync(new byte[] { 0x7d, 0x00, 0xaa });
+        await ConsumeSelfWeaponAndSingleEquipInventoryBurst(stream);
+        var spawn = await ReadDynamic(stream);
+        var actorId = BinaryPrimitives.ReadUInt32LittleEndian(spawn.AsSpan(5));
+
+        await stream.WriteAsync(AttackPacket(actorId));
+        await ReadExact(stream, PacketConstants.ZcNotifyAct3Length); // First (immediate) hit.
+        Assert.True(target.IsAlive);
+
+        // Advancing less than the full source-backed delay must NOT produce a second hit yet. The
+        // loop already rescheduled/re-armed its timer synchronously while processing the first
+        // hit above (before its damage packet was even written to the wire), so no additional
+        // registration-wait is needed here.
+        await clock.AdvanceAsync(TimeSpan.FromMilliseconds(WeakNoviceKnifeDelayMs - 1));
+        Assert.Equal(0, client.Available);
+
+        // Crossing the remaining 1ms releases exactly the expected next hit.
+        await clock.AdvanceAsync(TimeSpan.FromMilliseconds(1));
+        var secondHit = await ReadExact(stream, PacketConstants.ZcNotifyAct3Length);
+        Assert.True(BinaryPrimitives.ReadUInt32LittleEndian(secondHit.AsSpan(22)) > 0);
+
+        client.Close();
+        await run.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
+    public async Task Attack_TargetDeathDuringRepeat_StopsRepetition_NoFurtherDamageEvents()
+    {
+        // WeakFreshNovice + Knife deals enough damage per hit that G_PORING's 55 HP dies within a
+        // few repeat hits (not the first) - proving the loop stops issuing damage events once the
+        // target is dead, rather than merely "the test stopped attacking".
+        var inventoryPersistence = new RecordingInventoryPersistence(existingRowCount: 1);
+        var knifeInventory = new CharacterInventorySnapshot([new CharacterInventoryItem(DurableId: 1, SlotIndex: 0, 1201, 1, 0x000002, true, 0, 0, 0)]);
+        var inventoryListPersistence = new FixedInventoryListPersistence(knifeInventory);
+        var clock = new ControllableTimeProvider();
+        var (client, stream, session, run, target) = await SetupAsync(inventoryPersistence, CharacterQuestStatus.Absent, inventoryListPersistence, gameplayState: WeakFreshNovice(), timeProvider: clock, rollWeaponAtk: MinWeaponAtkRoll);
+        using var _ = client;
+
+        await stream.WriteAsync(new byte[] { 0x7d, 0x00, 0xaa });
+        await ConsumeSelfWeaponAndSingleEquipInventoryBurst(stream);
+        var spawn = await ReadDynamic(stream);
+        var actorId = BinaryPrimitives.ReadUInt32LittleEndian(spawn.AsSpan(5));
+
+        await stream.WriteAsync(AttackPacket(actorId));
+
+        const int weakNoviceKnifeDelayMs = 1160; // WeakFreshNovice (DEX/AGI=9) + Knife, hand-derived.
+        var isDead = false;
+        for (var i = 0; i < 30 && !isDead; i++)
+        {
+            // Advance BEFORE reading (except the very first, already-immediate hit): the loop may
+            // kill the target as part of THIS advance, so the resulting damage packet must always
+            // be read off the wire before checking target.IsAlive - checking the alive flag first
+            // and conditionally skipping the read (as an earlier version of this test did) leaves
+            // that hit's already-written damage packet unread, corrupting every later read in the
+            // test with a stale packet boundary.
+            if (i > 0) await clock.AdvanceAsync(TimeSpan.FromMilliseconds(weakNoviceKnifeDelayMs));
+            await ReadExact(stream, PacketConstants.ZcNotifyAct3Length);
+            isDead = !target.IsAlive;
+            if (isDead)
+            {
+                var vanish = await ReadExact(stream, PacketConstants.ZcNotifyVanishLength);
+                Assert.Equal((short)PacketConstants.ZcNotifyVanish, BinaryPrimitives.ReadInt16LittleEndian(vanish));
+            }
+        }
+        Assert.True(isDead);
+
+        // No further damage/vanish traffic must ever follow death - confirmed by advancing time
+        // generously with no new attack request and observing only a harmless ping response next.
+        await clock.AdvanceAsync(TimeSpan.FromMilliseconds(weakNoviceKnifeDelayMs * 5));
+        await stream.WriteAsync(new byte[] { 0x1c, 0x0b });
+        var next = await ReadExact(stream, 2);
+        Assert.Equal((short)PacketConstants.ZcPingLive, BinaryPrimitives.ReadInt16LittleEndian(next));
+
+        client.Close();
+        await run.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
+    public async Task Attack_NewTargetRequest_ReplacesPriorRepeatTarget()
+    {
+        var inventoryPersistence = new RecordingInventoryPersistence(existingRowCount: 1);
+        var knifeInventory = new CharacterInventorySnapshot([new CharacterInventoryItem(DurableId: 1, SlotIndex: 0, 1201, 1, 0x000002, true, 0, 0, 0)]);
+        var inventoryListPersistence = new FixedInventoryListPersistence(knifeInventory);
+        var clock = new ControllableTimeProvider();
+
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var client = new TcpClient();
+        var connect = client.ConnectAsync((IPEndPoint)listener.LocalEndpoint);
+        var serverClient = await listener.AcceptTcpClientAsync();
+        await connect;
+        listener.Stop();
+        var stream = client.GetStream();
+        using var _ = client;
+
+        var allocator = new WorldActorIdAllocator();
+        var spawnA = new MobSpawnDefinition(GeneratedMobs.GPoring, "int_land03", 1, 5000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "test", 0));
+        var spawnB = new MobSpawnDefinition(GeneratedMobs.GPoring, "int_land03", 1, 5000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "test", 0));
+        var registry = new MonsterRegistry([spawnA, spawnB], allocator, new SequentialCellSelector((75, 51), (80, 55)), TimeProvider.System);
+        var questDrops = new QuestDropResolver(Generated.GameData.Quests.GeneratedQuestDrops.All);
+        var combat = new MonsterCombatCoordinator(registry, questDrops, new RenewalBasicAttackRules(MinWeaponAtkRoll));
+        var targetA = registry.AllInstances[0];
+        var targetB = registry.AllInstances[1];
+
+        var questPersistence = new RecordingQuestPersistence(Quest21008, CharacterQuestStatus.Absent);
+        var gameplayPersistence = new RecordingGameplayStatePersistence(WeakFreshNovice());
+
+        var session = new MapClientSession(
+            1, serverClient, new CharServerConnector(new MapConfigStore(new MapConfig(), "unused.conf")), true,
+            "int_land03", 75, 51, WorldMapRegistry.Tutorial,
+            questPersistence: questPersistence, gameplayStatePersistence: gameplayPersistence,
+            accountId: AccountId, charId: CharId, monsters: registry, combat: combat,
+            inventoryPersistence: inventoryPersistence, inventoryListPersistence: inventoryListPersistence,
+            timeProvider: clock);
+        var run = session.RunAsync(CancellationToken.None);
+        await session.CompleteIroAuthenticationAsync(new(AccountId, CharId, 1, 2, 0, 0, false, "int_land03", 75, 51, 0, 0, 0));
+        await ReadExact(stream, 4 + 6 + 6 + 13);
+
+        await stream.WriteAsync(new byte[] { 0x7d, 0x00, 0xaa });
+        await ConsumeSelfWeaponAndSingleEquipInventoryBurst(stream);
+        var spawnPacketA = await ReadDynamic(stream);
+        var spawnPacketB = await ReadDynamic(stream);
+        Assert.Equal(targetA.ActorId, BinaryPrimitives.ReadUInt32LittleEndian(spawnPacketA.AsSpan(5)));
+        Assert.Equal(targetB.ActorId, BinaryPrimitives.ReadUInt32LittleEndian(spawnPacketB.AsSpan(5)));
+
+        // Start a repeat attack against target A.
+        await stream.WriteAsync(AttackPacket(targetA.ActorId));
+        var firstHit = await ReadExact(stream, PacketConstants.ZcNotifyAct3Length);
+        Assert.Equal(targetA.ActorId, BinaryPrimitives.ReadUInt32LittleEndian(firstHit.AsSpan(6)));
+        Assert.True(targetA.IsAlive, "WeakFreshNovice's Knife hit must not one-shot G_PORING for this test to observe the retarget.");
+
+        // Before the next scheduled hit against A, retarget to B - pinned unit_attack's "just
+        // change target/type" behavior (unit.cpp:2951-2953): while an attack timer is already
+        // pending, a new request only changes WHICH target the already-scheduled timer will hit
+        // next - it does NOT reset attackabletime or force an immediate hit. So target B's first
+        // hit only arrives after A's remaining cooldown elapses, not immediately.
+        await stream.WriteAsync(AttackPacket(targetB.ActorId));
+        // Synchronize on the retarget actually being processed before advancing the fake clock:
+        // WriteAsync only guarantees the bytes were queued, not that MapClientSession's packet
+        // loop already handled them. 0x0B1C is processed strictly after the just-sent 0x0437 on
+        // the same TCP stream and always elicits an immediate reply (same synchronization idiom
+        // the existing ping-probe tests in this file already use).
+        await stream.WriteAsync(new byte[] { 0x1c, 0x0b });
+        await ReadExact(stream, 2);
+        var secondHit = await WaitForNextDamagePacketAsync(stream, clock, WeakNoviceKnifeDelayMs);
+        Assert.Equal(targetB.ActorId, BinaryPrimitives.ReadUInt32LittleEndian(secondHit.AsSpan(6)));
+
+        // Advancing time again must continue hitting B, never A again.
+        var targetAHpAfterItsOnlyHit = targetA.CurrentHp;
+        var thirdHit = await WaitForNextDamagePacketAsync(stream, clock, WeakNoviceKnifeDelayMs);
+        Assert.Equal(targetB.ActorId, BinaryPrimitives.ReadUInt32LittleEndian(thirdHit.AsSpan(6)));
+        Assert.Equal(targetAHpAfterItsOnlyHit, targetA.CurrentHp); // A took exactly its one hit, never a second.
+
+        client.Close();
+        await run.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    private sealed class SequentialCellSelector(params (ushort X, ushort Y)[] cells) : IMobSpawnCellSelector
+    {
+        public (ushort X, ushort Y) SelectCell(MobSpawnDefinition spawn, int index) => cells[index];
+    }
+
+    [Fact]
+    public async Task Attack_DuplicateRepeatRequestsSameTarget_DoNotCreateConcurrentAttackLoops()
+    {
+        var inventoryPersistence = new RecordingInventoryPersistence(existingRowCount: 1);
+        var knifeInventory = new CharacterInventorySnapshot([new CharacterInventoryItem(DurableId: 1, SlotIndex: 0, 1201, 1, 0x000002, true, 0, 0, 0)]);
+        var inventoryListPersistence = new FixedInventoryListPersistence(knifeInventory);
+        var clock = new ControllableTimeProvider();
+        var (client, stream, session, run, target) = await SetupAsync(inventoryPersistence, CharacterQuestStatus.Absent, inventoryListPersistence, gameplayState: WeakFreshNovice(), timeProvider: clock, rollWeaponAtk: MinWeaponAtkRoll);
+        using var _ = client;
+
+        await stream.WriteAsync(new byte[] { 0x7d, 0x00, 0xaa });
+        await ConsumeSelfWeaponAndSingleEquipInventoryBurst(stream);
+        var spawn = await ReadDynamic(stream);
+        var actorId = BinaryPrimitives.ReadUInt32LittleEndian(spawn.AsSpan(5));
+
+        // First, establish a repeat attack and let its immediate hit fully land (rescheduling the
+        // loop for a real future delay) before sending the duplicate - this isolates the
+        // invariant this test actually targets (a duplicate request arriving WHILE an attack
+        // timer is already pending must not add a second concurrent loop/second immediate hit,
+        // pinned unit_attack's "just change target/type" guard, unit.cpp:2951-2953) from an
+        // unrelated race: two requests sent back-to-back with no synchronization between them can
+        // both legitimately be processed before either one's immediate hit executes (Athena's
+        // packet-loop and repeat-attack-loop are independently scheduled async tasks, unlike
+        // pinned rAthena's single-threaded server, where a second unit_attack call for the same
+        // unit cannot even begin until the first one's synchronous unit_attack_timer call already
+        // returned) - two genuinely-simultaneous FRESH requests can validly produce two immediate
+        // hits, and this test must not assert otherwise.
+        await stream.WriteAsync(AttackPacket(actorId));
+        var firstHit = await ReadExact(stream, PacketConstants.ZcNotifyAct3Length);
+        Assert.Equal(actorId, BinaryPrimitives.ReadUInt32LittleEndian(firstHit.AsSpan(6)));
+        Assert.True(target.IsAlive, "WeakFreshNovice's Knife hit must not one-shot G_PORING for this test to observe the no-double-hit invariant.");
+
+        // Now duplicate the SAME request while that attack timer is genuinely pending (confirmed
+        // above) - this must not add a second concurrent loop or force an immediate second hit.
+        await stream.WriteAsync(AttackPacket(actorId));
+
+        // No second hit must already be queued on the wire immediately - only after a full delay.
+        // No real-time wait is needed: the fake clock never advances on its own, so nothing server
+        // -side can produce more bytes without either a clock advance or another client request -
+        // a ping round-trip is enough to prove the server has caught up with everything sent so far.
+        await stream.WriteAsync(new byte[] { 0x1c, 0x0b });
+        var pingReply = await ReadExact(stream, 2);
+        Assert.Equal((short)PacketConstants.ZcPingLive, BinaryPrimitives.ReadInt16LittleEndian(pingReply));
+        Assert.Equal(0, client.Available);
+
+        var secondHit = await WaitForNextDamagePacketAsync(stream, clock, WeakNoviceKnifeDelayMs);
+        Assert.Equal(actorId, BinaryPrimitives.ReadUInt32LittleEndian(secondHit.AsSpan(6)));
+
+        client.Close();
+        await run.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    private static byte[] MovementRequestPacket(ushort x, ushort y)
+    {
+        var packet = new byte[6];
+        BinaryPrimitives.WriteInt16LittleEndian(packet, PacketConstants.IroCzRequestMove);
+        packet[2] = (byte)(x >> 2);
+        packet[3] = (byte)((x << 6) | ((y >> 4) & 0x3f));
+        packet[4] = (byte)(y << 4);
+        packet[5] = 0xab;
+        return packet;
+    }
+
+    // Pinned unit_walktoxy (unit.cpp:888) unconditionally calls unit_stop_attack before starting
+    // any walk - a real client movement request must cancel an active server-owned repeat attack,
+    // not merely leave it to expire. Proven end-to-end: start a repeat attack, move away before
+    // its next scheduled hit, then advance the fake clock generously and confirm no further
+    // damage/vanish traffic ever arrives - only the movement response itself.
+    [Fact]
+    public async Task Attack_MovementRequest_CancelsActiveRepeatAttack()
+    {
+        var inventoryPersistence = new RecordingInventoryPersistence(existingRowCount: 1);
+        var knifeInventory = new CharacterInventorySnapshot([new CharacterInventoryItem(DurableId: 1, SlotIndex: 0, 1201, 1, 0x000002, true, 0, 0, 0)]);
+        var inventoryListPersistence = new FixedInventoryListPersistence(knifeInventory);
+        var clock = new ControllableTimeProvider();
+        var (client, stream, session, run, target) = await SetupAsync(inventoryPersistence, CharacterQuestStatus.Absent, inventoryListPersistence, gameplayState: WeakFreshNovice(), timeProvider: clock, rollWeaponAtk: MinWeaponAtkRoll);
+        using var _ = client;
+
+        await stream.WriteAsync(new byte[] { 0x7d, 0x00, 0xaa });
+        await ConsumeSelfWeaponAndSingleEquipInventoryBurst(stream);
+        var spawn = await ReadDynamic(stream);
+        var actorId = BinaryPrimitives.ReadUInt32LittleEndian(spawn.AsSpan(5));
+
+        await stream.WriteAsync(AttackPacket(actorId));
+        await ReadExact(stream, PacketConstants.ZcNotifyAct3Length); // Immediate first hit.
+        Assert.True(target.IsAlive, "WeakFreshNovice's Knife hit must not one-shot G_PORING so a repeat state remains scheduled to be cancelled.");
+
+        // Move away before the next scheduled hit - must cancel the repeat attack outright.
+        await stream.WriteAsync(MovementRequestPacket(76, 51));
+        var movementResponse = await ReadExact(stream, 12);
+        Assert.Equal((short)PacketConstants.ZcNotifyPlayerMove, BinaryPrimitives.ReadInt16LittleEndian(movementResponse));
+
+        // Advance well past the interval the cancelled attack would have fired at, then confirm
+        // no damage/vanish packet ever arrives - only a harmless ping response.
+        await clock.AdvanceAsync(TimeSpan.FromMilliseconds(WeakNoviceKnifeDelayMs * 5));
+        await stream.WriteAsync(new byte[] { 0x1c, 0x0b });
+        var next = await ReadExact(stream, 2);
+        Assert.Equal((short)PacketConstants.ZcPingLive, BinaryPrimitives.ReadInt16LittleEndian(next));
+        Assert.True(target.IsAlive); // Never took a second hit.
+
+        client.Close();
+        await run.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
+    public async Task Attack_SessionDisposal_CancelsOutstandingRepeatState_NoOrphanTask()
+    {
+        var inventoryPersistence = new RecordingInventoryPersistence(existingRowCount: 1);
+        var knifeInventory = new CharacterInventorySnapshot([new CharacterInventoryItem(DurableId: 1, SlotIndex: 0, 1201, 1, 0x000002, true, 0, 0, 0)]);
+        var inventoryListPersistence = new FixedInventoryListPersistence(knifeInventory);
+        var clock = new ControllableTimeProvider();
+        var (client, stream, session, run, target) = await SetupAsync(inventoryPersistence, CharacterQuestStatus.Absent, inventoryListPersistence, gameplayState: WeakFreshNovice(), timeProvider: clock, rollWeaponAtk: MinWeaponAtkRoll);
+        using var _ = client;
+
+        await stream.WriteAsync(new byte[] { 0x7d, 0x00, 0xaa });
+        await ConsumeSelfWeaponAndSingleEquipInventoryBurst(stream);
+        var spawn = await ReadDynamic(stream);
+        var actorId = BinaryPrimitives.ReadUInt32LittleEndian(spawn.AsSpan(5));
+
+        await stream.WriteAsync(AttackPacket(actorId));
+        await ReadExact(stream, PacketConstants.ZcNotifyAct3Length);
+        Assert.True(target.IsAlive, "WeakFreshNovice's Knife hit must not one-shot G_PORING so a repeat state remains scheduled at disposal.");
+
+        // Close the client (the same graceful-EOF shutdown path every other test in this file
+        // uses) while a repeat attack is still scheduled (never fired again), then explicitly
+        // dispose the session - StopAsync is idempotent and shared (MapClientSession's own doc
+        // comment), so this either performs or joins the exact same shutdown RunAsync's own
+        // `finally` already triggered, and must join the attack loop like every other background
+        // loop, leaving no orphan Task/timer that could keep the test process alive.
+        client.Close();
+        await run.WaitAsync(TimeSpan.FromSeconds(5));
+        await session.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
     }
 }
