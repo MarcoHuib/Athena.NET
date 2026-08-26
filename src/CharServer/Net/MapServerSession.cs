@@ -457,10 +457,17 @@ public sealed class MapServerSession : IDisposable, ISession
             try
             {
                 await using var db = _dbFactory();
+                // Pinned mmo.hpp:322: "equip; // location(s) where item is equipped (using enum
+                // equip_pos for bitmasking)" - real usage (pc.cpp:1582/12173/12427) always tests
+                // `equip & EQP_HAND_R`, never exact equality, since a single row's Equip can carry
+                // multiple simultaneous position bits (e.g. a two-handed weapon also setting
+                // EQP_HAND_L). More than one row matching this bit is an invariant violation, not
+                // a case to arbitrarily resolve - SingleOrDefaultAsync intentionally throws then,
+                // surfacing as a database-error read failure below rather than picking a row.
                 var rightHand = db is null
                     ? null
                     : await db.Inventory.AsNoTracking().SingleOrDefaultAsync(
-                        i => i.CharId == charId && i.Equip == EquipPositionRightHand,
+                        i => i.CharId == charId && (i.Equip & EquipPositionRightHand) != 0,
                         cancellationToken);
                 equipment = rightHand is null
                     ? new CharacterEquipmentDto(HasRightHand: false, RightHandItemId: 0, RightHandRefine: 0)

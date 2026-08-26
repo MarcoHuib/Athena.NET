@@ -128,6 +128,7 @@ public sealed class MapClientSessionMonsterCombatTests
         // Trigger visibility (0x007D map-loaded) so the monster is in _visibleActorIds and its
         // real allocated actor ID is observable from the wire.
         await stream.WriteAsync(new byte[] { 0x7d, 0x00, 0xaa });
+        await ReadExact(stream, 15); // 0x01D7 self weapon look, sent before the spawn broadcast
         var spawn = await ReadDynamic(stream);
         Assert.Equal((short)PacketConstants.ZcNotifyStandEntry, BinaryPrimitives.ReadInt16LittleEndian(spawn));
         Assert.Equal((byte)5, spawn[4]);
@@ -174,6 +175,7 @@ public sealed class MapClientSessionMonsterCombatTests
         using var _ = client;
 
         await stream.WriteAsync(new byte[] { 0x7d, 0x00, 0xaa });
+        await ReadExact(stream, 15); // 0x01D7 self weapon look, sent before the spawn broadcast
         var spawn = await ReadDynamic(stream);
         var actorId = BinaryPrimitives.ReadUInt32LittleEndian(spawn.AsSpan(5));
 
@@ -210,6 +212,7 @@ public sealed class MapClientSessionMonsterCombatTests
         using var _ = client;
 
         await stream.WriteAsync(new byte[] { 0x7d, 0x00, 0xaa });
+        await ReadExact(stream, 15); // 0x01D7 self weapon look, sent before the spawn broadcast
         var spawn = await ReadDynamic(stream);
         var actorId = BinaryPrimitives.ReadUInt32LittleEndian(spawn.AsSpan(5));
 

@@ -99,4 +99,15 @@ public static class PacketConstants
     public const short ZcItemPickupAck = 0x0b41;
     public const int ZcItemPickupAckLength = 70;
     public const byte ZcItemPickupResultSuccess = 0;
+    // Traced pinned rAthena: sendLookType (packets_struct.hpp:317, PACKETVER >= 4, pinned build
+    // satisfies this). PACKET_ZC_SPRITE_CHANGE (packets_struct.hpp:2591), wide-field variant
+    // (PACKETVER_RE_NUM >= 20180704, pinned build satisfies this): packetType.W AID.L type.B
+    // val.L val2.L = 15 bytes. Sent inside clif_parse_LoadEndAck (0x007D handler, clif.cpp:10771)
+    // via clif_changelook(sd, LOOK_WEAPON, ...) with target=AREA (includes self), BEFORE the
+    // AREA_WOS spawn/idle broadcast - so this is what makes the local client see its own
+    // equipped weapon at initial map load, not the spawn packet's embedded weapon field.
+    public const short ZcSpriteChange = 0x01d7;
+    public const int ZcSpriteChangeLength = 15;
+    // Pinned enum _look (map.hpp:594-596): LOOK_BASE=0, LOOK_HAIR=1, LOOK_WEAPON=2.
+    public const byte ZcSpriteChangeTypeWeapon = 2;
 }

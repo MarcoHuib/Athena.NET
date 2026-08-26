@@ -31,7 +31,7 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
     private readonly ConcurrentDictionary<uint, TaskCompletionSource<CharacterGameplayState?>> _pendingGameplayReads = new();
     private readonly ConcurrentDictionary<uint, TaskCompletionSource<CharacterGameplayState?>> _pendingGameplayUpdates = new();
     private readonly ConcurrentDictionary<(uint CharId, int ItemId), TaskCompletionSource<(bool Success, uint NewAmount, uint SlotIndex)>> _pendingInventoryAdds = new();
-    private readonly ConcurrentDictionary<uint, TaskCompletionSource<CharacterEquipmentSnapshot?>> _pendingEquipmentReads = new();
+    private readonly ConcurrentDictionary<uint, TaskCompletionSource<CharacterEquipmentReadResult>> _pendingEquipmentReads = new();
     private CharServerConnectionState? _connection;
 
     public CharServerConnector(MapConfigStore configStore)
@@ -133,11 +133,11 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
         finally { _pendingGameplayUpdates.TryRemove(expected.CharacterId,out _); }
     }
 
-    public async Task<CharacterEquipmentSnapshot?> GetEquipmentAsync(uint accountId, uint characterId, CancellationToken cancellationToken)
+    public async Task<CharacterEquipmentReadResult> GetEquipmentAsync(uint accountId, uint characterId, CancellationToken cancellationToken)
     {
-        var connection = _connection; if (connection is null) return null;
-        var pending = new TaskCompletionSource<CharacterEquipmentSnapshot?>(TaskCreationOptions.RunContinuationsAsynchronously);
-        if (!_pendingEquipmentReads.TryAdd(characterId, pending)) return null;
+        var connection = _connection; if (connection is null) return CharacterEquipmentReadResult.Failed();
+        var pending = new TaskCompletionSource<CharacterEquipmentReadResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (!_pendingEquipmentReads.TryAdd(characterId, pending)) return CharacterEquipmentReadResult.Failed();
         using var registration = cancellationToken.Register(() => pending.TrySetCanceled(cancellationToken));
         try { await connection.WriteAsync(MapEquipmentProtocol.BuildGetRequest(accountId, characterId), cancellationToken); return await pending.Task; }
         finally { _pendingEquipmentReads.TryRemove(characterId, out _); }
@@ -398,8 +398,8 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
 
     private bool HandleEquipmentGetResponse(byte[] packet)
     {
-        if (!MapEquipmentProtocol.TryParseResponse(packet, out var result, out var charId, out var equipment)) return false;
-        if (_pendingEquipmentReads.TryRemove(charId, out var pending)) pending.TrySetResult(result == 0 ? equipment : null);
+        if (!MapEquipmentProtocol.TryParseResponse(packet, out _, out var charId, out var equipment)) return false;
+        if (_pendingEquipmentReads.TryRemove(charId, out var pending)) pending.TrySetResult(equipment);
         return true;
     }
 
@@ -509,7 +509,7 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
 
     private void FailPendingEquipmentReads()
     {
-        foreach (var pending in _pendingEquipmentReads.Values) pending.TrySetResult(null);
+        foreach (var pending in _pendingEquipmentReads.Values) pending.TrySetResult(CharacterEquipmentReadResult.Failed());
         _pendingEquipmentReads.Clear();
     }
 

@@ -63,3 +63,30 @@ internal static class IroMonsterCombatPackets
         return packet;
     }
 }
+
+// Self-facing appearance projection derived from the authoritative equipment snapshot -
+// distinct from IroMonsterCombatPackets, which is combat-result representation only.
+internal static class IroCharacterAppearancePackets
+{
+    // PACKET_ZC_SPRITE_CHANGE (0x01D7), wide-field variant (PACKETVER_RE_NUM >= 20180704,
+    // pinned build satisfies this): packetType.W AID.L type.B val.L val2.L = 15 bytes
+    // (packets_struct.hpp:2591). Sent inside clif_parse_LoadEndAck (clif.cpp:10771) via
+    // clif_changelook(sd, LOOK_WEAPON, ...), target=AREA (includes self). For a player,
+    // clif_changelook always overwrites val with vd->look[LOOK_WEAPON] and sets
+    // val2 = vd->look[LOOK_SHIELD] (clif.cpp:3979-3986, 4096-4099). weaponViewId is the
+    // AliasName-resolved view_id (or the item's own nameid as fallback) per
+    // map_session_data::update_look (pc.cpp:623-647) - verified against stock-iRO capture
+    // (kill-poring-heal-jobup, frame 210): Knife 1201's LOOK_WEAPON val=1201, NOT its
+    // weapon_type enum value. shieldViewId is 0 when no shield is equipped (this vertical
+    // slice's CharacterEquipmentSnapshot does not yet model a shield slot).
+    internal static byte[] BuildSpriteChangeWeapon(uint actorId, uint weaponViewId, uint shieldViewId = 0)
+    {
+        var packet = new byte[PacketConstants.ZcSpriteChangeLength];
+        BinaryPrimitives.WriteInt16LittleEndian(packet, PacketConstants.ZcSpriteChange);
+        BinaryPrimitives.WriteUInt32LittleEndian(packet.AsSpan(2), actorId);
+        packet[6] = PacketConstants.ZcSpriteChangeTypeWeapon;
+        BinaryPrimitives.WriteUInt32LittleEndian(packet.AsSpan(7), weaponViewId);
+        BinaryPrimitives.WriteUInt32LittleEndian(packet.AsSpan(11), shieldViewId);
+        return packet;
+    }
+}

@@ -30,8 +30,9 @@ public sealed class MapEquipmentProtocolTests
         Assert.True(MapEquipmentProtocol.TryParseResponse(packet, out var result, out var charId, out var equipment));
         Assert.Equal((byte)0, result);
         Assert.Equal(100U, charId);
-        Assert.Equal(1201, equipment!.RightHandItemId);
-        Assert.Equal((byte)2, equipment.RightHandRefine);
+        Assert.True(equipment.Succeeded);
+        Assert.Equal(1201, equipment.Snapshot!.RightHandItemId);
+        Assert.Equal((byte)2, equipment.Snapshot.RightHandRefine);
     }
 
     [Fact]
@@ -44,11 +45,12 @@ public sealed class MapEquipmentProtocolTests
         packet[7] = 0;
 
         Assert.True(MapEquipmentProtocol.TryParseResponse(packet, out _, out _, out var equipment));
-        Assert.Null(equipment!.RightHandItemId);
+        Assert.True(equipment.Succeeded);
+        Assert.Null(equipment.Snapshot!.RightHandItemId);
     }
 
     [Fact]
-    public void TryParseResponse_FailureResult_ReturnsNullSnapshot()
+    public void TryParseResponse_FailureResult_ReturnsFailedRead_NotConfusedWithUnarmed()
     {
         var packet = new byte[MapEquipmentProtocol.ResponseLength];
         BinaryPrimitives.WriteInt16LittleEndian(packet, PacketConstants.MapEquipmentGetResponse);
@@ -56,7 +58,8 @@ public sealed class MapEquipmentProtocolTests
 
         Assert.True(MapEquipmentProtocol.TryParseResponse(packet, out var result, out _, out var equipment));
         Assert.Equal((byte)1, result);
-        Assert.Null(equipment);
+        Assert.False(equipment.Succeeded);
+        Assert.Null(equipment.Snapshot);
     }
 
     [Fact]

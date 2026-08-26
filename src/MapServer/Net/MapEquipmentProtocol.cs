@@ -16,11 +16,11 @@ internal static class MapEquipmentProtocol
         return packet;
     }
 
-    internal static bool TryParseResponse(byte[] packet, out byte result, out uint charId, out CharacterEquipmentSnapshot? equipment)
+    internal static bool TryParseResponse(byte[] packet, out byte result, out uint charId, out CharacterEquipmentReadResult equipment)
     {
         result = 1;
         charId = 0;
-        equipment = null;
+        equipment = CharacterEquipmentReadResult.Failed();
         if (packet.Length != ResponseLength) return false;
 
         result = packet[2];
@@ -30,7 +30,8 @@ internal static class MapEquipmentProtocol
             var hasRightHand = packet[7] != 0;
             var rightHandItemId = BinaryPrimitives.ReadUInt32LittleEndian(packet.AsSpan(8));
             var rightHandRefine = packet[12];
-            equipment = new CharacterEquipmentSnapshot(hasRightHand ? (int)rightHandItemId : null, rightHandRefine);
+            equipment = CharacterEquipmentReadResult.Success(
+                new CharacterEquipmentSnapshot(hasRightHand ? (int)rightHandItemId : null, rightHandRefine));
         }
         return true;
     }

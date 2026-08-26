@@ -13,13 +13,33 @@ public sealed class ItemDataCompilerTests
             AegisName: Knife
             Name: Knife
             Type: Weapon
+            SubType: Dagger
             Attack: 17
             WeaponLevel: 1
           - Id: 1202
             AegisName: Sword
             Name: Sword
             Type: Weapon
+            SubType: 1hSword
             Attack: 10
+          - Id: 501
+            AegisName: Red_Potion
+            Name: Red Potion
+            Type: Healing
+          - Id: 1203
+            AegisName: Mystery_Weapon
+            Name: Mystery Weapon
+            Type: Weapon
+            SubType: Nonexistent
+            Attack: 5
+          - Id: 1301
+            AegisName: Novice_Knife
+            Name: Novice Knife
+            Type: Weapon
+            SubType: Dagger
+            AliasName: Knife
+            Attack: 17
+            WeaponLevel: 1
         """;
 
     [Fact]
@@ -81,6 +101,51 @@ public sealed class ItemDataCompilerTests
         Assert.Contains("WeaponItemDefinition", generated);
         Assert.Contains("Attack: 17", generated);
         Assert.Contains("WeaponLevel: 1", generated);
+        Assert.Contains("WeaponType: WeaponType.Dagger", generated);
+        Assert.Contains("WeaponViewId: 1201", generated);
+    }
+
+    [Fact]
+    public void ReadItemDefinition_WeaponWithoutAliasName_WeaponViewIdEqualsOwnId()
+    {
+        // Pinned map_session_data::update_look (pc.cpp:623-647): falls back to the item's own
+        // nameid when it has no AliasName-resolved view_id. Verified against stock-iRO capture
+        // (kill-poring-heal-jobup, frame 210): Knife 1201's LOOK_WEAPON wire value is 1201.
+        var knife = ItemDataCompiler.ReadItemDefinition(ItemDbFixture, 1201);
+        Assert.Equal(1201, knife.WeaponViewId);
+    }
+
+    [Fact]
+    public void ReadItemDefinition_WeaponWithAliasName_WeaponViewIdResolvesToAliasedItemId()
+    {
+        var novice = ItemDataCompiler.ReadItemDefinition(ItemDbFixture, 1301);
+        Assert.Equal(1201, novice.WeaponViewId); // AliasName: Knife -> Id 1201
+    }
+
+    [Fact]
+    public void ReadItemDefinition_WeaponSubTypeMapsToStronglyTypedWeaponType()
+    {
+        // Pinned enum weapon_type (map/pc.hpp:959): W_DAGGER = 1, W_1HSWORD = 2.
+        var knife = ItemDataCompiler.ReadItemDefinition(ItemDbFixture, 1201);
+        Assert.Equal(WeaponType.Dagger, knife.WeaponType);
+        Assert.Equal((byte)1, (byte)knife.WeaponType!.Value);
+
+        var sword = ItemDataCompiler.ReadItemDefinition(ItemDbFixture, 1202);
+        Assert.Equal(WeaponType.OneHandSword, sword.WeaponType);
+        Assert.Equal((byte)2, (byte)sword.WeaponType!.Value);
+    }
+
+    [Fact]
+    public void ReadItemDefinition_UnrecognizedSubType_ThrowsRatherThanSilentlyDefaulting()
+    {
+        Assert.Throws<NotSupportedException>(() => ItemDataCompiler.ReadItemDefinition(ItemDbFixture, 1203));
+    }
+
+    [Fact]
+    public void Generate_UnsupportedType_ThrowsRatherThanCollapsingIntoEtc()
+    {
+        var item = ItemDataCompiler.ReadItemDefinition(ItemDbFixture, 501);
+        Assert.Throws<NotSupportedException>(() => ItemDataCompiler.Generate(item, "abc123", "AcademyItems", "RedPotion", "db/re/item_db_usable.yml", 3));
     }
 
     [Fact]

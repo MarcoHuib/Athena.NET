@@ -202,7 +202,13 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
             movementPathProvider,
             combat,
             inventoryPersistence,
-            equipmentPersistence)
+            // Defaults to a successful "confirmed unarmed" read, NOT the production default
+            // (falling through to charConnector, a disconnected CharServerConnector in tests,
+            // whose GetEquipmentAsync always returns Failed() and would make
+            // CompleteIroAuthenticationAsync fail auth for every test that doesn't care about
+            // equipment). Tests that need to exercise a specific equipped weapon or a failed
+            // read must pass equipmentPersistence explicitly, same as gameplayStatePersistence.
+            equipmentPersistence ?? AlwaysConfirmedUnarmedEquipmentPersistence.Instance)
     {
         _iroAuthRequested = iroAuthenticated;
         _authRequested = iroAuthenticated;
@@ -335,7 +341,19 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
             HandleAuthFail(); return;
         }
         _gameplayState = new CharacterGameplayStateSession(authOk.AccountId, state, _gameplayStatePersistence);
-        _equipment = await _equipmentPersistence.GetEquipmentAsync(authOk.AccountId, authOk.CharId, _sessionCancellation.Token);
+
+        var equipmentRead = await _equipmentPersistence.GetEquipmentAsync(authOk.AccountId, authOk.CharId, _sessionCancellation.Token);
+        if (!equipmentRead.Succeeded)
+        {
+            MapLogger.Warning($"[iRO MAP DEBUG] Character equipment load failed accountId={authOk.AccountId} charId={authOk.CharId}.");
+            HandleAuthFail(); return;
+        }
+        // Invariant: an authenticated session always has BOTH gameplay state and equipment state
+        // loaded. A failed/unavailable equipment read must never let a session become authenticated
+        // with unknown equipment state - future combat/appearance code must be able to trust that
+        // Equipment is non-null whenever the session is authenticated, and that a null
+        // Equipment.RightHandItemId means authoritatively unarmed, never "unknown".
+        _equipment = equipmentRead.Snapshot;
         _authenticated = true; _positionDirty = false;
         MapLogger.Info($"[iRO MAP DEBUG] 0x0C1F MapAuthNode authentication succeeded accountId={authOk.AccountId} charId={authOk.CharId} sessionMatch=true gameplayStateVersion={state.Version}");
         EnsureRuntimeLoopsStarted();
@@ -650,6 +668,11 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
                 {
                     MapLogger.Info(
                         $"[iRO MAP DEBUG] Received stock iRO map-loaded packet=0x{packetType:X4} len={packet.Length}");
+                    // Pinned ordering (clif_parse_LoadEndAck, clif.cpp:10748-10817): self weapon
+                    // look (clif_changelook, target=AREA which includes self) is sent BEFORE the
+                    // AREA_WOS spawn broadcast that other visible actors receive - so this goes
+                    // first, ahead of SendVisibleWarpActorsAsync/SendVisibleMonsterActorsAsync.
+                    await SendSelfWeaponAppearanceAsync(cancellationToken);
                     _visibleActorIds.Clear();
                     await SendVisibleWarpActorsAsync(cancellationToken);
                     await SendVisibleMonsterActorsAsync(cancellationToken);
@@ -1527,6 +1550,40 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
     private enum InstructionExecutionResult { Continue, Stop }
     private enum GeneratedContinuationKind { Next, Selection, Close2 }
 
+    // Pinned map_session_data::update_look(LOOK_WEAPON) (pc.cpp:623-647): the wire value is the
+    // equipped item's AliasName-resolved view_id, falling back to its own nameid - NOT the
+    // weapon_type enum (verified stock-iRO capture, kill-poring-heal-jobup frame 210: Knife
+    // 1201's LOOK_WEAPON val=1201, not 1=W_DAGGER). A confirmed-unarmed right hand sends 0
+    // (update_look's "Nothing equipped" branch), never skips the packet.
+    // _equipment is guaranteed non-null once authenticated (CompleteIroAuthenticationAsync
+    // fails auth outright on an unsuccessful equipment read - see
+    // ICharacterEquipmentPersistence/CharacterEquipmentReadResult), so this never runs with
+    // an unknown equipment state. Resolution goes through the one shared EquippedWeaponResolver
+    // path - no Knife-specific branching. An UnknownItem/NonWeaponInWeaponSlot resolution is a
+    // data/generation invariant violation, not a legitimate appearance case, so it is logged and
+    // skipped rather than guessed at.
+    private async Task SendSelfWeaponAppearanceAsync(CancellationToken cancellationToken)
+    {
+        if (_equipment is not { } equipment) return;
+
+        var resolution = EquippedWeaponResolver.Resolve(equipment, GeneratedItems.ById);
+        var weaponViewId = resolution.Resolution switch
+        {
+            EquippedWeaponResolution.Unarmed => (uint?)0,
+            EquippedWeaponResolution.Weapon => (uint)resolution.Weapon!.WeaponViewId,
+            _ => null,
+        };
+        if (weaponViewId is null)
+        {
+            MapLogger.Warning($"[iRO MAP DEBUG] Equipped right-hand item did not resolve to a weapon (resolution={resolution.Resolution}); skipping 0x01D7.");
+            return;
+        }
+
+        var packet = IroCharacterAppearancePackets.BuildSpriteChangeWeapon(_accountId, weaponViewId.Value);
+        MapLogger.Info($"[iRO MAP DEBUG] Sending 0x01D7 self weapon look weaponViewId={weaponViewId.Value}");
+        await WriteAsync(packet, cancellationToken);
+    }
+
     private async Task SendVisibleWarpActorsAsync(CancellationToken cancellationToken)
     {
         foreach (var actor in _worldMapRegistry.GetVisibleWarpActors(_mapName, _x, _y))
@@ -1800,5 +1857,18 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
         buffer[0] = (byte)(x >> 2);
         buffer[1] = (byte)((x << 6) | ((y >> 4) & 0x3f));
         buffer[2] = (byte)((y << 4) | (direction & 0x0f));
+    }
+
+    // Test-only default for the internal test-facing constructor (see its equipmentPersistence
+    // parameter). Always reports a successful read with no right-hand item equipped, so tests
+    // that never pass equipmentPersistence explicitly still authenticate successfully.
+    private sealed class AlwaysConfirmedUnarmedEquipmentPersistence : ICharacterEquipmentPersistence
+    {
+        internal static readonly AlwaysConfirmedUnarmedEquipmentPersistence Instance = new();
+        private static readonly CharacterEquipmentReadResult Unarmed =
+            CharacterEquipmentReadResult.Success(new CharacterEquipmentSnapshot(RightHandItemId: null, RightHandRefine: 0));
+
+        public Task<CharacterEquipmentReadResult> GetEquipmentAsync(uint accountId, uint characterId, CancellationToken cancellationToken)
+            => Task.FromResult(Unarmed);
     }
 }
