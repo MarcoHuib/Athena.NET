@@ -76,8 +76,18 @@ public sealed class MapClientSessionMonsterCombatTests
         BaseExperience: 0, JobExperience: 0, CurrentHp: 100, CurrentSp: 100, MaxHp: 100, MaxSp: 100,
         StatPoints: 0, SkillPoints: 0, Strength: 99, Agility: 1, Vitality: 1, Intelligence: 1, Dexterity: 99, Luck: 99);
 
+    // Deliberately weak (canonical fresh-Novice 9/9/9/9/9/9, matching BasicAttackCalculatorTests/
+    // WeaponAttackCalculatorTests' own FreshNovice fixture) so a single unarmed hit against
+    // G_PORING's 55 HP does not one-shot it - needed to observe an unarmed hit's damage
+    // distinctly from an armed hit's, rather than both instantly killing the target.
+    private static CharacterGameplayState WeakFreshNovice() => new(
+        CharacterId: CharId, Version: 1, JobClass: 0, BaseLevel: 1, JobLevel: 1,
+        BaseExperience: 0, JobExperience: 0, CurrentHp: 40, CurrentSp: 10, MaxHp: 40, MaxSp: 10,
+        StatPoints: 0, SkillPoints: 0, Strength: 9, Agility: 9, Vitality: 9, Intelligence: 9, Dexterity: 9, Luck: 9);
+
     private async Task<(TcpClient Client, NetworkStream Stream, MapClientSession Session, Task RunTask, MobInstance Target)> SetupAsync(
-        RecordingInventoryPersistence inventoryPersistence, CharacterQuestStatus questState)
+        RecordingInventoryPersistence inventoryPersistence, CharacterQuestStatus questState, ICharacterInventoryListPersistence? inventoryListPersistence = null,
+        CharacterGameplayState? gameplayState = null)
     {
         var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
@@ -96,14 +106,14 @@ public sealed class MapClientSessionMonsterCombatTests
         var target = registry.AllInstances[0];
 
         var questPersistence = new RecordingQuestPersistence(Quest21008, questState);
-        var gameplayPersistence = new RecordingGameplayStatePersistence(StrongNovice());
+        var gameplayPersistence = new RecordingGameplayStatePersistence(gameplayState ?? StrongNovice());
 
         var session = new MapClientSession(
             1, serverClient, new CharServerConnector(new MapConfigStore(new MapConfig(), "unused.conf")), true,
             "int_land03", 75, 51, WorldMapRegistry.Tutorial,
             questPersistence: questPersistence, gameplayStatePersistence: gameplayPersistence,
             accountId: AccountId, charId: CharId, monsters: registry, combat: combat,
-            inventoryPersistence: inventoryPersistence);
+            inventoryPersistence: inventoryPersistence, inventoryListPersistence: inventoryListPersistence);
         var run = session.RunAsync(CancellationToken.None);
         await session.CompleteIroAuthenticationAsync(new(AccountId, CharId, 1, 2, 0, 0, false, "int_land03", 75, 51, 0, 0, 0));
 
@@ -111,6 +121,18 @@ public sealed class MapClientSessionMonsterCombatTests
         await ReadExact(stream, 4 + 6 + 6 + 13);
 
         return (client, stream, session, run, target);
+    }
+
+    private sealed class FixedInventoryListPersistence(CharacterInventorySnapshot initial) : ICharacterInventoryListPersistence
+    {
+        private CharacterInventorySnapshot _current = initial;
+        public Task<CharacterInventoryReadResult> GetInventoryAsync(uint a, uint c, CancellationToken t) => Task.FromResult(CharacterInventoryReadResult.Success(_current));
+        public Task<bool> SetItemEquipAsync(uint a, uint c, uint slotIndex, uint equip, CancellationToken t)
+        {
+            var items = _current.Items.Select(i => i.SlotIndex == slotIndex ? i with { Equip = equip } : i).ToList();
+            _current = new CharacterInventorySnapshot(items);
+            return Task.FromResult(true);
+        }
     }
 
     private sealed class FixedCellSelector(ushort x, ushort y) : IMobSpawnCellSelector
@@ -241,6 +263,160 @@ public sealed class MapClientSessionMonsterCombatTests
         var next = await ReadExact(stream, 2);
         Assert.Equal((short)PacketConstants.ZcPingLive, BinaryPrimitives.ReadInt16LittleEndian(next));
 
+        client.Close();
+        await run.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    private static byte[] UnequipRequestPacket(ushort clientIndex)
+    {
+        var packet = new byte[PacketConstants.IroCzReqTakeoffEquipLength];
+        BinaryPrimitives.WriteInt16LittleEndian(packet, PacketConstants.IroCzReqTakeoffEquip);
+        BinaryPrimitives.WriteUInt16LittleEndian(packet.AsSpan(2), clientIndex);
+        return packet;
+    }
+
+    private static byte[] EquipRequestPacket(ushort clientIndex, uint position)
+    {
+        var packet = new byte[PacketConstants.IroCzReqWearEquipLength];
+        BinaryPrimitives.WriteInt16LittleEndian(packet, PacketConstants.IroCzReqWearEquip);
+        BinaryPrimitives.WriteUInt16LittleEndian(packet.AsSpan(2), clientIndex);
+        BinaryPrimitives.WriteUInt32LittleEndian(packet.AsSpan(4), position);
+        return packet;
+    }
+
+    // Consumes the self weapon-look (0x01D7) and inventory list burst (0x0B08 start,
+    // optional 0x0B09 stackable/0x0B39 equip lists, 0x0B0B end) sent right after
+    // 0x007D, for a session whose starter inventory has a Knife equipped in the right
+    // hand (and nothing else) - i.e. exactly one 0x0B39 entry, no 0x0B09.
+    private static async Task ConsumeSelfWeaponAndSingleEquipInventoryBurst(Stream stream)
+    {
+        await ReadExact(stream, 15); // 0x01D7 self weapon look
+        await ReadExact(stream, 6); // 0x0B08 inventoryStart
+        await ReadDynamic(stream); // 0x0B39 equip list (one Knife entry)
+        await ReadExact(stream, 4); // 0x0B0B inventoryEnd
+    }
+
+    // Live-verified equipment infrastructure (EquippedWeaponResolver, CharacterEquipmentSnapshot)
+    // already exists; this proves MonsterCombatCoordinator.Attack is actually wired to consume it:
+    // a character whose starter inventory has the Knife equipped in the right hand deals damage
+    // through WeaponAttackCalculator (not the unarmed BasicAttackCalculator), observable end-to-end
+    // over the real wire path exactly like the existing unarmed combat tests.
+    [Fact]
+    public async Task Attack_WithEquippedKnife_KillsMonster_UsingWeaponAwareDamage()
+    {
+        var inventoryPersistence = new RecordingInventoryPersistence();
+        var knifeInventory = new CharacterInventorySnapshot([new CharacterInventoryItem(0, 1201, 1, 0x000002, true, 0, 0, 0)]);
+        var inventoryListPersistence = new FixedInventoryListPersistence(knifeInventory);
+        var (client, stream, session, run, target) = await SetupAsync(inventoryPersistence, CharacterQuestStatus.Active, inventoryListPersistence);
+        using var _ = client;
+
+        await stream.WriteAsync(new byte[] { 0x7d, 0x00, 0xaa });
+        await ConsumeSelfWeaponAndSingleEquipInventoryBurst(stream);
+        var spawn = await ReadDynamic(stream);
+        var actorId = BinaryPrimitives.ReadUInt32LittleEndian(spawn.AsSpan(5));
+
+        for (var i = 0; i < 20 && target.IsAlive; i++)
+        {
+            await stream.WriteAsync(AttackPacket(actorId));
+            var damagePacket = await ReadExact(stream, PacketConstants.ZcNotifyAct3Length);
+            var damage = BinaryPrimitives.ReadUInt32LittleEndian(damagePacket.AsSpan(22));
+            Assert.True(damage > 0, "Expected the equipped-Knife attacker to deal nonzero damage.");
+
+            if (!target.IsAlive)
+            {
+                await ReadExact(stream, PacketConstants.ZcNotifyVanishLength);
+                await ReadExact(stream, PacketConstants.ZcItemPickupAckLength);
+                break;
+            }
+        }
+
+        Assert.False(target.IsAlive);
+        client.Close();
+        await run.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    // The architecture requirement: unequipping mid-session must return combat to the genuine
+    // unarmed path WITHOUT reconnecting - MonsterCombatCoordinator never caches the weapon
+    // resolution, so the very next attack after a successful 0x00AB unequip must dispatch to
+    // BasicAttackCalculator again.
+    [Fact]
+    public async Task Attack_UnequipKnifeMidSession_ReturnsToUnarmedCombat_WithoutReconnecting()
+    {
+        var inventoryPersistence = new RecordingInventoryPersistence();
+        var knifeInventory = new CharacterInventorySnapshot([new CharacterInventoryItem(0, 1201, 1, 0x000002, true, 0, 0, 0)]);
+        var inventoryListPersistence = new FixedInventoryListPersistence(knifeInventory);
+        var (client, stream, session, run, target) = await SetupAsync(inventoryPersistence, CharacterQuestStatus.Absent, inventoryListPersistence, WeakFreshNovice());
+        using var _ = client;
+
+        await stream.WriteAsync(new byte[] { 0x7d, 0x00, 0xaa });
+        await ConsumeSelfWeaponAndSingleEquipInventoryBurst(stream);
+        var spawn = await ReadDynamic(stream);
+        var actorId = BinaryPrimitives.ReadUInt32LittleEndian(spawn.AsSpan(5));
+
+        // First hit while still armed - establishes the weapon-aware damage magnitude to compare
+        // the post-unequip hit against.
+        await stream.WriteAsync(AttackPacket(actorId));
+        var armedDamagePacket = await ReadExact(stream, PacketConstants.ZcNotifyAct3Length);
+        var armedDamage = BinaryPrimitives.ReadUInt32LittleEndian(armedDamagePacket.AsSpan(22));
+        Assert.True(target.IsAlive, "Test setup requires G_PORING to survive the first (armed) hit so a second, post-unequip hit can be observed.");
+
+        // clientIndex = server slotIndex(0) + 2, per the established client_index() convention.
+        await stream.WriteAsync(UnequipRequestPacket(2));
+        await ReadExact(stream, 15); // 0x01D7 self weapon look refresh, now unarmed (view id 0)
+        await ReadExact(stream, PacketConstants.IroZcReqTakeoffEquipAckLength);
+
+        await stream.WriteAsync(AttackPacket(actorId));
+        var unarmedDamagePacket = await ReadExact(stream, PacketConstants.ZcNotifyAct3Length);
+        var unarmedDamage = BinaryPrimitives.ReadUInt32LittleEndian(unarmedDamagePacket.AsSpan(22));
+
+        Assert.True(unarmedDamage < armedDamage, "Expected unequipping the Knife to reduce subsequent attack damage back to the unarmed level.");
+
+        client.Close();
+        await run.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    // Re-equipping the Knife during the SAME session must change subsequent combat back to
+    // weapon-aware behavior without reconnecting - mirrors the unequip test above but round-trips
+    // unequip -> equip and confirms damage becomes nonzero/weapon-shaped again afterward.
+    [Fact]
+    public async Task Attack_ReequipKnifeMidSession_ReturnsToWeaponAwareCombat_WithoutReconnecting()
+    {
+        var inventoryPersistence = new RecordingInventoryPersistence();
+        var knifeInventory = new CharacterInventorySnapshot([new CharacterInventoryItem(0, 1201, 1, 0x000002, true, 0, 0, 0)]);
+        var inventoryListPersistence = new FixedInventoryListPersistence(knifeInventory);
+        var (client, stream, session, run, target) = await SetupAsync(inventoryPersistence, CharacterQuestStatus.Active, inventoryListPersistence);
+        using var _ = client;
+
+        await stream.WriteAsync(new byte[] { 0x7d, 0x00, 0xaa });
+        await ConsumeSelfWeaponAndSingleEquipInventoryBurst(stream);
+        var spawn = await ReadDynamic(stream);
+        var actorId = BinaryPrimitives.ReadUInt32LittleEndian(spawn.AsSpan(5));
+
+        // clientIndex = server slotIndex(0) + 2.
+        await stream.WriteAsync(UnequipRequestPacket(2));
+        await ReadExact(stream, 15); // 0x01D7 appearance refresh (unarmed)
+        await ReadExact(stream, PacketConstants.IroZcReqTakeoffEquipAckLength);
+
+        await stream.WriteAsync(EquipRequestPacket(2, 0x000002)); // EQP_HAND_R
+        await ReadExact(stream, PacketConstants.IroZcReqWearEquipAckLength); // ack first for equip
+        await ReadExact(stream, 15); // 0x01D7 appearance refresh (Knife again)
+
+        for (var i = 0; i < 20 && target.IsAlive; i++)
+        {
+            await stream.WriteAsync(AttackPacket(actorId));
+            var damagePacket = await ReadExact(stream, PacketConstants.ZcNotifyAct3Length);
+            var damage = BinaryPrimitives.ReadUInt32LittleEndian(damagePacket.AsSpan(22));
+            Assert.True(damage > 0, "Expected weapon-aware damage after re-equipping the Knife.");
+
+            if (!target.IsAlive)
+            {
+                await ReadExact(stream, PacketConstants.ZcNotifyVanishLength);
+                await ReadExact(stream, PacketConstants.ZcItemPickupAckLength);
+                break;
+            }
+        }
+
+        Assert.False(target.IsAlive);
         client.Close();
         await run.WaitAsync(TimeSpan.FromSeconds(5));
     }

@@ -1003,11 +1003,36 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
             questStates[rule.QuestId] = await _questPersistence.GetQuestStateAsync(_accountId, _charId, rule.QuestId, cancellationToken) ?? CharacterQuestStatus.Absent;
         }
 
+        // Resolve the CURRENT authoritative right-hand weapon through the same shared
+        // EquippedWeaponResolver path SendSelfWeaponAppearanceAsync uses - never the
+        // client-facing LOOK_WEAPON/ClientViewId, and never cached across attacks, so
+        // a same-session equip/unequip changes the very next attack's calculation.
+        // UnknownItem/NonWeaponInWeaponSlot are data/generation invariant violations,
+        // not legitimate unarmed states - logged and treated as unarmed rather than
+        // silently guessed at (matching SendSelfWeaponAppearanceAsync's own precedent).
+        WeaponItemDefinition? equippedWeapon = null;
+        if (_equipment is { } equipment)
+        {
+            var weaponResolution = EquippedWeaponResolver.Resolve(equipment, GeneratedItems.ById);
+            switch (weaponResolution.Resolution)
+            {
+                case EquippedWeaponResolution.Weapon:
+                    equippedWeapon = weaponResolution.Weapon;
+                    break;
+                case EquippedWeaponResolution.Unarmed:
+                    break;
+                default:
+                    MapLogger.Warning($"[iRO MAP DEBUG] Equipped right-hand item did not resolve to a weapon (resolution={weaponResolution.Resolution}); attacking unarmed.");
+                    break;
+            }
+        }
+
         var effectiveStats = _statusEffects.Recalculate(_gameplayState.State);
         var outcome = _combat.Attack(
             target,
             effectiveStats,
             _gameplayState.State.BaseLevel,
+            equippedWeapon,
             questId => questStates.GetValueOrDefault(questId, CharacterQuestStatus.Absent));
         if (!outcome.Accepted) return;
 

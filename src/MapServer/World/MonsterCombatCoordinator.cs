@@ -21,11 +21,26 @@ public sealed class MonsterCombatCoordinator(MonsterRegistry monsters, QuestDrop
     // QuestDropResolver's doc comment) - the caller must obtain each relevant quest's status from
     // ICharacterQuestPersistence BEFORE calling Attack, e.g. by awaiting GetQuestStateAsync once per
     // distinct QuestId in the generated drop rules and closing over the results.
-    public MonsterAttackOutcome Attack(MobInstance target, EffectiveCharacterStats attacker, ushort attackerBaseLevel, Func<uint, CharacterQuestStatus> attackerQuestStatus)
+    //
+    // `equippedWeapon`: the CURRENT authoritative right-hand weapon, already resolved by the caller
+    // via EquippedWeaponResolver against the session's live CharacterEquipmentSnapshot - null means
+    // genuinely unarmed (EquippedWeaponResolution.Unarmed), never "unknown"/"not looked up yet". This
+    // coordinator never reads equipment state itself; it only dispatches to the matching pinned-source
+    // calculator (WeaponAttackCalculator vs the existing unarmed BasicAttackCalculator) based on what
+    // the caller already resolved, so re-equipping/unequipping mid-session changes the very next
+    // attack's calculation without any coordinator-side caching to invalidate.
+    public MonsterAttackOutcome Attack(
+        MobInstance target,
+        EffectiveCharacterStats attacker,
+        ushort attackerBaseLevel,
+        WeaponItemDefinition? equippedWeapon,
+        Func<uint, CharacterQuestStatus> attackerQuestStatus)
     {
         if (!target.IsAlive) return new(false, target.CurrentHp, target.CurrentHp, false, false, []);
 
-        var result = BasicAttackCalculator.CalculateUnarmedNoviceAttack(attacker, attackerBaseLevel, target.Spawn.Mob);
+        var result = equippedWeapon is null
+            ? BasicAttackCalculator.CalculateUnarmedNoviceAttack(attacker, attackerBaseLevel, target.Spawn.Mob)
+            : WeaponAttackCalculator.CalculateWeaponNoviceAttack(attacker, attackerBaseLevel, equippedWeapon, target.Spawn.Mob);
         var (hpBefore, hpAfter, killed) = target.ApplyDamage(result.Damage);
 
         IReadOnlyList<QuestDropOutcome> drops = [];

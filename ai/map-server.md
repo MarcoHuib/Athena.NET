@@ -623,3 +623,82 @@ Use heavily for architecture/game mechanics, not as iRO packet authority:
 
 ## Definition of done for current milestone
 A supported unmodified stock iRO client selects a character, connects to Athena.NET MapServer, authenticates through the verified iRO entry flow, and reaches a stable first-map state.
+
+## Weapon-aware basic melee combat (Knife vs G_PORING)
+
+The prior unarmed-only `BasicAttackCalculator` covered a genuinely unarmed Novice.
+The starter tutorial character is not actually unarmed - it has a persisted Knife
+(itemId 1201, Attack 17, WeaponLevel 1, WeaponType Dagger) equipped in the right
+hand by default. Live 0x0437 attacks against G_PORING were resolving through the
+unarmed path regardless of equipment, which is not the pinned RENEWAL PC combat
+path a real client-observed attack takes.
+
+### Pinned source trace
+
+The unarmed calculator's own `battle_calc_base_damage` (`battle.cpp:2515`) is
+**not** the function a real PC normal attack executes in RENEWAL. The actual path,
+traced field-by-field in `WeaponAttackCalculator`'s own doc comment
+(`src/MapServer/World/WeaponAttackCalculator.cs`), is:
+
+1. `status_base_atk` (`status.cpp:2424`) - same `batk` formula the unarmed
+   calculator already uses (Dagger is not a DEX-flagged weapon type).
+2. `battle_calc_damage_parts` (`battle.cpp:3889`) - `statusAtk = 2*batk`
+   (doubled), `weaponAtk` from `battle_calc_base_weapon_attack`, `equipAtk`/
+   `masteryAtk` both correctly 0 for a fresh Novice with no eatk-granting items
+   or weapon-mastery skills (not approximated as 0 - traced to specific
+   skill-level-gated no-ops in `battle_addmastery`, `battle.cpp:2277`).
+3. `battle_calc_base_weapon_attack` (`battle.cpp:2443`) - `atkmin/atkmax` from
+   `wa.atk` (= item Attack at refine 0) +/- variance (`5*atk*wlv/100`) +
+   STR-based `base_stat_bonus` (`atk*STR/200`), then `rnd_value(atkmin,atkmax)`,
+   then `battle_calc_sizefix` (`battle.cpp:2427`): `damage * atkmods[size] / 100`.
+4. `wd.damage = statusAtk + weaponAtk + equipAtk + percentAtk`, `+= masteryAtk`.
+5. `battle_calc_defense_reduction` (`battle.cpp:4720`) - identical RE DEF formula
+   and monster soft-DEF (`def2 = floor((Level+Vit)/2)`) the unarmed calculator
+   already implements; reused unchanged.
+6. `battle_calc_attack` (`battle.cpp:6766`) - damage < 1 is a miss (0 damage),
+   same rule the unarmed calculator already implements.
+
+**Size-fix ambiguity, resolved by pinned data default, not by capture-matching**:
+`db/re/size_fix.yml` has no `Dagger` row (only Knuckle/Whip carry entries). The
+pinned C++ initialization path for `atkmods[]` when a weapon type has no
+size_fix.yml row could not be fully traced through `TypesafeYamlDatabase`
+plumbing in the pinned snapshot; the YAML file's own header comment states the
+column default is 100 for every unlisted weapon/size pair, which is also the
+only value consistent with real gameplay (a Dagger dealing zero damage to every
+target of an unlisted size would be an obvious live-game bug). `atkmods[SZ_*]`
+is therefore treated as 100 (no-op) for Dagger against any target size,
+documented as a data-default resolution, not a capture-fitted constant -
+`MobDefinition` gets no `Size` field for this slice since the modifier is a
+no-op regardless of target size for this weapon type.
+
+### Fields Athena already had vs. required
+
+Already present and reused unchanged: `EffectiveCharacterStats` (STR/AGI/VIT/
+INT/DEX/LUK), `MobDefinition.Defense/Level/Vit`, the RE DEF-reduction formula,
+`WeaponItemDefinition.Attack/WeaponLevel`, `CharacterEquipmentSnapshot`
+(live-maintained per session, rebuilt only after confirmed persistence),
+`EquippedWeaponResolver` (already existed, previously only consumed by
+`SendSelfWeaponAppearanceAsync` for the 0x01D7 LOOK_WEAPON packet - now also
+consumed by the attack path). No new authoritative input was missing; this was
+purely a missing combat-formula/dispatch gap, not a data gap.
+
+### Architecture
+
+`WeaponAttackCalculator.CalculateWeaponNoviceAttack` (new file, sibling to
+`BasicAttackCalculator`) implements the traced RENEWAL PC weapon path.
+`MonsterCombatCoordinator.Attack` gained a `WeaponItemDefinition? equippedWeapon`
+parameter and dispatches to `WeaponAttackCalculator` when non-null, otherwise the
+existing `BasicAttackCalculator` - no parallel combat system, no itemId-specific
+branching. `MapClientSession.HandleIroAttackRequestAsync` resolves the CURRENT
+equipped weapon through the same `EquippedWeaponResolver` path
+`SendSelfWeaponAppearanceAsync` already used (never `ClientViewId`/LOOK_WEAPON,
+never cached across attacks), so a same-session equip/unequip changes the very
+next attack's calculation with no reconnect and no coordinator-side cache to
+invalidate. The weapon-ATK roll is injectable (`Func<int,int,int> rollWeaponAtk`,
+same pattern as `QuestDropResolver`'s injectable RNG) so tests can pin it
+deterministically; production defaults to `Random.Shared`.
+
+Live stock-iRO validation (equipped Knife vs G_PORING; unequip mid-session
+returning to unarmed) is the next step, pending a live test session - the
+capture's observed 37 damage/hit remains validation evidence only, not an input
+to the implementation.
