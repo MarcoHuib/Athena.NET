@@ -40,6 +40,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
     private readonly ICharacterPositionPersistence _positionPersistence;
     private readonly ICharacterQuestPersistence _questPersistence;
     private readonly ICharacterGameplayStatePersistence _gameplayStatePersistence;
+    private readonly ICharacterEquipmentPersistence _equipmentPersistence;
     private readonly ICharacterInventoryPersistence _inventoryPersistence;
     private readonly WorldMapRegistry _worldMapRegistry;
     // Null when no MapServerWorld was supplied (test-facing constructor default).
@@ -112,6 +113,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
     private readonly object _shutdownGate = new();
     private Task? _shutdownTask;
     private CharacterGameplayStateSession? _gameplayState;
+    private CharacterEquipmentSnapshot? _equipment;
     private readonly CharacterStatusEffectState _statusEffects;
     private readonly TimeProvider _timeProvider;
     // Single-slot wake signal (max count 1, not int.MaxValue): StartStatusAsync may Release()
@@ -143,7 +145,8 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
         MonsterRegistry? monsters = null,
         IMovementPathProvider? movementPathProvider = null,
         MonsterCombatCoordinator? combat = null,
-        ICharacterInventoryPersistence? inventoryPersistence = null)
+        ICharacterInventoryPersistence? inventoryPersistence = null,
+        ICharacterEquipmentPersistence? equipmentPersistence = null)
     {
         SessionId = sessionId;
         _client = client;
@@ -153,6 +156,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
         _questPersistence = questPersistence ?? charConnector;
         _gameplayStatePersistence = gameplayStatePersistence ?? charConnector;
         _inventoryPersistence = inventoryPersistence ?? charConnector;
+        _equipmentPersistence = equipmentPersistence ?? charConnector;
         _worldMapRegistry = worldMapRegistry;
         _monsters = monsters;
         _combat = combat;
@@ -183,7 +187,8 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
         MonsterRegistry? monsters = null,
         IMovementPathProvider? movementPathProvider = null,
         MonsterCombatCoordinator? combat = null,
-        ICharacterInventoryPersistence? inventoryPersistence = null)
+        ICharacterInventoryPersistence? inventoryPersistence = null,
+        ICharacterEquipmentPersistence? equipmentPersistence = null)
         : this(
             sessionId,
             client,
@@ -196,7 +201,8 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
             monsters,
             movementPathProvider,
             combat,
-            inventoryPersistence)
+            inventoryPersistence,
+            equipmentPersistence)
     {
         _iroAuthRequested = iroAuthenticated;
         _authRequested = iroAuthenticated;
@@ -220,6 +226,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
     internal ScriptExecutionState? ActiveScriptState => _scriptExecutionSession?.State;
     internal string? ActiveGeneratedScriptEntityId => _generatedScriptEntityId;
     internal CharacterGameplayStateSession? GameplayState => _gameplayState;
+    internal CharacterEquipmentSnapshot? Equipment => _equipment;
     internal CharacterStatusEffectState StatusEffects => _statusEffects;
 
     public async Task RunAsync(CancellationToken cancellationToken)
@@ -328,6 +335,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
             HandleAuthFail(); return;
         }
         _gameplayState = new CharacterGameplayStateSession(authOk.AccountId, state, _gameplayStatePersistence);
+        _equipment = await _equipmentPersistence.GetEquipmentAsync(authOk.AccountId, authOk.CharId, _sessionCancellation.Token);
         _authenticated = true; _positionDirty = false;
         MapLogger.Info($"[iRO MAP DEBUG] 0x0C1F MapAuthNode authentication succeeded accountId={authOk.AccountId} charId={authOk.CharId} sessionMatch=true gameplayStateVersion={state.Version}");
         EnsureRuntimeLoopsStarted();

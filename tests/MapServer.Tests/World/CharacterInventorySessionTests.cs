@@ -39,7 +39,7 @@ internal sealed class FakeInventoryPersistence : ICharacterInventoryPersistence
 
 public sealed class CharacterInventorySessionTests
 {
-    private static readonly ItemDefinition Wood = new(6008, "Wood", "Wood", Stackable: true, new("rAthena", "abc", "db/re/item_db_etc.yml", 1));
+    private static readonly ItemDefinition Wood = new EtcItemDefinition(6008, "Wood", "Wood", Stackable: true, new("rAthena", "abc", "db/re/item_db_etc.yml", 1));
 
     [Fact]
     public async Task AddItemAsync_FirstAward_CreatesNewStackWithAmount()

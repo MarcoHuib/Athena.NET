@@ -10,16 +10,27 @@ namespace Athena.Net.MapServer.Generated.GameData.Items;
 
 internal static class GeneratedItems
 {
-    internal static readonly ItemDefinition Wood = new(
+    internal static readonly EtcItemDefinition Wood = new(
         Id: 6008,
         AegisName: "Wood",
         Name: "Wood",
         Stackable: true,
         Source: new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/re/item_db_etc.yml", 0));
 
+    // Generated via `compile-item --item-id 1201 --item-db-file db/re/item_db_equip.yml`.
+    // Starter tutorial weapon (char_athena.conf start_items: 1201,1,2 = EQP_HAND_R).
+    internal static readonly WeaponItemDefinition Knife = new(
+        Id: 1201,
+        AegisName: "Knife",
+        Name: "Knife",
+        Stackable: false,
+        Attack: 17,
+        WeaponLevel: 1,
+        Source: new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/re/item_db_equip.yml", 0));
+
     // Hand-composed lookup (not compiler output) over the generated items above, mirroring
     // how AcademyMobSpawnRegistration.cs composes AcademyMobSpawns.GPoringSpawns outside the
     // NpcWorldEmitter's own deterministic-reproducibility guarantee. Extend by adding entries
     // here as more items are generated; do not regenerate this file to add lookup logic.
-    internal static readonly IReadOnlyDictionary<int, ItemDefinition> ById = new Dictionary<int, ItemDefinition> { [Wood.Id] = Wood };
+    internal static readonly IReadOnlyDictionary<int, ItemDefinition> ById = new Dictionary<int, ItemDefinition> { [Wood.Id] = Wood, [Knife.Id] = Knife };
 }

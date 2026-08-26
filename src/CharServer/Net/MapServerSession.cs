@@ -21,6 +21,7 @@ public sealed class MapServerSession : IDisposable, ISession
         [PacketConstants.MapGameplayStateGetRequest] = MapCharacterGameplayStateProtocol.GetRequestLength,
         [PacketConstants.MapGameplayStateUpdateRequest] = MapCharacterGameplayStateProtocol.UpdateRequestLength,
         [PacketConstants.MapInventoryAddRequest] = MapInventoryAddProtocol.RequestLength,
+        [PacketConstants.MapEquipmentGetRequest] = MapEquipmentProtocol.GetRequestLength,
     };
 
     private readonly TcpClient _client;
@@ -116,6 +117,9 @@ public sealed class MapServerSession : IDisposable, ISession
                 break;
             case PacketConstants.MapInventoryAddRequest:
                 await HandleInventoryAddRequestAsync(packet, cancellationToken);
+                break;
+            case PacketConstants.MapEquipmentGetRequest:
+                await HandleEquipmentGetAsync(packet, cancellationToken);
                 break;
             default:
                 CharLogger.Warning($"Unknown map server packet 0x{packetType:X4}, disconnecting.");
@@ -439,6 +443,38 @@ public sealed class MapServerSession : IDisposable, ISession
             }
         }
         await WriteAsync(MapCharacterGameplayStateProtocol.BuildResponse(PacketConstants.MapGameplayStateGetResponse, result, charId, state), cancellationToken);
+    }
+
+    // Pinned EQP_HAND_R (mmo.hpp:340).
+    private const uint EquipPositionRightHand = 0x000002;
+
+    private async Task HandleEquipmentGetAsync(byte[] packet, CancellationToken cancellationToken)
+    {
+        if (!MapEquipmentProtocol.TryParseGet(packet, out var accountId, out var charId)) return;
+        CharacterEquipmentDto? equipment = null; byte result = 1;
+        if (IsGameplayStateRequestAuthorized(_authenticated, _ownedCharacters, accountId, charId))
+        {
+            try
+            {
+                await using var db = _dbFactory();
+                var rightHand = db is null
+                    ? null
+                    : await db.Inventory.AsNoTracking().SingleOrDefaultAsync(
+                        i => i.CharId == charId && i.Equip == EquipPositionRightHand,
+                        cancellationToken);
+                equipment = rightHand is null
+                    ? new CharacterEquipmentDto(HasRightHand: false, RightHandItemId: 0, RightHandRefine: 0)
+                    : new CharacterEquipmentDto(HasRightHand: true, rightHand.NameId, rightHand.Refine);
+                result = 0;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                CharLogger.Warning(
+                    $"Character equipment read rejected reason=database-error charId={charId} " +
+                    $"error={ex.GetType().Name}.");
+            }
+        }
+        await WriteAsync(MapEquipmentProtocol.BuildResponse(result, charId, equipment), cancellationToken);
     }
 
     private async Task HandleGameplayStateUpdateAsync(byte[] packet, CancellationToken cancellationToken)
