@@ -43,6 +43,7 @@ internal sealed class IntroToIzludeOnTouchScript : INpcScript
         local_map = ("izlude" + ScriptContext.ReplaceString(context.StrNpcInfo(2), "intro_to_izlude", ""));
         await context.WarpAsync(local_map, 196, 209, cancellationToken);
         await context.SetSavePointAsync(local_map, 128, 142, cancellationToken);
+        return;
 #line default
     }
 }

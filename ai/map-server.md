@@ -194,7 +194,7 @@ which is semantically equivalent to Athena's unchecked unsigned
 
 ## Existing CharServer auth state (read-only diagnosis)
 - On authenticated `0x0066`, `CharServer.Net.ClientSession.HandleSelectCharAsync` resolves the selected character by account and slot and stores a `MapAuthNode` keyed by account ID.
-- The node contains account ID, selected character ID, login ID 1, login ID 2, sex, map/position metadata, expiration time, group ID, and map-change state. The login IDs originate in LoginServer authentication and pass through the CharServer session.
+- The node contains account ID, selected character ID, the selected authoritative character name, login ID 1, login ID 2, sex, map/position metadata, expiration time, group ID, and map-change state. The name is read from CharServer's owned character row at selection time and is carried in the authenticated internal MapAuth response for generated `strcharinfo(0)`; it is not accepted from a MapServer client packet. The login IDs originate in LoginServer authentication and pass through the CharServer session.
 - `ExpirationTime` is currently stored as `0`; `MapAuthManager` performs no time-based expiry.
 - The legacy map-entry handler reads account ID, character ID, login ID 1, and sex from its proven 19-byte legacy packet and asks CharServer to validate them. CharServer checks those values against the node, consumes it on success, and returns the stored node data.
 - The iRO path validates the three capture-proven classic fields. Login ID 2, sex,

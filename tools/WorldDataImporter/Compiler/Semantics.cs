@@ -11,7 +11,7 @@ internal static class RathenaCommandCatalog
         new("mes",1,1,false,true,true), new("next",0,0,true,true,true), new("select",1,null,true,true,true),
         new("close",0,0,false,true,true),new("close2",0,0,false,true,true),new("end",0,0,false,false,true),
         new("setquest",1,1,false,true,true),new("completequest",1,1,false,true,true),new("isbegin_quest",1,1,false,true,true),
-        new("warp",3,3,false,true,true),new("savepoint",3,5,true,true,true),new("strnpcinfo",1,1,false,false,true),new("replacestr",3,3,false,false,true),new("cutin",2,2,false,true,true),
+        new("warp",3,3,false,true,true),new("savepoint",3,5,true,true,true),new("strnpcinfo",1,1,false,false,true),new("strcharinfo",1,1,false,true,true),new("replacestr",3,3,false,false,true),new("cutin",2,2,false,true,true),
         new("heal",2,2,false,true,true),new("specialeffect2",1,2,false,true,true),new("skilleffect",2,2,false,true,true),new("sc_start",3,9,false,true,true),new("getexp",2,2,false,true,true),
         new("goto",1,1,false,false,false),new("callsub",1,null,true,false,false),new("callfunc",1,null,true,false,false)
     }.ToDictionary(x=>x.Name,StringComparer.OrdinalIgnoreCase);

@@ -31,6 +31,7 @@ public interface INpcScriptHost
     Task SpecialEffectAsync(int effectId, CancellationToken cancellationToken);
     Task SkillEffectAsync(int skillId, int level, CancellationToken cancellationToken);
     Task StartStatusAsync(int statusId, int durationMilliseconds, int val1, CancellationToken cancellationToken);
+    string GetActiveCharacterName();
 }
 
 // Pinned rAthena numeric constants referenced by generated script identifiers
@@ -92,6 +93,12 @@ public sealed class ScriptContext
         2 => ExecutingNpcName.TrimStart('#'),
         4 => EntityId.Split(':', 3)[1],
         _ => throw new NotSupportedException($"strnpcinfo({type}) is not available in generated scripts."),
+    };
+
+    public string StrCharInfo(int type) => type switch
+    {
+        0 => _host.GetActiveCharacterName(),
+        _ => throw new NotSupportedException($"strcharinfo({type}) is not available in generated scripts."),
     };
 
     public static string ReplaceString(string value, string search, string replacement) =>

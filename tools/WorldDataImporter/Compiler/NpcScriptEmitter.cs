@@ -180,8 +180,8 @@ internal static class NpcScriptEmitter
             case "skilleffect": output.Append(indent).Append("await context.SkillEffectAsync("); EmitExpression(output, command.Arguments[0]); output.Append(", "); EmitExpression(output, command.Arguments[1]); output.AppendLine(", cancellationToken);"); break;
             case "sc_start": output.Append(indent).Append("await context.StartStatusAsync("); EmitArguments(output, command.Arguments); output.AppendLine(", cancellationToken);"); break;
             case "getexp": output.Append(indent).Append("await context.GrantExperienceAsync("); EmitArguments(output, command.Arguments); output.AppendLine(", cancellationToken);"); break;
-            case "end": break;
-            case "select": throw new InvalidOperationException("select is emitted as an expression.");
+            case "end": output.Append(indent).AppendLine("return;"); break;
+            case "select": output.Append(indent).Append("await context.SelectAsync(["); EmitArguments(output, command.Arguments); output.AppendLine("], cancellationToken);"); break;
         }
     }
 
@@ -203,6 +203,7 @@ internal static class NpcScriptEmitter
             case LoweredLiteral { Value: string text }: output.Append('"').Append(Escape(text)).Append('"'); break;
             case LoweredLiteral literal: output.Append(Convert.ToString(literal.Value, CultureInfo.InvariantCulture)); break;
             case LoweredVariable variable: output.Append(Local(variable.Name)); break;
+            case LoweredCharacterInfo characterInfo: output.Append("context.StrCharInfo(").Append(characterInfo.InfoType).Append(')'); break;
             case LoweredBinary binary:
                 if (binary.Left is LoweredCall { Name: "isbegin_quest" } quest && binary.Operator is TokenKind.Equal or TokenKind.NotEqual && binary.Right is LoweredLiteral expected)
                 {

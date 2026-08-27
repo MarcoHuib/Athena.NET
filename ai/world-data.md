@@ -71,14 +71,10 @@ ACTOR entirely (only appropriate when that literal instance/map is not part
 of the intended generated world at all — never merely because a placement is
 a `duplicate(...)` family's generic/base template row), while `--no-behavior`
 keeps a definition's actor(s) visible/interactable-looking but withholds its
-script registration. This is how the Academy slice keeps Lumin actor-only
-today even though pinned rAthena contains real, non-trivial click dialogue
-for it — its script deliberately remains unregistered pending real inventory
-runtime support, which is an emission-time decision (`--no-behavior
-'Lumin#new_ship'`), not something the converter encodes. Captain Carocc's
-script IS registered (dialogue/quest/heal/status/EXP runtime capabilities all
-exist), and both NPCs' actors are placed on every `int_land`/`int_land01..04`
-map, not only the instanced duplicates.
+script registration. The Academy slice no longer needs that suppression for
+Lumin: both Captain Carocc and Lumin have generated click scripts, and both
+NPCs' actors are placed on every `int_land`/`int_land01..04` map, not only the
+instanced duplicates.
 
 `WorldRegistryBuilder.AddNpc(NpcDefinition, IReadOnlyList<NpcPlacement>)` is
 the runtime registration entry point generated `AcademyWorld.Register(builder)`
@@ -88,9 +84,9 @@ calls; it lowers the definition/placement pair back into today's
 Hand-written custom NPC content uses the identical `AddNpc` API. A definition
 with zero behaviors still contributes its `WorldEntityDefinition`s to the
 built world (proven by `WorldRegistryBuildResult.Entities`, independent of
-whether `WorldRegistryBuildResult.Scripts` has any registration for it) — this
-is how actor-only NPCs like Captain Carocc/Lumin remain visible without a
-script registration.
+whether `WorldRegistryBuildResult.Scripts` has any registration for it). This
+remains available for genuinely actor-only generated content; Captain Carocc
+and Lumin now both have script registrations.
 
 Generated tree for this slice: `src/MapServer/Generated/World/Izlude/Academy/AcademyWorld.cs`,
 `AcademyNpcs.cs`, and one `Scripts/*.cs` file per unique executable behavior.
@@ -214,7 +210,7 @@ their breadth does not imply runtime support.
 
 ## Still missing
 
-The complete `iz_int`/`int_land` tutorial family (generic base maps plus all four instanced duplicates) includes compiler-generated navigation targets, both Wounded Swordsman actor states/scripts, and definitions for Captain Carocc and Lumin — not only the `iz_int03`/`int_land03` instanced variant, which was the only fully complete member before a regeneration-selection fix restored the generic/base and remaining instanced placements (see the "Runtime architecture" section above and `WorldMapRegistryFamilyTests`). Captain Carocc's real pinned dialogue/quest/heal/status/EXP script is registered and executable on every map in the family, using the generic heal, temporary-status, and existing quest/progression runtime capabilities described below. Lumin remains actor-only on every map in the family: its script stays unregistered until real inventory runtime support exists; no no-op gameplay commands are used.
+The complete `iz_int`/`int_land` tutorial family (generic base maps plus all four instanced duplicates) includes compiler-generated navigation targets, both Wounded Swordsman actor states/scripts, and generated behavior for Captain Carocc and Lumin — not only the `iz_int03`/`int_land03` instanced variant. Captain Carocc's pinned dialogue/quest/heal/status/EXP script and Lumin's pinned dialogue/quest/cutin/cloak script are registered and executable on every map in the family. Lumin's `strcharinfo(0)` resolves the active character name carried through the authenticated CharServer map handoff; it is never sourced from a client dialogue packet or capture constant.
 
 Separately, pinned `Wounded Swordsman#intro_npc02_iz_int`'s `OnInit: questinfo(...)` is a genuine, still-open capability gap: rAthena's `questinfo(QTYPE_QUEST, QMARK_YELLOW, ...)` drives a client-facing quest-marker icon above the NPC, which Athena does not yet emit any packet for. This is NOT implemented here — no packet has been synthesized without capture/wire evidence (see `ai/iro-2026-wire.md`'s evidence-priority rule) — and remains distinct from the navigation-arrow (`navigateto`) capability, which IS implemented and generated from pinned source via `compile-navigation`/`AcademyNavigation.cs`.
 

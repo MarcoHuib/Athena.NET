@@ -358,7 +358,8 @@ public sealed class ClientSession : IDisposable, ISession
             character.Font,
             0,
             0,
-            false);
+            false,
+            character.Name);
 
         _mapAuthManager.Add(node);
         await SendZoneServerAsync(character.CharId, location.MapName, mapServer, cancellationToken);

@@ -61,7 +61,7 @@ and performs the existing same-server transfer through `ScriptContext`.
 | `int_land04/#intro_to_izlude_d` + duplicates | `Academy/AcademyWorld.cs`, `Academy/AcademyWarpTriggers.cs`, `Academy/Scripts/IntroToIzludeOnTouchScript.cs` | `WorldRegistryBuilder` + `ScriptContext` | generated stock-iRO session integration | Yes; no runtime JSON existed |
 | `iz_int/#ship_out` + duplicates | `Academy/AcademyWorld.cs`, `Academy/AcademyWarpTriggers.cs`, `Academy/Scripts/ShipOutOnTouchScript.cs` | `WorldRegistryBuilder` + `ScriptContext` | generated ShipOut03 warp/savepoint integration | Yes; no runtime JSON existed |
 | `iz_int/Wounded Swordsman#intro_npc02_iz_int` + duplicates | `Academy/AcademyWorld.cs`, `Academy/AcademyNpcs.cs`, `Academy/Scripts/*.cs` | `WorldRegistryBuilder` + `ScriptContext` | visible actor/click/dialogue/quest integration | Yes; no runtime JSON existed |
-| `int_land/Captain Carocc#intro_npc03`, `int_land/Lumin#new_ship` + duplicates | `Academy/AcademyWorld.cs`, `Academy/AcademyNpcs.cs` (actor-only, no behavior) | `WorldRegistryBuilder` | visible actor presence | Yes; no runtime JSON existed |
+| `int_land/Captain Carocc#intro_npc03`, `int_land/Lumin#new_ship` + duplicates | `Academy/AcademyWorld.cs`, `Academy/AcademyNpcs.cs`, `Academy/Scripts/*.cs` | `WorldRegistryBuilder` + `ScriptContext` | generated dialogue/quest/runtime integration | Yes; no runtime JSON existed |
 | `iz_int` and `iz_int03` room door pairs | `Academy/AcademyWarps.cs` | compiled `WorldMapRegistry` | generated minimal-warp/manual-login tests | Yes; aggregate removed |
 
 ## Generate an area's NPC/warp-trigger definitions + placements (duplicate-aware)
@@ -93,7 +93,6 @@ dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- compile
   --name 'Wounded Swordsman#intro_npc01_iz_int' \
   --name 'Captain Carocc#intro_npc03' \
   --name 'Lumin#new_ship' \
-  --no-behavior 'Lumin#new_ship' \
   --warp-name '#ship_out' \
   --warp-name '#intro_to_izlude' \
   --namespace Athena.Net.MapServer.Generated.World.Izlude.Academy \
@@ -115,15 +114,11 @@ bug, not an intentional narrower slice — see
 `WorldMapRegistryFamilyTests` (`tests/MapServer.Tests/World/`) for the
 regression coverage across all five `iz_int`/`int_land` family members.
 
-`--no-behavior` keeps Lumin actor-only: it has real, non-trivial rAthena
-click dialogue (the converter finds it losslessly), but its script
-deliberately stays unregistered pending real inventory runtime support (see
-`ai/world-data.md`) — this is an explicit emission-time decision, not a
-converter limitation, and is orthogonal to placement: Lumin's ACTOR still
-exists on every `int_land`/`int_land01..04` map even though its click
-behavior is not yet callable. Captain Carocc's script is registered: it only
-needs dialogue/quest/heal/status/EXP runtime capabilities, which now all
-exist. The pinned `Wounded Swordsman#intro_npc01_iz_int` OnTouch body still
+Lumin's real pinned click behavior is registered on every
+`int_land`/`int_land01..04` placement. Its generated script uses the generic
+dialogue/continuation, quest, cutin, cloak-state, and `strcharinfo(0)`
+capabilities; the active character name comes from authenticated CharServer
+state. The pinned `Wounded Swordsman#intro_npc01_iz_int` OnTouch body still
 isn't lowerable (a `sleep2` timer construct) — the compiler itself skips it
 automatically (no exclusion flag needed) and only its OnClick
 ("Lying"/cloak-toggle) behavior is emitted; this is a separate, still-open

@@ -689,6 +689,11 @@ public sealed class MapServerSession : IDisposable, ISession
 
     private Task SendAuthOkAsync(MapAuthNode node, CancellationToken cancellationToken)
     {
+        return WriteAsync(BuildAuthOkPacket(node), cancellationToken);
+    }
+
+    internal static byte[] BuildAuthOkPacket(MapAuthNode node)
+    {
         var length = MapAuthOkLength;
         var buffer = new byte[length];
         BinaryPrimitives.WriteInt16LittleEndian(buffer.AsSpan(0, 2), PacketConstants.MapAuthOk);
@@ -706,8 +711,9 @@ public sealed class MapServerSession : IDisposable, ISession
         buffer[49] = node.Direction;
         BinaryPrimitives.WriteUInt16LittleEndian(buffer.AsSpan(50, 2), node.Font);
         buffer[52] = node.Sex;
+        WriteFixedString(buffer.AsSpan(53, PacketConstants.NameLength), node.CharacterName);
 
-        return WriteAsync(buffer, cancellationToken);
+        return buffer;
     }
 
     private Task SendAuthFailAsync(uint accountId, uint charId, uint loginId1, byte sex, IPAddress ip, CancellationToken cancellationToken)
@@ -835,5 +841,5 @@ public sealed class MapServerSession : IDisposable, ISession
         bytes.AsSpan(0, length).CopyTo(buffer);
     }
 
-    private static int MapAuthOkLength => 2 + 2 + 4 + 4 + 4 + 4 + 4 + 1 + 4 + PacketConstants.MapNameLength + 2 + 2 + 1 + 2 + 1;
+    private static int MapAuthOkLength => 2 + 2 + 4 + 4 + 4 + 4 + 4 + 1 + 4 + PacketConstants.MapNameLength + 2 + 2 + 1 + 2 + 1 + PacketConstants.NameLength;
 }
