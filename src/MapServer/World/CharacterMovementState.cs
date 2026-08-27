@@ -182,6 +182,24 @@ public sealed class CharacterMovementState
         return crossed ?? (IReadOnlyList<(ushort X, ushort Y)>)[];
     }
 
+    // Pinned unit_stop_walking (unit.cpp:1695-1751, without any of its USW_MOVE_ONCE/
+    // USW_MOVE_FULL_CELL/canmove_delay options this project does not yet model): an IMMEDIATE halt
+    // at the character's current cell, truncating the path right there - unlike RequestRetarget
+    // (which only takes effect at the NEXT cell boundary), this discards the rest of the in-flight
+    // path outright, matching pinned source's own "delete_timer(ud->walktimer, ...); ud->walkpath.
+    // path_len = 0" (unit.cpp:1717-1739). Used by monster combat (MobInstance.StopChase) when a
+    // mob has closed to attack range and must stop advancing THIS instant, not at whatever cell
+    // boundary happens to come next - unlike a player mid-walk retarget, pinned mob_ai_sub_hard's
+    // own "target in range -> unit_stop_walking" (unit.cpp:2165-2166) is not itself subject to any
+    // deferred-retarget semantics. A no-op when not currently moving.
+    public void Stop()
+    {
+        if (!IsMoving) return;
+        _path = [(CurrentX, CurrentY)];
+        _pathPosition = 0;
+        _pendingRetargetDestination = null;
+    }
+
     // Used only by warp/map-transition handling, which teleports the character outright rather than
     // walking it (no path, no per-cell timing) - mirrors the existing MapClientSession warp paths
     // that directly assign _x/_y today.

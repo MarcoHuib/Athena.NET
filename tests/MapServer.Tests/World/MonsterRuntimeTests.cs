@@ -592,4 +592,58 @@ public sealed class MonsterRuntimeTests
                 $"Live scheduler advanced the monster onto a non-traversal cell ({position.X},{position.Y}).");
         }
     }
+
+    // ===== Idle random walk suppression while engaged (mob_ai_sub_hard's own "if (!tbl)" gate) =====
+
+    [Fact]
+    public void ProcessTick_MobWithActiveTarget_NeverStartsANewIdleRandomWalk()
+    {
+        var map = MakeAllWalkableMap("test_map", 40);
+        var spawn = MakeSpawn();
+        var (runtime, registry, clock) = MakeRuntime([spawn], 20, 20, map);
+        var instance = registry.AllInstances[0];
+        instance.TryAcquireTarget(500, allowChangeTargetWhileChasing: false);
+
+        for (var i = 0; i < 50; i++)
+        {
+            clock.Advance(TimeSpan.FromSeconds(5)); // Far past MinRandomWalkTimeMs+jitter.
+            runtime.ProcessTick();
+        }
+
+        Assert.False(instance.IsWalking);
+        var position = instance.GetPosition();
+        Assert.Equal((ushort)20, position.X);
+        Assert.Equal((ushort)20, position.Y);
+    }
+
+    // Item 9G: once genuinely idle again (target unlocked), random-walk scheduling must resume
+    // source-faithfully - this is the observable "fix confirmed" behavior for the reported bug.
+    [Fact]
+    public void ProcessTick_AfterTargetUnlocked_IdleRandomWalkEventuallyResumes()
+    {
+        var map = MakeAllWalkableMap("test_map", 40);
+        var spawn = MakeSpawn();
+        var (runtime, registry, clock) = MakeRuntime([spawn], 20, 20, map);
+        var instance = registry.AllInstances[0];
+        instance.TryAcquireTarget(500, allowChangeTargetWhileChasing: false);
+
+        for (var i = 0; i < 10; i++)
+        {
+            clock.Advance(TimeSpan.FromSeconds(5));
+            runtime.ProcessTick();
+        }
+        Assert.False(instance.IsWalking); // Still suppressed while engaged.
+
+        instance.TryUnlockTarget(clock.GetUtcNow().UtcTicks, () => 0);
+
+        var everWalked = false;
+        for (var i = 0; i < 50 && !everWalked; i++)
+        {
+            clock.Advance(TimeSpan.FromSeconds(5));
+            runtime.ProcessTick();
+            everWalked = instance.IsWalking || instance.GetPosition() != new MobPosition(20, 20);
+        }
+
+        Assert.True(everWalked, "Idle random walk never resumed after the target was unlocked.");
+    }
 }

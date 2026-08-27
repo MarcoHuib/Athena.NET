@@ -97,7 +97,7 @@ public sealed class PoringQuestDropIntegrationTests
         MonsterAttackOutcome outcome = default;
         for (var i = 0; i < 20 && target.IsAlive; i++)
         {
-            outcome = combat.Attack(target, StrongEnoughToOneShot(), attackerBaseLevel: 1, null, questStatus);
+            outcome = combat.Attack(target, 1001, StrongEnoughToOneShot(), attackerBaseLevel: 1, null, questStatus);
         }
         Assert.True(outcome.KilledByThisHit);
         Assert.Single(outcome.QuestDrops);
@@ -118,7 +118,7 @@ public sealed class PoringQuestDropIntegrationTests
         // --- Second kill ---
         for (var i = 0; i < 20 && target.IsAlive; i++)
         {
-            outcome = combat.Attack(target, StrongEnoughToOneShot(), attackerBaseLevel: 1, null, questStatus);
+            outcome = combat.Attack(target, 1001, StrongEnoughToOneShot(), attackerBaseLevel: 1, null, questStatus);
         }
         Assert.True(outcome.KilledByThisHit);
         Assert.Single(outcome.QuestDrops);
@@ -145,7 +145,7 @@ public sealed class PoringQuestDropIntegrationTests
         MonsterAttackOutcome outcome = default;
         for (var i = 0; i < 20 && target.IsAlive; i++)
         {
-            outcome = combat.Attack(target, StrongEnoughToOneShot(), 1, null, questStatus);
+            outcome = combat.Attack(target, 1001, StrongEnoughToOneShot(), 1, null, questStatus);
         }
 
         Assert.True(outcome.KilledByThisHit);
@@ -178,7 +178,7 @@ public sealed class PoringQuestDropIntegrationTests
         // needs several hits, not one.
         for (var i = 0; i < 55 && target.IsAlive; i++, attackCount++)
         {
-            outcome = combat.Attack(target, RealisticPostTutorialNovice(), RealisticNoviceBaseLevel, null, questStatus);
+            outcome = combat.Attack(target, 1001, RealisticPostTutorialNovice(), RealisticNoviceBaseLevel, null, questStatus);
         }
 
         Assert.True(outcome.KilledByThisHit, $"The realistic post-tutorial Novice state failed to kill G_PORING within {attackCount} attacks.");

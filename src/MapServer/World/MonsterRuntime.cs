@@ -122,6 +122,14 @@ public sealed class MonsterRuntime(MonsterRegistry monsters, IMapCollisionProvid
         var mode = instance.Spawn.Mob.Mode;
         if (!mode.HasFlag(MobMode.CanMove) || mode.HasFlag(MobMode.NoRandomWalk)) return false;
 
+        // Pinned mob_ai_sub_hard only ever reaches its mob_randomwalk call inside the "if (!tbl)"
+        // branch (mob.cpp:2043-2069) - a mob with a valid combat target never falls into that
+        // branch at all, so mob_randomwalk is never even considered while engaged. Checked here
+        // (not inside MobInstance.IsIdleWalkDue) so a still-engaged mob's _nextIdleWalkTimestamp is
+        // never advanced/consulted while combat is deciding its movement instead - see
+        // MonsterCombatDomain's own doc comment for where that decision actually happens.
+        if (instance.HasActiveTarget) return false;
+
         if (!instance.IsIdleWalkDue(nowTicks, _randomJitterMs)) return false;
 
         if (!collisionProvider.TryGetMap(instance.Map, out var map))

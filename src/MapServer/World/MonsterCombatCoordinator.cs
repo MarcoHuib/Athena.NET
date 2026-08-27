@@ -36,6 +36,7 @@ public sealed class MonsterCombatCoordinator(MonsterRegistry monsters, QuestDrop
     // calculation without any coordinator-side caching to invalidate.
     public MonsterAttackOutcome Attack(
         MobInstance target,
+        uint attackerAccountId,
         EffectiveCharacterStats attacker,
         ushort attackerBaseLevel,
         WeaponItemDefinition? equippedWeapon,
@@ -45,6 +46,18 @@ public sealed class MonsterCombatCoordinator(MonsterRegistry monsters, QuestDrop
 
         var result = basicAttackRules.Calculate(new BasicAttackContext(attacker, attackerBaseLevel, equippedWeapon, target.Spawn.Mob));
         var (hpBefore, hpAfter, killed) = target.ApplyDamage(result.Damage);
+
+        // Pinned mob_set_attacked_id, called from the walk-delay timer battle_damage schedules for
+        // every hit that connects against a mob (battle.cpp:356-362) - see MobInstance.
+        // TryAcquireTarget's own doc comment for why this project calls it immediately rather than
+        // reproducing that intermediate timer hop. A killing hit must not re-acquire a target on an
+        // instance that ApplyDamage just moved to Dead (TryAcquireTarget's own IsAlive guard already
+        // makes this a no-op, but skipping the call entirely when killed also avoids the pointless
+        // MSS_RUSH-on-a-dead-mob transition that TryAcquireTarget's own logic would otherwise not
+        // reach anyway - either way, matches pinned mob_dead's own immediate unlock, mob.cpp:3863).
+        // `allowChangeTargetWhileChasing: false` matches G_PORING's mode lacking MD_CHANGETARGETMELEE
+        // /MD_CHANGETARGETCHASE (mob.cpp:1242,1252) - see TryAcquireTarget's own doc comment.
+        if (!killed) target.TryAcquireTarget(attackerAccountId, allowChangeTargetWhileChasing: false);
 
         IReadOnlyList<QuestDropOutcome> drops = [];
         if (killed)

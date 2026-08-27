@@ -221,4 +221,193 @@ public sealed class MobInstanceTests
         Assert.False(instance.TryRespawn(500, () => Fixed(15, 25)));
         Assert.False(instance.IsAlive);
     }
+
+    // ===== Combat engagement (TryAcquireTarget/TryUnlockTarget/Engagement) =====
+
+    [Fact]
+    public void FreshInstance_HasNoTarget_AndIsIdle()
+    {
+        var instance = new MobInstance(1, MakeSpawn(), 0, 0);
+
+        Assert.False(instance.HasActiveTarget);
+        Assert.Equal((MobEngagement)new(null, MobCombatState.Idle), instance.Engagement);
+    }
+
+    [Fact]
+    public void TryAcquireTarget_WhileIdle_LocksOnAndEntersRush()
+    {
+        var instance = new MobInstance(1, MakeSpawn(), 0, 0);
+
+        var accepted = instance.TryAcquireTarget(500, allowChangeTargetWhileChasing: false);
+
+        Assert.True(accepted);
+        Assert.True(instance.HasActiveTarget);
+        Assert.Equal(500u, instance.Engagement.TargetAccountId);
+        Assert.Equal(MobCombatState.Rush, instance.Engagement.State);
+    }
+
+    [Fact]
+    public void TryAcquireTarget_SameAttackerAgainWhileLocked_RemainsAccepted()
+    {
+        var instance = new MobInstance(1, MakeSpawn(), 0, 0);
+        instance.TryAcquireTarget(500, allowChangeTargetWhileChasing: false);
+
+        var acceptedAgain = instance.TryAcquireTarget(500, allowChangeTargetWhileChasing: false);
+
+        Assert.True(acceptedAgain);
+        Assert.Equal(500u, instance.Engagement.TargetAccountId);
+    }
+
+    // Item 6 / pinned mob_can_changetarget's MSS_RUSH case (mob.cpp:1251-1252): G_PORING's mode
+    // lacks MD_CHANGETARGETCHASE, so a caller must pass allowChangeTargetWhileChasing: false - a
+    // second, different attacker must NOT steal the target while the mob is chasing the first.
+    [Fact]
+    public void TryAcquireTarget_DifferentAttackerWhileChasing_WithoutChangeTargetChase_IsRejected()
+    {
+        var instance = new MobInstance(1, MakeSpawn(), 0, 0);
+        instance.TryAcquireTarget(500, allowChangeTargetWhileChasing: false);
+
+        var accepted = instance.TryAcquireTarget(600, allowChangeTargetWhileChasing: false);
+
+        Assert.False(accepted);
+        Assert.Equal(500u, instance.Engagement.TargetAccountId); // Original target retained.
+    }
+
+    [Fact]
+    public void TryAcquireTarget_DifferentAttackerWhileChasing_WithChangeTargetChase_Replaces()
+    {
+        var instance = new MobInstance(1, MakeSpawn(), 0, 0);
+        instance.TryAcquireTarget(500, allowChangeTargetWhileChasing: false);
+
+        var accepted = instance.TryAcquireTarget(600, allowChangeTargetWhileChasing: true);
+
+        Assert.True(accepted);
+        Assert.Equal(600u, instance.Engagement.TargetAccountId);
+    }
+
+    [Fact]
+    public void TryAcquireTarget_OnDeadInstance_IsRejected()
+    {
+        var instance = new MobInstance(1, MakeSpawn(), 0, 0);
+        instance.ApplyDamage(55);
+
+        Assert.False(instance.TryAcquireTarget(500, allowChangeTargetWhileChasing: false));
+        Assert.False(instance.HasActiveTarget);
+    }
+
+    [Fact]
+    public void TryUnlockTarget_WhenLocked_ClearsTargetAndReturnsToIdle()
+    {
+        var instance = new MobInstance(1, MakeSpawn(), 0, 0);
+        instance.TryAcquireTarget(500, allowChangeTargetWhileChasing: false);
+
+        var unlocked = instance.TryUnlockTarget(1000, () => 0);
+
+        Assert.True(unlocked);
+        Assert.False(instance.HasActiveTarget);
+        Assert.Equal(MobCombatState.Idle, instance.Engagement.State);
+    }
+
+    [Fact]
+    public void TryUnlockTarget_WhenAlreadyIdle_IsANoOp()
+    {
+        var instance = new MobInstance(1, MakeSpawn(), 0, 0);
+
+        Assert.False(instance.TryUnlockTarget(1000, () => 0));
+    }
+
+    // Requirement 7 / pinned mob_dead's own target unlock (mob.cpp:3863) - a killing hit must
+    // never leave a stale target/engagement state on the now-dead instance.
+    [Fact]
+    public void ApplyDamage_Lethal_ClearsEngagementState()
+    {
+        var instance = new MobInstance(1, MakeSpawn(), 0, 0);
+        instance.TryAcquireTarget(500, allowChangeTargetWhileChasing: false);
+        instance.EnterAttackState();
+
+        instance.ApplyDamage(55);
+
+        Assert.False(instance.HasActiveTarget);
+        Assert.Equal(MobCombatState.Idle, instance.Engagement.State);
+    }
+
+    // Requirement 7's own "never leave stale account IDs attached to a respawned monster".
+    [Fact]
+    public void TryRespawn_ClearsAnyStaleEngagementFromThePreviousLife()
+    {
+        var instance = new MobInstance(1, MakeSpawn(), 10, 10);
+        instance.TryAcquireTarget(500, allowChangeTargetWhileChasing: false);
+        instance.ApplyDamage(55); // Already clears via death, but exercise the respawn path independently too.
+        instance.TryScheduleRespawn(1000);
+
+        Assert.True(instance.TryRespawn(1000, () => Fixed(20, 20)));
+
+        Assert.False(instance.HasActiveTarget);
+        Assert.Equal(MobCombatState.Idle, instance.Engagement.State);
+    }
+
+    [Fact]
+    public void EnterAttackState_WithNoTarget_DoesNotFabricateEngagement()
+    {
+        var instance = new MobInstance(1, MakeSpawn(), 0, 0);
+
+        instance.EnterAttackState();
+
+        Assert.Equal(MobCombatState.Idle, instance.Engagement.State);
+    }
+
+    [Fact]
+    public void EnterAttackState_WhileTargeted_TransitionsToBerserk()
+    {
+        var instance = new MobInstance(1, MakeSpawn(), 0, 0);
+        instance.TryAcquireTarget(500, allowChangeTargetWhileChasing: false);
+
+        instance.EnterAttackState();
+
+        Assert.Equal(MobCombatState.Berserk, instance.Engagement.State);
+    }
+
+    [Fact]
+    public void EnterChaseState_FromBerserk_ReturnsToRush()
+    {
+        var instance = new MobInstance(1, MakeSpawn(), 0, 0);
+        instance.TryAcquireTarget(500, allowChangeTargetWhileChasing: false);
+        instance.EnterAttackState();
+
+        instance.EnterChaseState();
+
+        Assert.Equal(MobCombatState.Rush, instance.Engagement.State);
+    }
+
+    [Fact]
+    public void NextAttackTimestamp_DefaultsToNull_UntilScheduled()
+    {
+        var instance = new MobInstance(1, MakeSpawn(), 0, 0);
+
+        Assert.Null(instance.NextAttackTimestamp);
+
+        instance.ScheduleNextAttack(5000);
+
+        Assert.Equal(5000L, instance.NextAttackTimestamp);
+    }
+
+    // Pinned unit_stop_walking's own immediate halt (unit.cpp:1695-1751) - StopChase must not wait
+    // for the current cell to finish, unlike a retarget.
+    [Fact]
+    public void StopChase_WhileMoving_HaltsImmediatelyAtCurrentCell()
+    {
+        var instance = new MobInstance(1, MakeSpawn(), 0, 0);
+        var path = new (ushort X, ushort Y)[] { (0, 0), (1, 0), (2, 0), (3, 0) };
+        instance.TryStartChase(path, orthogonalStepMs: 150, DateTimeOffset.UnixEpoch);
+
+        instance.StopChase();
+
+        var position = instance.GetPosition();
+        Assert.Equal((ushort)0, position.X);
+        Assert.Equal((ushort)0, position.Y);
+        // Advancing time far past the whole stale path must not move the instance any further -
+        // the path was genuinely truncated, not merely retargeted-to-apply-later.
+        var crossed = instance.AdvanceMovement(DateTimeOffset.UnixEpoch.AddSeconds(10));
+        Assert.Empty(crossed);
+    }
 }

@@ -325,6 +325,11 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
 
     public int SessionId { get; }
 
+    // Read-only; never mutated after CompleteIroAuthenticationAsync sets it. Safe to read from any
+    // thread (a plain uint field, assigned once during single-threaded auth completion before this
+    // session is registered in MapTcpServer's _sessions - see that dictionary's own doc comment for
+    // why a session is only ever discoverable there after authentication is complete).
+    internal uint AccountId => _accountId;
     internal string CurrentMapName => _mapName;
     // Syncs against real elapsed walking time on every read (no background timer - mirrors
     // CharacterStatusEffectState's lazy-on-read expiration model), so any caller (tests, a future
@@ -1422,6 +1427,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
         var effectiveStats = _statusEffects.Recalculate(_gameplayState.State);
         var outcome = _combat.Attack(
             target,
+            _accountId,
             effectiveStats,
             _gameplayState.State.BaseLevel,
             equippedWeapon,
@@ -1533,6 +1539,67 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
             if (ReferenceEquals(_repeatAttack, expected)) _repeatAttack = null;
         }
         finally { _attackGate.Release(); }
+    }
+
+    // Narrow, synchronized read for the world monster-tick orchestrator (MapTcpServer) to pass
+    // into MonsterEngagementDomain.Evaluate - see PlayerCombatSnapshot's own doc comment for why
+    // this is deliberately narrow rather than exposing MapClientSession's full surface. Guarded by
+    // _movementGate (the SAME gate HandleIroMovementAsync/ProcessDueMovementAsync already use for
+    // _x/_y/_mapName) so a concurrent world tick reading this snapshot can never observe a torn
+    // position mid-movement-packet-processing - this is the "use the session's existing
+    // synchronization model" this task's own concurrency requirement calls for, not a new ad-hoc
+    // lock. Returns null once (not before) the character has been authenticated far enough to have
+    // gameplay state - a session mid-handshake is not yet a valid combat target, matching how
+    // MapTcpServer's _sessions dictionary itself only holds sessions that have reached RunAsync.
+    internal async Task<PlayerCombatSnapshot?> TryGetCombatSnapshotAsync(CancellationToken cancellationToken)
+    {
+        if (_gameplayState is null) return null;
+        var stats = _statusEffects.Recalculate(_gameplayState.State);
+        await _movementGate.WaitAsync(cancellationToken);
+        try
+        {
+            SyncPositionToNow();
+            return new PlayerCombatSnapshot(_accountId, _mapName, _x, _y, _gameplayState.State.CurrentHp > 0, _gameplayState.State.BaseLevel, stats.Vitality);
+        }
+        finally { _movementGate.Release(); }
+    }
+
+    // Authoritative mob-on-player basic-attack application, called by the world monster-tick
+    // orchestrator (MapTcpServer) once MonsterEngagementDomain.Evaluate has already decided (from a
+    // PlayerCombatSnapshot taken moments earlier) that this hit should happen. Re-validates
+    // liveness/map under _gameplayState's own MutateAsync (optimistic-concurrency: the mutation
+    // callback re-reads `expected.CurrentHp` itself) so a player who died, changed map, or received
+    // a DIFFERENT concurrent HP mutation between snapshot and this call cannot have this hit
+    // silently clobber that newer state - MutateAsync's own persisted-row compare-and-swap is
+    // exactly this project's "treat a stale snapshot as needing re-validation, not blind
+    // overwrite" pattern (see ICharacterGameplayStatePersistence.MutateAsync's own doc comment).
+    // Returns false (does nothing, sends nothing) if the player is no longer a valid target by the
+    // time the mutation actually runs - the orchestrator feeds that back into the mob's own target-
+    // unlock lifecycle exactly like a snapshot that was null/dead/wrong-map to begin with.
+    internal async Task<bool> ApplyIncomingMobBasicAttackAsync(uint mobActorId, string mobAegisName, uint damage, bool isMiss, CancellationToken cancellationToken)
+    {
+        if (_gameplayState is null) return false;
+
+        var mutated = await _gameplayState.MutateAsync(current =>
+        {
+            if (current.CurrentHp == 0) return current; // Already dead - no further reduction (pinned status_isdead target check).
+            var after = damage >= current.CurrentHp ? 0u : current.CurrentHp - damage;
+            return current with { CurrentHp = after };
+        }, cancellationToken);
+
+        if (mutated is null) return false; // Persistence rejected the mutation (stale row) - treat as a normal "target no longer valid this tick", not an error.
+
+        MapLogger.Info(
+            $"[iRO MAP DEBUG] Mob attack accepted mobActorId={mobActorId} mob='{mobAegisName}' targetAccountId={_accountId} damage={damage} isMiss={isMiss} hpAfter={mutated.CurrentHp}");
+
+        var tick = unchecked((uint)Environment.TickCount);
+        var damagePacket = IroMonsterCombatPackets.BuildNotifyAct3(
+            mobActorId, _accountId, tick, srcSpeed: 460, dstSpeed: 480, damage: damage, div: 1, actionType: 0);
+        await WriteAsync(damagePacket, cancellationToken);
+
+        var hpPacket = IroCharacterProgressionPackets.Parameter(5, mutated.CurrentHp); // SP_HP.
+        await WriteAsync(hpPacket, cancellationToken);
+        return true;
     }
 
     // Pinned clif_parse_UseItem (clif.cpp:12077-12106) -> pc_useitem (pc.cpp:6450-6576).

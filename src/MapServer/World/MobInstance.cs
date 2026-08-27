@@ -2,6 +2,27 @@ namespace Athena.Net.MapServer.World;
 
 public enum MobLifecycleState { Alive, Dead }
 
+// Subset of pinned e_mob_skill_state (mob.hpp MSS_*) this project's monster-engagement slice
+// actually needs. MSS_IDLE = no combat target (mob_randomwalk eligible). MSS_RUSH = "Mob
+// following a player after being attacked" (mob.hpp:101) - target acquired, chasing because out
+// of attack range. MSS_BERSERK = "Aggressive mob attacking" (mob.hpp:99) - actually reused here
+// for "target acquired AND currently in/entering attack range", matching unit_attack's own
+// unconditional mob_setstate(*md, MSS_BERSERK) whenever an attack is issued (unit.cpp:2982-2983),
+// regardless of whether the mob's own aggression mode is MD_AGGRESSIVE. Deliberately omits
+// MSS_WALK/MSS_LOOT/MSS_ANGRY/MSS_FOLLOW - none of pinned mob_can_changetarget's behavior for
+// those states is reachable by a passive (non-MD_AGGRESSIVE, non-looter-relevant) mob like
+// G_PORING in this slice; see mob_can_changetarget's own switch (mob.cpp:1240-1261) for why only
+// MSS_RUSH's "requires MD_CHANGETARGETCHASE to steal target" branch is reachable here.
+public enum MobCombatState { Idle, Rush, Berserk }
+
+// Immutable snapshot of a monster's combat engagement, returned by MobInstance so callers (the
+// monster combat domain service) can make source-backed decisions without holding MobInstance's
+// own lock or reaching into its private fields. Mirrors reading md->target_id/md->state.skillstate
+// as one atomic pair (pinned source reads these as plain struct fields with no such atomicity
+// concern; MobInstance's lock-per-call model requires this project to snapshot them together
+// instead, matching MobPosition's own "one atomic read" rationale).
+public readonly record struct MobEngagement(uint? TargetAccountId, MobCombatState State);
+
 // One resolved runtime (x,y) cell. Deliberately a single value type (not two independently
 // readable properties) so every consumer that needs a monster's current position takes ONE
 // logical snapshot rather than two separate field reads that could observe different points in
@@ -29,6 +50,19 @@ public sealed class MobInstance
     // shared by both) differ. Never null after construction; a freshly constructed/respawned
     // instance's movement state simply has an empty path (IsMoving=false) until a walk starts.
     private CharacterMovementState _movement;
+    // Pinned md->target_id (mob.hpp) - the account ID of the player currently locked as this
+    // mob's combat target, or null when genuinely idle (mob.cpp:1655-1658's target_id=0). Never
+    // read/written outside this instance's own lock; the monster combat domain service only ever
+    // observes it via the Engagement snapshot, never mutates it directly (matching how
+    // MonsterCombatCoordinator never mutates HP directly either - see ApplyDamage's own doc
+    // comment for that precedent).
+    private uint? _targetAccountId;
+    private MobCombatState _combatState = MobCombatState.Idle;
+    // Pinned md->attackabletime / status->adelay (mob_db AttackDelay) - the next tick at which this
+    // mob's own attack timer may fire again (unit_attack_timer_sub's own ud->attacktimer re-arm,
+    // unit.cpp:3337). 0 means "no attack in flight / delay elapsed", matching
+    // _nextIdleWalkTimestamp's own "0 = not scheduled" sentinel convention on this same type.
+    private long _nextAttackTimestamp;
 
     public MobInstance(uint actorId, MobSpawnDefinition spawn, ushort x, ushort y)
     {
@@ -83,6 +117,149 @@ public sealed class MobInstance
     public MobLifecycleState State { get { lock (_gate) return _state; } }
     public bool IsAlive => State == MobLifecycleState.Alive;
 
+    // One atomic read of target/state together - see MobEngagement's own doc comment for why this
+    // must be a single snapshot rather than two separate property reads.
+    public MobEngagement Engagement { get { lock (_gate) return new MobEngagement(_targetAccountId, _combatState); } }
+    public bool HasActiveTarget { get { lock (_gate) return _targetAccountId is not null; } }
+
+    // Pinned mob_set_attacked_id + the target-change branch of mob_ai_sub_hard (mob.cpp:1936-1995):
+    // establishes `attackerAccountId` as this mob's target, mirroring md->attacked_id ->
+    // md->target_id promotion. This project calls it directly and immediately from
+    // MonsterCombatCoordinator.Attack rather than reproducing pinned source's own two-phase
+    // walk-delay-timer deferral (battle_damage schedules mob_attacked via
+    // add_timer(tick+delay,...), which only THEN calls mob_set_attacked_id) - that deferral exists
+    // in pinned source purely so a monster's attacked-reaction is delayed by its own walk-delay
+    // (battle_calc_walkdelay), a sub-cell-duration timing nuance this slice does not model; the
+    // OBSERVABLE target-acquisition outcome (attacker becomes target, mob leaves idle-walk
+    // eligibility) is reproduced exactly, just without that intermediate scheduling hop.
+    //
+    // Mirrors mob_can_changetarget's own switch (mob.cpp:1229-1262) narrowed to the two states this
+    // slice's mob AI can actually be in: Idle always accepts a new target (matches MSS_IDLE's
+    // `return 1` case); Rush only accepts a DIFFERENT attacker as a replacement target if
+    // `allowChangeTargetWhileChasing` is true (mob_can_changetarget's MSS_RUSH case: `return
+    // (mode&MD_CHANGETARGETCHASE)` - G_PORING's mode does not have this bit, so a caller passes
+    // false for it and a second attacker while already chasing the first is correctly ignored,
+    // matching item 6's own traced acceptance criterion). The SAME attacker re-hitting an
+    // already-locked target is always accepted (pinned mob.cpp:1939: "md->attacked_id ==
+    // md->target_id" is the "rude attacked" check, never a target change - modeled here as a no-op
+    // success, since there is nothing to change). Berserk (mob is in/entering attack range) follows
+    // the same Rush-shaped rule in this slice - MD_CHANGETARGETMELEE is likewise absent from
+    // G_PORING's mode (mob.cpp:1242).
+    public bool TryAcquireTarget(uint attackerAccountId, bool allowChangeTargetWhileChasing)
+    {
+        lock (_gate)
+        {
+            if (_state != MobLifecycleState.Alive) return false;
+            if (_targetAccountId is null || _targetAccountId == attackerAccountId)
+            {
+                _targetAccountId = attackerAccountId;
+                if (_combatState == MobCombatState.Idle) _combatState = MobCombatState.Rush;
+                return true;
+            }
+            if (!allowChangeTargetWhileChasing) return false;
+            _targetAccountId = attackerAccountId;
+            return true;
+        }
+    }
+
+    // Pinned mob_unlocktarget (mob.cpp:1627-1669), narrowed to this slice's own state machine: the
+    // pinned unit_stop_attack + MSS_IDLE transition + next_walktime reschedule (mob.cpp:1647-1652).
+    // `jitterMs`/`now` reschedule the NEXT idle-walk consideration exactly like pinned source's own
+    // "tick+rnd()%1000+MIN_RANDOMWALKTIME" (mob.cpp:1652) - unlocking a target must not leave the
+    // mob eligible to randomly walk on the very next tick, matching a genuine target loss's real
+    // pinned cooldown rather than resuming idle behavior instantly. A no-op (returns false) when
+    // there was no target to unlock, so a caller doesn't need its own "was there a target" guard
+    // before calling this.
+    public bool TryUnlockTarget(long now, Func<long> jitterMs)
+    {
+        lock (_gate)
+        {
+            if (_targetAccountId is null) return false;
+            _targetAccountId = null;
+            _combatState = MobCombatState.Idle;
+            _nextAttackTimestamp = 0;
+            _nextIdleWalkTimestamp = now + jitterMs() + MinRandomWalkTimeMs;
+            return true;
+        }
+    }
+
+    // Pinned unit_attack's own unconditional mob_setstate(*md, MSS_BERSERK) whenever an attack is
+    // issued (unit.cpp:2982-2983) - called by the monster combat domain service once it decides
+    // this tick results in an attack rather than a chase. Idempotent/safe to call every attacking
+    // tick; does nothing to _targetAccountId (a state transition alone never changes who the
+    // target is).
+    public void EnterAttackState()
+    {
+        lock (_gate)
+        {
+            if (_targetAccountId is not null) _combatState = MobCombatState.Berserk;
+        }
+    }
+
+    // Pinned unit_walktobl's own mob_setstate(md, MSS_RUSH) whenever a chase-walk is (re)issued
+    // against the current target (unit.cpp:992-995) - called by the monster combat domain service
+    // once it decides this tick results in a chase rather than an attack.
+    public void EnterChaseState()
+    {
+        lock (_gate)
+        {
+            if (_targetAccountId is not null) _combatState = MobCombatState.Rush;
+        }
+    }
+
+    // Pinned unit_attack_timer_sub's own ud->attacktimer re-arm (unit.cpp:3337:
+    // "add_timer(ud->attackabletime,unit_attack_timer,...)") - the next tick at which this mob may
+    // attack again. Null means no attack has been performed yet (or the delay already elapsed) -
+    // same "null/0 = not scheduled" convention as NextMovementStepDueAt.
+    public long? NextAttackTimestamp { get { lock (_gate) { return _nextAttackTimestamp == 0 ? null : _nextAttackTimestamp; } } }
+
+    public void ScheduleNextAttack(long dueTimestamp)
+    {
+        lock (_gate) { _nextAttackTimestamp = dueTimestamp; }
+    }
+
+    // Pinned unit_walktoxy's mid-walk retarget branch (unit.cpp:884-899), reused here for monster
+    // chase exactly as MapClientSession already reuses it for player movement (see
+    // CharacterMovementState.RequestRetarget's own doc comment) - a chase re-issued while the mob is
+    // already mid-cell must defer to the next cell boundary rather than resetting the in-flight
+    // step's elapsed progress. Returns false (does nothing) if the mob is dead or not currently
+    // moving - the caller (monster combat domain service) is expected to call StartWalk directly
+    // for the not-moving case instead, matching CharacterMovementState.RequestRetarget's own
+    // "caller must only call this while IsMoving" contract.
+    public bool TryRetargetChase(ushort destinationX, ushort destinationY)
+    {
+        lock (_gate)
+        {
+            if (_state != MobLifecycleState.Alive || !_movement.IsMoving) return false;
+            _movement.RequestRetarget(destinationX, destinationY);
+            return true;
+        }
+    }
+
+    // Starts (or, per StartWalk's own contract, replaces a NOT-currently-moving walk with) a fresh
+    // chase path toward the target - used by the monster combat domain service's Chase decision
+    // when the mob is not already mid-walk (TryRetargetChase's counterpart for that case). Does
+    // nothing (returns false) if the mob has died since the caller computed `path`.
+    public bool TryStartChase(IReadOnlyList<(ushort X, ushort Y)> path, int orthogonalStepMs, DateTimeOffset now)
+    {
+        lock (_gate)
+        {
+            if (_state != MobLifecycleState.Alive) return false;
+            _movement.StartWalk(path, orthogonalStepMs, now);
+            _position = new MobPosition(_movement.CurrentX, _movement.CurrentY);
+            return true;
+        }
+    }
+
+    // Pinned mob_ai_sub_hard's own "target in attack range -> unit_stop_walking" (unit.cpp:2165-
+    // 2166) - called by the monster combat domain service's Attack decision so a mob that has just
+    // closed to melee range stops advancing further instead of continuing to walk into/past its
+    // target's cell.
+    public void StopChase()
+    {
+        lock (_gate) { _movement.Stop(); }
+    }
+
     // Applies damage and reports whether THIS call caused the Alive->Dead
     // transition (never true twice for the same death - the state check and
     // the mutation happen under one lock, so two concurrent lethal hits
@@ -96,7 +273,16 @@ public sealed class MobInstance
             var after = damage >= before ? 0u : before - damage;
             _currentHp = after;
             var killed = after == 0;
-            if (killed) _state = MobLifecycleState.Dead;
+            if (killed)
+            {
+                _state = MobLifecycleState.Dead;
+                // Pinned mob_dead's own unlock-on-death (mob.cpp:3863: "md->target_id =
+                // md->attacked_id = md->norm_attacked_id = 0") - no stale engagement may survive a
+                // death, matching requirement 7's own "mob dies" unlock condition.
+                _targetAccountId = null;
+                _combatState = MobCombatState.Idle;
+                _nextAttackTimestamp = 0;
+            }
             return (before, after, killed);
         }
     }
@@ -166,6 +352,12 @@ public sealed class MobInstance
             // spawn and a respawn - mob.cpp:1134-1143 calls mob_spawn for both).
             _movement = new CharacterMovementState(Map, position.X, position.Y);
             _nextIdleWalkTimestamp = 0;
+            // A respawned instance is a brand new mob_spawn per pinned source's own comment above -
+            // no engagement from the PREVIOUS life may survive (requirement 7's own "never leave
+            // stale account IDs attached to a respawned monster").
+            _targetAccountId = null;
+            _combatState = MobCombatState.Idle;
+            _nextAttackTimestamp = 0;
             return true;
         }
     }

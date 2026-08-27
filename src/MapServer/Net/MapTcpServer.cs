@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Linq;
 using System.Net;
 using System.Net.Sockets;
 using Athena.Net.MapServer.Config;
@@ -23,15 +24,17 @@ public sealed class MapTcpServer
     private readonly MapServerWorld _world;
     private readonly TcpListener _listener;
     private readonly ConcurrentDictionary<int, MapClientSession> _sessions = new();
+    private readonly MonsterEngagementTickProcessor _engagementProcessor;
     private int _nextSessionId;
 
-    public MapTcpServer(MapConfigStore configStore, CharServerConnector charConnector, MapServerWorld world)
+    public MapTcpServer(MapConfigStore configStore, CharServerConnector charConnector, MapServerWorld world, TimeProvider? timeProvider = null)
     {
         _configStore = configStore;
         _charConnector = charConnector;
         _world = world;
         var config = _configStore.Current;
         _listener = new TcpListener(config.BindIp, config.MapPort);
+        _engagementProcessor = new MonsterEngagementTickProcessor(_world.Monsters, _world.Collision, _world.MovementPathProvider, timeProvider ?? TimeProvider.System);
     }
 
     public int BoundPort { get; private set; }
@@ -91,6 +94,9 @@ public sealed class MapTcpServer
                 // 0x09FF stand entry, never a spurious 0x09FD).
                 var respawned = _world.Monsters.ProcessDueRespawns();
                 var changed = _world.MonsterRuntime.ProcessTick();
+
+                await _engagementProcessor.ProcessAsync(_sessions.Values.ToArray(), cancellationToken);
+
                 if (changed.Count == 0 && respawned.Count == 0) continue;
 
                 foreach (var session in _sessions.Values)
