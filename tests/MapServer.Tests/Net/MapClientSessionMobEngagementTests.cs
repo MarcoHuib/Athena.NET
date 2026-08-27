@@ -209,6 +209,109 @@ public sealed class MapClientSessionMobEngagementTests
         await player.RunTask.WaitAsync(TimeSpan.FromSeconds(5));
     }
 
+    // Live-bug regression: the reported sequence was mob=(81,72), player moves away, chase begins,
+    // then EVERY subsequent 100ms tick logged "retarget requested / retarget applied
+    // previousCell=(81,72) reachedCell=(81,72)" forever - the mob never actually advanced past its
+    // starting cell no matter how much real time passed. Root cause was
+    // MobInstance.AdvanceMovementForCombat consuming/applying a pending retarget on EVERY call
+    // regardless of whether AdvanceTo actually crossed a cell boundary this tick - since
+    // ApplyChaseDecision re-requested the identical destination every tick (Evaluate re-derives
+    // Chase(target's current cell) every tick by design), the retarget was perpetually re-applied
+    // from the mob's still-unmoved current position, resetting the in-flight step's clock before it
+    // could ever complete. The player is placed due east of the mob so the resulting chase path's
+    // first (and only relevant) leg is a pure orthogonal step - WalkSpeed=400 (GeneratedMobs.
+    // GPoring) makes that step exactly 400ms (CharacterMovementState.StepDurationMs's own
+    // orthogonalStepMs-directly contract) - so ticking every 100ms, well short of a full step,
+    // exactly reproduces the live 100ms engagement-tick cadence while keeping the step duration
+    // deterministic regardless of the A* path provider's own diagonal-vs-orthogonal leg choice.
+    [Fact]
+    public async Task ProcessAsync_ChasingMobTickingEvery100Ms_AdvancesPastStartingCell_InsteadOfRepeatingIdenticalRetargetForever()
+    {
+        var clock = new ControllableTimeProvider();
+        var world = MakeWorld(monsterX: 81, monsterY: 72, timeProvider: clock);
+        var player = await ConnectSessionAsync(world.Registry, world.Combat, AccountId, CharId, 90, 72, "int_land03", FreshNovice(hp: 40), visibleMonsterCount: 1, timeProvider: clock);
+        using var _dispose = player.Client;
+
+        world.Poring.TryAcquireTarget(AccountId, mode: MobMode.None);
+        var startingCell = world.Poring.GetPosition();
+        Assert.Equal((ushort)81, startingCell.X);
+        Assert.Equal((ushort)72, startingCell.Y);
+
+        // Tick 0 legitimately starts the fresh chase (a real WalkStarted, TryStartChase's own
+        // fresh-walk branch) - the regression under test is what happens on every SUBSEQUENT tick
+        // while that first step is still in flight.
+        var firstResult = await world.Processor.ProcessAsync([player.Session], CancellationToken.None);
+        Assert.Contains(firstResult.MovementChanges, c => c.Kind == MonsterMovementChangeKind.WalkStarted);
+        await clock.AdvanceAsync(TimeSpan.FromMilliseconds(100));
+
+        for (var i = 0; i < 3; i++)
+        {
+            var result = await world.Processor.ProcessAsync([player.Session], CancellationToken.None);
+            // None of these mid-step ticks may report a WalkStarted/retarget-applied movement
+            // change - the mob is still genuinely mid-step, so nothing has actually changed yet.
+            Assert.DoesNotContain(result.MovementChanges, c => c.Kind == MonsterMovementChangeKind.WalkStarted);
+            var stillAtStart = world.Poring.GetPosition();
+            Assert.Equal(startingCell.X, stillAtStart.X);
+            Assert.Equal(startingCell.Y, stillAtStart.Y);
+            await clock.AdvanceAsync(TimeSpan.FromMilliseconds(100));
+        }
+
+        // Enough real time has now elapsed (500ms total since the step started, past its 400ms
+        // orthogonal duration) for the mob's current in-flight step to genuinely complete - the
+        // very next tick must show real progress away from the starting cell, proving it was never
+        // silently reset by any of the mid-step ticks above.
+        await clock.AdvanceAsync(TimeSpan.FromMilliseconds(100));
+        var finalResult = await world.Processor.ProcessAsync([player.Session], CancellationToken.None);
+        var advanced = world.Poring.GetPosition();
+        Assert.False(advanced.X == startingCell.X && advanced.Y == startingCell.Y, "The mob must have actually advanced past its starting cell once a real step boundary was reached.");
+        Assert.Contains(finalResult.MovementChanges, c => c.Kind is MonsterMovementChangeKind.WalkStarted or MonsterMovementChangeKind.CellCrossed);
+
+        player.Client.Close();
+        await player.RunTask.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    // Live-bug regression, second half: even a STATIONARY far-away target must not cause a fresh
+    // TryRetargetChase call (and therefore a fresh 0x09FD-shaped WalkStarted outcome) on every tick
+    // once the mob is already genuinely chasing toward that exact destination - Evaluate correctly
+    // re-derives an identical Chase(sameX, sameY) decision every tick (this is pinned behavior, not
+    // a bug), but the ORCHESTRATOR must recognize "already chasing this exact destination" and do
+    // nothing further until a real cell boundary or an actual destination change occurs.
+    [Fact]
+    public async Task ProcessAsync_StationaryFarAwayTarget_RepeatedTicksDoNotRepeatRetargetOrWalkStarted()
+    {
+        var clock = new ControllableTimeProvider();
+        var world = MakeWorld(monsterX: 10, monsterY: 10, timeProvider: clock);
+        // 20 cells away (diagonal), safely within RathenaCompatibleMovementPathProvider's own
+        // pinned MAX_WALKPATH=32-step cap - far enough to stay out of AttackRange for many ticks,
+        // but still within visibility range so the bootstrap actually sends the monster-spawn
+        // packet ConsumeVisibleMonsterSpawnsAsync below expects.
+        var player = await ConnectSessionAsync(world.Registry, world.Combat, AccountId, CharId, 20, 20, "int_land03", FreshNovice(hp: 40), visibleMonsterCount: 1, timeProvider: clock);
+        using var _dispose = player.Client;
+
+        world.Poring.TryAcquireTarget(AccountId, mode: MobMode.None);
+
+        var firstResult = await world.Processor.ProcessAsync([player.Session], CancellationToken.None);
+        Assert.Single(firstResult.MovementChanges);
+        Assert.Equal(MonsterMovementChangeKind.WalkStarted, firstResult.MovementChanges[0].Kind);
+        Assert.True(world.Poring.IsWalking);
+        var destinationAfterFirstTick = world.Poring.MovementDestination;
+
+        // Repeated ticks at the SAME (still far-away, still-not-moved) player position must produce
+        // no further movement-change outcomes at all - no repeated retarget request, no repeated
+        // WalkStarted - the mob simply continues its already-in-flight chase toward the same cell.
+        for (var i = 0; i < 5; i++)
+        {
+            await clock.AdvanceAsync(TimeSpan.FromMilliseconds(100));
+            var result = await world.Processor.ProcessAsync([player.Session], CancellationToken.None);
+            Assert.DoesNotContain(result.MovementChanges, c => c.Kind == MonsterMovementChangeKind.WalkStarted);
+        }
+
+        Assert.Equal(destinationAfterFirstTick, world.Poring.MovementDestination);
+
+        player.Client.Close();
+        await player.RunTask.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
     // Steps 10-14: drive the mob into range via the SAME processor, confirm the decision flips to
     // Attack, confirm real HP mutation + the correct stock-iRO packets arrive over the actual
     // client wire (via the production fan-out), confirm the attack cooldown withholds a second hit
@@ -434,11 +537,29 @@ public sealed class MapClientSessionMobEngagementTests
 
         // The action packet is still sent (damage=0, matching pinned clif_damage's own
         // unconditional call) - but NOTHING else follows it; confirm the wire goes quiet with a
-        // bounded ping immediately after, proving no HP packet was sent.
+        // bounded ping immediately after, proving no HP packet was sent. Every field asserted below
+        // is exactly what pinned battle_calc_attack (battle.cpp:6753-6796) + clif_damage
+        // (clif.cpp:5236, called from battle.cpp:7399 with wd.div_/wd.type) produce for a genuine
+        // ATK_MISS on a plain (non-skill) basic attack - see MobBasicAttackCalculator's own doc
+        // comment for the full trace of why this is a real miss, not an invented zero-damage hit.
         var damagePacket = await ReadExact(player.Stream, PacketConstants.ZcNotifyAct3Length);
         Assert.Equal((short)PacketConstants.ZcNotifyAct3, BinaryPrimitives.ReadInt16LittleEndian(damagePacket));
+        Assert.Equal(world.Poring.ActorId, BinaryPrimitives.ReadUInt32LittleEndian(damagePacket.AsSpan(2)));
+        Assert.Equal(AccountId, BinaryPrimitives.ReadUInt32LittleEndian(damagePacket.AsSpan(6)));
+        // srcSpeed/dstSpeed must still be the real nonzero AttackMotion/DamageMotion pair - a real
+        // stock-iRO miss still plays the attacker's full swing animation timing, never a truncated
+        // "nothing happened" no-op; only the damage number itself is 0.
+        var wireSrcSpeed = BinaryPrimitives.ReadUInt32LittleEndian(damagePacket.AsSpan(14));
+        var wireDstSpeed = BinaryPrimitives.ReadUInt32LittleEndian(damagePacket.AsSpan(18));
+        Assert.Equal((uint)world.Poring.Spawn.Mob.AttackMotion, wireSrcSpeed);
+        Assert.True(wireSrcSpeed > 0);
+        Assert.True(wireDstSpeed > 0);
         var wireDamage = BinaryPrimitives.ReadUInt32LittleEndian(damagePacket.AsSpan(22));
         Assert.Equal(0u, wireDamage);
+        var wireDiv = BinaryPrimitives.ReadUInt16LittleEndian(damagePacket.AsSpan(27));
+        Assert.Equal(1, wireDiv); // wd.div_ = skill_id ? ... : 1 (battle.cpp:5286) - always 1 for a plain basic attack, hit or miss.
+        var wireActionType = damagePacket[29];
+        Assert.Equal(0, wireActionType); // DMG_NORMAL - dmg_lv's ATK_MISS reclassification is server-internal only, never a distinct wire `type`.
 
         await player.Stream.WriteAsync(new byte[] { 0x1c, 0x0b });
         var pingReply = await ReadExact(player.Stream, 2);

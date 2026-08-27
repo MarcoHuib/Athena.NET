@@ -92,7 +92,15 @@ internal sealed class MonsterEngagementTickProcessor(
 
             var snapshot = await TryFindSnapshotAsync(sessions, targetAccountId, cancellationToken);
             var decision = MonsterEngagementDomain.Evaluate(mob, snapshot, now);
-            LogDecision(mob, snapshot, decision);
+            // Chase is logged separately, below, only when it actually causes a real effect
+            // (fresh walk start or a genuinely new retarget) - Evaluate legitimately re-derives an
+            // IDENTICAL Chase(target's current cell) decision every single 100ms tick while a
+            // target stays out of range (pinned mob_ai_sub_hard re-evaluates every AI tick too),
+            // so logging this branch unconditionally would spam the log every tick for the entire
+            // duration of an ordinary chase - exactly the live-observed "decision=Chase" flood this
+            // diagnostics requirement calls out. Unlock/Attack remain rare, state-changing
+            // transitions for the whole engagement and are still always logged immediately.
+            if (decision is not MonsterEngagementDecision.Chase) LogDecision(mob, snapshot, decision);
             switch (decision)
             {
                 case MonsterEngagementDecision.Unlock:
@@ -100,7 +108,11 @@ internal sealed class MonsterEngagementTickProcessor(
                     break;
 
                 case MonsterEngagementDecision.Chase chase:
-                    if (ApplyChaseDecision(mob, chase, now)) (movementChanges ??= []).Add(new MonsterMovementChange(mob, MonsterMovementChangeKind.WalkStarted));
+                    if (ApplyChaseDecision(mob, chase, now))
+                    {
+                        (movementChanges ??= []).Add(new MonsterMovementChange(mob, MonsterMovementChangeKind.WalkStarted));
+                        LogDecision(mob, snapshot, decision);
+                    }
                     break;
 
                 case MonsterEngagementDecision.Attack:
@@ -143,9 +155,13 @@ internal sealed class MonsterEngagementTickProcessor(
     private static long RandomJitterMs() => System.Random.Shared.Next(0, 1000);
 
     // Section 16: logs the decision itself only for the transitions worth diagnosing live -
-    // Unlock/Attack always (rare, state-changing events for the whole engagement), Chase only
-    // (never Wait, which recurs every 100ms tick while an attack cooldown is pending and would
-    // otherwise spam the log for an engaged-but-waiting mob doing nothing new).
+    // Unlock/Attack always (rare, state-changing events for the whole engagement); Wait never
+    // (recurs every 100ms tick while an attack cooldown is pending); Chase never from THIS call
+    // site (its caller logs it separately, only when ApplyChaseDecision reports a real effect) -
+    // see ProcessAsync's own call-site comment for why an unconditional per-tick Chase log would
+    // reproduce the exact "decision=Chase" flood this project's live diagnostics requirement calls
+    // out (Evaluate legitimately re-derives the identical Chase decision every tick while a target
+    // stays out of range - that repetition is correct domain behavior, not new information to log).
     private static void LogDecision(MobInstance mob, PlayerCombatSnapshot? snapshot, MonsterEngagementDecision decision)
     {
         if (decision is MonsterEngagementDecision.Wait) return;
@@ -179,6 +195,27 @@ internal sealed class MonsterEngagementTickProcessor(
     // method must not double-report it.
     private bool ApplyChaseDecision(MobInstance mob, MonsterEngagementDecision.Chase chase, DateTimeOffset now)
     {
+        if (mob.IsWalking)
+        {
+            // Requirement: "if the desired destination has not meaningfully changed, keep the
+            // existing chase path running" - Evaluate re-derives Chase(target's CURRENT cell) every
+            // single tick by design (pinned mob_ai_sub_hard re-evaluates every AI tick too), so a
+            // still-out-of-range, unmoving-relative-to-the-mob target produces the IDENTICAL
+            // destination tick after tick while the mob is mid-step. Without this check, every one
+            // of those ticks would call TryRetargetChase again - harmless on its own (RequestRetarget
+            // just overwrites the same value with itself), but it also means a bystander watching
+            // MobInstance.PendingChaseDestination for "is a real change coming" would see the same
+            // request re-armed every 100ms forever, and it is pure log/call spam for no behavioral
+            // gain. Compares against BOTH the already-pending retarget (a change requested last tick,
+            // not yet applied) and the currently in-flight path's own final destination (no retarget
+            // pending at all, already walking straight there) - either match means this tick's
+            // decision is asking for something already in motion.
+            var alreadyTargeting = mob.PendingChaseDestination is { } pending
+                ? pending.X == chase.DestinationX && pending.Y == chase.DestinationY
+                : mob.MovementDestination.X == chase.DestinationX && mob.MovementDestination.Y == chase.DestinationY;
+            if (alreadyTargeting) return false;
+        }
+
         if (mob.TryRetargetChase(chase.DestinationX, chase.DestinationY))
         {
             mob.EnterChaseState();

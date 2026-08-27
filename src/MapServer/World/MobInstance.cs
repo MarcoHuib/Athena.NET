@@ -536,6 +536,17 @@ public sealed class MobInstance
             var crossed = _movement.AdvanceTo(now);
             if (crossed.Count > 0) _position = new MobPosition(_movement.CurrentX, _movement.CurrentY);
 
+            // Pinned unit_walktoxy_timer only ever consults change_walk_target immediately after
+            // an actual cell arrival (unit.cpp:738) - a retarget requested mid-step must sit
+            // untouched until THIS step's own boundary is reached, never be applied against the
+            // in-flight step's still-unchanged current cell. Without this guard, a target that
+            // keeps re-requesting the same (or any) destination every 100ms tick while the mob is
+            // still mid-step (WalkSpeed's step duration > tick interval) would have this call
+            // consume-and-reapply the pending retarget from the CURRENT (unmoved) position on every
+            // single tick, via StartWalk below - which resets _stepStartedAt and _pathPosition,
+            // permanently pinning the mob at its starting cell no matter how much real time passes.
+            if (crossed.Count == 0) return (crossed, false);
+
             var pendingRetarget = _movement.ConsumePendingRetarget();
             if (pendingRetarget is not { } retarget) return (crossed, false);
 
@@ -555,4 +566,12 @@ public sealed class MobInstance
     public bool IsWalking { get { lock (_gate) return _movement.IsMoving; } }
     public DateTimeOffset? NextMovementStepDueAt { get { lock (_gate) return _movement.NextStepDueAt; } }
     public (ushort X, ushort Y) MovementDestination { get { lock (_gate) return _movement.Destination; } }
+
+    // The retarget destination awaiting the current in-flight step's boundary, if any - lets a
+    // caller (MonsterEngagementTickProcessor.ApplyChaseDecision) recognize "I already asked for
+    // this exact destination last tick and it simply hasn't been applied yet" and skip re-issuing
+    // an identical TryRetargetChase call every 100ms tick while the mob is still walking toward its
+    // OWN current step's boundary. Null means no retarget is currently pending (either none was
+    // ever requested, or one was already applied at the last boundary).
+    public (ushort X, ushort Y)? PendingChaseDestination { get { lock (_gate) return _movement.PendingRetargetDestination; } }
 }

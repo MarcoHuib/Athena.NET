@@ -34,8 +34,27 @@ namespace Athena.Net.MapServer.Gameplay.Rules.Renewal;
 //     comment) rather than silently approximating a nonzero value; extending this to real equipped
 //     armor is a clearly separate follow-up once Athena models armor DEF at all.
 //     damage = damage*(4000+def1)/(4000+10*def1) - vit_def (battle.cpp:4866-4867).
-//  3. battle_calc_attack (battle.cpp:6766, referenced by RenewalBasicAttackRules' own trace):
-//     damage < 1 is a miss/absorbed result (0 damage), no separate minimum-1 floor.
+//  3. battle_calc_attack (battle.cpp:6753-6796): `if (d.damage + d.damage2 < 1) { ... if
+//     (d.dmg_lv == ATK_DEF) d.dmg_lv = ATK_MISS; ... }` (battle.cpp:6766-6770) - a post-
+//     defense-reduction result below 1 is reclassified from a connected hit (ATK_DEF) to a genuine
+//     MISS (ATK_MISS), NOT a "successful zero-damage hit" and NOT floored to a minimum of 1 (no
+//     such floor exists anywhere in this call chain for a normal weapon attack). This is answer A
+//     of this project's own "miss vs. zero-damage-hit vs. minimum-1" trace requirement - confirmed
+//     directly against pinned source, not assumed from the arithmetic alone.
+//
+//     Critically, `dmg_lv` (ATK_MISS vs ATK_DEF) is SERVER-INTERNAL bookkeeping only (gates
+//     on-hit trigger effects elsewhere) - it does NOT change what clif_damage puts on the wire.
+//     wd.div_ is `skill_id ? skill_get_num(...) : 1` (battle.cpp:5286), so a plain basic attack
+//     (skill_id=0) always sends div=1 whether it hits or misses; wd.type stays DMG_NORMAL for an
+//     ordinary attack either way (battle.cpp:7399's own clif_damage(..., wd.div_, wd.type, ...)
+//     call passes exactly these two fields, both hit and miss). The ONLY wire-visible difference
+//     between a miss and a real hit is damage=0 itself (plus the resulting client-side omission of
+//     the target's own hit-flinch/HP-bar movement) - there is no separate "miss" flag/type value to
+//     set. MapClientSession.NotifyMonsterAttackOutcomeAsync's own `div: 1, actionType: 0`
+//     (DMG_NORMAL) already matches this exactly for both the hit and miss cases; srcSpeed/dstSpeed
+//     (the attacker's own AttackMotion/the target's DamageMotion) are sent unconditionally so the
+//     attack swing animation itself always plays, miss or not - a real miss on live stock iRO
+//     LOOKS like the mob swinging and missing, not like nothing happening at all.
 //
 // Deliberately NOT implemented, same scope boundary as RenewalBasicAttackRules: hit/FLEE accuracy
 // roll, elemental attribute table, cards, size/racial modifiers, player armor DEF (see step 2),

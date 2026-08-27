@@ -1,4 +1,5 @@
 using Athena.Net.MapServer.Gameplay.Rules.Renewal;
+using Athena.Net.MapServer.Generated.GameData.Mobs;
 using Athena.Net.MapServer.World;
 
 namespace Athena.Net.MapServer.Tests.Gameplay.Rules.Renewal;
@@ -104,5 +105,27 @@ public sealed class MobBasicAttackCalculatorTests
 
         // def2 increases by exactly 1 crossing this boundary, so damage must decrease by exactly 1.
         Assert.Equal(justBelowBoundary.Damage - 1, atBoundary.Damage);
+    }
+
+    // Live-observation regression: the real generated G_PORING definition (Attack=1) against a
+    // fresh Novice's real starting stats reproduces the exact "damage=0, IsMiss=true" outcome the
+    // live log showed - proving this is the AUTHORITATIVE pinned result (battle_calc_attack's own
+    // ATK_MISS reclassification, battle.cpp:6766-6770 - see this calculator's own doc comment for
+    // the full trace) for THIS specific mob/target pairing, not an artifact of a hand-built test
+    // fixture. G_PORING's own atkmax is 1*120/100=1 (integer division), which a fresh Novice's
+    // def2 of floor((1+9)/2 + 9/5) = 5+1 = 6 (using this project's own default fresh-character
+    // Vitality=9/Agility=9, WeaponAttackCalculatorTests' own convention) always exceeds - no roll
+    // of the real Attack=1 band can ever clear it, so this is deterministic, not merely likely.
+    [Fact]
+    public void Calculate_RealGeneratedGPoring_AgainstFreshNoviceStats_IsAuthoritativelyAMiss()
+    {
+        var attacker = GeneratedMobs.GPoring;
+        Assert.Equal(1, attacker.Attack); // Pin the exact live-observed mob_db value this test depends on.
+        var freshNovice = new PlayerCombatSnapshot(AccountId: 1, Map: "iz_int03", X: 0, Y: 0, IsAlive: true, IsWalking: false, BaseLevel: 1, Vitality: 9, Agility: 9);
+
+        var result = MobBasicAttackCalculator.Calculate(attacker, freshNovice, (min, max) => max); // Max roll - even the best-case roll must still miss.
+
+        Assert.True(result.IsMiss);
+        Assert.Equal(0u, result.Damage);
     }
 }
