@@ -34,6 +34,17 @@ public sealed class RathenaCompatibleMovementPathProvider(IMapCollisionProvider 
     private const int MoveCost = 10;
     private const int MoveDiagonalCost = 14;
 
+    // Pinned MAX_WALKPATH (path.hpp:14) - path_search's own reconstruction rejects a path once its
+    // STEP count (`len`, the number of parent-links walked back from goal to start, path.cpp:409-
+    // 411 `for (it = current; it->parent != nullptr; it = it->parent, len++);` then `if (len >
+    // sizeof(wpd->path)) return false;`) exceeds this. `len` counts movement directions/steps, NOT
+    // cells - the pinned walkpath_data.path[MAX_WALKPATH] array holds one `directions` entry per
+    // STEP, never the starting cell itself. This provider's own ComputePath return value DOES
+    // include the starting cell (see its own doc comment/ReconstructPath), so the equivalent check
+    // here is `path.Count - 1 > MaxWalkPath` - a 32-step path is `path.Count == 33` and valid; a
+    // 33-step path is `path.Count == 34` and must fail.
+    private const int MaxWalkPathSteps = 32;
+
     private readonly record struct Node(int X, int Y);
 
     public IReadOnlyList<(ushort X, ushort Y)> ComputePath(string mapName, ushort fromX, ushort fromY, ushort toX, ushort toY)
@@ -81,7 +92,16 @@ public sealed class RathenaCompatibleMovementPathProvider(IMapCollisionProvider 
             closed.Add(current);
 
             if (current == goal)
-                return ReconstructPath(parent, current, fromX, fromY);
+            {
+                var path = ReconstructPath(parent, current, fromX, fromY);
+                // Pinned path_search fails (returns false) once the reconstructed step count
+                // exceeds MAX_WALKPATH (path.cpp:409-411) - see MaxWalkPathSteps' own doc comment
+                // for the exact off-by-one between pinned step count and this provider's own
+                // cell-inclusive path.Count. A path this long is never returned as a partial/
+                // truncated route - it is a hard failure, exactly like "no path found".
+                if (path.Count - 1 > MaxWalkPathSteps) return [];
+                return path;
+            }
 
             // Diagonal directions are only allowed if both cardinal directions around them are
             // open - prevents cutting the corner of a wall (path.cpp:358-361).

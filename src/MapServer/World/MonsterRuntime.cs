@@ -27,12 +27,11 @@ public readonly record struct MonsterMovementChange(MobInstance Instance, Monste
 //     which MobInstance's own methods deliberately do not special-case (they operate generically
 //     on whatever mode a mob happens to have).
 //   - The search radius is a 15x15 square (d=7, i.e. -7..+7 on each axis) centered on the mob's
-//     CURRENT position, not spawn position (mob.cpp:1675,1698-1699,1701-1751) - reproduced here as
-//     a simple uniform scan (this project's injected `randomJitterMs`/candidate order does not
-//     reproduce pinned mob_randomwalk's own specific rdir-based spiral-search traversal order bit-
-//     for-bit; it reproduces the same SEARCH SPACE and SUCCESS CONDITION - see TryFindIdleWalkPath's
-//     own doc comment - which is the behaviorally-relevant part for this slice, not the exact scan
-//     order pinned source uses to find it).
+//     CURRENT position, not spawn position (mob.cpp:1675,1698-1699,1701-1751).
+//   - The candidate ITERATION ORDER is ported exactly, not merely the search space - see
+//     TryFindIdleWalkPath's own doc comment for the full derivation from `r`/`rdir` (mob.cpp:
+//     1696-1751, "Randomize direction in which we iterate to prevent monster cluttering up in one
+//     corner").
 //   - The candidate cell predicate is CELL_CHKPASS (mob.cpp:1704) - reproduced as
 //     MapCollisionMap.IsTraversalCell, matching this project's existing centralization of that
 //     pinned semantic (see IsTraversalCell's own doc comment).
@@ -53,19 +52,26 @@ public readonly record struct MonsterMovementChange(MobInstance Instance, Monste
 // no per-mob timer; ProcessTick is meant to be invoked periodically by ONE caller-owned loop
 // (MapServerApp's live path) at a cadence far shorter than WalkSpeed so movement still looks
 // smooth, not once per pinned-exact-cell-duration.
-public sealed class MonsterRuntime(MonsterRegistry monsters, IMapCollisionProvider collisionProvider, IMovementPathProvider pathProvider, TimeProvider timeProvider, Func<int, int, int>? randomInclusiveRange = null, Func<long>? randomJitterMs = null)
+public sealed class MonsterRuntime(MonsterRegistry monsters, IMapCollisionProvider collisionProvider, IMovementPathProvider pathProvider, TimeProvider timeProvider, Func<int>? randomSearchSeed = null, Func<int>? randomDirection = null, Func<long>? randomJitterMs = null)
 {
     private const int SearchRadius = 7; // Pinned mob_randomwalk's `d=7` (mob.cpp:1675) - a 15x15 square.
-    private readonly Func<int, int, int> _randomInclusiveRange = randomInclusiveRange ?? DefaultRandomInclusiveRange;
+    private const int SearchSpan = SearchRadius * 2 + 1; // 15 - pinned `d*2+1`.
+
+    // Pinned `r=rnd()` (mob.cpp:1696) - a single unbounded random draw whose OWN value is reused for
+    // both the dx and dy starting offsets (mob.cpp:1698-1699: dx=r%(d*2+1)-d, dy=r/(d*2+1)%(d*2+1)-d)
+    // - NOT two independent random draws. Injected so tests can pin the exact starting candidate.
+    private readonly Func<int> _randomSearchSeed = randomSearchSeed ?? DefaultRandomSearchSeed;
+    // Pinned `rdir=rnd()%4` (mob.cpp:1697) - selects which of the 4 pinned iteration directions
+    // this search uses (mob.cpp:1701-1751's switch) - see TryFindIdleWalkPath's own doc comment.
+    private readonly Func<int> _randomDirection = randomDirection ?? DefaultRandomDirection;
     // Pinned `rnd()%1000` (mob.cpp:1682,1766, mob.cpp:2065) - injected (not called inline via
     // Random.Shared) so both the idle-walk-due initialization jitter, the post-success
     // reschedule jitter, and the post-failure reschedule jitter can be driven deterministically by
     // tests, matching this project's existing TimeProvider-based determinism philosophy.
     private readonly Func<long> _randomJitterMs = randomJitterMs ?? DefaultRandomJitterMs;
 
-    private static int DefaultRandomInclusiveRange(int minInclusive, int maxInclusive) =>
-        System.Random.Shared.Next(minInclusive, maxInclusive + 1);
-
+    private static int DefaultRandomSearchSeed() => System.Random.Shared.Next(0, int.MaxValue);
+    private static int DefaultRandomDirection() => System.Random.Shared.Next(0, 4);
     private static long DefaultRandomJitterMs() => System.Random.Shared.Next(0, 1000);
 
     // One tick: for every alive instance, consider starting a new idle walk (if none is already in
@@ -137,36 +143,88 @@ public sealed class MonsterRuntime(MonsterRegistry monsters, IMapCollisionProvid
         return instance.TryStartIdleWalk(path, walkSpeed, nowTicks, now, _randomJitterMs);
     }
 
-    // Pinned mob_randomwalk's candidate search (mob.cpp:1696-1751), with the combined
-    // "CELL_CHKPASS && unit_walktoxy" success condition (mob.cpp:1704) reproduced as ONE loop that
-    // does not stop until BOTH a traversal-valid candidate cell AND a real computable path to it
-    // are found - an individually-walkable-but-unreachable candidate must not end the search (see
-    // this class's own doc comment for the exact pinned-line citation). Picks a RANDOM (dx,dy)
-    // offset within the 15x15 square around the mob's CURRENT position first (mob.cpp:1696-1699),
-    // and only falls back to scanning the remaining candidates in the square if that first random
-    // pick doesn't satisfy the combined condition (mob.cpp:1701-1751's spiral continuation) -
-    // reproducing the same overall search space/order-independence and the same "randomized, not
-    // always the same offset" behavioral property, without reproducing pinned source's specific
-    // rdir-seeded spiral traversal order bit-for-bit (see this class's own doc comment for why that
-    // distinction doesn't matter for this slice).
+    // Pinned mob_randomwalk's candidate search (mob.cpp:1696-1751), ported exactly - not just the
+    // search SPACE but the actual ITERATION ORDER, per the pinned source's own comment: "Randomize
+    // direction in which we iterate to prevent monster cluttering up in one corner". Combined
+    // "CELL_CHKPASS && unit_walktoxy" success condition (mob.cpp:1704) is reproduced as ONE loop
+    // that does not stop until BOTH a traversal-valid candidate cell AND a real computable path to
+    // it are found - an individually-walkable-but-unreachable candidate must not end the search.
+    //
+    // Exact derivation (mob.cpp:1696-1751):
+    //   r = rnd(); rdir = rnd()%4;
+    //   dx = r % (d*2+1) - d; dy = r / (d*2+1) % (d*2+1) - d;   // ONE shared random value r.
+    //   max = (d*2+1)*(d*2+1);                                  // 225 candidates total.
+    //   for (i = 0; i < max; i++) {
+    //       candidate = (dx,dy) offset from the mob's CURRENT position;
+    //       if (candidate != own cell && CELL_CHKPASS(candidate) && unit_walktoxy(candidate)) break;
+    //       // advance (dx,dy) by +-d in one axis, wrapping (with carry into the other axis) per rdir
+    //   }
+    // The four rdir cases step one axis by +-d and, on overflow past +-d, wrap that axis back
+    // around (mod d*2+1) AND carry one +-d step into the OTHER axis - this is what makes each rdir
+    // value visit all 225 distinct (dx,dy) offsets exactly once (verified independently: for d=7,
+    // gcd(d, d*2+1)=gcd(7,15)=1, so a fixed +-7 stride mod 15 is a full-period permutation of the
+    // 15x15 grid) before ever repeating, matching pinned source's own guarantee that every distinct
+    // 15x15 candidate is tried exactly once per call regardless of which rdir was rolled.
     private bool TryFindIdleWalkPath(MapCollisionMap map, ushort currentX, ushort currentY, int walkSpeed, out IReadOnlyList<(ushort X, ushort Y)> path)
     {
-        var randomDx = _randomInclusiveRange(-SearchRadius, SearchRadius);
-        var randomDy = _randomInclusiveRange(-SearchRadius, SearchRadius);
-        if (TryCandidatePath(map, currentX, currentY, randomDx, randomDy, walkSpeed, out path)) return true;
+        var r = _randomSearchSeed();
+        var rdir = ((_randomDirection() % 4) + 4) % 4; // Defensive modulo: tolerate an injected value outside [0,4) without going out of switch range.
+        var dx = Mod(r, SearchSpan) - SearchRadius;
+        var dy = Mod(r / SearchSpan, SearchSpan) - SearchRadius;
 
-        for (var dy = -SearchRadius; dy <= SearchRadius; dy++)
+        for (var i = 0; i < SearchSpan * SearchSpan; i++)
         {
-            for (var dx = -SearchRadius; dx <= SearchRadius; dx++)
+            if (TryCandidatePath(map, currentX, currentY, dx, dy, walkSpeed, out path)) return true;
+
+            switch (rdir)
             {
-                if (dx == randomDx && dy == randomDy) continue; // Already tried above.
-                if (TryCandidatePath(map, currentX, currentY, dx, dy, walkSpeed, out path)) return true;
+                case 0:
+                    dx += SearchRadius;
+                    if (dx > SearchRadius)
+                    {
+                        dx -= SearchSpan;
+                        dy += SearchRadius;
+                        if (dy > SearchRadius) dy -= SearchSpan;
+                    }
+                    break;
+                case 1:
+                    dx -= SearchRadius;
+                    if (dx < -SearchRadius)
+                    {
+                        dx += SearchSpan;
+                        dy -= SearchRadius;
+                        if (dy < -SearchRadius) dy += SearchSpan;
+                    }
+                    break;
+                case 2:
+                    dy += SearchRadius;
+                    if (dy > SearchRadius)
+                    {
+                        dy -= SearchSpan;
+                        dx += SearchRadius;
+                        if (dx > SearchRadius) dx -= SearchSpan;
+                    }
+                    break;
+                case 3:
+                    dy -= SearchRadius;
+                    if (dy < -SearchRadius)
+                    {
+                        dy += SearchSpan;
+                        dx -= SearchRadius;
+                        if (dx < -SearchRadius) dx += SearchSpan;
+                    }
+                    break;
             }
         }
 
         path = [];
         return false;
     }
+
+    // C#'s % is remainder (can be negative for a negative dividend), while pinned C's rnd() is
+    // always non-negative so mob.cpp's own `%` never needs this - kept only as a defensive
+    // normalization in case an injected randomSearchSeed test double supplies a negative value.
+    private static int Mod(int value, int modulus) => ((value % modulus) + modulus) % modulus;
 
     // A single candidate: valid only when the cell itself is traversal-valid AND
     // IMovementPathProvider actually finds a real route to it (mob.cpp:1704's combined condition -

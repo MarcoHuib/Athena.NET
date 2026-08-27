@@ -242,6 +242,123 @@ public sealed class MonsterRuntimeTests
         Assert.True(walkedAgain, "A respawned G_PORING never walked again.");
     }
 
+    // Pinned dx=r%(d*2+1)-d, dy=r/(d*2+1)%(d*2+1)-d (mob.cpp:1698-1699) with r=0 gives a fixed
+    // starting offset of (-7,-7) (the search box's own corner) regardless of rdir - the FIRST
+    // candidate is always immediately accepted on a fully-walkable map, so this proves the exact
+    // starting-offset derivation independent of which rdir was rolled.
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(3)]
+    public void ProcessTick_RSeedZero_AlwaysStartsSearchAtTheBoxCorner_RegardlessOfDirection(int rdir)
+    {
+        var map = MakeAllWalkableMap("test_map", 40);
+        var spawn = MakeSpawn();
+        var clock = new FakeTimeProvider();
+        var registry = new MonsterRegistry([spawn], new WorldActorIdAllocator(), new FixedCellSelector(20, 20), clock);
+        var provider = new MapCollisionProvider([map]);
+        var pathProvider = new RathenaCompatibleMovementPathProvider(provider);
+        var runtime = new MonsterRuntime(registry, provider, pathProvider, clock, randomSearchSeed: () => 0, randomDirection: () => rdir);
+        var instance = registry.AllInstances[0];
+
+        for (var i = 0; i < 20 && !instance.IsWalking; i++)
+        {
+            clock.Advance(TimeSpan.FromSeconds(5));
+            runtime.ProcessTick();
+        }
+
+        Assert.True(instance.IsWalking);
+        var destination = instance.MovementDestination;
+        Assert.Equal((ushort)(20 - 7), destination.X);
+        Assert.Equal((ushort)(20 - 7), destination.Y);
+    }
+
+    // Pinned mob_randomwalk's per-rdir FALLBACK order (mob.cpp:1701-1751) differs by direction once
+    // the first candidate fails - this test forces the first candidate to fail (blocked) and proves
+    // each rdir's own second-candidate offset matches the pinned switch statement's own stepping
+    // rule exactly (independently re-derived in Python against the same mob.cpp source and cross-
+    // checked here), not merely "some" fallback order.
+    [Theory]
+    [InlineData(0, 0, -7)] // rdir=0: dx+=d first -> (-7,-7) blocked -> next (0,-7).
+    [InlineData(1, 1, 1)] // rdir=1: dx-=d wraps (carries into dy) -> next (1,1).
+    [InlineData(2, -7, 0)] // rdir=2: dy+=d first -> next (-7,0).
+    [InlineData(3, 1, 1)] // rdir=3: dy-=d wraps (carries into dx) -> next (1,1).
+    public void ProcessTick_FirstCandidateBlocked_FallsBackToThePinnedRdirSpecificSecondCandidate(int rdir, int expectedDx, int expectedDy)
+    {
+        var width = 40;
+        var height = 40;
+        var cells = Enumerable.Repeat(MapCellFlags.Walkable, width * height).ToArray();
+        ushort spawnX = 20, spawnY = 20;
+        // Block ONLY the very first candidate (-7,-7) - every rdir's own second candidate (per the
+        // pinned switch statement) must then be selected, proving the fallback order is the real
+        // ported algorithm and not an arbitrary scan.
+        cells[(spawnX - 7) + (spawnY - 7) * width] = MapCellFlags.None;
+        var map = new MapCollisionMap("test_map", width, height, cells);
+
+        var spawn = MakeSpawn();
+        var clock = new FakeTimeProvider();
+        var registry = new MonsterRegistry([spawn], new WorldActorIdAllocator(), new FixedCellSelector(spawnX, spawnY), clock);
+        var provider = new MapCollisionProvider([map]);
+        var pathProvider = new RathenaCompatibleMovementPathProvider(provider);
+        var runtime = new MonsterRuntime(registry, provider, pathProvider, clock, randomSearchSeed: () => 0, randomDirection: () => rdir);
+        var instance = registry.AllInstances[0];
+
+        for (var i = 0; i < 20 && !instance.IsWalking; i++)
+        {
+            clock.Advance(TimeSpan.FromSeconds(5));
+            runtime.ProcessTick();
+        }
+
+        Assert.True(instance.IsWalking);
+        var destination = instance.MovementDestination;
+        Assert.Equal((ushort)(spawnX + expectedDx), destination.X);
+        Assert.Equal((ushort)(spawnY + expectedDy), destination.Y);
+    }
+
+    // Pinned mob_randomwalk's fallback order deliberately alternates which AXIS steps first
+    // depending on rdir (0/1 step dx first; 2/3 step dy first) specifically "to prevent monster
+    // cluttering up in one corner" (mob.cpp:1697's own comment) - proving rdir=0/1 and rdir=2/3
+    // produce genuinely DIFFERENT candidate orders (not all converging on the same corner-biased
+    // scan) is the direct, source-faithful counterpart to that stated design intent.
+    [Fact]
+    public void ProcessTick_DifferentRdirValues_ProduceDifferentFallbackOrders_NotAllPreferringTheSameCorner()
+    {
+        var width = 40;
+        var height = 40;
+        ushort spawnX = 20, spawnY = 20;
+
+        (ushort X, ushort Y) DestinationForRdir(int rdir)
+        {
+            var cells = Enumerable.Repeat(MapCellFlags.Walkable, width * height).ToArray();
+            cells[(spawnX - 7) + (spawnY - 7) * width] = MapCellFlags.None; // Block only the first candidate.
+            var map = new MapCollisionMap("test_map", width, height, cells);
+            var spawn = MakeSpawn();
+            var clock = new FakeTimeProvider();
+            var registry = new MonsterRegistry([spawn], new WorldActorIdAllocator(), new FixedCellSelector(spawnX, spawnY), clock);
+            var provider = new MapCollisionProvider([map]);
+            var pathProvider = new RathenaCompatibleMovementPathProvider(provider);
+            var runtime = new MonsterRuntime(registry, provider, pathProvider, clock, randomSearchSeed: () => 0, randomDirection: () => rdir);
+            var instance = registry.AllInstances[0];
+            for (var i = 0; i < 20 && !instance.IsWalking; i++)
+            {
+                clock.Advance(TimeSpan.FromSeconds(5));
+                runtime.ProcessTick();
+            }
+            Assert.True(instance.IsWalking);
+            return instance.MovementDestination;
+        }
+
+        var destinations = Enumerable.Range(0, 4).Select(DestinationForRdir).ToArray();
+
+        // rdir=0 and rdir=1 both step dx first but in opposite directions (+d vs -d); rdir=2 and
+        // rdir=3 both step dy first - the four resulting second-candidates are not all identical,
+        // proving the direction genuinely varies the search order rather than converging on one
+        // fixed corner-biased fallback regardless of rdir.
+        Assert.True(destinations.Distinct().Count() > 1,
+            "All four rdir values produced the same fallback destination - the fallback order does not actually vary by direction.");
+    }
+
     // Pinned mob_randomwalk's candidate loop combines CELL_CHKPASS && unit_walktoxy as ONE success
     // condition (mob.cpp:1704) - an individually walkable-but-UNREACHABLE candidate must not end
     // the search. This map places a single isolated walkable cell (fully enclosed by walls, so
@@ -271,17 +388,16 @@ public sealed class MonsterRuntimeTests
         Block(spawnX + 3, spawnY + 4);
         var trappedMap = new MapCollisionMap("test_map", width, height, trap);
 
-        // MonsterRuntime calls this once for dx then once for dy per idle-walk-search attempt
-        // (TryFindIdleWalkPath's own doc comment) - alternating 3,3,3,3,... forces every attempt's
-        // "random" first candidate to be the unreachable trapped cell at offset (+3,+3).
-        var randomInclusiveRange = (int min, int max) => 3;
-
         var clock = new FakeTimeProvider();
         var spawn = MakeSpawn();
         var registry = new MonsterRegistry([spawn], new WorldActorIdAllocator(), new FixedCellSelector(spawnX, spawnY), clock);
         var provider = new MapCollisionProvider([trappedMap]);
         var pathProvider = new RathenaCompatibleMovementPathProvider(provider);
-        var runtime = new MonsterRuntime(registry, provider, pathProvider, clock, randomInclusiveRange);
+        // Pinned dx=r%(d*2+1)-d, dy=r/(d*2+1)%(d*2+1)-d (mob.cpp:1698-1699) - r=160 forces the
+        // FIRST candidate offset to be exactly (+3,+3), the unreachable trapped cell, for every
+        // search attempt (rdir only affects the FALLBACK order after the first candidate fails, so
+        // it does not matter which one is injected here).
+        var runtime = new MonsterRuntime(registry, provider, pathProvider, clock, randomSearchSeed: () => 160, randomDirection: () => 0);
         var instance = registry.AllInstances[0];
 
         var walked = false;
@@ -378,10 +494,16 @@ public sealed class MonsterRuntimeTests
     public void ProcessTick_MidWalkCellCrossing_IsReportedAsCellCrossed_NotWalkStarted()
     {
         var map = MakeAllWalkableMap("test_map", 40);
-        // A longer straight walk (several cells) so at least one ordinary mid-walk crossing tick
-        // exists between "just started" and "just finished".
         var spawn = MakeSpawn();
-        var (runtime, registry, clock) = MakeRuntime([spawn], 20, 20, map);
+        var clock = new FakeTimeProvider();
+        var registry = new MonsterRegistry([spawn], new WorldActorIdAllocator(), new FixedCellSelector(20, 20), clock);
+        var provider = new MapCollisionProvider([map]);
+        var pathProvider = new RathenaCompatibleMovementPathProvider(provider);
+        // r=119 forces a first-try candidate offset of exactly (+7,0) - a full-radius straight walk
+        // (7 cells) on this fully-walkable map, deterministically guaranteeing at least one ordinary
+        // mid-walk crossing tick exists between "just started" and "just finished" (the whole point
+        // of this test), rather than leaving it to chance which offset System.Random.Shared rolls.
+        var runtime = new MonsterRuntime(registry, provider, pathProvider, clock, randomSearchSeed: () => 119, randomDirection: () => 0);
         var instance = registry.AllInstances[0];
 
         MonsterMovementChangeKind? startedKind = null;

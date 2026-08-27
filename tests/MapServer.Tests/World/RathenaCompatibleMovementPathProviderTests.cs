@@ -242,6 +242,36 @@ public sealed class RathenaCompatibleMovementPathProviderTests
         Assert.All(path, cell => Assert.True(map.IsTraversalCell(cell.X, cell.Y)));
     }
 
+    // Pinned MAX_WALKPATH (path.hpp:14) - path_search's own reconstruction fails once the STEP
+    // count exceeds 32 (path.cpp:409-411). This provider's own ComputePath return value includes
+    // the starting cell (see this provider's own doc comment/ReconstructPath), so 32 movement
+    // steps = path.Count 33 (valid) and 33 movement steps = path.Count 34 (must fail/return empty).
+    [Fact]
+    public void ComputePath_Exactly32Steps_Succeeds()
+    {
+        var map = MakeAllWalkableMap("test_map", 40);
+        var provider = new MapCollisionProvider([map]);
+        var pathfinder = new RathenaCompatibleMovementPathProvider(provider);
+
+        var path = pathfinder.ComputePath("test_map", 0, 0, 32, 0);
+
+        Assert.Equal(33, path.Count); // 32 steps + the starting cell.
+        Assert.Equal((ushort)32, path[^1].X);
+        Assert.Equal((ushort)0, path[^1].Y);
+    }
+
+    [Fact]
+    public void ComputePath_Exactly33Steps_FailsEvenThoughAShorterPathWouldOtherwiseExist()
+    {
+        var map = MakeAllWalkableMap("test_map", 40);
+        var provider = new MapCollisionProvider([map]);
+        var pathfinder = new RathenaCompatibleMovementPathProvider(provider);
+
+        var path = pathfinder.ComputePath("test_map", 0, 0, 33, 0);
+
+        Assert.Empty(path);
+    }
+
     [Fact]
     public void ComputePath_UnknownMap_Throws()
     {

@@ -12,6 +12,45 @@ namespace Athena.Net.MapServer.Net;
 
 public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
 {
+    // Thread-safe wrapper around this session's "which actor IDs has this client already been told
+    // exist" set. Before MapTcpServer's shared monster tick loop existed, _visibleActorIds was only
+    // ever touched from this session's own sequential packet-handling/background-loop code, so a
+    // plain HashSet<uint> was safe. It no longer is: NotifyMonsterMovedAsync is now called from
+    // MapTcpServer's OWN background tick loop, concurrently with this session's packet loop (actor-
+    // info handling, death/vanish handling, warp/map-change Clear, repeat-attack processing) and its
+    // own player-movement visibility scan - several independent call sites that can race on the same
+    // HashSet<uint>, which is not safe to read/mutate concurrently under any circumstance (not just
+    // "give wrong answers" - literally undefined/corrupting behavior for concurrent Add/Remove).
+    //
+    // A single `lock` (not a full lock-free/concurrent-collection design) is deliberately the
+    // smallest correct fix here: every operation below is O(1)-ish HashSet work with no I/O, so
+    // holding the lock for the whole operation is cheap and never blocks on a network write -
+    // callers must never call these while already holding this lock or vice versa, and every method
+    // here returns before any WriteAsync/await happens in the caller.
+    //
+    // TryMarkVisible folds the pre-existing "Contains, then if false Add" pattern several call
+    // sites used into ONE atomic operation (HashSet<T>.Add already reports whether the item was
+    // newly added) - that combined check+add is exactly the operation that must be atomic under
+    // concurrency: two racing callers must never both observe "not yet visible" and both send a
+    // discovery packet for the same actor.
+    private sealed class VisibleActorTracker
+    {
+        private readonly Lock _gate = new();
+        private readonly HashSet<uint> _actorIds = [];
+
+        public bool IsActorVisible(uint actorId) { lock (_gate) return _actorIds.Contains(actorId); }
+
+        // Returns true only when THIS call is the one that actually added actorId (matching
+        // HashSet<T>.Add's own "returns true if the element is added" contract) - a caller uses
+        // this to decide whether IT is responsible for sending the one-time discovery packet.
+        public bool TryMarkVisible(uint actorId) { lock (_gate) return _actorIds.Add(actorId); }
+
+        public void MarkNotVisible(uint actorId) { lock (_gate) _actorIds.Remove(actorId); }
+
+        public void Clear() { lock (_gate) _actorIds.Clear(); }
+    }
+
+
     private static readonly Dictionary<short, int> PacketLengths = new()
     {
         [PacketConstants.CzEnter] = 19,
@@ -120,7 +159,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
     private Task? _attackLoop;
     private readonly SemaphoreSlim _writeLock = new(1, 1);
     private readonly CancellationTokenSource _sessionCancellation = new();
-    private readonly HashSet<uint> _visibleActorIds = new();
+    private readonly VisibleActorTracker _visibleActorIds = new();
     private ScriptExecutionSession? _scriptExecutionSession;
     private Task? _generatedScriptTask;
     private string? _generatedScriptEntityId;
@@ -785,12 +824,12 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
                 MapLogger.Info(
                     $"[iRO MAP DEBUG] Received stock iRO actor-info request packet=0x{packetType:X4} len={packet.Length}");
                 var requestedActorId = BinaryPrimitives.ReadUInt32LittleEndian(packet.AsSpan(2));
-                if (_visibleActorIds.Contains(requestedActorId) && _worldMapRegistry.TryGetActorName(requestedActorId, _mapName, out var actorName))
+                if (_visibleActorIds.IsActorVisible(requestedActorId) && _worldMapRegistry.TryGetActorName(requestedActorId, _mapName, out var actorName))
                 {
                     MapLogger.Info($"[iRO MAP DEBUG] Sending 0x0ADF NPC name actorId={requestedActorId} name='{actorName}'");
                     await WriteAsync(IroWorldActorPackets.BuildNpcName(requestedActorId, actorName), cancellationToken);
                 }
-                else if (_visibleActorIds.Contains(requestedActorId) && _monsters is not null && _monsters.TryGetInstance(requestedActorId, _mapName, out var monsterInstance))
+                else if (_visibleActorIds.IsActorVisible(requestedActorId) && _monsters is not null && _monsters.TryGetInstance(requestedActorId, _mapName, out var monsterInstance))
                 {
                     var monsterName = monsterInstance.Spawn.Mob.Name;
                     MapLogger.Info($"[iRO MAP DEBUG] Sending 0x0ADF monster name actorId={requestedActorId} name='{monsterName}'");
@@ -1300,7 +1339,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
             MapLogger.Info($"[iRO MAP DEBUG] Monster died actorId={expected.TargetActorId} mob={target.Spawn.Mob.AegisName}");
             var vanishPacket = IroMonsterCombatPackets.BuildNotifyVanish(expected.TargetActorId, PacketConstants.ZcNotifyVanishReasonDied);
             await WriteAsync(vanishPacket, cancellationToken);
-            _visibleActorIds.Remove(expected.TargetActorId);
+            _visibleActorIds.MarkNotVisible(expected.TargetActorId);
 
             foreach (var drop in outcome.QuestDrops)
             {
@@ -1567,7 +1606,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
         // A monster actor ID is never registered in _worldMapRegistry (NPC/warp actors only),
         // so TryGetInteraction below already rejects it - monster actors are never routed into
         // NPC script dispatch, intentionally, not by accident.
-        if (!IroNpcDialoguePackets.TryParseInteraction(packet, out var actorId) || HasActiveScript || !_visibleActorIds.Contains(actorId) || !_worldMapRegistry.TryGetInteraction(actorId, _mapName, out var entity, out var script))
+        if (!IroNpcDialoguePackets.TryParseInteraction(packet, out var actorId) || HasActiveScript || !_visibleActorIds.IsActorVisible(actorId) || !_worldMapRegistry.TryGetInteraction(actorId, _mapName, out var entity, out var script))
         {
             MapLogger.Info($"[iRO MAP DEBUG] NPC interaction rejected actorId={actorId}");
             return;
@@ -2154,7 +2193,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
     {
         foreach (var actor in _worldMapRegistry.GetVisibleWarpActors(_mapName, _x, _y))
         {
-            if (!_visibleActorIds.Add(actor.ActorId))
+            if (!_visibleActorIds.TryMarkVisible(actor.ActorId))
             {
                 continue;
             }
@@ -2178,7 +2217,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
 
         foreach (var instance in _monsters.GetVisibleInstances(_mapName, _x, _y))
         {
-            if (!_visibleActorIds.Add(instance.ActorId))
+            if (!_visibleActorIds.TryMarkVisible(instance.ActorId))
             {
                 continue;
             }
@@ -2222,13 +2261,22 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
     //     and never a fabricated/fractional subcell value (BuildWalkEntry's own subX/subY=8 is the
     //     only capture-verified value, reused as-is here, not re-derived from elapsed step
     //     progress). A monster discovered while NOT walking still gets the ordinary 0x09FF.
-    //   - Already visible: WalkStarted and WalkFinished each send exactly one packet (0x09FD /
-    //     0x0088 respectively - see BuildStopMove's own doc comment for its capture evidence).
-    //     CellCrossed sends NOTHING: pinned unit_walktoxy_nextcell's ordinary per-cell continuation
-    //     call always passes sendMove=false (unit.cpp:749 vs. the sendMove=true initial call at
-    //     unit.cpp:317) - only MobInstance's own authoritative position is updated for a
-    //     CellCrossed change, matching that the client is expected to already be animating the
-    //     walk it was told about once, at WalkStarted, exactly like a real rAthena client does.
+    //   - Already visible: only WalkStarted sends a packet (the capture-verified 0x09FD walk
+    //     entry). CellCrossed AND WalkFinished both send NOTHING: pinned unit_walktoxy_nextcell's
+    //     ordinary per-cell continuation always passes sendMove=false (unit.cpp:749 vs. the
+    //     sendMove=true initial call at unit.cpp:317), and reaching the end of the walkpath
+    //     (ud->walkpath.path_pos >= path_len) simply returns false with NO clif_fixpos/stop
+    //     notification for either a PC or a MOB (unit.cpp:186-192) - a normal completed walk is
+    //     silent on the wire past its own initial 0x09FD. The captured 0x0088 (ZC_STOPMOVE, frame
+    //     674 of kill-poring-heal-jobup.pcapng) occurs in a COMBAT sequence together with the
+    //     Poring's own attack-back, not as part of an ordinary idle walk's own completion - it is
+    //     evidence for the packet's layout and for SOME fix-position/interruption scenario, not
+    //     evidence that every natural walk completion sends it. BuildStopMove is kept available
+    //     (IroMonsterActorPackets) for a future source-backed movement-interruption/fixpos use case
+    //     (e.g. a walk cancelled by combat), just not wired to ordinary WalkFinished here.
+    //     Only MobInstance's own authoritative position is updated for CellCrossed/WalkFinished,
+    //     matching that the client is expected to already be animating the walk it was told about
+    //     once, at WalkStarted, exactly like a real rAthena client does.
     //   - The reverse of the discovery case (a monster walking OUT of visibility while the player
     //     stays still) has no capture-verified packet in this project: ai/iro-2026-wire.md documents
     //     0x0080 ZC_NOTIFY_VANISH type=1 ("died") from a real capture, and separately notes pinned
@@ -2246,10 +2294,10 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
         var mob = instance.Spawn.Mob;
         var position = instance.GetPosition();
 
-        if (!_visibleActorIds.Contains(instance.ActorId))
+        if (!_visibleActorIds.IsActorVisible(instance.ActorId))
         {
             if (Math.Abs(position.X - _x) > 14 || Math.Abs(position.Y - _y) > 14) return;
-            if (!_visibleActorIds.Add(instance.ActorId)) return;
+            if (!_visibleActorIds.TryMarkVisible(instance.ActorId)) return;
 
             if (instance.IsWalking)
             {
@@ -2287,13 +2335,11 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
         switch (change.Kind)
         {
             case MonsterMovementChangeKind.CellCrossed:
-                // Pinned unit_walktoxy_nextcell's ordinary per-cell continuation never resends the
-                // walk packet (sendMove=false, unit.cpp:749) - see this method's own doc comment.
-                return;
-
             case MonsterMovementChangeKind.WalkFinished:
-                var stopPacket = IroMonsterActorPackets.BuildStopMove(instance.ActorId, position.X, position.Y);
-                await WriteAsync(stopPacket, cancellationToken);
+                // Pinned unit_walktoxy_nextcell never resends the walk packet for an ordinary
+                // per-cell continuation (sendMove=false, unit.cpp:749), and reaching the end of the
+                // walkpath sends nothing at all (unit.cpp:186-192, no clif_fixpos) - see this
+                // method's own doc comment for why the captured 0x0088 does NOT apply here.
                 return;
 
             case MonsterMovementChangeKind.WalkStarted:
