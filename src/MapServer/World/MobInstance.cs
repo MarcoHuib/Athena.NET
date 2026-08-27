@@ -260,11 +260,23 @@ public sealed class MobInstance
         lock (_gate)
         {
             if (_state != MobLifecycleState.Alive) return false;
+            if (!PathStartsAtCurrentPosition(path)) return false;
             _movement.StartWalk(path, orthogonalStepMs, now);
             _position = new MobPosition(_movement.CurrentX, _movement.CurrentY);
             return true;
         }
     }
+
+    // Defensive invariant: CharacterMovementState.StartWalk trusts its caller completely and will
+    // happily "teleport" this instance to path[0] if it differs from the mob's actual current cell
+    // (there is no relocation semantic anywhere in this codebase - a walk path only ever describes
+    // where an actor already standing at path[0] is going, never where to put it). Enforced here,
+    // at MobInstance's own boundary, rather than inside CharacterMovementState, since
+    // CharacterMovementState is shared with player movement and has no concept of "this instance's
+    // authoritative current position" independent of the path it's given - MobInstance._position is
+    // the one thing that IS authoritative here. Must be called under `_gate`.
+    private bool PathStartsAtCurrentPosition(IReadOnlyList<(ushort X, ushort Y)> path)
+        => path.Count > 0 && path[0].X == _position.X && path[0].Y == _position.Y;
 
     // Pinned mob_ai_sub_hard's own "target in attack range -> unit_stop_walking" (unit.cpp:2165-
     // 2166) - called by the monster combat domain service's Attack decision so a mob that has just
@@ -451,6 +463,7 @@ public sealed class MobInstance
         lock (_gate)
         {
             if (_state != MobLifecycleState.Alive || _movement.IsMoving) return false;
+            if (!PathStartsAtCurrentPosition(path)) return false;
             _movement.StartWalk(path, orthogonalStepMs, now);
             _position = new MobPosition(_movement.CurrentX, _movement.CurrentY);
             // Pinned mob_randomwalk's own post-walk-start rescheduling (mob.cpp:1766):

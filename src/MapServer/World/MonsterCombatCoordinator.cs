@@ -1,15 +1,21 @@
 using Athena.Net.MapServer.Gameplay.Rules;
-using Athena.Net.MapServer.Logging;
 
 namespace Athena.Net.MapServer.World;
 
 // Outcome of one basic-attack attempt against a live MobInstance.
+//
+// `EngagementAcquired`: true only for the actual acquisition transition (Idle -> Rush for a
+// genuinely NEW target), never a re-hit of an already-targeted mob or a rejected steal attempt
+// while chasing/attacking. This coordinator stays a pure state/rules layer and never logs itself
+// (MapLogger has no place here) - the caller (an orchestration layer, e.g. MapClientSession or
+// MonsterEngagementTickProcessor) surfaces this flag as its own operational diagnostic.
 public readonly record struct MonsterAttackOutcome(
     bool Accepted,
     uint HpBefore,
     uint HpAfter,
     bool IsMiss,
     bool KilledByThisHit,
+    bool EngagementAcquired,
     IReadOnlyList<QuestDropOutcome> QuestDrops);
 
 // Coordinates one authoritative attack -> damage -> (exactly-once) death ->
@@ -43,7 +49,7 @@ public sealed class MonsterCombatCoordinator(MonsterRegistry monsters, QuestDrop
         WeaponItemDefinition? equippedWeapon,
         Func<uint, CharacterQuestStatus> attackerQuestStatus)
     {
-        if (!target.IsAlive) return new(false, target.CurrentHp, target.CurrentHp, false, false, []);
+        if (!target.IsAlive) return new(false, target.CurrentHp, target.CurrentHp, false, false, false, []);
 
         var result = basicAttackRules.Calculate(new BasicAttackContext(attacker, attackerBaseLevel, equippedWeapon, target.Spawn.Mob));
         var (hpBefore, hpAfter, killed) = target.ApplyDamage(result.Damage);
@@ -62,7 +68,7 @@ public sealed class MonsterCombatCoordinator(MonsterRegistry monsters, QuestDrop
         // MSS_RUSH-on-a-dead-mob transition that TryAcquireTarget's own logic would otherwise not
         // reach anyway - either way, matches pinned mob_dead's own immediate unlock, mob.cpp:3863).
         var mode = target.Spawn.Mob.Mode;
-        if (!killed && mode.HasFlag(MobMode.CanAttack)) LogIfEngagementAcquired(target, attackerAccountId, mode);
+        var engagementAcquired = !killed && mode.HasFlag(MobMode.CanAttack) && TryAcquireEngagement(target, attackerAccountId, mode);
 
         IReadOnlyList<QuestDropOutcome> drops = [];
         if (killed)
@@ -71,20 +77,18 @@ public sealed class MonsterCombatCoordinator(MonsterRegistry monsters, QuestDrop
             monsters.ScheduleRespawnIfNeeded(target);
         }
 
-        return new(true, hpBefore, hpAfter, result.IsMiss, killed, drops);
+        return new(true, hpBefore, hpAfter, result.IsMiss, killed, engagementAcquired, drops);
     }
 
-    // Section 16: logs ONLY the actual acquisition transition (Idle -> Rush for a genuinely NEW
+    // Section 16: reports ONLY the actual acquisition transition (Idle -> Rush for a genuinely NEW
     // target), never a re-hit of an already-targeted mob or a rejected steal attempt while
-    // chasing/attacking - avoids per-hit log spam for an ongoing engagement while still capturing
-    // the moment this task's own live regression hinges on ("does the mob actually acquire the
-    // attacker as a target").
-    private static void LogIfEngagementAcquired(MobInstance target, uint attackerAccountId, MobMode mode)
+    // chasing/attacking - via MonsterAttackOutcome.EngagementAcquired, not a direct log call. This
+    // coordinator is domain-adjacent state/rules, not operational diagnostics: the caller decides
+    // whether/how to log the transition (MapLogger has no place in this class).
+    private static bool TryAcquireEngagement(MobInstance target, uint attackerAccountId, MobMode mode)
     {
         var wasIdle = target.Engagement.State == MobCombatState.Idle;
-        if (!target.TryAcquireTarget(attackerAccountId, mode) || !wasIdle) return;
-        var position = target.GetPosition();
-        MapLogger.Info($"[iRO MAP DEBUG] Mob engagement acquired mobActorId={target.ActorId} targetAccountId={attackerAccountId} mobPosition=({position.X},{position.Y}) combatState={target.Engagement.State}");
+        return target.TryAcquireTarget(attackerAccountId, mode) && wasIdle;
     }
 
     // Section 15's own optimization: a quest-state CharServer roundtrip is only ever NEEDED when
@@ -105,13 +109,13 @@ public sealed class MonsterCombatCoordinator(MonsterRegistry monsters, QuestDrop
         WeaponItemDefinition? equippedWeapon,
         Func<Task<Func<uint, CharacterQuestStatus>>> resolveQuestStates)
     {
-        if (!target.IsAlive) return new(false, target.CurrentHp, target.CurrentHp, false, false, []);
+        if (!target.IsAlive) return new(false, target.CurrentHp, target.CurrentHp, false, false, false, []);
 
         var result = basicAttackRules.Calculate(new BasicAttackContext(attacker, attackerBaseLevel, equippedWeapon, target.Spawn.Mob));
         var (hpBefore, hpAfter, killed) = target.ApplyDamage(result.Damage);
 
         var mode = target.Spawn.Mob.Mode;
-        if (!killed && mode.HasFlag(MobMode.CanAttack)) LogIfEngagementAcquired(target, attackerAccountId, mode);
+        var engagementAcquired = !killed && mode.HasFlag(MobMode.CanAttack) && TryAcquireEngagement(target, attackerAccountId, mode);
 
         IReadOnlyList<QuestDropOutcome> drops = [];
         if (killed)
@@ -121,6 +125,6 @@ public sealed class MonsterCombatCoordinator(MonsterRegistry monsters, QuestDrop
             monsters.ScheduleRespawnIfNeeded(target);
         }
 
-        return new(true, hpBefore, hpAfter, result.IsMiss, killed, drops);
+        return new(true, hpBefore, hpAfter, result.IsMiss, killed, engagementAcquired, drops);
     }
 }

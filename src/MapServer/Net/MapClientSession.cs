@@ -954,19 +954,6 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
     // caught by EnsureMovementState's now-removed map-mismatch check, which is exactly the bug this
     // helper fixes: MapClientSessionWarpTests.MovementIntoTutorialDoor_... teleports within
     // "iz_int03", so map-equality alone cannot detect that the previous walk state is stale.
-    // Test-only wrapper around TeleportTo, gated identically to every production caller of that
-    // method (see _movementGate's own doc comment) - lets a test simulate "the player's
-    // authoritative position changed concurrently" (e.g. a real movement/warp packet landing
-    // between MonsterEngagementTickProcessor's own Evaluate and its later attack-execution
-    // snapshot) without reflecting into private state or duplicating TeleportTo's own
-    // movement-state-reset logic.
-    internal async Task TeleportForTestAsync(string map, ushort x, ushort y, CancellationToken cancellationToken)
-    {
-        await _movementGate.WaitAsync(cancellationToken);
-        try { TeleportTo(map, x, y); }
-        finally { _movementGate.Release(); }
-    }
-
     private void TeleportTo(string map, ushort x, ushort y)
     {
         _mapName = map;
@@ -1420,6 +1407,15 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
             equippedWeapon,
             ResolveQuestStatesAsync);
         if (!outcome.Accepted) { ClearRepeatAttackIfCurrent(expected); return; }
+
+        // Section 16: log ONLY the actual acquisition transition the coordinator reported - see
+        // MonsterAttackOutcome.EngagementAcquired's own doc comment for why that pure state/rules
+        // layer surfaces this as a flag rather than logging it itself.
+        if (outcome.EngagementAcquired)
+        {
+            var position = target.GetPosition();
+            MapLogger.Info($"[iRO MAP DEBUG] Mob engagement acquired mobActorId={target.ActorId} targetAccountId={_accountId} mobPosition=({position.X},{position.Y}) combatState={target.Engagement.State}");
+        }
 
         // Reschedule (or clear, on death) the repeat-attack runtime state BEFORE any wire
         // notification for this hit - matching this project's validate -> persist -> update

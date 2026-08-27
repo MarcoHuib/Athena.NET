@@ -30,8 +30,20 @@ namespace Athena.Net.MapServer.Net;
 // what a null/dead/wrong-map PlayerCombatSnapshot already means to MonsterEngagementDomain.
 // Evaluate (see that method's own doc comment), which resolves it to an ordinary Unlock decision -
 // the same source-backed lifecycle a live but out-of-map-sync target would hit.
-internal sealed class MonsterEngagementTickProcessor(MonsterRegistry monsters, IMapCollisionProvider collisionProvider, IMovementPathProvider movementPathProvider, TimeProvider timeProvider)
+// `beforeFinalAttackRevalidation`: a genuine orchestration seam, not test-only plumbing - it fires
+// immediately before TryApplyAttackAsync takes its second (execution-time) PlayerCombatSnapshot,
+// i.e. exactly at the point pinned unit_attack_timer_sub itself re-validates range/target
+// immediately before committing a hit. Production always passes the default no-op. Tests use it to
+// drive an EXISTING real session mechanism (e.g. a genuine movement packet round-trip) at the exact
+// instant a concurrent state change needs to land for a TOCTOU regression, rather than adding a
+// test-only mutation method to MapClientSession itself.
+internal sealed class MonsterEngagementTickProcessor(
+    MonsterRegistry monsters, IMapCollisionProvider collisionProvider, IMovementPathProvider movementPathProvider, TimeProvider timeProvider,
+    Func<Task>? beforeFinalAttackRevalidation = null)
 {
+    private readonly Func<Task> _beforeFinalAttackRevalidation = beforeFinalAttackRevalidation ?? (() => Task.CompletedTask);
+
+
     public async Task<MonsterEngagementTickResult> ProcessAsync(IReadOnlyCollection<MapClientSession> sessions, CancellationToken cancellationToken)
     {
         var now = timeProvider.GetUtcNow();
@@ -193,7 +205,7 @@ internal sealed class MonsterEngagementTickProcessor(MonsterRegistry monsters, I
     // between - no HP mutation and no attack outcome are produced; the mob is transitioned back to
     // Chase/Unlock according to that SAME re-evaluation, matching the source-backed unlock/chase
     // lifecycle rather than silently doing nothing.
-    private static async Task<MonsterAttackActionOutcome?> TryApplyAttackAsync(IReadOnlyCollection<MapClientSession> sessions, MobInstance mob, uint targetAccountId, DateTimeOffset now, CancellationToken cancellationToken)
+    private async Task<MonsterAttackActionOutcome?> TryApplyAttackAsync(IReadOnlyCollection<MapClientSession> sessions, MobInstance mob, uint targetAccountId, DateTimeOffset now, CancellationToken cancellationToken)
     {
         MapClientSession? targetSession = null;
         foreach (var candidate in sessions)
@@ -202,6 +214,7 @@ internal sealed class MonsterEngagementTickProcessor(MonsterRegistry monsters, I
         }
         if (targetSession is null) return null; // Disconnected between Evaluate and here - next tick's snapshot resolves to null and unlocks normally.
 
+        await _beforeFinalAttackRevalidation();
         var freshSnapshot = await TrySnapshotAsync(targetSession, cancellationToken);
         var reEvaluated = MonsterEngagementDomain.Evaluate(mob, freshSnapshot, now);
         if (reEvaluated is not MonsterEngagementDecision.Attack)

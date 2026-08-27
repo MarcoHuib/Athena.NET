@@ -68,6 +68,17 @@ public sealed class MapClientSessionMobEngagementTests
         return buffer;
     }
 
+    private static byte[] BuildMovementRequest(ushort x, ushort y)
+    {
+        var packet = new byte[6];
+        BinaryPrimitives.WriteInt16LittleEndian(packet, 0x035f);
+        packet[2] = (byte)(x >> 2);
+        packet[3] = (byte)((x << 6) | ((y >> 4) & 0x3f));
+        packet[4] = (byte)(y << 4);
+        packet[5] = 0xab;
+        return packet;
+    }
+
     private static async Task ConsumeBootstrapAsync(Stream stream)
     {
         await ReadExact(stream, 4 + 6 + 6 + 13); // 0x0B18/0x0283/0x0ADE/0x02EB.
@@ -97,7 +108,8 @@ public sealed class MapClientSessionMobEngagementTests
 
     private async Task<TestSession> ConnectSessionAsync(
         MonsterRegistry registry, MonsterCombatCoordinator combat, uint accountId, uint charId,
-        ushort x, ushort y, string map, CharacterGameplayState? gameplayState, int visibleMonsterCount)
+        ushort x, ushort y, string map, CharacterGameplayState? gameplayState, int visibleMonsterCount,
+        TimeProvider? timeProvider = null, IMapCollisionProvider? collisionProvider = null, IMovementPathProvider? movementPathProvider = null)
     {
         var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
@@ -113,7 +125,8 @@ public sealed class MapClientSessionMobEngagementTests
             (int)accountId, serverClient, new CharServerConnector(new MapConfigStore(new MapConfig(), "unused.conf")), true,
             map, x, y, WorldMapRegistry.Tutorial,
             gameplayStatePersistence: gameplayPersistence,
-            accountId: accountId, charId: charId, monsters: registry, combat: combat);
+            accountId: accountId, charId: charId, monsters: registry, combat: combat,
+            timeProvider: timeProvider, collisionProvider: collisionProvider, movementPathProvider: movementPathProvider);
         var run = session.RunAsync(CancellationToken.None);
         await session.CompleteIroAuthenticationAsync(new(accountId, charId, 1, 2, 0, 0, false, map, x, y, 0, 0, 0));
 
@@ -303,20 +316,37 @@ public sealed class MapClientSessionMobEngagementTests
     // ATTACK RANGE (stays alive, same map) between the tick's own Evaluate and the actual
     // hit-execution instant - the re-Evaluate inside TryApplyAttackAsync must produce Chase, not
     // Unlock, and must never mutate HP or emit a successful attack outcome for this tick.
+    //
+    // Drives the state change through the SAME production seam MapTcpServer's own real tick would
+    // observe a concurrent player movement through: a genuine 0x035F movement packet processed by
+    // MapClientSession's own real packet-handling path, timed via
+    // MonsterEngagementTickProcessor's own beforeFinalAttackRevalidation hook (a real orchestration
+    // seam, not a test-only mutation method on MapClientSession) so the move completes exactly
+    // between the tick's initial Evaluate and its later execution-time re-snapshot - no reflection,
+    // no private-state mutation, no duplicated production algorithm.
     [Fact]
     public async Task ProcessAsync_PlayerMovesOutOfRangeBetweenEvaluateAndExecution_NoAttack_TransitionsToChase()
     {
-        var world = MakeWorld(monsterX: 76, monsterY: 51);
-        var player = await ConnectSessionAsync(world.Registry, world.Combat, AccountId, CharId, 75, 51, "int_land03", FreshNovice(hp: 40), visibleMonsterCount: 1);
+        var clock = new ControllableTimeProvider();
+        var world = MakeWorld(monsterX: 76, monsterY: 51, timeProvider: clock);
+        var player = await ConnectSessionAsync(
+            world.Registry, world.Combat, AccountId, CharId, 75, 51, "int_land03", FreshNovice(hp: 40), visibleMonsterCount: 1,
+            timeProvider: clock, collisionProvider: world.Collision, movementPathProvider: world.PathProvider);
         using var _dispose = player.Client;
         world.Poring.TryAcquireTarget(AccountId, mode: MobMode.None);
 
-        // Teleport the player far away directly on the session's own authoritative position -
-        // simulating a concurrent movement packet landing between this tick's Evaluate (which
-        // still sees the player at (75,51), in range) and the actual hit-execution instant.
-        await player.Session.TeleportForTestAsync("int_land03", 95, 51, CancellationToken.None);
+        var processor = new MonsterEngagementTickProcessor(world.Registry, world.Collision, world.PathProvider, clock, async () =>
+        {
+            // A real client movement request to a cell far enough away to leave AttackRange=1
+            // once the single resulting step completes.
+            await player.Stream.WriteAsync(BuildMovementRequest(90, 51));
+            await ReadExact(player.Stream, 12); // 0x0087 movement-accepted response.
+            await clock.AdvanceAsync(TimeSpan.FromSeconds(30)); // Real elapsed time for the walk to complete far past AttackRange.
+            await player.Stream.WriteAsync(new byte[] { 0x1c, 0x0b }); // Synchronize on the movement having actually been processed.
+            await ReadExact(player.Stream, 2);
+        });
 
-        var result = await world.Processor.ProcessAsync([player.Session], CancellationToken.None);
+        var result = await processor.ProcessAsync([player.Session], CancellationToken.None);
 
         Assert.Empty(result.AttackActions); // No attack outcome may be produced against a target that moved out of range in the interim.
         Assert.Equal(40u, player.Session.GameplayState!.State.CurrentHp); // HP never mutated.
@@ -334,7 +364,7 @@ public sealed class MapClientSessionMobEngagementTests
     [Fact]
     public async Task ProcessAsync_ChaseInterruptedToAttack_NearbySecondObserverAlsoReceivesFixpos()
     {
-        var world = MakeWorld(monsterX: 80, monsterY: 51);
+        var world = MakeWorld(monsterX: 76, monsterY: 51);
         var target = await ConnectSessionAsync(world.Registry, world.Combat, AccountId, CharId, 75, 51, "int_land03", FreshNovice(CharId, hp: 40), visibleMonsterCount: 1);
         using var _disposeTarget = target.Client;
         var bystander = await ConnectSessionAsync(world.Registry, world.Combat, OtherAccountId, OtherCharId, 80, 52, "int_land03", FreshNovice(OtherCharId, hp: 40), visibleMonsterCount: 1);
@@ -343,7 +373,10 @@ public sealed class MapClientSessionMobEngagementTests
         // Put the mob RIGHT NEXT TO the target (Chebyshev distance 1, within G_PORING's AttackRange
         // of 1) but still IsMoving (a long-duration in-flight step that has not completed yet) - so
         // this tick's Evaluate finds it already in range and decides Attack while a chase is still
-        // technically in progress, reproducing "chase interrupted by an in-range decision".
+        // technically in progress, reproducing "chase interrupted by an in-range decision". The path's
+        // first cell must equal the mob's actual spawn cell (76,51) - TryStartChase never relocates
+        // the mob to path[0]; a mismatched first cell is rejected (see MobInstanceTests' malformed-path
+        // invariant regression).
         var stillWalkingPath = new (ushort X, ushort Y)[] { (76, 51), (76, 52) };
         Assert.True(world.Poring.TryStartChase(stillWalkingPath, orthogonalStepMs: 100_000, DateTimeOffset.UtcNow)); // Long duration - still walking when the tick runs.
         world.Poring.TryAcquireTarget(AccountId, mode: MobMode.None);

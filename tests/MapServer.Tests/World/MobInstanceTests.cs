@@ -412,6 +412,49 @@ public sealed class MobInstanceTests
         Assert.Empty(crossed);
     }
 
+    // A malformed path (first cell != the mob's authoritative current cell) must never "teleport"
+    // the instance - CharacterMovementState.StartWalk trusts its caller completely and will happily
+    // relocate to path[0], so MobInstance itself must reject this at its own boundary.
+    [Fact]
+    public void TryStartChase_PathDoesNotStartAtCurrentPosition_ReturnsFalseAndDoesNotMoveInstance()
+    {
+        var instance = new MobInstance(1, MakeSpawn(), 80, 51);
+        var malformedPath = new (ushort X, ushort Y)[] { (76, 51), (76, 52) };
+
+        var started = instance.TryStartChase(malformedPath, orthogonalStepMs: 150, DateTimeOffset.UnixEpoch);
+
+        Assert.False(started);
+        var position = instance.GetPosition();
+        Assert.Equal((ushort)80, position.X);
+        Assert.Equal((ushort)51, position.Y);
+        Assert.False(instance.IsWalking);
+    }
+
+    [Fact]
+    public void TryStartIdleWalk_PathDoesNotStartAtCurrentPosition_ReturnsFalseAndDoesNotMoveInstance()
+    {
+        var instance = new MobInstance(1, MakeSpawn(), 80, 51);
+        var malformedPath = new (ushort X, ushort Y)[] { (76, 51), (76, 52) };
+
+        var started = instance.TryStartIdleWalk(malformedPath, orthogonalStepMs: 150, DateTimeOffset.UnixEpoch, () => 0);
+
+        Assert.False(started);
+        var position = instance.GetPosition();
+        Assert.Equal((ushort)80, position.X);
+        Assert.Equal((ushort)51, position.Y);
+        Assert.False(instance.IsWalking);
+    }
+
+    [Fact]
+    public void TryStartChase_PathStartingAtCurrentPosition_Succeeds()
+    {
+        var instance = new MobInstance(1, MakeSpawn(), 76, 51);
+        var path = new (ushort X, ushort Y)[] { (76, 51), (76, 52) };
+
+        Assert.True(instance.TryStartChase(path, orthogonalStepMs: 150, DateTimeOffset.UnixEpoch));
+        Assert.True(instance.IsWalking);
+    }
+
     // ===== Mandatory timing tests (unit-mismatch regression) =====
     //
     // An earlier revision passed DateTimeOffset.UtcTicks (100-nanosecond ticks) into these
