@@ -45,19 +45,34 @@ public static class MapCollisionStartupLoader
     // ai/world-data.md for why an alias layer is not needed for this source.
     private static IMapCollisionProvider LoadFromMapCache(string mapCachePath)
     {
-        if (!File.Exists(mapCachePath))
+        // `mapCachePath` as configured/passed in is resolved by ordinary filesystem rules, which
+        // means it depends on this process's current working directory when it isn't already
+        // absolute - a real production incident (Aspire's AppHost launches MapServer with a CWD
+        // that is not guaranteed to be the repository root) proved that a relative
+        // `map_cache_path` value silently "worked" for direct local execution and Docker (both
+        // happen to have a CWD the configured relative path resolves correctly against) while
+        // failing under Aspire with no clue why. Resolving and logging/reporting the ABSOLUTE path
+        // explicitly - not just echoing back the original configured string - makes a future CWD
+        // mismatch immediately diagnosable instead of requiring another live debugging session.
+        var resolvedPath = Path.GetFullPath(mapCachePath);
+        MapLogger.Status($"Map collision source: map_cache.dat configured='{mapCachePath}' resolved='{resolvedPath}'");
+
+        if (!File.Exists(resolvedPath))
         {
-            throw new InvalidOperationException($"Configured map_cache_path '{mapCachePath}' was not found.");
+            throw new InvalidOperationException(
+                $"Configured map_cache_path '{mapCachePath}' (resolved to '{resolvedPath}') was not found. " +
+                "If this path is relative, verify the MapServer process's working directory actually matches " +
+                "where it should resolve from, or supply an absolute path via --map-cache-path.");
         }
 
         IReadOnlyList<MapCollisionMap> maps;
         try
         {
-            maps = RathenaMapCacheReader.ReadAllFromFile(mapCachePath);
+            maps = RathenaMapCacheReader.ReadAllFromFile(resolvedPath);
         }
         catch (Exception ex) when (ex is InvalidDataException or IOException)
         {
-            throw new InvalidOperationException($"Configured map_cache_path '{mapCachePath}' could not be read: {ex.Message}", ex);
+            throw new InvalidOperationException($"Configured map_cache_path '{mapCachePath}' (resolved to '{resolvedPath}') could not be read: {ex.Message}", ex);
         }
 
         var byMapName = new Dictionary<string, MapCollisionMap>(StringComparer.OrdinalIgnoreCase);
@@ -69,7 +84,7 @@ public static class MapCollisionStartupLoader
             }
         }
 
-        MapLogger.Status($"Loaded map_cache.dat '{mapCachePath}': {byMapName.Count} maps.");
+        MapLogger.Status($"Loaded map_cache.dat '{resolvedPath}': {byMapName.Count} maps.");
         return new MapCollisionProvider(byMapName);
     }
 

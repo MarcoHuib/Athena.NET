@@ -160,6 +160,23 @@ public sealed class MapCollisionStartupLoaderTests
         Assert.Contains("not found", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
+    // Regression coverage for the Aspire incident: a relative map_cache_path silently resolved
+    // against the wrong process CWD, and the original exception only echoed back the unresolved
+    // configured string, giving no clue what path was actually attempted. The exception must now
+    // include the RESOLVED absolute path so a CWD mismatch is immediately diagnosable from the
+    // error alone.
+    [Fact]
+    public void Load_MissingRelativeMapCachePath_ExceptionIncludesResolvedAbsolutePath()
+    {
+        var relativePath = "definitely/not/a/real/map_cache.dat";
+        var expectedResolved = Path.GetFullPath(relativePath);
+
+        var ex = Assert.Throws<InvalidOperationException>(() => MapCollisionStartupLoader.Load([], relativePath));
+
+        Assert.Contains(relativePath, ex.Message);
+        Assert.Contains(expectedResolved, ex.Message);
+    }
+
     [Fact]
     public void Load_MalformedMapCachePath_ThrowsClearly()
     {
@@ -185,6 +202,45 @@ public sealed class MapCollisionStartupLoaderTests
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
         while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "Athena.NET.sln"))) directory = directory.Parent;
         return directory?.FullName ?? throw new DirectoryNotFoundException("Athena.NET repository root was not found.");
+    }
+
+    // The precedence rule itself (`options.MapCachePathOverride ?? mergedConfig.MapCachePath`,
+    // MapServerApp.RunAsync) is a one-line ??; these tests exercise the effect that rule has on
+    // MapCollisionStartupLoader.Load - the "effective path" it receives is uniform regardless of
+    // whether it came from an explicit --map-cache-path override or the configured map_cache_path
+    // value, so proving the loader handles an ABSOLUTE Aspire-style path exactly like a relative
+    // one is what actually matters here (StartupOptionsTests covers the CLI-parsing half of the
+    // precedence rule: that --map-cache-path is captured into MapCachePathOverride at all).
+
+    [Fact]
+    public void Load_AbsoluteAspireStylePath_LoadsRealPinnedMapCache_JustLikeARelativePath()
+    {
+        // Simulates the exact effective path Aspire's AppHost supplies via --map-cache-path: an
+        // absolute path built from its own discovered repository root
+        // (Path.Combine(repoRoot, "legacy", "rathena", "db", "map_cache.dat")), not the
+        // CWD-relative "legacy/rathena/db/map_cache.dat" direct-local-execution/Docker use.
+        var absoluteMapCachePath = Path.Combine(FindRepositoryRoot(), "legacy", "rathena", "db", "map_cache.dat");
+        Assert.True(Path.IsPathRooted(absoluteMapCachePath));
+
+        var provider = MapCollisionStartupLoader.Load([], absoluteMapCachePath);
+
+        Assert.True(provider.TryGetMap("int_land", out var map));
+        Assert.Equal(140, map.Width);
+        Assert.Equal(140, map.Height);
+    }
+
+    [Fact]
+    public void Load_ExplicitOverridePathThatDoesNotExist_FailsLoudly_NeverSilentlyIgnoredInFavorOfSomeOtherSource()
+    {
+        // An operator/launcher that explicitly supplies an override must be told loudly if THAT
+        // specific path is wrong - Load has no "other" config path to silently fall back to here
+        // (there is only ever one effective path by the time it reaches Load), but this proves the
+        // failure is exactly as loud for an absolute, override-shaped path as for a relative one.
+        var bogusAbsolutePath = Path.Combine(FindRepositoryRoot(), "legacy", "rathena", "db", "does_not_exist.dat");
+
+        var ex = Assert.Throws<InvalidOperationException>(() => MapCollisionStartupLoader.Load([], bogusAbsolutePath));
+
+        Assert.Contains(bogusAbsolutePath, ex.Message);
     }
 
     [Fact]

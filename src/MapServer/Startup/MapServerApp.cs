@@ -39,12 +39,22 @@ public static class MapServerApp
         var gameplayOptions = new GameplayOptions { RuleSet = mergedConfig.GameplayRuleSet };
         MapLogger.Status($"Gameplay ruleset: {gameplayOptions.RuleSet}");
         var gameplayRules = GameplayRulesFactory.Create(gameplayOptions);
+        // `--map-cache-path` (StartupOptions.MapCachePathOverride) wins over the configured
+        // `map_cache_path` value - see StartupOptions' own doc comment. Filesystem resource
+        // resolution is a deployment/runtime concern, not something one CWD-relative config value
+        // can correctly serve for every launcher: direct local execution from the repo root and
+        // Docker (WORKDIR /app) both happen to have a CWD the configured relative
+        // `legacy/rathena/db/map_cache.dat` resolves correctly against, but Aspire's AppHost
+        // launches this process with no such guarantee - it already knows its own discovered
+        // repository root and already passes other config paths as absolutes the same way
+        // (src/AppHost/Program.cs), so it supplies this override instead of relying on CWD luck.
+        var effectiveMapCachePath = options.MapCachePathOverride ?? mergedConfig.MapCachePath;
         // Fails startup loudly (does not fall back to EmptyMapCollisionProvider) if the configured
         // map_cache_path/map_collision_artifact source is missing/malformed/duplicated - see
         // MapCollisionStartupLoader's own doc comment. An unconfigured server (neither key set) is
         // unaffected: Load returns EmptyMapCollisionProvider.Instance, the same default
         // MapServerWorld.Build already used.
-        var collisionProvider = MapCollisionStartupLoader.Load(mergedConfig.CollisionArtifacts, mergedConfig.MapCachePath);
+        var collisionProvider = MapCollisionStartupLoader.Load(mergedConfig.CollisionArtifacts, effectiveMapCachePath);
         // Production-only fail-closed guard (never applied inside MapServerWorld.Build itself, so
         // tests can still freely compose a collision-less world on purpose) - see that method's own
         // doc comment. A live MapServer with generated monster spawns and no real collision source
