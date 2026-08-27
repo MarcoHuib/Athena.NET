@@ -14,7 +14,7 @@ namespace Athena.Net.MapServer.World;
 // fall back to WorldMapRegistry.Tutorial once this exists; that static
 // singleton remains only for existing tests/legacy standalone callers that
 // don't combine world data with a monster runtime.
-public sealed record MapServerWorld(WorldMapRegistry Maps, MonsterRegistry Monsters, MonsterCombatCoordinator Combat, IMapCollisionProvider Collision)
+public sealed record MapServerWorld(WorldMapRegistry Maps, MonsterRegistry Monsters, MonsterCombatCoordinator Combat, IMapCollisionProvider Collision, MonsterSpatialInspector SpatialInspector)
 {
     // `cellSelector` defaults to null, which means "explicitly choose ONE of the two selectors
     // based on `collisionProvider`'s identity, right here at composition time" - never an internal
@@ -59,7 +59,8 @@ public sealed record MapServerWorld(WorldMapRegistry Maps, MonsterRegistry Monst
             timeProvider ?? TimeProvider.System);
         var questDrops = new QuestDropResolver(GeneratedQuestDrops.All);
         var combat = new MonsterCombatCoordinator(monsters, questDrops, gameplayRules.BasicAttackRules);
-        return new MapServerWorld(maps, monsters, combat, resolvedCollisionProvider);
+        var spatialInspector = new MonsterSpatialInspector(monsters, resolvedCollisionProvider);
+        return new MapServerWorld(maps, monsters, combat, resolvedCollisionProvider, spatialInspector);
     }
 
     // Production fail-closed guard: called explicitly by MapServerApp.RunAsync (the live

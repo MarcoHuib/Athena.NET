@@ -171,4 +171,73 @@ public sealed class PoringRandomSpawnIntegrationTests
         // No stray sixth entry and no map outside the family sneaking into GPoringSpawns.
         Assert.Equal(intLandFamily.Length, AcademyMobSpawns.GPoringSpawns.Length);
     }
+
+    // Spawn diagnostics regression coverage (ai/world-data.md's "Investigation (in progress):
+    // G_PORING spawns visually on water/mountain" section): these ten coordinates were sampled
+    // from the 2026-08-27 runtime startup log as visible generic-int_land G_PORING spawns at that
+    // moment - they are NOT confirmed to include the specific instance a tester saw standing on
+    // water/mountain (that requires the actorId-based MonsterSpatialInspector diagnostic, not this
+    // coordinate sample). This proves those ten sampled coordinates classify as plain Walkable
+    // (not Water, not a reader/coordinate bug) against the REAL pinned map_cache.dat, reproducing
+    // the same MapCellFlags/IsWalkable/IsWater/IsTraversalCell inspection the [MONSTER CELL]
+    // diagnostic log line reports live - without asserting any policy about whether such cells are
+    // desirable, and without asserting a pinned-source-vs-current-iRO-client mismatch is
+    // established (it is not, per ai/world-data.md).
+    // Deliberately does NOT assert "Water is forbidden" or any stronger connectivity/rectangle
+    // rule - see this class's own suite for why (RathenaCompatibleMobSpawnCellSelectorTests /
+    // ai/world-data.md).
+    [Theory]
+    [InlineData(63, 69)]
+    [InlineData(69, 70)]
+    [InlineData(68, 53)]
+    [InlineData(74, 58)]
+    [InlineData(65, 61)]
+    [InlineData(75, 71)]
+    [InlineData(68, 60)]
+    [InlineData(56, 61)]
+    [InlineData(70, 72)]
+    [InlineData(77, 53)]
+    public void SampledStartupLogIntLandCoordinates_AreClassifiedAsPlainWalkable_NotWater_NotWall(ushort x, ushort y)
+    {
+        var provider = LoadRealMapCache();
+        Assert.True(provider.TryGetMap("int_land", out var map));
+
+        var flags = map.GetCell(x, y);
+
+        // Case B (matches pinned static source), not case A (reader bug) or a Water-specific
+        // mislabel: every one of these reported coordinates is plain Walkable ground in the real
+        // pinned map_cache.dat, not Walkable|Water and not a wall.
+        Assert.True(map.IsWalkable(x, y), $"({x},{y}) should be Walkable per pinned map_cache.dat");
+        Assert.False(map.IsWater(x, y), $"({x},{y}) is not Water in pinned map_cache.dat - rules out the Water-specific theory for this coordinate");
+        Assert.True(map.IsTraversalCell(x, y), $"({x},{y}) should be a valid traversal cell per pinned map_cache.dat");
+        Assert.Equal(MapCellFlags.Walkable | MapCellFlags.Shootable, flags);
+    }
+
+    // int_land is a small, mostly-blocked map (documented in ai/world-data.md): only ~14% of its
+    // cells are walkable at all. A uniform random pick among valid traversal cells is therefore
+    // inherently confined to that narrow footprint - this is expected pinned-source behavior, not
+    // evidence of a bug, and this test documents the real proportions so a future reader doesn't
+    // need to re-derive them from scratch.
+    [Fact]
+    public void IntLand_HasASmallWalkableFootprint_ExplainingWhyRandomSpawnsLookTightlyClustered()
+    {
+        var provider = LoadRealMapCache();
+        Assert.True(provider.TryGetMap("int_land", out var map));
+
+        var walkable = 0;
+        var water = 0;
+        var total = map.Width * map.Height;
+        for (var x = 0; x < map.Width; x++)
+        {
+            for (var y = 0; y < map.Height; y++)
+            {
+                if (map.IsWalkable(x, y)) walkable++;
+                if (map.IsWater(x, y)) water++;
+            }
+        }
+
+        Assert.Equal(19600, total);
+        Assert.Equal(2742 + 57, walkable); // Type 0 (dry walkable) + type 3 (walkable water).
+        Assert.Equal(57, water);
+    }
 }

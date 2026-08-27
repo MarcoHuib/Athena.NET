@@ -661,6 +661,79 @@ document — this section only proves Athena *knows* real map geometry now.
 Random monster spawn, pathfinding, movement, and wandering are unchanged and
 still do not consume this data.
 
+## Investigation (in progress): G_PORING spawns visually on water/mountain on generic `int_land`
+
+Live testing against the unmodified current iRO client (PACKETVER 20220406) reported that some
+generic-`int_land` G_PORING spawns visually appear on water/mountain/unreachable-looking terrain.
+**This is not yet resolved** - the investigation below establishes one data point and the
+diagnostic tooling needed to pin down the actual suspect instance; it does NOT yet establish
+whether pinned `map_cache.dat` and the current iRO client's real geometry disagree.
+
+### What is established so far
+
+Ten G_PORING coordinates sampled from the 2026-08-27 runtime startup log (all visible spawns on
+generic `int_land` at that moment, not confirmed to include the specific instance that looked wrong
+on screen) all decode to raw GAT type **0** (plain `Walkable`, not `Water`, not a wall) in the real
+pinned `legacy/rathena/db/map_cache.dat` `int_land` record: `(63,69)`, `(69,70)`, `(68,53)`,
+`(74,58)`, `(65,61)`, `(75,71)`, `(68,60)`, `(56,61)`, `(70,72)`, `(77,53)`. None are type 3
+(`Walkable|Water`). This rules out an Athena reader/coordinate bug for these ten specific
+coordinates (the reported flags exactly match what `map_cache.dat` itself stores there) and rules
+out "landed on a Water cell" for these ten specifically - but **it has not been proven that any of
+these ten is the actual instance the tester saw standing on water/mountain**. A screenshot
+correlates a visual position to a report, not to one of these ten sampled coordinates.
+
+Separately, `int_land` itself is a small, mostly-blocked map: 19600 total cells, 16801 type 1
+(wall, ~86%), only 2742 type 0 (walkable, ~14%), and 57 type 3 (walkable water) - so a uniform
+random pick among all `IsTraversalCell` cells is inherently confined to that narrow ~14% walkable
+footprint, which will look visually tight/scattered regardless of RNG behavior. This is
+context, not a conclusion about the reported instance.
+
+### What remains to be done
+
+The next step is to use the diagnostic tooling below to identify the SPECIFIC actorId a tester
+observes as visually wrong (by hovering/clicking it in the stock client) and inspect its exact
+live cell state. Only once that specific instance's coordinate and cell flags are known can the
+three-way classification (A: Athena bug / B: matches pinned source, including possibly Water / C:
+pinned-source-vs-current-iRO-client mismatch) be applied to the actual reported instance rather
+than to an unrelated sample. Settling case C specifically would additionally need either: the live
+stock iRO client refusing/redirecting a click-to-move request onto that exact coordinate (a real
+client pathing refusal onto a cell pinned `map_cache.dat` marks walkable would be concrete evidence
+of a genuine source-version mismatch), or a real client-side `.gat`/`.rsw` extraction for
+`int_land` compared cell-by-cell against the pinned record.
+
+No blanket "forbid Water", "require grass", hardcoded region, or invented "same connected
+component" spawn-legality rule has been added while this remains open, since pinned
+`map_search_freecell`'s normal (non-`flag&2`) call path (used by ordinary `mob_spawn`,
+`battle_config.no_spawn_on_player?4:0`, never `2`) only checks the individual candidate cell's own
+`CELL_CHKREACH`, never `unit_can_reach_pos`/connected-component reachability from an anchor point
+(`map.cpp:1798-1867`, `mob.cpp:1149`) - inventing a stronger rule here would itself be an unproven
+deviation from pinned semantics, and would do so before the actual reported instance has even been
+identified.
+
+### Diagnostics added
+
+- `RathenaCompatibleMobSpawnCellSelector.TrySelectCell` logs `[iRO MAP DEBUG][MONSTER CELL]` for
+  every accepted initial-spawn or respawn cell (mob AegisName, map, x/y, raw `MapCellFlags`, and
+  the four derived predicates) - useful for seeing what was CHOSEN at spawn/respawn time, but
+  cannot answer "what is at actorId N right now": `WorldActorIdAllocator` assigns the real actorId
+  in `MonsterRegistry`'s constructor only AFTER `TrySelectCell` already returned a position, so the
+  selector itself never observes the actorId.
+- `MonsterSpatialInspector` (`src/MapServer/World/MonsterSpatialInspector.cs`) is the small,
+  reusable, READ-ONLY spatial-inspection capability that closes that gap: given an actorId and map
+  name, it resolves the live `MobInstance` via `MonsterRegistry.TryGetInstance`, reads its CURRENT
+  `GetPosition()` (reflecting the latest respawn, not the original spawn), and looks up that exact
+  cell's static state via the already-composed `IMapCollisionProvider` - never re-parsing
+  `map_cache.dat`, never threaded into `MonsterRegistry` itself merely for logging. Composed once
+  in `MapServerWorld.Build` alongside the rest of the live world.
+- `MapClientSession`'s existing proven `0x0368` actor-info-request handler (already used for
+  monster-name lookup on click/hover) now calls `MonsterSpatialInspector.TryDescribe` for the
+  clicked/hovered actorId and logs the same `[iRO MAP DEBUG][MONSTER CELL]` line - this is the live
+  flow a tester uses to identify one specific visually-suspicious instance: stock-client
+  hover/click -> `0x0368` -> actorId -> `MonsterSpatialInspector` -> position + cell flags -> log
+  line, entirely independent of whether the player can physically walk there.
+- All of the above are diagnostic-only: none change spawn eligibility, cell semantics, or any
+  gameplay behavior.
+
 ## Map collision data import + runtime collision foundation (secondary/debug tooling)
 
 This section documents an ALTERNATE, secondary collision-data import path —

@@ -51,6 +51,12 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
     // Null alongside _monsters on the test-facing default path; both are populated together
     // by the production MapServerWorld-based constructor.
     private readonly MonsterCombatCoordinator? _combat;
+    // Diagnostic-only for now (0x0368 actor-info click/hover logging) - see LogMonsterCellDiagnostics
+    // and the [MONSTER CELL] log line it emits. Null on the test-facing default path, same as
+    // _monsters/_combat. A small, reusable, read-only spatial-inspection capability rather than
+    // threading IMapCollisionProvider into MonsterRegistry merely for logging - see
+    // MonsterSpatialInspector's own doc comment for why it exists as its own composed type.
+    private readonly MonsterSpatialInspector? _spatialInspector;
     private readonly IMovementPathProvider _movementPathProvider;
     // Owns authoritative per-cell walk timing (see CharacterMovementState's own doc comment for the
     // rAthena unit_walktoxy_timer trace this replaces). _x/_y/_mapName remain the fields every other
@@ -157,7 +163,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
     // so silently falling back to it here would reintroduce a second, independent actor-ID
     // namespace alongside the composed MonsterRegistry's shared one.
     public MapClientSession(int sessionId, TcpClient client, CharServerConnector charConnector, MapServerWorld world)
-        : this(sessionId, client, charConnector, world.Maps, monsters: world.Monsters, combat: world.Combat)
+        : this(sessionId, client, charConnector, world.Maps, monsters: world.Monsters, combat: world.Combat, spatialInspector: world.SpatialInspector)
     {
     }
 
@@ -174,7 +180,8 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
         IMovementPathProvider? movementPathProvider = null,
         MonsterCombatCoordinator? combat = null,
         ICharacterInventoryPersistence? inventoryPersistence = null,
-        ICharacterInventoryListPersistence? inventoryListPersistence = null)
+        ICharacterInventoryListPersistence? inventoryListPersistence = null,
+        MonsterSpatialInspector? spatialInspector = null)
     {
         SessionId = sessionId;
         _client = client;
@@ -188,6 +195,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
         _worldMapRegistry = worldMapRegistry;
         _monsters = monsters;
         _combat = combat;
+        _spatialInspector = spatialInspector;
         _timeProvider = timeProvider ?? TimeProvider.System;
         _movementPathProvider = movementPathProvider ?? new UnverifiedGridLineMovementPathProvider();
         _statusEffects = new CharacterStatusEffectState(_timeProvider);
@@ -770,6 +778,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
                 {
                     var monsterName = monsterInstance.Spawn.Mob.Name;
                     MapLogger.Info($"[iRO MAP DEBUG] Sending 0x0ADF monster name actorId={requestedActorId} name='{monsterName}'");
+                    LogMonsterCellDiagnostics(requestedActorId);
                     await WriteAsync(IroWorldActorPackets.BuildNpcName(requestedActorId, monsterName), cancellationToken);
                 }
                 break;
@@ -1011,6 +1020,29 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
     private static long Distance(ushort x1, ushort y1, ushort x2, ushort y2)
     {
         var dx = (long)x2 - x1; var dy = (long)y2 - y1; return dx * dx + dy * dy;
+    }
+
+    // Diagnostic-only (source-neutral: does not decide spawn eligibility or gameplay behavior on
+    // its own). Lets a tester identify a visually suspicious monster (e.g. one that appears to
+    // stand on water/mountain) by hovering/clicking it in the stock client, which sends the
+    // existing proven 0x0368 actor-info request this already handles, and correlates the CURRENT
+    // actorId (assigned by WorldActorIdAllocator well after any spawn-time selection decision) to
+    // its live position/cell state via MonsterSpatialInspector - see that type's own doc comment
+    // for why spawn-time-selector-level diagnostics alone cannot answer "what is at actorId N
+    // right now". See the investigation notes in ai/world-data.md for why blanket-forbidding
+    // MapCellFlags.Water or inventing a stronger connectivity rule is NOT done here; this only
+    // reports the exact static cell state so that question can be answered from real map_cache.dat
+    // data instead of a screenshot guess.
+    private void LogMonsterCellDiagnostics(uint actorId)
+    {
+        if (_spatialInspector is null) return;
+        if (!_spatialInspector.TryDescribe(actorId, _mapName, out var diagnostics)) return;
+
+        MapLogger.Info(
+            $"[iRO MAP DEBUG][MONSTER CELL] actorId={diagnostics.ActorId} mob={diagnostics.MobAegisName} " +
+            $"map='{diagnostics.Map}' x={diagnostics.X} y={diagnostics.Y} flags='{diagnostics.Flags}' " +
+            $"walkable={diagnostics.IsWalkable} water={diagnostics.IsWater} " +
+            $"shootable={diagnostics.IsShootable} traversal={diagnostics.IsTraversalCell}");
     }
 
     private async Task SendSameServerWarpAsync(WarpDefinition warp, CancellationToken cancellationToken)
