@@ -9,15 +9,41 @@ Current pipeline:
 
 `pinned rAthena -> lexer/parser/semantics/lowering -> deterministic C# -> normal dotnet build -> WorldMapRegistry -> MapClientSession`
 
-The intentionally supported runtime slice is:
+The intentionally supported runtime slice covers the COMPLETE `iz_int`/`int_land`
+tutorial family — the generic/base maps (`iz_int`, `int_land`) and all four
+instanced duplicates (`iz_int01..04`, `int_land01..04`) alike, since
+`start_point` config can place a new character on any of the five `iz_int*`
+variants and each must be a functionally equivalent tutorial slice. This was
+NOT always true: an earlier `compile-npc-world`/`compile-navigation`
+regeneration invocation used `--exclude-placement`/`--warp-exclude-placement`
+to drop the generic/base template placements of several pinned
+`duplicate(...)` families, leaving generic `iz_int` (one of the five valid
+`start_point` destinations) without a visible Wounded Swordsman, without
+`#ship_out`, and downstream without Captain Carocc/Lumin/`#intro_to_izlude`
+on generic `int_land` either — a regeneration-selection bug, not an
+intentional narrower slice. See `tools/WorldDataImporter/README.md`'s
+`compile-npc-world`/`compile-navigation` sections for the corrected
+invocations and `WorldMapRegistryFamilyTests`
+(`tests/MapServer.Tests/World/`) for the regression coverage.
 
-- `iz_int/#room_out` and `#room_in`, pinned `izlude.txt:57,63`;
-- active instance variants `iz_int03/#room_out03` and `#room_in03`, pinned
-  `izlude.txt:60,66`;
-- `iz_int03/#ship_out03`, pinned duplicate at `izlude.txt:80`, generated
-  executable `OnTouch` with savepoint and transfer to `int_land03`;
-- `int_land04/#intro_to_izlude_d`, generated executable `OnTouch`;
-- `iz_int/Wounded Swordsman#intro_npc02_iz_int`, generated executable `OnClick`.
+Representative examples (every one of these has a `01`/`02`/`03`/`04`
+counterpart on the matching instanced map):
+
+- `iz_int/#room_out` and `#room_in`, pinned `izlude.txt:57,63` (instanced
+  variants e.g. `iz_int03/#room_out03`/`#room_in03`, pinned `izlude.txt:60,66`);
+- `iz_int/#ship_out`, pinned template at `izlude.txt:69`, generated executable
+  `OnTouch` with savepoint and transfer to `int_land` (instanced duplicate
+  e.g. `iz_int03/#ship_out03` -> `int_land03`, pinned `izlude.txt:80`);
+- `int_land/#intro_to_izlude`, pinned template at `izlude.txt:83`, generated
+  executable `OnTouch` with transfer to `izlude` (instanced duplicates use the
+  pinned lettered suffixes, e.g. `int_land04/#intro_to_izlude_d` -> `izlude_d`,
+  NOT a numeric `04` suffix — `StrNpcInfo(2)`-derived at runtime, not a
+  per-instance branch);
+- `iz_int/Wounded Swordsman#intro_npc01_iz_int` (class 687, generated
+  executable `OnClick`, initially visible — no `cloakonnpc()` in its pinned
+  `OnInit`) and `iz_int/Wounded Swordsman#intro_npc02_iz_int` (class 688,
+  generated executable `OnClick`, initially cloaked via pinned `OnInit:
+  cloakonnpc()`).
 
 `GeneratedScriptRegistry` owns explicit script factories and entity metadata.
 Generated and custom scripts share `INpcScript`, `ScriptContext`, world entities,
@@ -39,11 +65,20 @@ name.
 Which of those placements/behaviors actually reach a particular generated
 world slice is a separate, later "emission selection" step (`compile-npc-world`'s
 `--exclude-placement`/`--no-behavior` flags), applied strictly after the
-converter returns its lossless result. This is how the Academy slice keeps
-Captain Carocc and Lumin actor-only today even though pinned rAthena contains
-real, non-trivial click dialogue for both — their scripts deliberately remain
-unregistered pending real healing/EXP/status-effect/inventory runtime support,
-which is an emission-time decision, not something the converter encodes.
+converter returns its lossless result. Placement and behavior are
+orthogonal: `--exclude-placement` drops a specific NPC/warp instance's
+ACTOR entirely (only appropriate when that literal instance/map is not part
+of the intended generated world at all — never merely because a placement is
+a `duplicate(...)` family's generic/base template row), while `--no-behavior`
+keeps a definition's actor(s) visible/interactable-looking but withholds its
+script registration. This is how the Academy slice keeps Lumin actor-only
+today even though pinned rAthena contains real, non-trivial click dialogue
+for it — its script deliberately remains unregistered pending real inventory
+runtime support, which is an emission-time decision (`--no-behavior
+'Lumin#new_ship'`), not something the converter encodes. Captain Carocc's
+script IS registered (dialogue/quest/heal/status/EXP runtime capabilities all
+exist), and both NPCs' actors are placed on every `int_land`/`int_land01..04`
+map, not only the instanced duplicates.
 
 `WorldRegistryBuilder.AddNpc(NpcDefinition, IReadOnlyList<NpcPlacement>)` is
 the runtime registration entry point generated `AcademyWorld.Register(builder)`
@@ -156,7 +191,9 @@ their breadth does not imply runtime support.
 
 ## Still missing
 
-The minimal `iz_int03` slice now also includes compiler-generated navigation targets, both Wounded Swordsman actor states/scripts, and definitions for the pinned `int_land03` Captain Carocc and Lumin duplicates. Captain Carocc's real pinned dialogue/quest/heal/status/EXP script is registered and executable, using the generic heal, temporary-status, and existing quest/progression runtime capabilities described below. Lumin remains actor-only: its script stays unregistered until real inventory runtime support exists; no no-op gameplay commands are used.
+The complete `iz_int`/`int_land` tutorial family (generic base maps plus all four instanced duplicates) includes compiler-generated navigation targets, both Wounded Swordsman actor states/scripts, and definitions for Captain Carocc and Lumin — not only the `iz_int03`/`int_land03` instanced variant, which was the only fully complete member before a regeneration-selection fix restored the generic/base and remaining instanced placements (see the "Runtime architecture" section above and `WorldMapRegistryFamilyTests`). Captain Carocc's real pinned dialogue/quest/heal/status/EXP script is registered and executable on every map in the family, using the generic heal, temporary-status, and existing quest/progression runtime capabilities described below. Lumin remains actor-only on every map in the family: its script stays unregistered until real inventory runtime support exists; no no-op gameplay commands are used.
+
+Separately, pinned `Wounded Swordsman#intro_npc02_iz_int`'s `OnInit: questinfo(...)` is a genuine, still-open capability gap: rAthena's `questinfo(QTYPE_QUEST, QMARK_YELLOW, ...)` drives a client-facing quest-marker icon above the NPC, which Athena does not yet emit any packet for. This is NOT implemented here — no packet has been synthesized without capture/wire evidence (see `ai/iro-2026-wire.md`'s evidence-priority rule) — and remains distinct from the navigation-arrow (`navigateto`) capability, which IS implemented and generated from pinned source via `compile-navigation`/`AcademyNavigation.cs`.
 
 ## Heal and temporary status effects
 

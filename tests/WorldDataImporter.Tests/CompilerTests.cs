@@ -130,17 +130,10 @@ public sealed class CompilerTests
                 "--source-root", Path.Combine(repository, "legacy/rathena/npc/re/warps/cities"),
                 "--name", "Wounded Swordsman#intro_npc02_iz_int", "--name", "Wounded Swordsman#intro_npc01_iz_int",
                 "--name", "Captain Carocc#intro_npc03", "--name", "Lumin#new_ship",
-                "--exclude-placement", "npc:iz_int:wounded swordsman#intro_npc01_iz_int",
-                "--exclude-placement", "npc:int_land:captain carocc#intro_npc03",
-                "--exclude-placement", "npc:int_land:lumin#new_ship",
                 "--no-behavior", "Lumin#new_ship",
                 "--warp-name", "#ship_out", "--warp-name", "#intro_to_izlude",
-                "--warp-exclude-placement", "warp:iz_int:ship_out",
-                "--warp-exclude-placement", "warp:int_land01:intro_to_izlude_a",
-                "--warp-exclude-placement", "warp:int_land02:intro_to_izlude_b",
-                "--warp-exclude-placement", "warp:int_land03:intro_to_izlude_c",
-                "--warp-exclude-placement", "warp:int_land:intro_to_izlude",
                 "--namespace", "Athena.Net.MapServer.Generated.World.Izlude.Academy",
+                "--rathena-commit", "e985006171d2eb320ee512a653f4c83aea3d81b6",
                 "--output-dir", outputDir,
             ];
             Assert.Equal(0, await WorldDataImporterCli.RunAsync(Arguments(first)));
@@ -206,7 +199,8 @@ public sealed class CompilerTests
         {
             string[] Arguments(string output) => ["compile", "--source-root", Path.Combine(repository, "legacy/rathena/npc/re/warps/cities"), "--source-file", "izlude.txt",
                 "--name", "#room_out", "--name", "#room_in", "--name", "#room_out01", "--name", "#room_in01", "--name", "#room_out02", "--name", "#room_in02",
-                "--name", "#room_out03", "--name", "#room_in03", "--name", "#room_out04", "--name", "#room_in04", "--kind", "warp", "--output", output];
+                "--name", "#room_out03", "--name", "#room_in03", "--name", "#room_out04", "--name", "#room_in04", "--kind", "warp",
+                "--rathena-commit", "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca", "--output", output];
             Assert.Equal(0, await WorldDataImporterCli.RunAsync(Arguments(first)));
             Assert.Equal(0, await WorldDataImporterCli.RunAsync(Arguments(second)));
             Assert.Equal(await File.ReadAllBytesAsync(first), await File.ReadAllBytesAsync(second));
@@ -233,7 +227,7 @@ public sealed class CompilerTests
         var first = Path.Combine(Path.GetTempPath(), $"ship-out03-{Guid.NewGuid():N}.cs");
         try
         {
-            var arguments = new[] { "compile-script", "--source-root", Path.Combine(repository, "legacy/rathena/npc/re/warps/cities"), "--source-file", "izlude.txt", "--map", "iz_int03", "--name", "#ship_out03", "--kind", "warp", "--output", first };
+            var arguments = new[] { "compile-script", "--source-root", Path.Combine(repository, "legacy/rathena/npc/re/warps/cities"), "--source-file", "izlude.txt", "--map", "iz_int03", "--name", "#ship_out03", "--kind", "warp", "--rathena-commit", "e985006171d2eb320ee512a653f4c83aea3d81b6", "--output", first };
             Assert.Equal(0, await WorldDataImporterCli.RunAsync(arguments));
 
             var standalone = await File.ReadAllTextAsync(first);

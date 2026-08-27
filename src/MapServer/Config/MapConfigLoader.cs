@@ -309,8 +309,9 @@ public static class MapConfigLoader
 
     private static bool TryResolveIp(string value, out IPAddress ip)
     {
-        if (IPAddress.TryParse(value, out ip))
+        if (IPAddress.TryParse(value, out var parsedIp) && parsedIp is not null)
         {
+            ip = parsedIp;
             return true;
         }
 
