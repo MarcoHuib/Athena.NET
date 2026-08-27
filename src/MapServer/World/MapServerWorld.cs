@@ -61,4 +61,29 @@ public sealed record MapServerWorld(WorldMapRegistry Maps, MonsterRegistry Monst
         var combat = new MonsterCombatCoordinator(monsters, questDrops, gameplayRules.BasicAttackRules);
         return new MapServerWorld(maps, monsters, combat, resolvedCollisionProvider);
     }
+
+    // Production fail-closed guard: called explicitly by MapServerApp.RunAsync (the live
+    // executable's own composition root) BEFORE calling Build, never from inside Build itself -
+    // Build must stay freely usable by tests that intentionally want the collision-less/
+    // fallback-selector default (see Build's own doc comment on why EmptyMapCollisionProvider ->
+    // UnverifiedFallbackMobSpawnCellSelector is a legitimate, explicit choice in that context).
+    // This guard exists because a REAL running MapServer is a different situation: once generated
+    // content includes monster spawn declarations, starting it without real collision data would
+    // silently place those monsters on UnverifiedFallbackMobSpawnCellSelector's fabricated
+    // deterministic raster ((50,50), (52,50), ... - observed live on generic int_land before this
+    // fix) rather than genuine pinned-rAthena-compatible cells - i.e. inventing authoritative world
+    // state instead of failing loudly. `hasGeneratedMobSpawns` is a plain bool (not a live query
+    // against GeneratedScriptRegistry.MobSpawns) so this method has no dependency on which mob
+    // family/content module is generated - it protects any FUTURE mob family the same way, not
+    // just G_PORING specifically.
+    public static void RequireRealCollisionSourceIfMobSpawnsExist(bool hasGeneratedMobSpawns, IMapCollisionProvider collisionProvider)
+    {
+        if (hasGeneratedMobSpawns && ReferenceEquals(collisionProvider, EmptyMapCollisionProvider.Instance))
+        {
+            throw new InvalidOperationException(
+                "Generated monster spawns are configured but no real map collision source is loaded. " +
+                "Configure map_cache_path (or an explicit map_collision_artifact source) so monsters spawn on real, " +
+                "collision-backed cells instead of fabricated placeholder coordinates.");
+        }
+    }
 }

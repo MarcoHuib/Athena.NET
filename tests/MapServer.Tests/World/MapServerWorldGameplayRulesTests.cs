@@ -121,3 +121,89 @@ public sealed class MapServerWorldGameplayRulesTests
         public BasicAttackDamageResult Calculate(BasicAttackContext context) => new(0, IsMiss: true);
     }
 }
+
+// Production fail-closed composition guard (MapServerApp.RunAsync's own explicit call site, never
+// invoked from inside MapServerWorld.Build itself) - see
+// MapServerWorld.RequireRealCollisionSourceIfMobSpawnsExist's own doc comment. Found via a live
+// Docker run: production MapServer was silently placing generated G_PORING instances on
+// UnverifiedFallbackMobSpawnCellSelector's deterministic (50,50)/(52,50)/... raster on unreachable
+// terrain, because the real running executable had no collision source configured at all - this
+// guard exists specifically so that situation fails startup instead of running with fabricated
+// world state.
+public sealed class MapServerWorldProductionCollisionGuardTests
+{
+    [Fact]
+    public void RequireRealCollisionSourceIfMobSpawnsExist_MobSpawnsExist_NoRealProvider_Throws()
+    {
+        var exception = Assert.Throws<InvalidOperationException>(() =>
+            MapServerWorld.RequireRealCollisionSourceIfMobSpawnsExist(hasGeneratedMobSpawns: true, EmptyMapCollisionProvider.Instance));
+
+        Assert.Contains("Generated monster spawns are configured", exception.Message);
+        Assert.Contains("map_cache_path", exception.Message);
+    }
+
+    [Fact]
+    public void RequireRealCollisionSourceIfMobSpawnsExist_MobSpawnsExist_RealProviderConfigured_DoesNotThrow()
+    {
+        var provider = new MapCollisionProvider([new MapCollisionMap("int_land", 100, 100, Enumerable.Repeat(MapCellFlags.Walkable, 100 * 100).ToArray())]);
+
+        MapServerWorld.RequireRealCollisionSourceIfMobSpawnsExist(hasGeneratedMobSpawns: true, provider);
+        // No exception - test passes by not throwing.
+    }
+
+    [Fact]
+    public void RequireRealCollisionSourceIfMobSpawnsExist_NoMobSpawns_NoRealProvider_DoesNotThrow()
+    {
+        // A collision-less world with no generated monster content at all is a legitimate,
+        // deliberate configuration (e.g. a minimal NPC-only slice) - the guard must not demand
+        // collision data nothing in the generated world actually needs.
+        MapServerWorld.RequireRealCollisionSourceIfMobSpawnsExist(hasGeneratedMobSpawns: false, EmptyMapCollisionProvider.Instance);
+    }
+}
+
+// End-to-end proof against the REAL pinned legacy/rathena/db/map_cache.dat that the exact
+// production composition path (MapServerWorld.Build with a real collision provider, matching what
+// MapServerApp.RunAsync actually builds once map_cache_path is configured) produces genuinely
+// collision-backed, non-fallback monster positions - not merely that the selector works in
+// isolation (see PoringRandomSpawnIntegrationTests for that), but that composing the WHOLE
+// production world this way never regresses back to the fabricated deterministic raster.
+public sealed class MapServerWorldProductionCollisionCompositionTests
+{
+    private static string FindRepositoryRoot()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "Athena.NET.sln"))) directory = directory.Parent;
+        return directory?.FullName ?? throw new DirectoryNotFoundException("Athena.NET repository root was not found.");
+    }
+
+    [Fact]
+    public void Build_WithRealPinnedMapCache_ProducesGenuinelyCollisionBackedPositions_NotTheFallbackRaster()
+    {
+        var mapCachePath = Path.Combine(FindRepositoryRoot(), "legacy/rathena/db/map_cache.dat");
+        var maps = RathenaMapCacheReader.ReadAllFromFile(mapCachePath);
+        var provider = new MapCollisionProvider(maps);
+
+        var world = MapServerWorld.Build(new GameplayRuleServices(new RenewalBasicAttackRules()), collisionProvider: provider);
+
+        var intLandFamily = new[] { "int_land", "int_land01", "int_land02", "int_land03", "int_land04" };
+        var gPorings = world.Monsters.AllInstances.Where(instance => intLandFamily.Contains(instance.Map)).ToArray();
+        Assert.Equal(200, gPorings.Length);
+
+        foreach (var instance in gPorings)
+        {
+            provider.TryGetMap(instance.Map, out var map);
+            var position = instance.GetPosition();
+            Assert.True(map.IsTraversalCell(position.X, position.Y), $"{instance.Map} ({position.X},{position.Y}) is not a valid traversal cell");
+            Assert.True(map.IsWalkable(position.X, position.Y));
+        }
+
+        // The fabricated UnverifiedFallbackMobSpawnCellSelector raster for the first 40 instances
+        // on one map: (50,50),(52,50),...,(68,50),(50,52),... (stride 2, 10 columns per row). Real
+        // collision-backed selection must not reproduce this exact deterministic pattern.
+        var firstMapPositions = gPorings.Where(i => i.Map == intLandFamily[0]).Select(i => i.GetPosition()).Select(p => (p.X, p.Y)).ToArray();
+        var fallbackRaster = Enumerable.Range(0, 40)
+            .Select(i => ((ushort)(50 + (i % 10) * 2), (ushort)(50 + (i / 10) * 2)))
+            .ToArray();
+        Assert.NotEqual(fallbackRaster, firstMapPositions);
+    }
+}

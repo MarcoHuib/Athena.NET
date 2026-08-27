@@ -226,6 +226,36 @@ public sealed class MapConfigLoaderTests
         Assert.Equal(RagnarokRuleSet.PreRenewal, merged.GameplayRuleSet);
     }
 
+    // Regression test: SecretConfig.ApplyTo previously reconstructed a brand-new MapConfig without
+    // copying CollisionArtifacts/MapCachePath at all, so a correctly-parsed map_cache_path was
+    // silently DISCARDED by the merge step immediately after loading - MapServerApp.RunAsync always
+    // saw MapCachePath=null regardless of what the config file said, making it impossible for the
+    // real MapServer executable to ever select the real collision-backed selector. This was found
+    // by an end-to-end Docker run producing "Generated monster spawns are configured but no real
+    // map collision source is loaded" despite an explicit map_cache_path line in the loaded config.
+    [Fact]
+    public void SecretConfig_ApplyTo_PreservesMapCachePath()
+    {
+        var secrets = new SecretConfig();
+        var config = new MapConfig { MapCachePath = "legacy/rathena/db/map_cache.dat" };
+
+        var merged = secrets.ApplyTo(config);
+
+        Assert.Equal("legacy/rathena/db/map_cache.dat", merged.MapCachePath);
+    }
+
+    [Fact]
+    public void SecretConfig_ApplyTo_PreservesCollisionArtifacts()
+    {
+        var secrets = new SecretConfig();
+        var artifact = new MapCollisionArtifactConfig("/local/int_land.athmap", ["int_land"]);
+        var config = new MapConfig { CollisionArtifacts = [artifact] };
+
+        var merged = secrets.ApplyTo(config);
+
+        Assert.Same(artifact, Assert.Single(merged.CollisionArtifacts));
+    }
+
     [Fact]
     public void SecretConfig_AppliesCredentials_WhenPresent()
     {

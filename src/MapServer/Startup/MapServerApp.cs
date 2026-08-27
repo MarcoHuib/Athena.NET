@@ -4,6 +4,7 @@ using Athena.Net.MapServer.Logging;
 using Athena.Net.MapServer.Net;
 using Athena.Net.MapServer.Telemetry;
 using Athena.Net.MapServer.World;
+using Athena.Net.MapServer.World.GeneratedScripts;
 
 namespace Athena.Net.MapServer.Startup;
 
@@ -44,6 +45,14 @@ public static class MapServerApp
         // unaffected: Load returns EmptyMapCollisionProvider.Instance, the same default
         // MapServerWorld.Build already used.
         var collisionProvider = MapCollisionStartupLoader.Load(mergedConfig.CollisionArtifacts, mergedConfig.MapCachePath);
+        // Production-only fail-closed guard (never applied inside MapServerWorld.Build itself, so
+        // tests can still freely compose a collision-less world on purpose) - see that method's own
+        // doc comment. A live MapServer with generated monster spawns and no real collision source
+        // must refuse to start rather than silently place monsters on
+        // UnverifiedFallbackMobSpawnCellSelector's fabricated deterministic raster.
+        MapServerWorld.RequireRealCollisionSourceIfMobSpawnsExist(GeneratedScriptRegistry.MobSpawns.Count > 0, collisionProvider);
+        MapLogger.Status(
+            $"Monster spawn positioning: {(ReferenceEquals(collisionProvider, EmptyMapCollisionProvider.Instance) ? "none configured (no generated monster spawns)" : "rAthena collision-backed")}");
         var world = MapServerWorld.Build(gameplayRules, collisionProvider: collisionProvider);
         var connector = new CharServerConnector(configStore);
         var mapServer = new MapTcpServer(configStore, connector, world);
