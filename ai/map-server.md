@@ -623,3 +623,422 @@ Use heavily for architecture/game mechanics, not as iRO packet authority:
 
 ## Definition of done for current milestone
 A supported unmodified stock iRO client selects a character, connects to Athena.NET MapServer, authenticates through the verified iRO entry flow, and reaches a stable first-map state.
+
+## Weapon-aware basic melee combat (Knife vs G_PORING)
+
+The starter tutorial character is not actually unarmed - it has a persisted Knife
+(itemId 1201, Attack 17, WeaponLevel 1, WeaponType Dagger) equipped in the right
+hand by default. Live 0x0437 attacks against G_PORING must resolve through the
+pinned RENEWAL PC combat path, using whatever is CURRENTLY equipped in the
+right hand, not a hardcoded unarmed assumption.
+
+### Pinned source trace: armed and unarmed share ONE PC pipeline
+
+`battle.cpp:4140-4142` - `if (sd) battle_calc_damage_parts(...) else
+battle_calc_base_damage(...)`. This branch is gated purely on "is the attacker a
+PC" (`sd`), **never** on whether a weapon is equipped. `battle_calc_base_damage`
+is exclusively the non-PC/monster branch and is never reached by any PC normal
+attack in RENEWAL, armed or unarmed. An earlier implementation incorrectly used
+`battle_calc_base_damage` for the unarmed case (a distinct `BasicAttackCalculator`
+class, since removed) - that bug is now fixed as part of unifying armed/unarmed
+into one `RenewalBasicAttackRules`/`WeaponAttackCalculator` pipeline with an
+optional weapon term, per the pinned source's own structure.
+
+Full call chain, traced field-by-field in `RenewalBasicAttackRules`'s own doc
+comment (`src/MapServer/Gameplay/Rules/Renewal/RenewalBasicAttackRules.cs`):
+
+1. `status_base_atk` (`status.cpp:2424`) - `batk` formula (Dagger/fists are not
+   DEX-flagged weapon types).
+2. `battle_calc_damage_parts` (`battle.cpp:3889`) - `statusAtk = 2*batk`
+   (doubled, unconditionally - unarmed included), `weaponAtk` from
+   `battle_calc_base_weapon_attack`, `equipAtk`/`masteryAtk` both correctly 0
+   for a fresh Novice with no eatk-granting items or weapon-mastery skills.
+3. `battle_calc_base_weapon_attack` (`battle.cpp:2443`) - when no weapon is
+   equipped, its own `if (sd && sd->equip_index[type] >= 0 ...)` guard
+   (`battle.cpp:2453`) is false, leaving `atkmin=atkmax=status->watk=0` (an
+   unarmed PC's `rhw.atk` is never populated by the equipment-parse loop) - so
+   `weaponAtk` collapses to exactly 0 through the SAME function, not a separate
+   code path. When a weapon IS equipped: `atkmin/atkmax` from `wa.atk` (= item
+   Attack at refine 0) +/- variance (`5*atk*wlv/100`) + STR-based
+   `base_stat_bonus` (`atk*STR/200`), then `rnd_value(atkmin,atkmax)`, then
+   `battle_calc_sizefix` (`battle.cpp:2427`): `damage * atkmods[size] / 100`.
+4. `wd.damage = statusAtk + weaponAtk + equipAtk + percentAtk`, `+= masteryAtk`.
+5. `battle_calc_defense_reduction` (`battle.cpp:4720`) - RE DEF formula and
+   monster soft-DEF (`def2 = floor((Level+Vit)/2)`), identical for both cases.
+6. `battle_calc_attack` (`battle.cpp:6766`) - damage < 1 is a miss (0 damage).
+
+**Size-fix ambiguity, resolved by pinned data default, not by capture-matching**:
+`db/re/size_fix.yml` has no `Dagger` row (only Knuckle/Whip carry entries). The
+pinned C++ initialization path for `atkmods[]` when a weapon type has no
+size_fix.yml row could not be fully traced through `TypesafeYamlDatabase`
+plumbing in the pinned snapshot; the YAML file's own header comment states the
+column default is 100 for every unlisted weapon/size pair, which is also the
+only value consistent with real gameplay (a Dagger dealing zero damage to every
+target of an unlisted size would be an obvious live-game bug). `atkmods[SZ_*]`
+is therefore treated as 100 (no-op) for Dagger against any target size -
+`MobDefinition` gets no `Size` field for this slice since the modifier is a
+no-op regardless of target size for this weapon type.
+
+### Fields Athena already had vs. required
+
+Already present and reused unchanged: `EffectiveCharacterStats` (STR/AGI/VIT/
+INT/DEX/LUK), `MobDefinition.Defense/Level/Vit`, the RE DEF-reduction formula,
+`WeaponItemDefinition.Attack/WeaponLevel`, `CharacterEquipmentSnapshot`
+(live-maintained per session, rebuilt only after confirmed persistence),
+`EquippedWeaponResolver` (previously only consumed by
+`SendSelfWeaponAppearanceAsync` for the 0x01D7 LOOK_WEAPON packet - now also
+consumed by the attack path). No new authoritative input was missing; this was
+purely a missing combat-formula/dispatch gap, not a data gap.
+
+## Gameplay ruleset selection (Renewal / PreRenewal composition boundary)
+
+Athena.NET currently implements **RENEWAL gameplay only**, because the current
+official iRO client is the only live target combat mechanics can be validated
+against. Renewal-specific formulas must not leak into general MapServer
+orchestration (`MapClientSession`, `MonsterCombatCoordinator`, inventory/
+equipment ownership, monster HP/death handling, quest/drop handling) - those
+classes depend only on ruleset-agnostic interfaces under
+`src/MapServer/Gameplay/Rules/`.
+
+### Folder/namespace layout
+
+```text
+src/MapServer/Gameplay/Rules/
+    RagnarokRuleSet.cs        - enum { Renewal, PreRenewal } (domain value only)
+    GameplayOptions.cs        - RuleSet selection, sourced from MapConfig
+    GameplayRulesFactory.cs   - the ONE place ruleset -> implementations is decided
+    GameplayRuleServices.cs   - the composed bundle MapServerWorld.Build receives
+                                 (currently just BasicAttackRules; future independently
+                                 scoped rule interfaces are added here, not folded into
+                                 one giant IGameRules interface)
+    IBasicAttackRules.cs      - ruleset-agnostic basic-melee-attack contract
+    BasicAttackContext.cs     - authoritative inputs (attacker stats/level, optional
+                                 equipped weapon, target) - never client-supplied state
+    BasicAttackDamageResult.cs
+    Renewal/
+        RenewalBasicAttackRules.cs   - IBasicAttackRules impl; owns the pinned-source trace
+        WeaponAttackCalculator.cs    - internal pure-math helper RenewalBasicAttackRules uses
+    PreRenewal/
+        README.md                    - documents the convention; NO C# implementation yet
+```
+
+`PreRenewal/` holds only a `README.md` - git does not track empty directories,
+and an empty placeholder folder would need a stub C# file to force tracking,
+which is explicitly not wanted. The README documents that any future Pre-Renewal
+implementation belongs there, registered from `GameplayRulesFactory.Create`'s
+`RagnarokRuleSet.PreRenewal` branch, without touching `IBasicAttackRules`,
+`GameplayRuleServices`, `MonsterCombatCoordinator`, or `MapClientSession`.
+
+### Composition root and configuration
+
+This codebase has no `Microsoft.Extensions.DependencyInjection` container -
+`MapServerApp.RunAsync` (`src/MapServer/Startup/MapServerApp.cs`) is the ONE
+composition root that decides gameplay ruleset selection. `MapServerWorld.Build`
+(`src/MapServer/World/MapServerWorld.cs`) receives an already-composed
+`GameplayRuleServices` bundle as a **required** parameter - it never constructs
+`GameplayOptions`, never references `RagnarokRuleSet`, and never calls
+`GameplayRulesFactory.Create` itself, so it stays entirely unaware of which
+ruleset produced the bundle it was handed:
+
+```text
+map_athena.conf "gameplay_ruleset: Renewal"
+    -> MapConfigLoader (RagnarokRuleSet.TryParse; key ABSENT -> Renewal default;
+       key PRESENT but unrecognized -> throws InvalidOperationException, config load fails)
+    -> MapConfig.GameplayRuleSet
+    -> MapServerApp.RunAsync builds GameplayOptions { RuleSet = mergedConfig.GameplayRuleSet }
+    -> GameplayRulesFactory.Create(options) -> GameplayRuleServices
+    -> MapServerWorld.Build(gameplayRules: services)
+    -> new MonsterCombatCoordinator(monsters, questDrops, gameplayRules.BasicAttackRules)
+```
+
+`GameplayRulesFactory.Create` is a plain `switch` on `RagnarokRuleSet`:
+`Renewal` returns `new GameplayRuleServices(new RenewalBasicAttackRules())`;
+`PreRenewal` throws `NotSupportedException("Pre-Renewal gameplay rules are not
+implemented.")`. `PreRenewal` DOES parse successfully as a config value (it is a
+real, valid `RagnarokRuleSet` member) - the failure happens at composition, not
+at config-parse time. There is no silent fallback anywhere in this chain:
+- An absent `gameplay_ruleset` key defaults to Renewal (the same "use the field
+  default" convention every other optional key in `map_athena.conf` follows).
+- A PRESENT but unrecognized value (a typo, or a future enum member the running
+  binary doesn't know about) throws `InvalidOperationException` out of
+  `MapConfigLoader.Load` itself - config loading fails outright, it does not
+  quietly resolve to Renewal or any other value.
+- Selecting the real, valid `PreRenewal` value fails MapServer composition
+  loudly via `GameplayRulesFactory.Create`'s `NotSupportedException` (composition
+  happens before the TCP listener starts accepting connections).
+
+`MonsterCombatCoordinator` depends on `IBasicAttackRules` only and forwards a
+`BasicAttackContext` (attacker stats/level, the CURRENT authoritative equipped
+weapon or null, target) into `Calculate` - it never asks which ruleset is active.
+`MapClientSession.HandleIroAttackRequestAsync` resolves the equipped weapon
+through the same `EquippedWeaponResolver` path `SendSelfWeaponAppearanceAsync`
+already used (never `ClientViewId`/LOOK_WEAPON, never cached across attacks), so
+a same-session equip/unequip changes the very next attack's calculation with no
+reconnect and no coordinator-side cache to invalidate - `MapClientSession` itself
+selects nothing Renewal-specific. `EquippedWeaponResolution.UnknownItem` and
+`NonWeaponInWeaponSlot` are authoritative-state/data invariant FAILURES (an
+equipped item id absent from the generated item registry, or a non-weapon item
+resolved into the weapon slot) - `HandleIroAttackRequestAsync` treats either as
+grounds to reject/abort the attack outright (logged, no combat calculation runs,
+no wire response is sent at all), never as a legitimate unarmed state. Only
+`EquippedWeaponResolution.Unarmed` may enter the unarmed `RenewalBasicAttackRules`
+path.
+
+The weapon-ATK roll is injectable (`RenewalBasicAttackRules`'s constructor takes
+an optional `Func<int,int,int> rollWeaponAtk`, forwarded into
+`WeaponAttackCalculator`, same pattern as `QuestDropResolver`'s injectable RNG)
+so tests can pin it deterministically; production defaults to `Random.Shared`.
+
+Live stock-iRO validation is now PROVEN: equipped starter Knife vs G_PORING dealt
+19/18/18 damage across three consecutive live hits, the target's HP reached 0,
+death notification and quest Wood reward/persistence/0x0B41 pickup all worked.
+Unequipping the Knife during the same MapServer session immediately returned
+subsequent attacks to the genuine unarmed RENEWAL calculation (observed damage
+0 for this character/target state); re-equipping immediately restored
+weapon-aware damage (18/19) without reconnecting, and a second G_PORING died
+with the Wood stack amount increasing. The stock capture's originally observed
+37/36 damage remains validation evidence only, not an input to the
+implementation - the stock capture and this Athena run are not yet proven to
+share identical runtime status/buff state, so that exact-value comparison is
+separate future work.
+
+## Authoritative inventory SlotIndex consistency
+
+The live weapon-combat validation above also exposed a genuine authoritative-
+state consistency bug in the inventory pipeline, now fixed. This section
+documents the resulting invariants.
+
+### The bug
+
+There is exactly ONE authoritative server-side inventory `SlotIndex` namespace:
+a character's own `CharInventory` rows, ordered stably by `Id` ascending
+(`CharInventoryOrdering.InStableSlotOrder`, `src/CharServer/Db/
+CharInventoryOrdering.cs`) - matching pinned rAthena's own load-order-derived
+`sd->inventory.u.items_inventory[]` array position, since neither Athena's
+schema nor real rAthena's own `inventory` SQL table persists a slot column at
+all. **Equipped and unequipped rows share this same namespace** - equip state
+is not a slot-partitioning concern.
+
+`MapServerSession.HandleInventoryListGetAsync` and `HandleInventoryEquipUpdateAsync`
+always used this full ordering. `HandleInventoryAddRequestAsync` previously
+computed its returned `SlotIndex` via `CountAsync(item.Equip == 0 && item.Id <
+row.Id)` - filtering OUT equipped rows - producing a second, incompatible
+namespace: a character with a Knife and Cotton Shirt equipped (2 rows) plus an
+unequipped First Aid Box (1 row) would see the inventory-list read assign
+slots 0/1/2, while an inventory-add for a new Wood row would undercount by the
+2 equipped rows and return the wrong slot. All three handlers now share the
+same `InStableSlotOrder` extension method - there is exactly one place this
+ordering is defined.
+
+Separately, `MapClientSession`'s quest-drop reward path computed the client-facing
+`0x0B41` index from the returned `SlotIndex` but never updated the session's own
+authoritative `_inventory`/`_equipment` runtime state, so the MapServer runtime
+snapshot stayed stale (still reflecting login-time state) after a successful
+pickup, even though CharServer's database was correctly updated and the client
+had already been told the pickup succeeded.
+
+### Fixed invariants
+
+- **One stable server-side inventory `SlotIndex` namespace.** Equipped and
+  unequipped rows occupy the same ordering; equip state never partitions or
+  removes a row from it.
+- **`client_index = server SlotIndex + 2`** is applied ONLY at the wire
+  serialization boundary (pinned `clif.cpp:122-124`), never earlier.
+- **CharServer owns durable inventory state**; MapServer owns the confirmed
+  runtime snapshot of that state (`CharacterInventorySnapshot`, held in
+  `MapClientSession._inventory`).
+- **`CharacterEquipmentSnapshot` is always derived from `CharacterInventorySnapshot`**
+  (`CharacterEquipmentSnapshot.FromInventory`) - never a second, independently
+  mutable copy.
+- **Persisted mutations update MapServer's runtime inventory snapshot BEFORE
+  client notification.** `MapClientSession`'s reward path now calls
+  `_inventory = inventory.WithItem(addedItem)` and re-derives `_equipment`
+  immediately after a successful `CharacterInventorySession.AddItemAsync`,
+  before sending `0x0B41` - matching the same
+  validate -> persist -> update runtime state -> notify ordering
+  `HandleEquipRequestAsync`/`HandleUnequipRequestAsync` already used.
+- **A failed persistence never mutates the runtime snapshot and never notifies
+  the client** (no fake pickup success).
+
+### Internal CharServer <-> MapServer protocol extension
+
+`MapInventoryAddProtocol`'s response (both `CharServer.Net` and `MapServer.Net`
+copies) now carries the persisted row's own authoritative `Equip`/`Identified`/
+`Refine`/`Favorite`/`Bound` fields alongside `newAmount`/`slotIndex` (27 bytes,
+up from 19) - CharServer is the only side that knows these values (e.g.
+`Identify=1` is set at insert time), so MapServer never invents, assumes, or
+duplicates CharServer's persistence rules to reconstruct the authoritative
+`CharacterInventoryItem` this add produced or updated. No `IsNewRow` flag was
+added: `CharacterInventorySnapshot.WithItem` derives new-row-vs-replace purely
+from the returned `SlotIndex` compared against the runtime snapshot's own
+current row count (`SlotIndex == Items.Count` -> append; `SlotIndex <
+Items.Count` -> require the same `ItemId` already at that slot, then replace).
+Any other case - `SlotIndex > Items.Count`, or a slot occupied by a different
+`ItemId` - is treated as an authoritative-state invariant violation and throws
+rather than guessing/repairing, matching this codebase's existing "never
+silently resolve a data invariant violation" convention.
+
+The full chain: `ICharacterInventoryPersistence.AddStackableItemAsync` returns
+a single named `InventoryAddPersistenceResult` record (not a growing tuple) ->
+`CharacterInventorySession.AddItemAsync` builds the authoritative
+`CharacterInventoryItem` from it and returns it via `InventoryAddResult.Item` ->
+`MapClientSession` applies it through `CharacterInventorySnapshot.WithItem`.
+
+### DMG_REPEAT (documented future work, not implemented)
+
+The stock iRO capture strongly suggests one `0x0437` request carrying
+`actionType=DMG_REPEAT` starts a continuing attack sequence from which multiple
+server-side damage events can follow. Athena currently performs exactly one hit
+per `0x0437` request. Implementing a continuing auto-attack loop is a separate
+future combat capability, out of scope for the inventory-consistency fix.
+
+### Quest-state logging (documented cleanup, not addressed)
+
+Some existing quest-state logging describes a `GetQuestStateAsync` read
+operation in terms that read similarly to a persistence mutation. This is a
+pre-existing logging-clarity issue, unrelated to the inventory fix; noted here
+as future cleanup rather than addressed in this task.
+
+## Item-use request (0x00A7) and the First Aid Box container vertical slice
+
+### Live capture evidence
+
+Using the starter First Aid Box from the stock iRO client previously caused the
+session to disconnect: `[WARN] Unsupported map client packet=0x00A7 len=2`. The
+logged length (2) was an artifact of the framing bug below, not the real packet
+length - Athena had never registered `0x00A7` in `PacketLengths`, so
+`ReadPacketAsync` consumed only the 2-byte opcode and returned, and `RunAsync`
+treated that as EOF and disconnected.
+
+Pinned rAthena's generic `clif_packetdb.hpp` table is genuinely ambiguous for
+`0x00A7` across `PACKETVER` branches - it has been `clif_parse_UseItem`
+(`CZ_USE_ITEM`, 8 bytes), `clif_parse_SolveCharName`, `clif_parse_UseSkillToPos`,
+and `clif_parse_WalkToXY` in different historical branches, and the most recent
+branch in the pinned tree maps it to `WalkToXY` - so the generic table alone
+could not prove current-iRO semantics. A targeted, temporary diagnostic
+instrumentation (since removed) drained and logged whatever bytes the client had
+already queued immediately after the opaque 2-byte header, without guessing a
+length. The live capture proved:
+
+```text
+A7 00 04 00 80 84 1E 00 D2
+```
+
+`opcode.W(0x00A7) clientIndex.W(4) accountId.L(2,000,000) opaqueByte.B(0xD2)` -
+the classic `CZ_USE_ITEM` shape (`index.W accountId.L`, `clif.cpp:12077-12078`)
+plus one opaque trailing byte, matching the exact pattern already proven for
+attack/equip/unequip/movement/NPC packets. The `accountId` field exactly matched
+the authenticated session's own account, confirming field identity. Per this
+project's evidence-priority rule, this live capture wins over the ambiguous
+pinned generic table. `PacketConstants.IroCzUseItem = 0x00a7`,
+`IroCzUseItemLength = 9`, registered in `MapClientSession.PacketLengths` exactly
+like every other iRO packet.
+
+### Resolved item and pinned behavior
+
+`clientIndex 4` -> `SlotIndex = clientIndex - 2 = 2` (the same convention every
+other equip/unequip/pickup path already uses) -> the tutorial character's third
+starter row (`char_athena.conf start_items: 1201,1,2:2301,1,16:23484,1,0` -
+Knife equipped, Cotton Shirt equipped, First Aid Box unequipped) -> **ItemId
+23484, "Firstaid_Box_5"**, `GeneratedItems.FirstAidBox` (`UsableItemDefinition`).
+
+Its pinned `db/re/item_db_usable.yml` entry is a container/item-group opener,
+**not** a healing effect - its `Script` is five constant `getitem` statements:
+
+```text
+getitem 11518,10;   // N_Blue_Potion, Healing
+getitem 11614,20;   // Fresh_Milk, Healing
+getitem 12325,15;   // N_Magnifier, DelayConsume
+getitem 22542,1;    // Center_Potion_B, Usable (sc_start effect, not itself a container)
+getitem 23485,1;    // Firstaid_Box_10, Usable (a bigger box, same container pattern)
+```
+
+Traced call chain: `clif_parse_UseItem` (`clif.cpp:12077-12106`) resolves
+`n = server_index(index)` and calls `pc_useitem` (`pc.cpp:6450-6576`), which
+validates via `pc_isUseitem` (`pc.cpp:6276-...`, gate: `type == IT_HEALING ||
+IT_USABLE || IT_CASH` - First Aid Box's `IT_USABLE` passes trivially), then for
+an immediate-consume item (`delay_consume == 0`, no `expire_time`) sends
+`clif_useitemack(sd, n, amount-1, true)` **before** `pc_delitem(sd, n, 1, ...)`,
+then `run_script` executes the item's script. `pc_delitem` (`pc.cpp:6103-6128`)
+does **not** shift/renumber the in-memory array on removal - it `memset`s the
+row to zero in place, still occupying that array index.
+
+### `amount == 1` / row-removal semantics
+
+Athena's `SlotIndex` is derived from stable row-Id ordering
+(`CharInventoryOrdering.InStableSlotOrder`), not a fixed persisted array column,
+so there is no equivalent "zeroed placeholder row" to leave behind. The smallest
+correct translation: **CharServer deletes the row** when its amount reaches zero
+(`MapServerSession.HandleInventoryConsumeAsync`), and MapServer applies that via
+`CharacterInventorySnapshot.WithoutSlot`, which renumbers every later row's
+`SlotIndex` down by one - exactly reproducing what a fresh full inventory reload
+would produce, so a subsequent reconnect and the live runtime snapshot always
+agree. This project has no live-verified evidence of what a real client expects
+mid-session when a LOWER slot is deleted while un-reloaded higher-numbered UI
+elements keep stale indices; the narrow case this task targets (consuming the
+character's only First Aid Box, the LAST occupied slot at time of use) never
+exercises that gap, and it is deliberately left unaddressed rather than guessed
+at.
+
+### Container item data (source-derived, not hardcoded)
+
+`ItemDataCompiler` gained two new concrete `ItemDefinition` subtypes -
+`HealingItemDefinition` (`IT_HEALING`) and `DelayConsumeItemDefinition`
+(`IT_DELAYCONSUME`) - so pinned rows of those types are representable as
+authoritative inventory data without collapsing them into `UsableItemDefinition`
+or `EtcItemDefinition`. Neither type's real gameplay effect (`itemheal`,
+`itemskill`, etc.) is implemented - using any of the five granted items is a
+separate, unimplemented future vertical slice.
+
+`UsableItemDefinition` gained an optional `Grants` field
+(`IReadOnlyList<ItemGrantDefinition>`), populated only when
+`ItemDataCompiler.TryParseGetItemScript` recognizes the item's pinned `Script`
+as a sequence of constant `getitem <id>,<amount>;` statements - the ONLY script
+shape this project models; this project has no general rAthena script
+interpreter. The recognizer only commits to "this is a container" once the
+script's first statement is `getitem` - a Usable item whose script is something
+else entirely (e.g. Center_Potion_B's `sc_start`) simply has no `Grants` (that
+effect stays unmodeled, matching Healing's own unmodeled `itemheal`), but once a
+script DOES start with `getitem`, every remaining statement must also be a
+constant `getitem` or generation fails loudly - never silently representing
+only a getitem prefix and dropping an unrecognized suffix.
+
+`GeneratedItems.FirstAidBox.Grants` is generated data (`compile-item --item-id
+23484 --item-db-file db/re/item_db_usable.yml`) exactly matching the pinned
+script's five `getitem` calls. All five granted items (`BluePotion`,
+`FreshMilk`, `NoviceMagnifier`, `CenterPotionB`, `FirstaidBox10`) are likewise
+real generated item data, registered in `GeneratedItems.ById`, so they exist as
+authoritative inventory rows once granted - `MapClientSession` never invents a
+fake `ItemDefinition` for a granted item id.
+
+### Acknowledgement and architecture
+
+`ZC_USE_ITEM_ACK2` (`0x01C8`, pinned `clif.cpp:4468-4497` /
+`packets_struct.hpp:2577-2589`, `PACKETVER_RE_NUM >= 20180704` branch, 15 bytes:
+`index.W itemId.L accountId.L amount.W result.B`) is the pinned-source layout
+for the current `PACKETVER` branch - not yet independently capture-verified on
+the response side (only the request side has a live capture so far). Pinned
+`clif_useitemack` sends to `AREA` on success (`SELF` only on failure); Athena
+has no cross-session/multi-client broadcast infrastructure at all yet, so this
+slice sends to `SELF` only in both cases - a disclosed, real limitation, not an
+invented simplification.
+
+`MapClientSession.HandleIroUseItemRequestAsync` follows this project's
+validate -> persist -> update runtime state -> notify rule (`AGENTS.md`), which
+is also consistent with pinned `pc_useitem`'s own real ordering for this exact
+immediate-consume case (ack sent from the row's pre-delete state, before
+`pc_delitem` runs) - persisting first and building the ack from the confirmed
+post-persist state produces the same wire values without needing to
+special-case send-before-persist. After the ack, each `getitem` grant executes
+through the SAME `CharacterInventorySession`/runtime-snapshot-update path the
+quest-drop reward loop already uses, and each produces its own `0x0B41` pickup
+notification - matching the pinned script's five independent `getitem` calls,
+not one atomic operation (a grant referencing an unregistered item id is logged
+and skipped, not fatal to the remaining grants).
+
+The internal `MapInventoryConsumeRequest`/`Response` protocol
+(`0x2b37`/`0x2b38`) is new: CharServer resolves the target row from `SlotIndex`
+through the SAME `CharInventoryOrdering.InStableSlotOrder` the list/add/
+equip-update handlers already share, decrements or deletes it (pinned
+`pc_delitem`), and reports `RowDeleted` so MapServer knows whether to replace or
+remove that slot in its own runtime snapshot.

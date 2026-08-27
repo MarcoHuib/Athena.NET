@@ -1,5 +1,6 @@
 {
     "dataworkspace.excludedProjects": [
         "Ragnarok/Ragnarok.sqlproj"
-    ]
+    ],
+    "git.detectSubmodules": false
 }

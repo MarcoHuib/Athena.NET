@@ -390,5 +390,69 @@ Do not reintroduce these without newer verified iRO evidence:
 - iRO map handoff uses `0x0AC5`. **Disproven; capture used `0x0071`.**
 - Generic kRO/rAthena `CZ_ENTER/CZ_ENTER2` is the current stock-iRO MapServer entry packet. **Disproven by observed `0x0C1F/1001`.**
 
+## Verified monster combat wire evidence (G_PORING)
+
+Capture `kill-poring-heal-jobup.pcapng` (exported as a sanitized text form, never committed)
+proves the client-facing wire for killing a real monster on the map connection
+`192.168.178.55:63501 <-> 128.241.92.42:4506`. Target actor `0x00001E9D` (class 2401,
+`G_PORING`, name "Poring"). Reassembly used real packet-length fields, never raw TCP frame
+boundaries; two TCP segments in this capture each coalesce two logical Ragnarok packets.
+
+| Frame | Direction | Packet | Length | Proven meaning |
+|---:|:---:|:---:|---:|---|
+| 566 | S->C | `0x09FF` | 90 | `ZC_NOTIFY_STANDENTRY11` (`clif_set_unit_idle`, `clif.cpp:1041`), struct `packet_idle_unit` (`packets_struct.hpp:832`), gated `PACKETVER>=20141022`. objecttype=5 (`NPC_MOB_TYPE`) at offset 4, actorId at 5, speed=400 at 13, class=2401 at 23, packed position (75,51,dir 0) at 63, HP sentinel 0xFFFFFFFF/0xFFFFFFFF at 73/77 (full HP), name "Poring" at 84. Identical field-offset shape to the existing WARPNPC `0x09FF` (`IroWorldActorPackets.BuildWorldActor`, `FixedLength=84`); differs only in objecttype (5 vs 6) and in carrying a real, state-dependent HP pair rather than an unconditional sentinel. |
+| 566 | S->C | `0x09FD` | 96 | `ZC_NOTIFY_MOVEENTRY11` (`clif_set_unit_walking`, `clif.cpp:1369`), struct `packet_unit_walking` (`packets_struct.hpp:758`). Same header shape as `0x09FF` plus a `moveStartTime` tick at offset 37 and a 6-byte packed src/dst/subcell movement field at offset 67 (decoded (75,51)->(75,57) subcell 8/8) in place of the idle variant's 3-byte static position. Not implemented in Athena's serializer: this slice only sends the standing form, since monster wander/AI movement is not modeled. |
+| 600 | C->S | `0x0368` | 7 | Actor-info request for actor `0x1E9D`; reuses the already-proven generic layout. |
+| 601 | S->C | `0x0ADF` | 58 | Name response "Poring" for actor `0x1E9D`; reuses the already-proven generic layout/serializer unchanged. |
+| 614 | C->S | `0x0437` | 8 | `clif_parse_ActionRequest` (`clif.cpp:11818`), pinned generic length 7 (`clif_packetdb.hpp:1149/1222`), iRO adds one opaque trailing byte matching the established pattern. Fields: id(2), targetActorId(4, offset 2), actionType(1, offset 6, captured value `0x07` = `e_damage_type::DMG_REPEAT`, `clif.hpp:699`, "continuous attack"), opaque trailing byte(1, offset 7). |
+| 620, 659 | S->C | `0x08C8` | 34 | `ZC_NOTIFY_ACT3` (`clif.cpp:5220`): `srcId.L dstId.L tick.L srcSpeed.L dstSpeed.L damage.L isSpDamage.B div.W type.B damage2.L`. Both captured hits deal exactly 37 damage (2x37=74 >= Poring's 55 HP), `div=1`, `type=0` (`DMG_NORMAL`), `damage2=0`. Exact structural match, zero opaque bytes. |
+| 674 | S->C | `0x0088` | 10 | `ZC_STOPMOVE` (`clif.cpp:2204`): `id.L x.W y.W`. Poring stops at (75,57), matching `0x09FD`'s walk destination. |
+| 674 | S->C | `0x02E1` | 33 | `ZC_NOTIFY_ACT2` (`clif.cpp:5219`), same field family as `0x08C8` minus `isSpDamage`. srcId=Poring, dstId=player, damage=0 - the monster's own zero-damage "attack back" visual. Coalesced in the same TCP segment as the preceding `0x0088`. |
+| 694 | S->C | `0x0080` | 7 | `ZC_NOTIFY_VANISH` (`clif.cpp:945`): `id.L type.B`. Captured `type=1`, explicitly documented in pinned source as "died" (distinct from `0`=out of sight, `2`=logged out, `3`=teleport, `4`=trickdead). |
+| 699 | S->C | `0x0B41` | 70 | `ZC_ITEM_PICKUP_ACK` (`packets_struct.hpp:540`, pinned RE `PACKETVER_RE_NUM>=20200723` branch). Exact match: `Index=2, count=1, nameid=6008 (Wood), IsIdentified=1, type=3 (Etc), result=0`. `Index` is the pinned `client_index()` transform (`clif.cpp:122-124`: server-side inventory array position + 2) - captured `Index=2` means Wood landed in server-side array position 0, i.e. the character's first inventory row. Neither Athena's `CharInventory` schema nor real rAthena's own `inventory` SQL table persists a slot/position column; the server-side position is derived from stable row-insertion order among a character's own rows at grant time (`MapServerSession.HandleInventoryAddRequestAsync`), returned through the internal `0x2b31`/`0x2b32` protocol as a new `slotIndex` field, and the wire `+2` transform is applied only at the point of serializing `0x0B41`. |
+
+Respawn/reappearance for this specific actor is **not captured** in this export - the player
+moved away before any second `0x09FF`/`0x09FD` for `0x1E9D` would have appeared. Athena's
+respawn-visibility behavior (reusing the same `0x09FF` standing-entry emission once
+`MonsterRegistry.ProcessDueRespawns` reports the instance alive again) is inferred from pinned
+source (`clif_spawn_unit`/`clif_set_unit_idle` share one code path for first spawn and respawn),
+not independently capture-verified.
+
+A length-field transcription pitfall was found and corrected during this analysis: an early hex
+transcription of frame 566 dropped one 16-byte all-zero row, producing a false apparent
+16-byte "overlap" between `0x09FF` and `0x09FD`. The corrected byte-for-byte transcription
+(verified against both the hex and ASCII-sidebar columns of the source export) shows a fully
+self-consistent 90-byte `0x09FF` immediately followed by a 96-byte `0x09FD`, summing exactly to
+the captured 186-byte TCP payload. There is no length-field anomaly in the real capture.
+
+## Verified equip/unequip request framing (0x0998, 0x00AB)
+
+Live stock-iRO client session, map flow `192.168.178.55 -> 128.241.92.42:4506`. **These two
+C->S request lengths intentionally diverge from pinned rAthena** and are the current
+authoritative shape per the evidence-priority rule (capture overrides pinned source for
+current-client wire behavior).
+
+| Frame | Direction | Packet | Pinned rAthena length | Actual stock-iRO length | Bytes |
+|---:|:---:|:---:|---:|---:|---|
+| 388 | C->S | `0x0998` (`CZ_REQ_WEAR_EQUIP_V5`) | 8 (`packets.hpp:1502-1509`) | **9** | `98 09 02 00 02 00 00 00 5B` |
+| 449 | C->S | `0x0998` | 8 | **9** | `98 09 03 00 10 00 00 00 88` |
+| 370 | C->S | `0x00AB` (`CZ_REQ_TAKEOFF_EQUIP`) | 4 (`clif_packetdb.hpp:59`) | **5** | `AB 00 02 00 4F` |
+| 395 | C->S | `0x00AB` | 4 | **5** | `AB 00 03 00 85` |
+
+Known fields (both packets): `packetType.W`, `index.W` (client inventory index,
+`client_index()` = server slot + 2). `0x0998` additionally carries `position.L` (the requested
+equip-position bitmask) per pinned source, matching the captured `02 00 00 00`=`EQP_HAND_R` and
+`10 00 00 00`=`EQP_ARMOR` values exactly. Each packet's final byte (offset 8 for `0x0998`,
+offset 4 for `0x00AB`) is **not present in pinned rAthena's struct at all** and its semantics
+are unverified - it is consumed (required for correct framing of the next packet) but left
+explicitly opaque, never assigned an invented meaning (checksum/token/anti-cheat, etc.).
+
+**Impact if unmodeled**: parsing these packets at the pinned 8/4-byte lengths leaves exactly
+one real payload byte unconsumed in the receive stream. That byte becomes the leading byte of
+the next packet's 2-byte opcode header, producing a corrupted opcode - live-observed as
+`0xAB98` (leftover `0x98` from an under-read `0x0998` + leading `0xAB` of the following
+`0x00AB`) and `0x6025` (a further cascading desync). Athena now reads
+`IroCzReqWearEquipLength=9` / `IroCzReqTakeoffEquipLength=5`, eliminating the residue.
+
 ## Capture handling
 Official captures can contain credentials, account/session identifiers, bearer/JWT-like tokens, and other sensitive authentication material. Never commit unsanitized PCAPs or raw token dumps to the repository.

@@ -14,18 +14,27 @@ namespace Athena.Net.MapServer.World;
 public sealed class MonsterRegistry
 {
     private readonly TimeProvider _timeProvider;
+    private readonly IMobSpawnCellSelector _cellSelector;
     private readonly List<MobInstance> _instances = [];
     private readonly Dictionary<uint, MobInstance> _byActorId = [];
 
     public MonsterRegistry(IEnumerable<MobSpawnDefinition> spawns, WorldActorIdAllocator allocator, IMobSpawnCellSelector cellSelector, TimeProvider timeProvider)
     {
         _timeProvider = timeProvider;
+        _cellSelector = cellSelector;
         foreach (var spawn in spawns)
         {
             for (var i = 0; i < spawn.Count; i++)
             {
-                var (x, y) = cellSelector.SelectCell(spawn, i);
-                var instance = new MobInstance(allocator.Allocate(), spawn, x, y);
+                // Pinned mob_spawn does NOT treat exhausting its 8+50 random-attempt budget as a
+                // fatal configuration error - it schedules mob_delayspawn and retries later
+                // (mob.cpp:1152-1159). Athena matches that exactly at startup too: an instance that
+                // cannot be placed immediately is created "pending" (Dead, respawn already due) via
+                // MobInstance.CreatePending, reusing the EXISTING ProcessDueRespawns retry sweep -
+                // never a thrown exception, and never a silent fallback coordinate.
+                var instance = cellSelector.TrySelectCell(spawn, i, out var position)
+                    ? new MobInstance(allocator.Allocate(), spawn, position.X, position.Y)
+                    : MobInstance.CreatePending(allocator.Allocate(), spawn, timeProvider.GetUtcNow().UtcTicks);
                 _instances.Add(instance);
                 _byActorId[instance.ActorId] = instance;
             }
@@ -35,9 +44,12 @@ public sealed class MonsterRegistry
     public IReadOnlyList<MobInstance> AllInstances => _instances;
 
     public IEnumerable<MobInstance> GetVisibleInstances(string mapName, ushort x, ushort y, ushort range = 14) =>
-        _instances.Where(instance => instance.IsAlive
-            && string.Equals(instance.Map, mapName, StringComparison.OrdinalIgnoreCase)
-            && Math.Abs((int)instance.X - x) <= range && Math.Abs((int)instance.Y - y) <= range);
+        _instances.Where(instance =>
+        {
+            if (!instance.IsAlive || !string.Equals(instance.Map, mapName, StringComparison.OrdinalIgnoreCase)) return false;
+            var position = instance.GetPosition(); // One atomic snapshot - never torn between axes.
+            return Math.Abs((int)position.X - x) <= range && Math.Abs((int)position.Y - y) <= range;
+        });
 
     public bool TryGetInstance(uint actorId, string mapName, out MobInstance instance)
     {
@@ -63,15 +75,35 @@ public sealed class MonsterRegistry
     // Applies any respawns whose due time has passed. Callers (a background
     // loop, or a test driving TimeProvider directly) invoke this rather than
     // one Timer per monster instance, matching CharacterStatusEffectState's
-    // "no timer per entry" scheduling philosophy.
-    public int ProcessDueRespawns()
+    // "no timer per entry" scheduling philosophy. Returns the instances that ACTUALLY respawned
+    // this call (not merely a count) - MapTcpServer's own live tick loop needs to know WHICH
+    // instances came back so it can fan out a fresh client-facing spawn/stand notification to any
+    // session whose visibility now covers the respawn position; a killer session had already
+    // removed the actor from its own _visibleActorIds on death (see
+    // MapClientSession's existing vanish-on-death handling), so nothing else re-discovers a
+    // respawned instance on its own once respawned.
+    public IReadOnlyList<MobInstance> ProcessDueRespawns()
     {
         var now = _timeProvider.GetUtcNow().UtcTicks;
-        var count = 0;
+        var respawned = new List<MobInstance>();
         foreach (var instance in _instances)
         {
-            if (instance.TryRespawn(now)) count++;
+            // instanceIndex=0: TrySelectCell's instanceIndex parameter only has meaning for the
+            // initial batch-spawn loop above (spreading UnverifiedFallbackMobSpawnCellSelector's
+            // deterministic placeholder row across N instances); a respawn is a single independent
+            // re-selection for one already-existing instance, matching pinned mob_spawn re-running
+            // map_search_freecell fresh on every call with no memory of "which instance number"
+            // this is.
+            //
+            // A `false` TrySelectCell result (attempt budget exhausted - a genuine temporary
+            // failure, see IMobSpawnCellSelector's own doc comment) makes TryRespawn itself return
+            // false and leave the instance Dead with its respawn already scheduled - the NEXT call
+            // to this same ProcessDueRespawns sweep will try again, exactly matching pinned
+            // mob_spawn's own mob_delayspawn retry-later behavior without introducing any new
+            // timer/scheduler.
+            if (instance.TryRespawn(now, () => _cellSelector.TrySelectCell(instance.Spawn, 0, out var position) ? (true, position) : (false, default)))
+                respawned.Add(instance);
         }
-        return count;
+        return respawned;
     }
 }

@@ -93,39 +93,56 @@ dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- compile
   --name 'Wounded Swordsman#intro_npc01_iz_int' \
   --name 'Captain Carocc#intro_npc03' \
   --name 'Lumin#new_ship' \
-  --exclude-placement 'npc:iz_int:wounded swordsman#intro_npc01_iz_int' \
-  --exclude-placement 'npc:int_land:captain carocc#intro_npc03' \
-  --exclude-placement 'npc:int_land:lumin#new_ship' \
   --no-behavior 'Lumin#new_ship' \
   --warp-name '#ship_out' \
   --warp-name '#intro_to_izlude' \
-  --warp-exclude-placement 'warp:iz_int:ship_out' \
-  --warp-exclude-placement 'warp:int_land01:intro_to_izlude_a' \
-  --warp-exclude-placement 'warp:int_land02:intro_to_izlude_b' \
-  --warp-exclude-placement 'warp:int_land03:intro_to_izlude_c' \
-  --warp-exclude-placement 'warp:int_land:intro_to_izlude' \
   --namespace Athena.Net.MapServer.Generated.World.Izlude.Academy \
+  --rathena-commit e985006171d2eb320ee512a653f4c83aea3d81b6 \
   --output-dir src/MapServer/Generated/World/Izlude/Academy
 ```
 
-`--exclude-placement`/`--warp-exclude-placement` preserve today's exact
-vertical slice: the pinned `Wounded Swordsman#intro_npc01_iz_int` OnTouch body
-isn't currently lowerable (a `sleep2` timer construct), so only its OnClick
-("Lying"/cloak-toggle) behavior is emitted; `#ship_out`'s and
-`#intro_to_izlude`'s own template placements (`iz_int`/`int_land`) and
-`#intro_to_izlude`'s `_a/_b/_c` duplicates were never part of the original
-hand-curated registry, matching `int_land`'s Captain Carocc/Lumin template
-placements. `--no-behavior` keeps Lumin actor-only: it has real, non-trivial
-rAthena click dialogue (the converter finds it losslessly), but its script
+No `--exclude-placement`/`--warp-exclude-placement` flags: every generic/base
+template placement (`iz_int`/`int_land`, not just their `01`-`04` instanced
+duplicates) is a genuinely valid member of the same pinned `duplicate(...)`
+family and must be emitted. An earlier version of this command excluded the
+generic `iz_int`/`int_land` template placements entirely (treating them as if
+only the numbered duplicates were "real" content) — this made the generic
+`iz_int` tutorial variant (one of five maps `start_point` can place a new
+character on) silently incomplete: no visible Wounded Swordsman, no
+`#ship_out` exit, and downstream no `#intro_to_izlude`/Captain
+Carocc/Lumin on generic `int_land` either. That was a regeneration-selection
+bug, not an intentional narrower slice — see
+`WorldMapRegistryFamilyTests` (`tests/MapServer.Tests/World/`) for the
+regression coverage across all five `iz_int`/`int_land` family members.
+
+`--no-behavior` keeps Lumin actor-only: it has real, non-trivial rAthena
+click dialogue (the converter finds it losslessly), but its script
 deliberately stays unregistered pending real inventory runtime support (see
 `ai/world-data.md`) — this is an explicit emission-time decision, not a
-converter limitation. Captain Carocc's script is registered: it only needs
-dialogue/quest/heal/status/EXP runtime capabilities, which now all exist.
+converter limitation, and is orthogonal to placement: Lumin's ACTOR still
+exists on every `int_land`/`int_land01..04` map even though its click
+behavior is not yet callable. Captain Carocc's script is registered: it only
+needs dialogue/quest/heal/status/EXP runtime capabilities, which now all
+exist. The pinned `Wounded Swordsman#intro_npc01_iz_int` OnTouch body still
+isn't lowerable (a `sleep2` timer construct) — the compiler itself skips it
+automatically (no exclusion flag needed) and only its OnClick
+("Lying"/cloak-toggle) behavior is emitted; this is a separate, still-open
+lowering-capability gap, not a placement issue.
 
-Omitting the exclusion/no-behavior flags entirely emits every placement and
-behavior the converter finds for the selected `--name`/`--warp-name`
-templates — the normal, fully-reproducible-from-source case for new content
-that doesn't need to preserve a pre-existing narrower slice.
+`--rathena-commit` must be the value of the pinned `legacy/rathena` gitlink
+(`git submodule status`), never a stale/unrelated SHA — this value is stamped
+into generated file comments and `WorldSourceInfo`/`NpcDefinition.Source`
+provenance data for traceability, so it must always match what was actually
+read from disk during this invocation.
+
+Omitting `--exclude-placement`/`--warp-exclude-placement`/`--no-behavior`
+entirely emits every placement and behavior the converter finds for the
+selected `--name`/`--warp-name` templates — the normal, fully-reproducible-
+from-source case. Use `--exclude-placement`/`--warp-exclude-placement` only
+when a specific individual duplicate is NOT a valid member of the intended
+generated slice (e.g. a map instance this MapServer build doesn't serve at
+all) — never merely because a placement happens to be the generic/base
+template of a `duplicate(...)` family.
 
 `compile-npc-world` writes one area-level `AcademyWorld.cs` (one
 `world.AddNpc(...)`/`world.AddWarpTrigger(...)` call per definition), one
@@ -135,6 +152,32 @@ area-level `AcademyWarpTriggers.cs` when `--warp-name` is given (one
 unique executable behavior — no per-NPC generated fragments, no hand-maintained
 registration list to edit when new content is added within the same
 invocation's scope.
+
+The current checked `AcademyNavigation.cs` (`navigateto(...)` targets for the
+tutorial's opening/room-transition NPCs) is reproduced with:
+
+```bash
+dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- compile-navigation \
+  --source-root legacy/rathena/npc/re/jobs/novice \
+  --name 'iz_int#intro_start' --name 'iz_int01#intro_start' --name 'iz_int02#intro_start' \
+  --name 'iz_int03#intro_start' --name 'iz_int04#intro_start' \
+  --name 'iz_int#intro_evt02' --name 'iz_int01#intro_evt02' --name 'iz_int02#intro_evt02' \
+  --name 'iz_int03#intro_evt02' --name 'iz_int04#intro_evt02' \
+  --namespace Athena.Net.MapServer.Generated.World.Izlude.Academy \
+  --output src/MapServer/Generated/World/Izlude/Academy/AcademyNavigation.cs
+```
+
+`--name` must list every instance whose navigation should be emitted,
+including the generic/base `iz_int#intro_start`/`iz_int#intro_evt02` template
+declarations, not just their `01`-`04` duplicates — an earlier version of
+this invocation omitted the generic instances, silently leaving the generic
+`iz_int` tutorial variant without navigation arrows (see the
+`compile-npc-world` note above for the matching placement-side bug).
+`--namespace` defaults to `Athena.Net.MapServer.Generated.World.Izlude` if
+omitted; the checked-in file uses the `.Academy` sub-namespace to match every
+other Academy-generated file. `compile-navigation` does not stamp a
+`rathena-commit` value into its output (no `--rathena-commit` flag exists for
+it) since `AcademyNavigation.cs` carries no provenance/commit metadata at all.
 
 ## Offline JSON conversion
 

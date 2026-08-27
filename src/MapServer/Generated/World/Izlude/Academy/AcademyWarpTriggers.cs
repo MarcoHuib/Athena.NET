@@ -11,9 +11,9 @@ internal static class AcademyWarpTriggers
     internal static readonly WarpTriggerDefinition IntroToIzlude = new(
         "npcdef:legacy/rathena/npc/re/warps/cities/izlude.txt:intro_to_izlude", "#intro_to_izlude",
         new("OnTouch", static () => new Athena.Net.MapServer.Generated.World.Izlude.Academy.Scripts.IntroToIzludeOnTouchScript()),
-        new("rAthena", "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca", "legacy/rathena/npc/re/warps/cities/izlude.txt", 83));
+        new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/warps/cities/izlude.txt", 83));
     internal static readonly WarpTriggerDefinition ShipOut = new(
         "npcdef:legacy/rathena/npc/re/warps/cities/izlude.txt:ship_out", "#ship_out",
         new("OnTouch", static () => new Athena.Net.MapServer.Generated.World.Izlude.Academy.Scripts.ShipOutOnTouchScript()),
-        new("rAthena", "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca", "legacy/rathena/npc/re/warps/cities/izlude.txt", 69));
+        new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/warps/cities/izlude.txt", 69));
 }

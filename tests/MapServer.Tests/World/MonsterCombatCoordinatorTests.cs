@@ -1,3 +1,4 @@
+using Athena.Net.MapServer.Gameplay.Rules.Renewal;
 using Athena.Net.MapServer.World;
 
 namespace Athena.Net.MapServer.Tests.World;
@@ -11,11 +12,16 @@ public sealed class MonsterCombatCoordinatorTests
         Id: 2401, AegisName: "G_PORING", Name: "Poring", Level: 1, MaxHp: maxHp,
         Attack: 1, Attack2: 1, Defense: 2, MagicDefense: 5,
         Str: 6, Agi: 1, Vit: 1, Int: 0, Dex: 6, Luk: 5,
-        AttackRange: 1, WalkSpeed: 400, AttackDelay: 1872,
-        BaseExp: 0, JobExp: 0,
+        AttackRange: 1, WalkSpeed: 400, AttackDelay: 1872, AttackMotion: 672, DamageMotion: 480,
+        BaseExp: 0, JobExp: 0, Mode: MobMode.CanMove | MobMode.CanAttack,
         Source: new("rAthena", "abc", "db/re/mob_db.yml", 1));
 
     private static EffectiveCharacterStats StrongAttacker() => new(50, 9, 9, 9, 20, 9, 0, 0);
+
+    private static WeaponItemDefinition MakeKnife() => new(
+        Id: 1201, AegisName: "Knife", Name: "Knife", Stackable: false, ClientViewId: 1201,
+        Attack: 17, WeaponLevel: 1, WeaponType: WeaponType.Dagger, Range: 1, EquipLocation: 0x000002,
+        Source: new("rAthena", "abc", "db/re/item_db_equip.yml", 1));
 
     private static Func<uint, CharacterQuestStatus> ActiveOnly(uint questId) => id => id == questId ? CharacterQuestStatus.Active : CharacterQuestStatus.Absent;
     private static readonly Func<uint, CharacterQuestStatus> NoActiveQuests = _ => CharacterQuestStatus.Absent;
@@ -25,14 +31,14 @@ public sealed class MonsterCombatCoordinatorTests
         var spawn = new MobSpawnDefinition(MakeGPoring(maxHp), "int_land01", 1, 5000, new("rAthena", "abc", "x.txt", 1));
         var registry = new MonsterRegistry([spawn], new WorldActorIdAllocator(), new FixedCellSelector(50, 50), clock ?? new FakeTimeProvider());
         var questDrops = new QuestDropResolver([new(Quest21008, 2401, WoodId, 1, 10000, new("rAthena", "abc", "quest_db.yml", 1))]);
-        return (new MonsterCombatCoordinator(registry, questDrops), registry.AllInstances[0]);
+        return (new MonsterCombatCoordinator(registry, questDrops, new RenewalBasicAttackRules()), registry.AllInstances[0]);
     }
 
     [Fact]
     public void Attack_NonLethalHit_NoDropsNoDeath()
     {
         var (coordinator, instance) = MakeScenario(maxHp: 9999);
-        var outcome = coordinator.Attack(instance, StrongAttacker(), 1, ActiveOnly(Quest21008));
+        var outcome = coordinator.Attack(instance, 1001, StrongAttacker(), 1, null, ActiveOnly(Quest21008));
 
         Assert.True(outcome.Accepted);
         Assert.False(outcome.KilledByThisHit);
@@ -44,7 +50,7 @@ public sealed class MonsterCombatCoordinatorTests
     public void Attack_LethalHit_WithActiveQuest_AwardsWoodExactlyOnce()
     {
         var (coordinator, instance) = MakeScenario(maxHp: 1);
-        var outcome = coordinator.Attack(instance, StrongAttacker(), 1, ActiveOnly(Quest21008));
+        var outcome = coordinator.Attack(instance, 1001, StrongAttacker(), 1, null, ActiveOnly(Quest21008));
 
         Assert.True(outcome.KilledByThisHit);
         Assert.Single(outcome.QuestDrops);
@@ -56,7 +62,7 @@ public sealed class MonsterCombatCoordinatorTests
     public void Attack_LethalHit_WithoutActiveQuest_NoDrop()
     {
         var (coordinator, instance) = MakeScenario(maxHp: 1);
-        var outcome = coordinator.Attack(instance, StrongAttacker(), 1, NoActiveQuests);
+        var outcome = coordinator.Attack(instance, 1001, StrongAttacker(), 1, null, NoActiveQuests);
 
         Assert.True(outcome.KilledByThisHit);
         Assert.Empty(outcome.QuestDrops);
@@ -66,9 +72,9 @@ public sealed class MonsterCombatCoordinatorTests
     public void Attack_AgainstAlreadyDeadMonster_IsRejected()
     {
         var (coordinator, instance) = MakeScenario(maxHp: 1);
-        coordinator.Attack(instance, StrongAttacker(), 1, ActiveOnly(Quest21008));
+        coordinator.Attack(instance, 1001, StrongAttacker(), 1, null, ActiveOnly(Quest21008));
 
-        var secondAttack = coordinator.Attack(instance, StrongAttacker(), 1, ActiveOnly(Quest21008));
+        var secondAttack = coordinator.Attack(instance, 1001, StrongAttacker(), 1, null, ActiveOnly(Quest21008));
 
         Assert.False(secondAttack.Accepted);
         Assert.Empty(secondAttack.QuestDrops); // No second award for the same death.
@@ -79,11 +85,11 @@ public sealed class MonsterCombatCoordinatorTests
     {
         var clock = new FakeTimeProvider();
         var (coordinator, instance) = MakeScenario(maxHp: 1, clock: clock);
-        coordinator.Attack(instance, StrongAttacker(), 1, ActiveOnly(Quest21008));
+        coordinator.Attack(instance, 1001, StrongAttacker(), 1, null, ActiveOnly(Quest21008));
 
         clock.Advance(TimeSpan.FromMilliseconds(5000));
-        Assert.False(instance.TryRespawn(clock.GetUtcNow().UtcTicks - 1)); // Not due yet at an earlier instant.
-        Assert.True(instance.TryRespawn(clock.GetUtcNow().UtcTicks));
+        Assert.False(instance.TryRespawn(clock.GetUtcNow().UtcTicks - 1, () => (true, new MobPosition(0, 0)))); // Not due yet at an earlier instant.
+        Assert.True(instance.TryRespawn(clock.GetUtcNow().UtcTicks, () => (true, new MobPosition(0, 0))));
         Assert.True(instance.IsAlive);
     }
 
@@ -91,11 +97,154 @@ public sealed class MonsterCombatCoordinatorTests
     public void TwoLethalAttacksInSuccession_OnlyFirstCountsAsKill()
     {
         var (coordinator, instance) = MakeScenario(maxHp: 1);
-        var first = coordinator.Attack(instance, StrongAttacker(), 1, ActiveOnly(Quest21008));
-        var second = coordinator.Attack(instance, StrongAttacker(), 1, ActiveOnly(Quest21008));
+        var first = coordinator.Attack(instance, 1001, StrongAttacker(), 1, null, ActiveOnly(Quest21008));
+        var second = coordinator.Attack(instance, 1001, StrongAttacker(), 1, null, ActiveOnly(Quest21008));
 
         Assert.True(first.KilledByThisHit);
         Assert.False(second.Accepted);
         Assert.Single(first.QuestDrops);
+    }
+
+    // A weak (fresh-Novice-like) attacker unarmed frequently misses G_PORING; the same
+    // attacker with a Knife equipped should deal real damage - proving the coordinator
+    // actually dispatches to WeaponAttackCalculator (not silently reusing the unarmed
+    // path) whenever a non-null WeaponItemDefinition is supplied, without depending on
+      // either calculator's exact per-hit value.
+    [Fact]
+    public void Attack_WithEquippedWeapon_DispatchesToWeaponCalculator_DealsMoreDamageThanUnarmed()
+    {
+        var freshNovice = new EffectiveCharacterStats(9, 9, 9, 9, 9, 9, 0, 0);
+        var (unarmedCoordinator, unarmedInstance) = MakeScenario(maxHp: 9999);
+        var (armedCoordinator, armedInstance) = MakeScenario(maxHp: 9999);
+
+        var unarmedOutcome = unarmedCoordinator.Attack(unarmedInstance, 1001, freshNovice, 1, null, NoActiveQuests);
+        var armedOutcome = armedCoordinator.Attack(armedInstance, 1001, freshNovice, 1, MakeKnife(), NoActiveQuests);
+
+        Assert.True(unarmedOutcome.Accepted);
+        Assert.True(armedOutcome.Accepted);
+        var unarmedDamage = unarmedOutcome.HpBefore - unarmedOutcome.HpAfter;
+        var armedDamage = armedOutcome.HpBefore - armedOutcome.HpAfter;
+        Assert.True(armedDamage > unarmedDamage);
+    }
+
+    // Re-equipping/unequipping mid-session must change the very next attack's
+    // calculation with no coordinator-side caching to invalidate - the coordinator
+    // never resolves equipment itself, so this just confirms passing null vs a weapon
+    // on successive calls against the SAME instance both take effect immediately.
+    [Fact]
+    public void Attack_SameInstance_SwitchingWeaponArgumentBetweenCalls_ChangesCalculatorUsed()
+    {
+        var freshNovice = new EffectiveCharacterStats(9, 9, 9, 9, 9, 9, 0, 0);
+        var (coordinator, instance) = MakeScenario(maxHp: 999999);
+
+        var unarmedOutcome = coordinator.Attack(instance, 1001, freshNovice, 1, null, NoActiveQuests);
+        var armedOutcome = coordinator.Attack(instance, 1001, freshNovice, 1, MakeKnife(), NoActiveQuests);
+        var unarmedAgainOutcome = coordinator.Attack(instance, 1001, freshNovice, 1, null, NoActiveQuests);
+
+        var unarmedDamage = unarmedOutcome.HpBefore - unarmedOutcome.HpAfter;
+        var armedDamage = armedOutcome.HpBefore - armedOutcome.HpAfter;
+        var unarmedAgainDamage = unarmedAgainOutcome.HpBefore - unarmedAgainOutcome.HpAfter;
+
+        Assert.True(armedDamage > unarmedDamage);
+        Assert.True(armedDamage > unarmedAgainDamage);
+    }
+
+    // ===== Target acquisition on Attack (mob_set_attacked_id -> mob_ai_sub_hard target promotion) =====
+
+    [Fact]
+    public void Attack_AgainstAnUntargetedMob_AcquiresAttackerAsTarget()
+    {
+        var (coordinator, instance) = MakeScenario(maxHp: 9999);
+
+        coordinator.Attack(instance, attackerAccountId: 500, StrongAttacker(), 1, null, NoActiveQuests);
+
+        Assert.True(instance.HasActiveTarget);
+        Assert.Equal(500u, instance.Engagement.TargetAccountId);
+        Assert.Equal(MobCombatState.Rush, instance.Engagement.State);
+    }
+
+    // Item 6: G_PORING's mode lacks MD_CHANGETARGETCHASE - a second attacker's hits land normally
+    // (damage still applies) but must not steal the target while the mob is already engaged.
+    [Fact]
+    public void Attack_BySecondPlayerWhileFirstIsTargeted_DealsDamageButDoesNotStealTarget()
+    {
+        var (coordinator, instance) = MakeScenario(maxHp: 9999);
+        coordinator.Attack(instance, attackerAccountId: 500, StrongAttacker(), 1, null, NoActiveQuests);
+
+        var secondOutcome = coordinator.Attack(instance, attackerAccountId: 600, StrongAttacker(), 1, null, NoActiveQuests);
+
+        Assert.True(secondOutcome.Accepted);
+        Assert.True(secondOutcome.HpBefore > secondOutcome.HpAfter); // Damage still applies.
+        Assert.Equal(500u, instance.Engagement.TargetAccountId); // Target unchanged.
+    }
+
+    [Fact]
+    public void Attack_LethalHit_LeavesNoStaleTargetOnTheNowDeadInstance()
+    {
+        var (coordinator, instance) = MakeScenario(maxHp: 1);
+
+        coordinator.Attack(instance, attackerAccountId: 500, StrongAttacker(), 1, null, ActiveOnly(Quest21008));
+
+        Assert.False(instance.HasActiveTarget);
+    }
+
+    // ===== Section 15: quest-state resolution is LAZY, only on a killing hit =====
+
+    [Fact]
+    public async Task AttackAsync_NonLethalHit_NeverInvokesTheQuestStateResolver()
+    {
+        var (coordinator, instance) = MakeScenario(maxHp: 9999);
+        var resolverCallCount = 0;
+        Task<Func<uint, CharacterQuestStatus>> Resolver()
+        {
+            resolverCallCount++;
+            return Task.FromResult(ActiveOnly(Quest21008));
+        }
+
+        var outcome = await coordinator.AttackAsync(instance, attackerAccountId: 500, StrongAttacker(), 1, null, Resolver);
+
+        Assert.False(outcome.KilledByThisHit);
+        Assert.Equal(0, resolverCallCount);
+    }
+
+    [Fact]
+    public async Task AttackAsync_LethalHit_InvokesTheQuestStateResolverExactlyOnce()
+    {
+        var (coordinator, instance) = MakeScenario(maxHp: 1);
+        var resolverCallCount = 0;
+        Task<Func<uint, CharacterQuestStatus>> Resolver()
+        {
+            resolverCallCount++;
+            return Task.FromResult(ActiveOnly(Quest21008));
+        }
+
+        var outcome = await coordinator.AttackAsync(instance, attackerAccountId: 500, StrongAttacker(), 1, null, Resolver);
+
+        Assert.True(outcome.KilledByThisHit);
+        Assert.Single(outcome.QuestDrops);
+        Assert.Equal(1, resolverCallCount);
+    }
+
+    // For a multi-hit kill (three ordinary hits, the third lethal), only that THIRD hit may ever
+    // invoke the resolver - reproducing the exact live-log pattern (hit 1 -> roundtrip, hit 2 ->
+    // roundtrip, hit 3 -> kill) this optimization fixes.
+    [Fact]
+    public async Task AttackAsync_MultiHitKill_ResolverInvokedOnlyOnTheFinalLethalHit()
+    {
+        var (coordinator, instance) = MakeScenario(maxHp: 3); // Three 1-damage hits to kill.
+        var weakAttacker = new EffectiveCharacterStats(1, 1, 1, 1, 1, 1, 0, 0);
+        var resolverCallCount = 0;
+        Task<Func<uint, CharacterQuestStatus>> Resolver()
+        {
+            resolverCallCount++;
+            return Task.FromResult(ActiveOnly(Quest21008));
+        }
+
+        MonsterAttackOutcome outcome = default;
+        for (var i = 0; i < 20 && instance.IsAlive; i++)
+            outcome = await coordinator.AttackAsync(instance, attackerAccountId: 500, StrongAttacker(), 1, null, Resolver);
+
+        Assert.True(outcome.KilledByThisHit);
+        Assert.Equal(1, resolverCallCount);
     }
 }

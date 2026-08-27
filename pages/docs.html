@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Documentation — Athena.NET</title>
+<meta name="description" content="Browse Athena.NET installation, architecture, gameplay, world-data and verified iRO protocol documentation.">
+<meta name="theme-color" content="#080b12">
+<link rel="canonical" href="https://athenanet.nl/docs.html">
+<meta property="og:title" content="Athena.NET Documentation"><meta property="og:type" content="website">
+<link rel="stylesheet" href="assets/styles.css">
+</head>
+<body>
+
+<header class="nav">
+  <div class="container nav-inner">
+    <a class="brand" href="index.html" aria-label="Athena.NET home">
+      <span class="brand-mark"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 2 20 6.5v11L12 22l-8-4.5v-11L12 2Z" stroke="currentColor" stroke-width="1.6"/><path d="m8.2 15.4 3.8-7 3.8 7M9.5 13h5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></span>
+      <span>Athena.NET<small>modern iRO server</small></span>
+    </a>
+    <nav class="nav-links" aria-label="Primary">
+      <a href="index.html#project">Project</a>
+      <a href="index.html#architecture">Architecture</a>
+      <a href="index.html#status">Status</a>
+      <a href="docs.html">Documentation</a>
+    </nav>
+    <div class="nav-actions">
+      <a class="btn hide-mobile" href="https://github.com/MarcoHuib/Athena.NET/stargazers" target="_blank" rel="noopener">★ <span data-stars>Star</span></a>
+      <a class="btn primary" href="https://github.com/MarcoHuib/Athena.NET" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .7a11.3 11.3 0 0 0-3.57 22c.57.1.77-.25.77-.55v-2.17c-3.14.68-3.8-1.33-3.8-1.33-.51-1.31-1.25-1.66-1.25-1.66-1.03-.7.08-.69.08-.69 1.13.08 1.73 1.17 1.73 1.17 1.01 1.73 2.65 1.23 3.3.94.1-.73.4-1.23.72-1.51-2.5-.29-5.14-1.25-5.14-5.58 0-1.23.44-2.24 1.16-3.03-.12-.29-.5-1.44.11-2.99 0 0 .95-.3 3.1 1.16a10.8 10.8 0 0 1 5.65 0c2.16-1.46 3.1-1.16 3.1-1.16.62 1.55.23 2.7.12 2.99.72.79 1.15 1.8 1.15 3.03 0 4.34-2.64 5.29-5.16 5.57.41.35.77 1.04.77 2.1v3.16c0 .3.2.66.78.55A11.3 11.3 0 0 0 12 .7Z"/></svg> GitHub</a>
+    </div>
+  </div>
+</header>
+<main>
+  <section class="docs-hero">
+    <div class="container">
+      <span class="eyebrow"><span class="dot"></span> Pinned to a7513e2</span>
+      <h1><span class="gradient-text">Documentation</span></h1>
+      <p>One premium index for the repository's 32 Markdown documents. Every reader page is pinned to the exact <code>feature/poring-live-wire</code> snapshot used to build this site.</p>
+      <div class="search-wrap"><span class="search-icon">⌕</span><input data-doc-search type="search" placeholder="Search architecture, iRO wire, MapServer, Aspire…" aria-label="Search documentation"></div>
+    </div>
+  </section>
+  <div class="container">
+    <section class="group" data-doc-group>
+      <div class="group-title"><h2>Project</h2><span class="count">2</span></div>
+      <div class="docs-grid"><a class="doc-card" data-search-card="project readme readme.md project overview, current status, roadmap, architecture direction and public entry points." href="docs/readme.html">
+          <small>Project</small><h3>Project README</h3><p>Project overview, current status, roadmap, architecture direction and public entry points.</p>
+          <div class="doc-path">README.md</div>
+        </a>
+<a class="doc-card" data-search-card="onboarding onboarding.md repository onboarding and the fastest route into the athena.net codebase." href="docs/onboarding.html">
+          <small>Project</small><h3>Onboarding</h3><p>Repository onboarding and the fastest route into the Athena.NET codebase.</p>
+          <div class="doc-path">ONBOARDING.md</div>
+        </a></div>
+    </section><section class="group" data-doc-group>
+      <div class="group-title"><h2>Maintainer notes</h2><span class="count">2</span></div>
+      <div class="docs-grid"><a class="doc-card" data-search-card="agent instructions agents.md repository-wide implementation guidance for coding agents and contributors." href="docs/agents.html">
+          <small>Maintainer notes</small><h3>Agent instructions</h3><p>Repository-wide implementation guidance for coding agents and contributors.</p>
+          <div class="doc-path">AGENTS.md</div>
+        </a>
+<a class="doc-card" data-search-card="claude guidance claude.md repository guidance used by claude-based development workflows." href="docs/claude.html">
+          <small>Maintainer notes</small><h3>Claude guidance</h3><p>Repository guidance used by Claude-based development workflows.</p>
+          <div class="doc-path">CLAUDE.md</div>
+        </a></div>
+    </section><section class="group" data-doc-group>
+      <div class="group-title"><h2>Getting started</h2><span class="count">8</span></div>
+      <div class="docs-grid"><a class="doc-card" data-search-card="installation docs/installation.md prerequisites and installation steps for athena.net." href="docs/docs-installation.html">
+          <small>Getting started</small><h3>Installation</h3><p>Prerequisites and installation steps for Athena.NET.</p>
+          <div class="doc-path">docs/installation.md</div>
+        </a>
+<a class="doc-card" data-search-card="configuration docs/configuration.md configuration model and local settings." href="docs/docs-configuration.html">
+          <small>Getting started</small><h3>Configuration</h3><p>Configuration model and local settings.</p>
+          <div class="doc-path">docs/configuration.md</div>
+        </a>
+<a class="doc-card" data-search-card="run locally docs/run-locally.md run the athena.net services on a development machine." href="docs/docs-run-locally.html">
+          <small>Getting started</small><h3>Run locally</h3><p>Run the Athena.NET services on a development machine.</p>
+          <div class="doc-path">docs/run-locally.md</div>
+        </a>
+<a class="doc-card" data-search-card=".net aspire docs/aspire.md local orchestration using .net aspire." href="docs/docs-aspire.html">
+          <small>Getting started</small><h3>.NET Aspire</h3><p>Local orchestration using .NET Aspire.</p>
+          <div class="doc-path">docs/aspire.md</div>
+        </a>
+<a class="doc-card" data-search-card="docker compose docs/docker-compose.md container-based local startup with docker compose." href="docs/docs-docker-compose.html">
+          <small>Getting started</small><h3>Docker Compose</h3><p>Container-based local startup with Docker Compose.</p>
+          <div class="doc-path">docs/docker-compose.md</div>
+        </a>
+<a class="doc-card" data-search-card="database migrations docs/migrations.md database migration workflow." href="docs/docs-migrations.html">
+          <small>Getting started</small><h3>Database migrations</h3><p>Database migration workflow.</p>
+          <div class="doc-path">docs/migrations.md</div>
+        </a>
+<a class="doc-card" data-search-card="sql edge / sql development docs/sql-edge.md database notes for the local development stack." href="docs/docs-sql-edge.html">
+          <small>Getting started</small><h3>SQL Edge / SQL development</h3><p>Database notes for the local development stack.</p>
+          <div class="doc-path">docs/sql-edge.md</div>
+        </a>
+<a class="doc-card" data-search-card="production docs/production.md production-oriented notes and current limitations." href="docs/docs-production.html">
+          <small>Getting started</small><h3>Production</h3><p>Production-oriented notes and current limitations.</p>
+          <div class="doc-path">docs/production.md</div>
+        </a></div>
+    </section><section class="group" data-doc-group>
+      <div class="group-title"><h2>Architecture</h2><span class="count">4</span></div>
+      <div class="docs-grid"><a class="doc-card" data-search-card="architecture roadmap docs/architecture-roadmap.md the deliberately phased path from stock iro tcp to proxy, quic, identity and orleans." href="docs/docs-architecture-roadmap.html">
+          <small>Architecture</small><h3>Architecture roadmap</h3><p>The deliberately phased path from stock iRO TCP to proxy, QUIC, Identity and Orleans.</p>
+          <div class="doc-path">docs/architecture-roadmap.md</div>
+        </a>
+<a class="doc-card" data-search-card="client &amp; gateway architecture docs/client-gateway-architecture.md athena.client, athena.gateway, transport boundaries and the future quic edge." href="docs/docs-client-gateway-architecture.html">
+          <small>Architecture</small><h3>Client &amp; Gateway architecture</h3><p>Athena.Client, Athena.Gateway, transport boundaries and the future QUIC edge.</p>
+          <div class="doc-path">docs/client-gateway-architecture.md</div>
+        </a>
+<a class="doc-card" data-search-card="orleans game engine docs/orleans-game-engine-architecture.md the later microsoft orleans distributed game-engine direction." href="docs/docs-orleans-game-engine-architecture.html">
+          <small>Architecture</small><h3>Orleans game engine</h3><p>The later Microsoft Orleans distributed game-engine direction.</p>
+          <div class="doc-path">docs/orleans-game-engine-architecture.md</div>
+        </a>
+<a class="doc-card" data-search-card="game content &amp; map lifecycle docs/game-content-map-lifecycle-architecture.md content updates, map lifecycle, telemetry and one-map-one-runtime ownership." href="docs/docs-game-content-map-lifecycle-architecture.html">
+          <small>Architecture</small><h3>Game content &amp; map lifecycle</h3><p>Content updates, map lifecycle, telemetry and one-map-one-runtime ownership.</p>
+          <div class="doc-path">docs/game-content-map-lifecycle-architecture.md</div>
+        </a></div>
+    </section><section class="group" data-doc-group>
+      <div class="group-title"><h2>Development</h2><span class="count">6</span></div>
+      <div class="docs-grid"><a class="doc-card" data-search-card="development checklists docs/checklists.md practical development checklists used by the project." href="docs/docs-checklists.html">
+          <small>Development</small><h3>Development checklists</h3><p>Practical development checklists used by the project.</p>
+          <div class="doc-path">docs/checklists.md</div>
+        </a>
+<a class="doc-card" data-search-card="helper scripts docs/scripts.md repository helper scripts and their intended use." href="docs/docs-scripts.html">
+          <small>Development</small><h3>Helper scripts</h3><p>Repository helper scripts and their intended use.</p>
+          <div class="doc-path">docs/scripts.md</div>
+        </a>
+<a class="doc-card" data-search-card="world data importer tools/worlddataimporter/readme.md world-data conversion pipeline, tooling and usage." href="docs/tools-worlddataimporter-readme.html">
+          <small>Development</small><h3>World Data Importer</h3><p>World-data conversion pipeline, tooling and usage.</p>
+          <div class="doc-path">tools/WorldDataImporter/README.md</div>
+        </a>
+<a class="doc-card" data-search-card="world data data/world/readme.md generated and converted world-data artifacts." href="docs/data-world-readme.html">
+          <small>Development</small><h3>World data</h3><p>Generated and converted world-data artifacts.</p>
+          <div class="doc-path">data/world/README.md</div>
+        </a>
+<a class="doc-card" data-search-card="generated mapserver content src/mapserver/generated/readme.md rules for generated mapserver source and world content." href="docs/src-mapserver-generated-readme.html">
+          <small>Development</small><h3>Generated MapServer content</h3><p>Rules for generated MapServer source and world content.</p>
+          <div class="doc-path">src/MapServer/Generated/README.md</div>
+        </a>
+<a class="doc-card" data-search-card="pre-renewal rules src/mapserver/gameplay/rules/prerenewal/readme.md boundary notes for the pre-renewal gameplay-rules area." href="docs/src-mapserver-gameplay-rules-prerenewal-readme.html">
+          <small>Development</small><h3>Pre-Renewal rules</h3><p>Boundary notes for the Pre-Renewal gameplay-rules area.</p>
+          <div class="doc-path">src/MapServer/Gameplay/Rules/PreRenewal/README.md</div>
+        </a></div>
+    </section><section class="group" data-doc-group>
+      <div class="group-title"><h2>Protocol evidence</h2><span class="count">10</span></div>
+      <div class="docs-grid"><a class="doc-card" data-search-card="evidence index ai/readme.md index for developer-facing evidence and verified implementation notes." href="docs/ai-readme.html">
+          <small>Protocol evidence</small><h3>Evidence index</h3><p>Index for developer-facing evidence and verified implementation notes.</p>
+          <div class="doc-path">ai/README.md</div>
+        </a>
+<a class="doc-card" data-search-card="iro 2026 wire reference ai/iro-2026-wire.md verified stock-iro client-facing wire behavior and packet evidence." href="docs/ai-iro-2026-wire.html">
+          <small>Protocol evidence</small><h3>iRO 2026 wire reference</h3><p>Verified stock-iRO client-facing wire behavior and packet evidence.</p>
+          <div class="doc-path">ai/iro-2026-wire.md</div>
+        </a>
+<a class="doc-card" data-search-card="loginserver notes ai/login-server.md loginserver implementation and evidence notes." href="docs/ai-login-server.html">
+          <small>Protocol evidence</small><h3>LoginServer notes</h3><p>LoginServer implementation and evidence notes.</p>
+          <div class="doc-path">ai/login-server.md</div>
+        </a>
+<a class="doc-card" data-search-card="loginserver parity ai/loginserver-parity.md loginserver parity tracking against the reference behavior." href="docs/ai-loginserver-parity.html">
+          <small>Protocol evidence</small><h3>LoginServer parity</h3><p>LoginServer parity tracking against the reference behavior.</p>
+          <div class="doc-path">ai/loginserver-parity.md</div>
+        </a>
+<a class="doc-card" data-search-card="charserver notes ai/char-server.md charserver implementation and evidence notes." href="docs/ai-char-server.html">
+          <small>Protocol evidence</small><h3>CharServer notes</h3><p>CharServer implementation and evidence notes.</p>
+          <div class="doc-path">ai/char-server.md</div>
+        </a>
+<a class="doc-card" data-search-card="charserver parity ai/charserver-parity.md charserver parity tracking against the reference behavior." href="docs/ai-charserver-parity.html">
+          <small>Protocol evidence</small><h3>CharServer parity</h3><p>CharServer parity tracking against the reference behavior.</p>
+          <div class="doc-path">ai/charserver-parity.md</div>
+        </a>
+<a class="doc-card" data-search-card="mapserver notes ai/map-server.md detailed mapserver evidence and implementation notes." href="docs/ai-map-server.html">
+          <small>Protocol evidence</small><h3>MapServer notes</h3><p>Detailed MapServer evidence and implementation notes.</p>
+          <div class="doc-path">ai/map-server.md</div>
+        </a>
+<a class="doc-card" data-search-card="mapserver parity ai/mapserver-parity.md mapserver parity tracking against the reference behavior." href="docs/ai-mapserver-parity.html">
+          <small>Protocol evidence</small><h3>MapServer parity</h3><p>MapServer parity tracking against the reference behavior.</p>
+          <div class="doc-path">ai/mapserver-parity.md</div>
+        </a>
+<a class="doc-card" data-search-card="world-data evidence ai/world-data.md world-data conversion, mapping and runtime evidence." href="docs/ai-world-data.html">
+          <small>Protocol evidence</small><h3>World-data evidence</h3><p>World-data conversion, mapping and runtime evidence.</p>
+          <div class="doc-path">ai/world-data.md</div>
+        </a>
+<a class="doc-card" data-search-card="data &amp; tools ai/data-and-tools.md data/tooling notes that support the evidence-driven implementation." href="docs/ai-data-and-tools.html">
+          <small>Protocol evidence</small><h3>Data &amp; tools</h3><p>Data/tooling notes that support the evidence-driven implementation.</p>
+          <div class="doc-path">ai/data-and-tools.md</div>
+        </a></div>
+    </section>
+  </div>
+</main>
+
+<footer>
+  <div class="container footer-inner">
+    <div class="legal">
+      <strong style="color:#dce2ee">Athena.NET</strong> is an unofficial server implementation and is not affiliated with, endorsed by, or sponsored by Gravity Co., Ltd. or WarpPortal.
+      Ragnarok Online and related names and assets belong to their respective owners.
+    </div>
+    <div class="footer-links">
+      <a href="https://github.com/MarcoHuib/Athena.NET">GitHub</a>
+      <a href="docs.html">Docs</a>
+      <a href="https://github.com/MarcoHuib/Athena.NET/blob/a7513e2defa2347d5ba20ff501436258d8503d04/LICENSE">License</a>
+    </div>
+  </div>
+</footer>
+<script src="assets/app.js"></script>
+</body></html>

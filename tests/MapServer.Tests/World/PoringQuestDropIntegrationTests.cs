@@ -1,3 +1,4 @@
+using Athena.Net.MapServer.Gameplay.Rules.Renewal;
 using Athena.Net.MapServer.Generated.GameData.Items;
 using Athena.Net.MapServer.Generated.GameData.Mobs;
 using Athena.Net.MapServer.Generated.GameData.Quests;
@@ -76,12 +77,12 @@ public sealed class PoringQuestDropIntegrationTests
     {
         var clock = new FakeTimeProvider();
         var registry = new MonsterRegistry(
-            [AcademyMobSpawns.GPoringSpawns[2]], // int_land03, matching real generated data.
+            [AcademyMobSpawns.GPoringSpawns.Single(s => s.Map == "int_land03")], // matching real generated data.
             new WorldActorIdAllocator(),
             new FixedCellSelector(50, 50),
             clock);
         var questDrops = new QuestDropResolver(GeneratedQuestDrops.All);
-        var combat = new MonsterCombatCoordinator(registry, questDrops);
+        var combat = new MonsterCombatCoordinator(registry, questDrops, new RenewalBasicAttackRules());
         var inventoryPersistence = new FakeInventoryPersistence();
         var inventorySession = new CharacterInventorySession(AccountId, CharId, inventoryPersistence);
         var questPersistence = new RecordingQuestPersistence(Quest21008, CharacterQuestStatus.Active);
@@ -96,7 +97,7 @@ public sealed class PoringQuestDropIntegrationTests
         MonsterAttackOutcome outcome = default;
         for (var i = 0; i < 20 && target.IsAlive; i++)
         {
-            outcome = combat.Attack(target, StrongEnoughToOneShot(), attackerBaseLevel: 1, questStatus);
+            outcome = combat.Attack(target, 1001, StrongEnoughToOneShot(), attackerBaseLevel: 1, null, questStatus);
         }
         Assert.True(outcome.KilledByThisHit);
         Assert.Single(outcome.QuestDrops);
@@ -109,7 +110,7 @@ public sealed class PoringQuestDropIntegrationTests
 
         // --- Respawn ---
         clock.Advance(TimeSpan.FromMilliseconds(target.Spawn.RespawnDelayMs + 1));
-        var respawnedCount = registry.ProcessDueRespawns();
+        var respawnedCount = registry.ProcessDueRespawns().Count;
         Assert.Equal(1, respawnedCount);
         Assert.True(target.IsAlive);
         Assert.Equal(target.Spawn.Mob.MaxHp, target.CurrentHp);
@@ -117,7 +118,7 @@ public sealed class PoringQuestDropIntegrationTests
         // --- Second kill ---
         for (var i = 0; i < 20 && target.IsAlive; i++)
         {
-            outcome = combat.Attack(target, StrongEnoughToOneShot(), attackerBaseLevel: 1, questStatus);
+            outcome = combat.Attack(target, 1001, StrongEnoughToOneShot(), attackerBaseLevel: 1, null, questStatus);
         }
         Assert.True(outcome.KilledByThisHit);
         Assert.Single(outcome.QuestDrops);
@@ -136,7 +137,7 @@ public sealed class PoringQuestDropIntegrationTests
             new WorldActorIdAllocator(),
             new FixedCellSelector(50, 50),
             clock);
-        var combat = new MonsterCombatCoordinator(registry, new QuestDropResolver(GeneratedQuestDrops.All));
+        var combat = new MonsterCombatCoordinator(registry, new QuestDropResolver(GeneratedQuestDrops.All), new RenewalBasicAttackRules());
         var target = registry.AllInstances[0];
         var noQuests = new RecordingQuestPersistence(Quest21008, CharacterQuestStatus.Absent);
         var questStatus = await BuildQuestStatusLookupAsync(noQuests, GeneratedQuestDrops.All.Select(rule => rule.QuestId));
@@ -144,7 +145,7 @@ public sealed class PoringQuestDropIntegrationTests
         MonsterAttackOutcome outcome = default;
         for (var i = 0; i < 20 && target.IsAlive; i++)
         {
-            outcome = combat.Attack(target, StrongEnoughToOneShot(), 1, questStatus);
+            outcome = combat.Attack(target, 1001, StrongEnoughToOneShot(), 1, null, questStatus);
         }
 
         Assert.True(outcome.KilledByThisHit);
@@ -155,7 +156,7 @@ public sealed class PoringQuestDropIntegrationTests
     public async Task RealisticPostTutorialNoviceState_CanCompleteTheSupportedCombatSlice()
     {
         // Proves the ACTUAL supported tutorial character (not synthetic stats) can kill G_PORING
-        // and receive Wood - i.e. that the real BasicAttackCalculator formula, applied to the real
+        // and receive Wood - i.e. that the real RenewalBasicAttackRules formula, applied to the real
         // post-Captain-Carocc-buffs stat state, is sufficient to complete this content within a
         // reasonable number of attacks, not merely that the surrounding plumbing works.
         var clock = new FakeTimeProvider();
@@ -164,7 +165,7 @@ public sealed class PoringQuestDropIntegrationTests
             new WorldActorIdAllocator(),
             new FixedCellSelector(50, 50),
             clock);
-        var combat = new MonsterCombatCoordinator(registry, new QuestDropResolver(GeneratedQuestDrops.All));
+        var combat = new MonsterCombatCoordinator(registry, new QuestDropResolver(GeneratedQuestDrops.All), new RenewalBasicAttackRules());
         var inventorySession = new CharacterInventorySession(AccountId, CharId, new FakeInventoryPersistence());
         var questPersistence = new RecordingQuestPersistence(Quest21008, CharacterQuestStatus.Active);
         var questStatus = await BuildQuestStatusLookupAsync(questPersistence, GeneratedQuestDrops.All.Select(rule => rule.QuestId));
@@ -173,10 +174,11 @@ public sealed class PoringQuestDropIntegrationTests
         MonsterAttackOutcome outcome = default;
         var attackCount = 0;
         // G_PORING has 55 HP; a fresh post-tutorial Novice's single-digit-per-hit damage
-        // (see BasicAttackCalculatorTests for the exact traced formula) needs several hits, not one.
+        // (see Gameplay/Rules/Renewal/WeaponAttackCalculatorTests for the exact traced formula)
+        // needs several hits, not one.
         for (var i = 0; i < 55 && target.IsAlive; i++, attackCount++)
         {
-            outcome = combat.Attack(target, RealisticPostTutorialNovice(), RealisticNoviceBaseLevel, questStatus);
+            outcome = combat.Attack(target, 1001, RealisticPostTutorialNovice(), RealisticNoviceBaseLevel, null, questStatus);
         }
 
         Assert.True(outcome.KilledByThisHit, $"The realistic post-tutorial Novice state failed to kill G_PORING within {attackCount} attacks.");

@@ -33,6 +33,13 @@ var interConfigPath = Path.Combine(repoRoot, "conf", "inter_athena.conf");
 var subnetConfigPath = Path.Combine(repoRoot, "conf", "subnet_athena.conf");
 var loginMsgPath = Path.Combine(repoRoot, "conf", "msg_conf", "login_msg.conf");
 var secretsPath = Path.Combine(repoRoot, "solutionfiles", "secrets", "secret.json");
+// MapServer's configured map_cache_path (legacy/rathena/db/map_cache.dat) is CWD-relative and only
+// resolves correctly when the process's working directory happens to be the repository root
+// (direct local `dotnet run`) or the Docker image's own WORKDIR /app (which mirrors the same
+// relative layout one level down) - Aspire's AppHost does not guarantee MapServer's child-process
+// CWD is the repo root, so it must supply the absolute path it already discovered instead of
+// relying on that coincidence (see MapServerApp.RunAsync's own doc comment on this precedence).
+var mapCachePath = Path.Combine(repoRoot, "legacy", "rathena", "db", "map_cache.dat");
 
 var sqlPassword = builder.AddParameter("sql-edge-password", secret: true);
 var sql = builder.AddSqlServer("sql", sqlPassword)
@@ -113,6 +120,7 @@ builder.AddProject("map-server", "../MapServer/MapServer.csproj")
     .WithEnvironment("OTEL_TRACES_EXPORTER", "otlp")
     .WithArgs(
         "--map-config", mapConfigPath,
+        "--map-cache-path", mapCachePath,
         "--secrets", secretsPath);
 
 builder.Build().Run();

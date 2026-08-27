@@ -150,3 +150,10 @@ ai/issues/*
 ai/.last_commit_ts
 ai/.issue_state/*
 ai/agent-status.md
+
+# Proprietary Gravity client map resources and any collision data derived from them (see
+# ai/world-data.md "Map collision data import + runtime collision foundation") - never committed.
+*.gat
+*.rsw
+*.grf
+*.athmap

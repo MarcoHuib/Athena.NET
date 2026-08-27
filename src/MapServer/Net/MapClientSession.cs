@@ -2,6 +2,8 @@ using System.Buffers.Binary;
 using System.Net;
 using System.Net.Sockets;
 using System.Runtime.ExceptionServices;
+using Athena.Net.MapServer.Generated.GameData.Items;
+using Athena.Net.MapServer.Generated.GameData.Quests;
 using Athena.Net.MapServer.Logging;
 using Athena.Net.MapServer.World;
 using Athena.Net.MapServer.World.GeneratedScripts;
@@ -29,6 +31,10 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
         [PacketConstants.IroCzNpcNext] = PacketConstants.IroCzNpcNextLength,
         [PacketConstants.IroCzNpcClose] = PacketConstants.IroCzNpcCloseLength,
         [PacketConstants.IroCzNpcSelection] = PacketConstants.IroCzNpcSelectionLength,
+        [PacketConstants.IroCzAttackRequest] = PacketConstants.IroCzAttackRequestLength,
+        [PacketConstants.IroCzReqWearEquip] = PacketConstants.IroCzReqWearEquipLength,
+        [PacketConstants.IroCzReqTakeoffEquip] = PacketConstants.IroCzReqTakeoffEquipLength,
+        [PacketConstants.IroCzUseItem] = PacketConstants.IroCzUseItemLength,
     };
 
     private readonly TcpClient _client;
@@ -37,13 +43,37 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
     private readonly ICharacterPositionPersistence _positionPersistence;
     private readonly ICharacterQuestPersistence _questPersistence;
     private readonly ICharacterGameplayStatePersistence _gameplayStatePersistence;
+    private readonly ICharacterInventoryListPersistence _inventoryListPersistence;
+    private readonly ICharacterInventoryPersistence _inventoryPersistence;
     private readonly WorldMapRegistry _worldMapRegistry;
-    // Null when no MapServerWorld was supplied (test-facing constructor default). No packet
-    // handler reads this yet - see MonsterRegistry/MonsterCombatCoordinator doc comments for why
-    // no live attack path exists - but it is threaded through explicitly now so a future handler
-    // does not need another constructor-plumbing change.
+    // Null when no MapServerWorld was supplied (test-facing constructor default).
     private readonly MonsterRegistry? _monsters;
+    // Null alongside _monsters on the test-facing default path; both are populated together
+    // by the production MapServerWorld-based constructor.
+    private readonly MonsterCombatCoordinator? _combat;
+    // Diagnostic-only for now (0x0368 actor-info click/hover logging) - see LogMonsterCellDiagnostics.
+    // This actorId-correlated diagnostic is the ONE remaining live spatial diagnostic; the old bulk
+    // per-spawn [MONSTER CELL] log (MobSpawnCellSelector, ~200 lines at startup) was removed once
+    // this superseded it for live investigation - see this task's own report for that decision.
+    // Null on the test-facing default path, same as _monsters/_combat. A small, reusable, read-only
+    // spatial-inspection capability rather than threading IMapCollisionProvider into MonsterRegistry
+    // merely for logging - see MonsterSpatialInspector's own doc comment for why it exists as its
+    // own composed type.
+    private readonly MonsterSpatialInspector? _spatialInspector;
+    // Null on the test-facing default path, same as _monsters/_combat/_spatialInspector. Shared
+    // across every session on this MapServer process (composed once in MapServerWorld.Build) -
+    // ProcessTick is safe to call from multiple sessions' own periodic loops because
+    // MonsterRegistry/MobInstance already own their own internal locking; this field is only a
+    // reference to that ONE shared scheduler, never a per-session copy.
+    private readonly MonsterRuntime? _monsterRuntime;
     private readonly IMovementPathProvider _movementPathProvider;
+    // Same shared collision data every other collision-aware component uses (MonsterRuntime's own
+    // idle-walk pathfinding, RathenaCompatibleMovementPathProvider) - never a second independently
+    // loaded copy, never re-parsing map_cache.dat. Used by BasicAttackDistanceValidator's
+    // battle_check_range line-of-attack check (see PerformDueRepeatAttackAsync). Defaults to
+    // EmptyMapCollisionProvider.Instance on the test-facing path, matching this project's existing
+    // "collision-less means no real map is loaded" convention (MapServerWorld.Build's own default).
+    private readonly IMapCollisionProvider _collisionProvider;
     // Owns authoritative per-cell walk timing (see CharacterMovementState's own doc comment for the
     // rAthena unit_walktoxy_timer trace this replaces). _x/_y/_mapName remain the fields every other
     // handler in this class reads; SyncPositionFromMovement() is the one place that reconciles them
@@ -68,14 +98,36 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
     private abstract record PendingMovementArrival;
     private sealed record PendingWarpArrival(WarpDefinition Warp) : PendingMovementArrival;
     private sealed record PendingScriptTouchArrival(WorldEntityDefinition Entity, uint ActorId, ScriptBehaviorDefinition Script) : PendingMovementArrival;
+    // NextAttackAt is the pinned ud->attackabletime equivalent - mutated in place (under
+    // _attackGate) each time an attack actually executes, rather than replacing the record, so a
+    // concurrent read of "is this still the active target" (TeleportTo/a replacing attack request)
+    // keeps identity-comparing against the same instance.
+    private sealed record RepeatAttackState(uint TargetActorId)
+    {
+        public DateTimeOffset NextAttackAt { get; set; }
+    }
     // Single-slot wake signal (same semantics as _statusExpirationSignal above): a new/retargeted
     // walk may need the loop to wake earlier than its current sleep, or wake it from indefinite
     // waiting when it starts moving from a standstill.
     private readonly SemaphoreSlim _movementSignal = new(0, 1);
     private Task? _movementLoop;
+    // Server-owned repeat-attack state (pinned unit_data.attacktimer/target/attackabletime,
+    // unit.cpp:2902-2986/3187-3344). At most one active repeat target per session, matching
+    // pinned unit_attack's own "just change target/type" comment (unit.cpp:2951-2953): a new
+    // 0x0437 replaces this record outright rather than layering a second concurrent loop. Guarded
+    // by _attackGate the same way _movement is guarded by _movementGate - RunRepeatAttackLoopAsync
+    // (background task) and HandleIroAttackRequestAsync/TeleportTo (packet-handling calls) run on
+    // independently-scheduled tasks that both touch this state.
+    private RepeatAttackState? _repeatAttack;
+    private readonly SemaphoreSlim _attackGate = new(1, 1);
+    // Single-slot wake signal, same semantics as _movementSignal/_statusExpirationSignal: a new or
+    // replaced repeat-attack target may need the loop to wake earlier than its current sleep, or
+    // wake it from indefinite waiting when no repeat attack was previously active.
+    private readonly SemaphoreSlim _attackSignal = new(0, 1);
+    private Task? _attackLoop;
     private readonly SemaphoreSlim _writeLock = new(1, 1);
     private readonly CancellationTokenSource _sessionCancellation = new();
-    private readonly HashSet<uint> _visibleActorIds = new();
+    private readonly VisibleActorTracker _visibleActorIds = new();
     private ScriptExecutionSession? _scriptExecutionSession;
     private Task? _generatedScriptTask;
     private string? _generatedScriptEntityId;
@@ -108,6 +160,10 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
     private readonly object _shutdownGate = new();
     private Task? _shutdownTask;
     private CharacterGameplayStateSession? _gameplayState;
+    // The one authoritative CharInventory read (see CharacterInventorySnapshot's own doc
+    // comment). Equipment is derived from this - never a second independent CharServer read.
+    private CharacterInventorySnapshot? _inventory;
+    private CharacterEquipmentSnapshot? _equipment;
     private readonly CharacterStatusEffectState _statusEffects;
     private readonly TimeProvider _timeProvider;
     // Single-slot wake signal (max count 1, not int.MaxValue): StartStatusAsync may Release()
@@ -123,7 +179,8 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
     // so silently falling back to it here would reintroduce a second, independent actor-ID
     // namespace alongside the composed MonsterRegistry's shared one.
     public MapClientSession(int sessionId, TcpClient client, CharServerConnector charConnector, MapServerWorld world)
-        : this(sessionId, client, charConnector, world.Maps, monsters: world.Monsters)
+        : this(sessionId, client, charConnector, world.Maps, monsters: world.Monsters, combat: world.Combat, spatialInspector: world.SpatialInspector,
+               movementPathProvider: world.MovementPathProvider, monsterRuntime: world.MonsterRuntime, collisionProvider: world.Collision)
     {
     }
 
@@ -137,7 +194,13 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
         ICharacterGameplayStatePersistence? gameplayStatePersistence = null,
         TimeProvider? timeProvider = null,
         MonsterRegistry? monsters = null,
-        IMovementPathProvider? movementPathProvider = null)
+        IMovementPathProvider? movementPathProvider = null,
+        MonsterCombatCoordinator? combat = null,
+        ICharacterInventoryPersistence? inventoryPersistence = null,
+        ICharacterInventoryListPersistence? inventoryListPersistence = null,
+        MonsterSpatialInspector? spatialInspector = null,
+        MonsterRuntime? monsterRuntime = null,
+        IMapCollisionProvider? collisionProvider = null)
     {
         SessionId = sessionId;
         _client = client;
@@ -146,10 +209,16 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
         _positionPersistence = positionPersistence ?? charConnector;
         _questPersistence = questPersistence ?? charConnector;
         _gameplayStatePersistence = gameplayStatePersistence ?? charConnector;
+        _inventoryPersistence = inventoryPersistence ?? charConnector;
+        _inventoryListPersistence = inventoryListPersistence ?? charConnector;
         _worldMapRegistry = worldMapRegistry;
         _monsters = monsters;
+        _combat = combat;
+        _spatialInspector = spatialInspector;
+        _monsterRuntime = monsterRuntime;
         _timeProvider = timeProvider ?? TimeProvider.System;
         _movementPathProvider = movementPathProvider ?? new UnverifiedGridLineMovementPathProvider();
+        _collisionProvider = collisionProvider ?? EmptyMapCollisionProvider.Instance;
         _statusEffects = new CharacterStatusEffectState(_timeProvider);
     }
 
@@ -173,7 +242,13 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
         ICharacterGameplayStatePersistence? gameplayStatePersistence = null,
         TimeProvider? timeProvider = null,
         MonsterRegistry? monsters = null,
-        IMovementPathProvider? movementPathProvider = null)
+        IMovementPathProvider? movementPathProvider = null,
+        MonsterCombatCoordinator? combat = null,
+        ICharacterInventoryPersistence? inventoryPersistence = null,
+        ICharacterInventoryListPersistence? inventoryListPersistence = null,
+        MonsterSpatialInspector? spatialInspector = null,
+        MonsterRuntime? monsterRuntime = null,
+        IMapCollisionProvider? collisionProvider = null)
         : this(
             sessionId,
             client,
@@ -184,7 +259,20 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
             gameplayStatePersistence,
             timeProvider,
             monsters,
-            movementPathProvider)
+            movementPathProvider,
+            combat,
+            inventoryPersistence,
+            // Defaults to a successful "confirmed empty inventory" read, NOT the production
+            // default (falling through to charConnector, a disconnected CharServerConnector in
+            // tests, whose GetInventoryAsync always returns Failed() and would make
+            // CompleteIroAuthenticationAsync fail auth for every test that doesn't care about
+            // inventory/equipment). Tests that need to exercise specific inventory rows or a
+            // failed read must pass inventoryListPersistence explicitly, same as
+            // gameplayStatePersistence.
+            inventoryListPersistence ?? AlwaysEmptyInventoryListPersistence.Instance,
+            spatialInspector,
+            monsterRuntime,
+            collisionProvider)
     {
         _iroAuthRequested = iroAuthenticated;
         _authRequested = iroAuthenticated;
@@ -198,6 +286,11 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
 
     public int SessionId { get; }
 
+    // Read-only; never mutated after CompleteIroAuthenticationAsync sets it. Safe to read from any
+    // thread (a plain uint field, assigned once during single-threaded auth completion before this
+    // session is registered in MapTcpServer's _sessions - see that dictionary's own doc comment for
+    // why a session is only ever discoverable there after authentication is complete).
+    internal uint AccountId => _accountId;
     internal string CurrentMapName => _mapName;
     // Syncs against real elapsed walking time on every read (no background timer - mirrors
     // CharacterStatusEffectState's lazy-on-read expiration model), so any caller (tests, a future
@@ -208,6 +301,8 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
     internal ScriptExecutionState? ActiveScriptState => _scriptExecutionSession?.State;
     internal string? ActiveGeneratedScriptEntityId => _generatedScriptEntityId;
     internal CharacterGameplayStateSession? GameplayState => _gameplayState;
+    internal CharacterInventorySnapshot? Inventory => _inventory;
+    internal CharacterEquipmentSnapshot? Equipment => _equipment;
     internal CharacterStatusEffectState StatusEffects => _statusEffects;
 
     public async Task RunAsync(CancellationToken cancellationToken)
@@ -281,6 +376,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
             _runtimeLoopsStarted = true;
             _statusExpirationLoop = RunStatusExpirationLoopAsync(_sessionCancellation.Token);
             _movementLoop = RunMovementLoopAsync(_sessionCancellation.Token);
+            _attackLoop = RunRepeatAttackLoopAsync(_sessionCancellation.Token);
         }
     }
 
@@ -316,6 +412,22 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
             HandleAuthFail(); return;
         }
         _gameplayState = new CharacterGameplayStateSession(authOk.AccountId, state, _gameplayStatePersistence);
+
+        var inventoryRead = await _inventoryListPersistence.GetInventoryAsync(authOk.AccountId, authOk.CharId, _sessionCancellation.Token);
+        if (!inventoryRead.Succeeded)
+        {
+            MapLogger.Warning($"[iRO MAP DEBUG] Character inventory load failed accountId={authOk.AccountId} charId={authOk.CharId}.");
+            HandleAuthFail(); return;
+        }
+        // Invariant: an authenticated session always has gameplay state AND inventory state
+        // loaded. A failed/unavailable inventory read must never let a session become
+        // authenticated with unknown inventory/equipment state - future combat/appearance code
+        // must be able to trust that Inventory/Equipment are non-null whenever the session is
+        // authenticated, and that a null Equipment.RightHandItemId means authoritatively
+        // unarmed, never "unknown". CharacterEquipmentSnapshot is derived from the SAME
+        // inventory read - never a second independent CharServer fetch.
+        _inventory = inventoryRead.Snapshot;
+        _equipment = CharacterEquipmentSnapshot.FromInventory(_inventory!);
         _authenticated = true; _positionDirty = false;
         MapLogger.Info($"[iRO MAP DEBUG] 0x0C1F MapAuthNode authentication succeeded accountId={authOk.AccountId} charId={authOk.CharId} sessionMatch=true gameplayStateVersion={state.Version}");
         EnsureRuntimeLoopsStarted();
@@ -371,6 +483,16 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
         }
     }
 
+    // KNOWN FUTURE CONCURRENCY-HARDENING ITEM (not addressed here - CharacterStatusEffectState's
+    // internal dictionary race was the target of this fix, and is now closed: every _statuses
+    // access is synchronized, ExpireDue's identify+remove is atomic, and Recalculate/
+    // RecalculateBeforeExpiration each read one coherent snapshot). This method itself still
+    // calls RecalculateBeforeExpiration -> ExpireDue -> Recalculate as three SEPARATELY
+    // synchronized operations with no lock spanning all three. A concurrent Start() landing
+    // between ExpireDue and the final Recalculate could theoretically produce a semantic
+    // expiration/reapply ordering race (e.g. "after" observing a status that started after
+    // "before" was captured) even though the dictionary itself can no longer throw. Revisit if
+    // this becomes observable; not changing the status architecture as part of this PR.
     private async Task ProcessDueStatusExpirationsAsync(CancellationToken cancellationToken)
     {
         var before = _gameplayState is null ? default : _statusEffects.RecalculateBeforeExpiration(_gameplayState.State);
@@ -458,6 +580,14 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
         IReadOnlyList<(ushort X, ushort Y)> crossed;
         PendingMovementArrival? arrival;
         string mapAtAdvance;
+        // Set only when a deferred retarget (HandleIroMovementAsync's own "mid-walk" branch) was
+        // actually consumed and applied THIS call - used purely to decide whether to send a fresh
+        // 0x0087 + visibility refresh below, after the gate is released (see this method's own
+        // "Movement retarget applied" diagnostic and requirement 1's pinned clif_walkok trace:
+        // unit_walktoxy_sub's own unit_walktoxy_nextcell(*bl, true, ...) call is exactly what makes
+        // clif_move+clif_walkok fire together at this cell boundary, carrying the REPLACEMENT path's
+        // src=reached-cell/dst=latest-requested-destination - never the stale click-time response).
+        (ushort FromX, ushort FromY, ResolvedMovementTarget Resolved)? appliedRetarget = null;
         await _movementGate.WaitAsync(cancellationToken);
         try
         {
@@ -468,10 +598,46 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
             _x = movement.CurrentX;
             _y = movement.CurrentY;
             _positionDirty = true;
+
+            // Pinned unit_walktoxy_timer's own change_walk_target check (unit.cpp:738-744), run
+            // immediately after this cell arrival, BEFORE ever considering _pendingArrival for the
+            // walk's ORIGINAL destination - a pending retarget always takes priority the moment a
+            // cell boundary is reached, exactly matching pinned source's own ordering. Requirement
+            // 7: recompute (never reuse) the warp/script intersection here, from the cell the
+            // character ACTUALLY just reached - the ORIGINAL _pendingArrival is unconditionally
+            // replaced (or cleared to null, if the replacement path has none) by this recomputation,
+            // so a stale warp/OnTouch belonging to the walk that was just replaced can never fire.
+            var pendingRetarget = movement.ConsumePendingRetarget();
+            if (pendingRetarget is { } retarget)
+            {
+                var fromX = _x;
+                var fromY = _y;
+                var resolved = ResolveMovementTarget(fromX, fromY, retarget.X, retarget.Y);
+                movement.StartWalk(resolved.Path, CurrentCellDurationMs(), _timeProvider.GetUtcNow());
+                _pendingArrival = resolved.Arrival;
+                appliedRetarget = (fromX, fromY, resolved);
+            }
+
             arrival = movement.IsMoving ? null : _pendingArrival; // Only relevant once the walk actually finished.
             mapAtAdvance = _mapName;
         }
         finally { _movementGate.Release(); }
+
+        if (appliedRetarget is { } applied)
+        {
+            MapLogger.Info(
+                $"[iRO MAP DEBUG] Movement retarget applied from=({applied.FromX},{applied.FromY}) target=({applied.Resolved.TargetX},{applied.Resolved.TargetY})");
+            var retargetResponse = IroMovementPackets.BuildResponse(
+                unchecked((uint)Environment.TickCount), applied.FromX, applied.FromY, applied.Resolved.TargetX, applied.Resolved.TargetY);
+            MapLogger.Info(
+                $"[iRO MAP DEBUG] Sending 0x0087 len=12 from=({applied.FromX},{applied.FromY}) to=({applied.Resolved.TargetX},{applied.Resolved.TargetY}) (mid-walk retarget)");
+            await WriteAsync(retargetResponse, cancellationToken);
+            if (!applied.Resolved.IntersectsWarp && !applied.Resolved.IntersectsScript)
+            {
+                await SendVisibleWarpActorsAsync(cancellationToken);
+                await SendVisibleMonsterActorsAsync(cancellationToken);
+            }
+        }
 
         if (arrival is null) return;
 
@@ -557,14 +723,15 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
         // pending (SemaphoreFullException), which is harmless here too.
         try { _statusExpirationSignal.Release(); } catch (ObjectDisposedException) { } catch (SemaphoreFullException) { }
         try { _movementSignal.Release(); } catch (ObjectDisposedException) { } catch (SemaphoreFullException) { }
+        try { _attackSignal.Release(); } catch (ObjectDisposedException) { } catch (SemaphoreFullException) { }
         _generatedContinuation?.Completion.TrySetCanceled();
 
-        // Join BOTH runtime loops before touching anything they can still access. This is the
+        // Join ALL runtime loops before touching anything they can still access. This is the
         // invariant the earlier lifecycle audit found missing: cancellation is only a request: it
-        // does not guarantee either loop has actually stopped reading _movement/_statusEffects or
-        // calling WriteAsync. Neither loop may be running yet (auth never completed), hence the
-        // null filter.
-        var loops = new[] { _statusExpirationLoop, _movementLoop }.Where(loop => loop is not null)!;
+        // does not guarantee any loop has actually stopped reading _movement/_statusEffects/
+        // _repeatAttack or calling WriteAsync. Some loops may not be running yet (auth never
+        // completed), hence the null filter.
+        var loops = new[] { _statusExpirationLoop, _movementLoop, _attackLoop }.Where(loop => loop is not null)!;
         Exception? firstError = null;
         try
         {
@@ -609,6 +776,8 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
             _statusExpirationSignal.Dispose();
             _movementSignal.Dispose();
             _movementGate.Dispose();
+            _attackSignal.Dispose();
+            _attackGate.Dispose();
         }
 
         if (firstError is not null)
@@ -630,10 +799,22 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
                 {
                     MapLogger.Info(
                         $"[iRO MAP DEBUG] Received stock iRO map-loaded packet=0x{packetType:X4} len={packet.Length}");
+                    // Pinned ordering (clif_parse_LoadEndAck, clif.cpp:10748-10817): self weapon
+                    // look (clif_changelook, target=AREA which includes self), THEN the self
+                    // inventory/equip-list projection (clif_inventorylist, target=SELF), both
+                    // BEFORE the AREA_WOS spawn broadcast that other visible actors receive - so
+                    // both go first, ahead of SendVisibleWarpActorsAsync/SendVisibleMonsterActorsAsync.
+                    await SendSelfWeaponAppearanceAsync(cancellationToken);
+                    await SendSelfInventoryAsync(cancellationToken);
                     _visibleActorIds.Clear();
                     await SendVisibleWarpActorsAsync(cancellationToken);
+                    await SendVisibleMonsterActorsAsync(cancellationToken);
                     foreach (var navigation in _worldMapRegistry.GetNavigationAt(_mapName, _x, _y))
+                    {
+                        MapLogger.Info(
+                            $"[iRO MAP DEBUG] Sending 0x08E2 navigation entityId='{navigation.EntityId}' current='{_mapName}'({_x},{_y}) -> dest='{navigation.DestinationMap}'({navigation.DestinationX},{navigation.DestinationY})");
                         await WriteAsync(IroNpcDialoguePackets.BuildNavigateTo(navigation.DestinationMap, navigation.DestinationX, navigation.DestinationY), cancellationToken);
+                    }
                     break;
                 }
 
@@ -664,10 +845,17 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
                 MapLogger.Info(
                     $"[iRO MAP DEBUG] Received stock iRO actor-info request packet=0x{packetType:X4} len={packet.Length}");
                 var requestedActorId = BinaryPrimitives.ReadUInt32LittleEndian(packet.AsSpan(2));
-                if (_visibleActorIds.Contains(requestedActorId) && _worldMapRegistry.TryGetActorName(requestedActorId, _mapName, out var actorName))
+                if (_visibleActorIds.IsActorVisible(requestedActorId) && _worldMapRegistry.TryGetActorName(requestedActorId, _mapName, out var actorName))
                 {
                     MapLogger.Info($"[iRO MAP DEBUG] Sending 0x0ADF NPC name actorId={requestedActorId} name='{actorName}'");
                     await WriteAsync(IroWorldActorPackets.BuildNpcName(requestedActorId, actorName), cancellationToken);
+                }
+                else if (_visibleActorIds.IsActorVisible(requestedActorId) && _monsters is not null && _monsters.TryGetInstance(requestedActorId, _mapName, out var monsterInstance))
+                {
+                    var monsterName = monsterInstance.Spawn.Mob.Name;
+                    MapLogger.Info($"[iRO MAP DEBUG] Sending 0x0ADF monster name actorId={requestedActorId} name='{monsterName}'");
+                    LogMonsterCellDiagnostics(requestedActorId);
+                    await WriteAsync(IroWorldActorPackets.BuildNpcName(requestedActorId, monsterName), cancellationToken);
                 }
                 break;
             case PacketConstants.IroCzChangeDirection when _iroAuthRequested:
@@ -695,6 +883,18 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
                 break;
             case PacketConstants.IroCzNpcSelection when _iroAuthRequested:
                 await HandleNpcSelectionAsync(packet, cancellationToken);
+                break;
+            case PacketConstants.IroCzAttackRequest when _iroAuthRequested:
+                await HandleIroAttackRequestAsync(packet, cancellationToken);
+                break;
+            case PacketConstants.IroCzReqWearEquip when _iroAuthRequested:
+                await HandleEquipRequestAsync(packet, cancellationToken);
+                break;
+            case PacketConstants.IroCzReqTakeoffEquip when _iroAuthRequested:
+                await HandleUnequipRequestAsync(packet, cancellationToken);
+                break;
+            case PacketConstants.IroCzUseItem when _iroAuthRequested:
+                await HandleIroUseItemRequestAsync(packet, cancellationToken);
                 break;
             default:
                 LogUnsupportedPacket(packetType, packet);
@@ -766,6 +966,15 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
         // from the pending arrival) could still fire a stale warp/OnTouch belonging to the walk that
         // was just replaced by this teleport.
         _pendingArrival = null;
+
+        // Pinned unit_walktoxy (unit.cpp:888) unconditionally calls unit_stop_attack before
+        // starting any walk - a map change/warp is the strongest form of that. Clearing the
+        // in-memory reference is enough: RunRepeatAttackLoopAsync re-reads _repeatAttack fresh on
+        // every iteration, so a loop iteration already in flight for the old target simply finds
+        // nothing to do next time it wakes.
+        _attackGate.Wait();
+        try { _repeatAttack = null; }
+        finally { _attackGate.Release(); }
     }
 
     // Reconciles _x/_y against real elapsed walking time. Pinned rAthena's authoritative position
@@ -787,6 +996,42 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
         return MovementSpeedCalculator.CellDurationMs(haste);
     }
 
+    // Resolves a requested destination into: the actual movement target (truncated to the first
+    // warp/script-touch cell along the route, if any, exactly like the destination itself
+    // otherwise), the path to it from `fromX,fromY`, and the PendingMovementArrival to attach - one
+    // shared computation used both by a fresh walk start (HandleIroMovementAsync) and by applying a
+    // deferred mid-walk retarget at the cell boundary where it takes effect
+    // (ProcessDueMovementAsync) - requirement 7's "recompute pending arrival according to the
+    // ultimately active path" means this warp/script intersection logic must run again from
+    // wherever the character ACTUALLY is when the retarget is applied, never reused from click-time.
+    private readonly record struct ResolvedMovementTarget(
+        ushort TargetX, ushort TargetY, IReadOnlyList<(ushort X, ushort Y)> Path, PendingMovementArrival? Arrival,
+        bool IntersectsWarp, bool IntersectsScript, WarpIntersection Warp, ScriptTouchIntersection Script);
+
+    private ResolvedMovementTarget ResolveMovementTarget(ushort fromX, ushort fromY, ushort requestedX, ushort requestedY)
+    {
+        var intersectsWarp = _worldMapRegistry.TryFindFirstWarpAlongRoute(
+            _mapName, fromX, fromY, requestedX, requestedY, out var intersection);
+        ScriptTouchIntersection scriptIntersection = default;
+        var intersectsScript = !HasActiveScript && _worldMapRegistry.TryFindFirstScriptTouchEnterAlongRoute(
+            _mapName, fromX, fromY, requestedX, requestedY, out scriptIntersection);
+        if (intersectsWarp && intersectsScript && Distance(fromX, fromY, scriptIntersection.X, scriptIntersection.Y) < Distance(fromX, fromY, intersection.X, intersection.Y))
+            intersectsWarp = false;
+        else if (intersectsWarp)
+            intersectsScript = false;
+
+        var targetX = intersectsWarp ? intersection.X : intersectsScript ? scriptIntersection.X : requestedX;
+        var targetY = intersectsWarp ? intersection.Y : intersectsScript ? scriptIntersection.Y : requestedY;
+        var path = _movementPathProvider.ComputePath(_mapName, fromX, fromY, targetX, targetY);
+        PendingMovementArrival? arrival = intersectsWarp
+            ? new PendingWarpArrival(intersection.Warp)
+            : intersectsScript
+                ? new PendingScriptTouchArrival(scriptIntersection.Binding.Entity, scriptIntersection.Binding.Actor.ActorId, scriptIntersection.Binding.Script)
+                : null;
+
+        return new ResolvedMovementTarget(targetX, targetY, path, arrival, intersectsWarp, intersectsScript, intersection, scriptIntersection);
+    }
+
     private async Task HandleIroMovementAsync(byte[] packet, CancellationToken cancellationToken)
     {
         if (!IroMovementPackets.TryParseRequest(packet, out var request))
@@ -795,42 +1040,41 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
             return;
         }
 
-        // Advance any walk already in progress to the character's ACTUAL current cell before doing
-        // anything else - this is the fix for the diagnosed bug: a second movement request must
-        // retarget from wherever the character has really walked to by now, not from a previous
-        // request's destination that the client may not have visually reached yet (see
-        // CharacterMovementState.StartWalk's doc comment for the exact rAthena unit_walktoxy
-        // mid-walk-retarget citation this mirrors).
+        // Pinned unit_walktoxy (unit.cpp:888) unconditionally calls unit_stop_attack REGARDLESS of
+        // whether this becomes a fresh walk or a mid-walk retarget - a real client movement request
+        // always cancels any active repeat attack.
+        await _attackGate.WaitAsync(cancellationToken);
+        try { _repeatAttack = null; }
+        finally { _attackGate.Release(); }
+
+        // Pinned unit_walktoxy (unit.cpp:884-899): "ud->to_x = x; ud->to_y = y; ... if
+        // (ud->walktimer != INVALID_TIMER) { ud->state.change_walk_target = 1; return 1; }" - a
+        // retarget arriving WHILE a step is already in flight does not touch the in-flight step at
+        // all (no SyncPositionToNow/path recompute/StartWalk here): it only records the desired
+        // destination, deferring everything else to the next real cell boundary
+        // (ProcessDueMovementAsync's own ConsumePendingRetarget handling) - exactly matching pinned
+        // unit_walktoxy_timer's own change_walk_target check (unit.cpp:738-744). This is the fix for
+        // the live stutter/jump-forward bug: resetting _stepStartedAt here on every rapid 0x035F
+        // would discard whatever real progress had already elapsed through the current cell.
+        var movementState = EnsureMovementState();
+        if (movementState.IsMoving)
+        {
+            movementState.RequestRetarget(request.TargetX, request.TargetY);
+            MapLogger.Info(
+                $"[iRO MAP DEBUG] Movement retarget deferred current=({movementState.CurrentX},{movementState.CurrentY}) requested=({request.TargetX},{request.TargetY}) nextCell={movementState.NextCell} currentStepDueAt={movementState.NextStepDueAt:O}");
+            return;
+        }
+
+        // Not currently moving: matches pinned unit_walktoxy's OTHER branch (walktimer ==
+        // INVALID_TIMER) - unit_walktoxy_sub runs immediately, computing the path from wherever the
+        // character stands right now and beginning to walk it without waiting for any cell boundary.
         SyncPositionToNow();
         var fromX = _x;
         var fromY = _y;
         MapLogger.Info(
             $"[iRO MAP DEBUG] Movement request from=({fromX},{fromY}) target=({request.TargetX},{request.TargetY})");
 
-        var intersectsWarp = _worldMapRegistry.TryFindFirstWarpAlongRoute(
-            _mapName,
-            fromX,
-            fromY,
-            request.TargetX,
-            request.TargetY,
-            out var intersection);
-        ScriptTouchIntersection scriptIntersection = default;
-        var intersectsScript = !HasActiveScript && _worldMapRegistry.TryFindFirstScriptTouchEnterAlongRoute(
-            _mapName, fromX, fromY, request.TargetX, request.TargetY, out scriptIntersection);
-        if (intersectsWarp && intersectsScript && Distance(fromX, fromY, scriptIntersection.X, scriptIntersection.Y) < Distance(fromX, fromY, intersection.X, intersection.Y))
-            intersectsWarp = false;
-        else if (intersectsWarp)
-            intersectsScript = false;
-        var movementTargetX = intersectsWarp ? intersection.X : intersectsScript ? scriptIntersection.X : request.TargetX;
-        var movementTargetY = intersectsWarp ? intersection.Y : intersectsScript ? scriptIntersection.Y : request.TargetY;
-
-        // Start (or retarget) the timed walk from the current cell toward movementTarget, rather
-        // than jumping _x/_y there immediately. The wire response below still reports the full
-        // destination (unchanged, capture-proven 0x0087 semantics) - only the SERVER-authoritative
-        // position now advances gradually, matching rAthena. Computed before the response is sent so
-        // that, by the time a caller observes the response, the new walk is already authoritative -
-        // avoiding a race where a caller could read stale position between the write and this update.
-        var path = _movementPathProvider.ComputePath(_mapName, fromX, fromY, movementTargetX, movementTargetY);
+        var resolved = ResolveMovementTarget(fromX, fromY, request.TargetX, request.TargetY);
         var now = _timeProvider.GetUtcNow();
 
         // Warp/OnTouch must fire only when the destination cell is actually reached over real
@@ -841,12 +1085,8 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
         await _movementGate.WaitAsync(cancellationToken);
         try
         {
-            EnsureMovementState().StartWalk(path, CurrentCellDurationMs(), now);
-            _pendingArrival = intersectsWarp
-                ? new PendingWarpArrival(intersection.Warp)
-                : intersectsScript
-                    ? new PendingScriptTouchArrival(scriptIntersection.Binding.Entity, scriptIntersection.Binding.Actor.ActorId, scriptIntersection.Binding.Script)
-                    : null;
+            movementState.StartWalk(resolved.Path, CurrentCellDurationMs(), now);
+            _pendingArrival = resolved.Arrival;
         }
         finally { _movementGate.Release(); }
         _positionDirty = true;
@@ -856,30 +1096,54 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
             unchecked((uint)Environment.TickCount),
             fromX,
             fromY,
-            movementTargetX,
-            movementTargetY);
+            resolved.TargetX,
+            resolved.TargetY);
         MapLogger.Info(
-            $"[iRO MAP DEBUG] Sending 0x0087 len=12 from=({fromX},{fromY}) to=({movementTargetX},{movementTargetY})");
+            $"[iRO MAP DEBUG] Sending 0x0087 len=12 from=({fromX},{fromY}) to=({resolved.TargetX},{resolved.TargetY})");
         await WriteAsync(response, cancellationToken);
 
-        if (intersectsWarp)
+        if (resolved.IntersectsWarp)
         {
             MapLogger.Info(
-                $"[iRO MAP DEBUG] Movement path intersects warp map='{_mapName}' at=({intersection.X},{intersection.Y}) requestedTarget=({request.TargetX},{request.TargetY}) (deferred to actual arrival)");
+                $"[iRO MAP DEBUG] Movement path intersects warp map='{_mapName}' at=({resolved.Warp.X},{resolved.Warp.Y}) requestedTarget=({request.TargetX},{request.TargetY}) (deferred to actual arrival)");
         }
-        else if (intersectsScript)
+        else if (resolved.IntersectsScript)
         {
-            MapLogger.Info($"[iRO MAP DEBUG] Movement path intersects script trigger entity='{scriptIntersection.Binding.Entity.Id}' map='{_mapName}' at=({scriptIntersection.X},{scriptIntersection.Y}) (deferred to actual arrival)");
+            MapLogger.Info($"[iRO MAP DEBUG] Movement path intersects script trigger entity='{resolved.Script.Binding.Entity.Id}' map='{_mapName}' at=({resolved.Script.X},{resolved.Script.Y}) (deferred to actual arrival)");
         }
         else
         {
             await SendVisibleWarpActorsAsync(cancellationToken);
+            await SendVisibleMonsterActorsAsync(cancellationToken);
         }
     }
 
     private static long Distance(ushort x1, ushort y1, ushort x2, ushort y2)
     {
         var dx = (long)x2 - x1; var dy = (long)y2 - y1; return dx * dx + dy * dy;
+    }
+
+    // Diagnostic-only (source-neutral: does not decide spawn eligibility or gameplay behavior on
+    // its own). Lets a tester identify a visually suspicious monster (e.g. one that appears to
+    // stand on water/mountain) by hovering/clicking it in the stock client, which sends the
+    // existing proven 0x0368 actor-info request this already handles, and correlates the CURRENT
+    // actorId (assigned by WorldActorIdAllocator well after any spawn-time selection decision) to
+    // its live position/cell state via MonsterSpatialInspector - see that type's own doc comment
+    // for why spawn-time-selector-level diagnostics alone cannot answer "what is at actorId N
+    // right now". See the investigation notes in ai/world-data.md for why blanket-forbidding
+    // MapCellFlags.Water or inventing a stronger connectivity rule is NOT done here; this only
+    // reports the exact static cell state so that question can be answered from real map_cache.dat
+    // data instead of a screenshot guess.
+    private void LogMonsterCellDiagnostics(uint actorId)
+    {
+        if (_spatialInspector is null) return;
+        if (!_spatialInspector.TryDescribe(actorId, _mapName, out var diagnostics)) return;
+
+        MapLogger.Info(
+            $"[iRO MAP DEBUG][MONSTER CELL] actorId={diagnostics.ActorId} mob={diagnostics.MobAegisName} " +
+            $"map='{diagnostics.Map}' x={diagnostics.X} y={diagnostics.Y} flags='{diagnostics.Flags}' " +
+            $"walkable={diagnostics.IsWalkable} water={diagnostics.IsWater} " +
+            $"shootable={diagnostics.IsShootable} traversal={diagnostics.IsTraversalCell}");
     }
 
     private async Task SendSameServerWarpAsync(WarpDefinition warp, CancellationToken cancellationToken)
@@ -909,9 +1173,649 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
         await PersistPositionIfDirtyAsync(cancellationToken);
     }
 
+    // Verified capture: 0x0437/8 (clif_parse_ActionRequest, clif.cpp:11818): id.W targetActorId.L
+    // actionType.B (offset 6, DMG_REPEAT=7 in every live capture) opaqueByte.B (offset 7).
+    // Pinned clif_parse_ActionRequest_sub (clif.cpp:11716-11739) dispatches DMG_NORMAL/DMG_REPEAT
+    // to the SAME unit_attack call - this handler does the same: it never performs a hit itself,
+    // it only resolves/validates the target and registers (or replaces) this session's ONE
+    // server-owned repeat-attack state (pinned unit_attack, unit.cpp:2942-2953 - "just change
+    // target/type" when an attack is already active for this unit). RunRepeatAttackLoopAsync
+    // (started once per session by EnsureRuntimeLoopsStarted, same pattern as the movement/status
+    // loops) owns actually executing hits on the pinned attack-delay cadence. A target that does
+    // not resolve to a live MobInstance on the player's current map is silently ignored (no fake
+    // success), matching this handler's existing "never fake a result" rule.
+    private async Task HandleIroAttackRequestAsync(byte[] packet, CancellationToken cancellationToken)
+    {
+        if (!IroAttackRequestPacket.TryParse(packet, out var request)) return;
+        var targetActorId = request.TargetActorId;
+        if (_monsters is null || _combat is null || _gameplayState is null) return;
+        if (!_monsters.TryGetInstance(targetActorId, _mapName, out var target) || !target.IsAlive) return;
+
+        await _attackGate.WaitAsync(cancellationToken);
+        try
+        {
+            // Pinned unit_attack (unit.cpp:2942-2978): a request ALWAYS updates the target
+            // (unit_set_target) - but whether it also fires/reschedules immediately depends on
+            // whether an attack timer is already pending: "// Just change target/type. [Skotlex]
+            // if(ud->attacktimer != INVALID_TIMER) return stop_flag;" (unit.cpp:2951-2953) - a
+            // retarget/duplicate request arriving mid-cooldown does NOT reset attackabletime or
+            // force an immediate hit; it only takes effect the next time the ALREADY-scheduled
+            // timer fires. Only when no attack is currently pending does unit_attack itself decide
+            // whether to fire now or schedule for attackabletime (unit.cpp:2971-2978) - which for
+            // a brand-new repeat state (no prior NextAttackAt to inherit) is always "now", since
+            // Athena has no cross-target attackabletime state to carry over otherwise.
+            var nextAttackAt = _repeatAttack?.NextAttackAt ?? _timeProvider.GetUtcNow();
+            _repeatAttack = new RepeatAttackState(targetActorId) { NextAttackAt = nextAttackAt };
+        }
+        finally { _attackGate.Release(); }
+        try { _attackSignal.Release(); } catch (SemaphoreFullException) { }
+    }
+
+    // One repeat-attack scheduler per session (not one Task.Delay/Timer per hit), mirroring
+    // RunMovementLoopAsync/RunStatusExpirationLoopAsync's exact shape: sleep until
+    // _repeatAttack.NextAttackAt via the shared TimeProvider, waking early whenever
+    // HandleIroAttackRequestAsync registers or replaces the active target (which can move the
+    // next deadline earlier, or wake the loop from indefinite waiting).
+    private async Task RunRepeatAttackLoopAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                RepeatAttackState? active;
+                await _attackGate.WaitAsync(cancellationToken);
+                try { active = _repeatAttack; }
+                finally { _attackGate.Release(); }
+
+                if (active is null)
+                {
+                    await _attackSignal.WaitAsync(cancellationToken);
+                    continue;
+                }
+
+                var delay = active.NextAttackAt - _timeProvider.GetUtcNow();
+                if (delay > TimeSpan.Zero)
+                {
+                    using var delayCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                    var wake = _attackSignal.WaitAsync(delayCancellation.Token);
+                    var sleep = Task.Delay(delay, _timeProvider, delayCancellation.Token);
+                    var completed = await Task.WhenAny(wake, sleep);
+                    delayCancellation.Cancel();
+                    if (completed == wake)
+                    {
+                        try { await wake; } catch (OperationCanceledException) { }
+                        continue;
+                    }
+                    try { await sleep; } catch (OperationCanceledException) { continue; }
+                }
+
+                await PerformDueRepeatAttackAsync(active, cancellationToken);
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (ObjectDisposedException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+    }
+
+    // Resolves each distinct QuestId GeneratedQuestDrops.All mentions through the real persistence
+    // interface (see QuestDropResolver's own doc comment) - Athena has no materialized "all active
+    // quests" concept anywhere else either. Only called from MonsterCombatCoordinator.AttackAsync's
+    // own `killed` branch (see PerformDueRepeatAttackAsync's own call site) - never on an ordinary
+    // non-lethal hit, which is the section 15 optimization this extraction exists for.
+    private async Task<Func<uint, CharacterQuestStatus>> ResolveActiveQuestStatesAsync(CancellationToken cancellationToken)
+    {
+        var questStates = new Dictionary<uint, CharacterQuestStatus>();
+        foreach (var rule in GeneratedQuestDrops.All)
+        {
+            if (questStates.ContainsKey(rule.QuestId)) continue;
+            questStates[rule.QuestId] = await _questPersistence.GetQuestStateAsync(_accountId, _charId, rule.QuestId, cancellationToken) ?? CharacterQuestStatus.Absent;
+        }
+        return questId => questStates.GetValueOrDefault(questId, CharacterQuestStatus.Absent);
+    }
+
+    // Executes exactly one authoritative hit for the repeat-attack state active at the time the
+    // loop woke. Reschedules the next hit (or clears the state on death/target-loss) BEFORE
+    // sending any wire notification for this hit - the pinned unit_attack_timer_sub tail
+    // (unit.cpp:3290-3338): perform the hit, unit_set_attackdelay (-> AttackDelayCalculator.
+    // AttackDelayMs here), then re-arm the timer only "if (ud->state.attack_continue &&
+    // !status_isdead(*src))". Ordering the reschedule before the notify matters: a client that
+    // reads this hit's damage packet and immediately sends a NEW attack request
+    // (HandleIroAttackRequestAsync, which inherits _repeatAttack?.NextAttackAt when a repeat is
+    // already active per unit_attack's "just change target/type" behavior) must observe the
+    // schedule THIS hit just computed, never a stale pre-hit value. `active` is re-validated as
+    // still the CURRENT session target (not merely non-null) before doing anything: a replacing
+    // attack request or a teleport/movement cancellation between "the loop woke" and "this method
+    // acquired the gate" must not let a stale hit execute or reschedule against a target the
+    // session no longer intends to attack.
+    private async Task PerformDueRepeatAttackAsync(RepeatAttackState expected, CancellationToken cancellationToken)
+    {
+        await _attackGate.WaitAsync(cancellationToken);
+        try
+        {
+            if (!ReferenceEquals(_repeatAttack, expected)) return;
+        }
+        finally { _attackGate.Release(); }
+
+        if (_monsters is null || _combat is null || _gameplayState is null) { ClearRepeatAttackIfCurrent(expected); return; }
+        if (!_monsters.TryGetInstance(expected.TargetActorId, _mapName, out var target) || !target.IsAlive)
+        {
+            ClearRepeatAttackIfCurrent(expected);
+            return;
+        }
+
+        // Resolve the CURRENT authoritative right-hand weapon through the same shared
+        // EquippedWeaponResolver path SendSelfWeaponAppearanceAsync uses - never the
+        // client-facing LOOK_WEAPON/ClientViewId, and never cached across attacks, so
+        // a same-session equip/unequip changes the very next attack's calculation.
+        // UnknownItem/NonWeaponInWeaponSlot are authoritative-state/data invariant
+        // FAILURES (an equipped item id that isn't in the pinned item_db, or a
+        // non-weapon item resolved into the weapon slot), never legitimate unarmed
+        // states - they must never silently degrade into an unarmed attack. This
+        // attack is rejected/aborted outright: no combat calculation runs, no wire
+        // response is sent, matching this handler's existing "never fake a result"
+        // rule for an unresolvable target. The repeat state is cleared rather than
+        // retried - the underlying equipment invariant violation will not resolve itself.
+        WeaponItemDefinition? equippedWeapon = null;
+        if (_equipment is { } equipment)
+        {
+            var weaponResolution = EquippedWeaponResolver.Resolve(equipment, GeneratedItems.ById);
+            switch (weaponResolution.Resolution)
+            {
+                case EquippedWeaponResolution.Weapon:
+                    equippedWeapon = weaponResolution.Weapon;
+                    break;
+                case EquippedWeaponResolution.Unarmed:
+                    break;
+                default:
+                    MapLogger.Warning($"[iRO MAP DEBUG] Equipped right-hand item did not resolve to a weapon (resolution={weaponResolution.Resolution}); rejecting attack.");
+                    ClearRepeatAttackIfCurrent(expected);
+                    return;
+            }
+        }
+
+        // MANDATORY server-authoritative range re-check, run before EVERY hit (the very first one
+        // included - PerformDueRepeatAttackAsync is the ONE place every attack attempt, immediate
+        // or scheduled, actually executes; see RunRepeatAttackLoopAsync's own doc comment). Pinned
+        // unit_attack_timer_sub (unit.cpp:3251-3266): range=status_get_range(src), then a +1
+        // "chasing" bonus when the TARGET is currently walking (unit_is_walking(target) - the
+        // second half of that pinned condition, "target->type==BL_PC || !CELL_CHKICEWALL", is
+        // unconditionally true for every monster target in this project: Ice Wall is a Wizard
+        // skill-created cell state this codebase has no skill system to ever create, so
+        // CELL_CHKICEWALL can never be true here), then check_distance_client_bl(src,target,range)
+        // - a PC failing this sends clif_movetoattack (0x0139) and returns WITHOUT attacking
+        // (unit.cpp:3255-3258), never with any damage/HP mutation/quest-drop side effect. Player
+        // position is synced to real elapsed walking time FIRST (SyncPositionToNow) so a moving
+        // attacker's position is never read stale, exactly like a fresh movement request would.
+        SyncPositionToNow();
+        var targetPositionForRangeCheck = target.GetPosition();
+        var resolvedRange = BasicAttackRangeResolver.Resolve(equippedWeapon);
+        var effectiveRangeForRangeCheck = resolvedRange + (target.IsWalking ? 1 : 0);
+        var dxForRangeCheck = _x - targetPositionForRangeCheck.X;
+        var dyForRangeCheck = _y - targetPositionForRangeCheck.Y;
+        if (!ClientDistance.CheckDistanceClient(dxForRangeCheck, dyForRangeCheck, effectiveRangeForRangeCheck))
+        {
+            var clientDistance = ClientDistance.DistanceClient(dxForRangeCheck, dyForRangeCheck);
+            MapLogger.Info(
+                $"[iRO MAP DEBUG] Attack range rejected player=({_x},{_y}) targetActorId={expected.TargetActorId} target=({targetPositionForRangeCheck.X},{targetPositionForRangeCheck.Y}) weapon={(equippedWeapon is null ? "unarmed" : $"{equippedWeapon.AegisName}/{equippedWeapon.Id}")} range={effectiveRangeForRangeCheck} clientDistance={clientDistance}");
+            var failurePacket = IroCombatDistancePackets.BuildAttackFailureForDistance(
+                expected.TargetActorId, targetPositionForRangeCheck.X, targetPositionForRangeCheck.Y, _x, _y, (ushort)effectiveRangeForRangeCheck);
+            await WriteAsync(failurePacket, cancellationToken);
+            // Pinned unit_attack_timer_sub's far-away branch never re-arms ud->attacktimer - only
+            // the tail AFTER a real hit lands does that (unit.cpp:3333, "if (attack_continue &&
+            // !status_isdead)"). The repeat-attack intent is therefore cleared here, not merely
+            // skipped-for-one-tick: a far-away 0x0437 must not become a background loop that keeps
+            // re-checking range/spamming 0x0139 while the player is still out of range - the stock
+            // client is expected to walk closer on its own and send a NEW 0x0437 when it does,
+            // which HandleIroAttackRequestAsync already handles as an ordinary fresh attack request.
+            ClearRepeatAttackIfCurrent(expected);
+            return;
+        }
+
+        // battle_check_range's own line-of-attack/obstacle check (battle.cpp:8215-8235), run AFTER
+        // the client-distance check per pinned unit_attack_timer_sub's own ordering (unit.cpp:3251-
+        // 3268: check_distance_client_bl first, THEN battle_check_range). For this project's only
+        // currently-modeled weapon (Knife, Range=1) this is provably a no-op: battle_check_range's
+        // own distance_bl(Chebyshev)<2 short-circuit (battle.cpp:8228-8229) always fires whenever
+        // check_distance_client already passed for a range<=1 weapon (circular distance is always
+        // >= Chebyshev distance for the same offset) - see BasicAttackDistanceValidator's own doc
+        // comment. Implemented faithfully anyway (not skipped) so a future higher-range weapon is
+        // already source-correct around walls/obstacles without revisiting this method.
+        if (!BasicAttackDistanceValidator.HasDirectAttackPath(_collisionProvider, _mapName, _x, _y, targetPositionForRangeCheck.X, targetPositionForRangeCheck.Y, effectiveRangeForRangeCheck))
+        {
+            MapLogger.Info(
+                $"[iRO MAP DEBUG] Attack range rejected (no direct attack path) player=({_x},{_y}) targetActorId={expected.TargetActorId} target=({targetPositionForRangeCheck.X},{targetPositionForRangeCheck.Y}) range={effectiveRangeForRangeCheck}");
+            ClearRepeatAttackIfCurrent(expected);
+            return;
+        }
+
+        // Section 15: quest-state CharServer roundtrips are only genuinely needed when THIS hit
+        // kills the target (QuestDropResolver.ResolveDrops is only ever reached on death) - the
+        // resolver below is only invoked by AttackAsync's own `killed` branch, so an ordinary
+        // non-lethal hit never touches CharServer for quest state at all (the live log's own
+        // observed "quest-state roundtrip on every hit" pattern this fixes).
+        Task<Func<uint, CharacterQuestStatus>> ResolveQuestStatesAsync() => ResolveActiveQuestStatesAsync(cancellationToken);
+
+        var effectiveStats = _statusEffects.Recalculate(_gameplayState.State);
+        var outcome = await _combat.AttackAsync(
+            target,
+            _accountId,
+            effectiveStats,
+            _gameplayState.State.BaseLevel,
+            equippedWeapon,
+            ResolveQuestStatesAsync);
+        if (!outcome.Accepted) { ClearRepeatAttackIfCurrent(expected); return; }
+
+        // Section 16: log ONLY the actual acquisition transition the coordinator reported - see
+        // MonsterAttackOutcome.EngagementAcquired's own doc comment for why that pure state/rules
+        // layer surfaces this as a flag rather than logging it itself.
+        if (outcome.EngagementAcquired)
+        {
+            var position = target.GetPosition();
+            MapLogger.Info($"[iRO MAP DEBUG] Mob engagement acquired mobActorId={target.ActorId} targetAccountId={_accountId} mobPosition=({position.X},{position.Y}) combatState={target.Engagement.State}");
+        }
+
+        // Reschedule (or clear, on death) the repeat-attack runtime state BEFORE any wire
+        // notification for this hit - matching this project's validate -> persist -> update
+        // runtime state -> notify ordering (AGENTS.md). This also closes a real race: a client
+        // that reads the damage packet and immediately sends a NEW attack request
+        // (HandleIroAttackRequestAsync, which inherits _repeatAttack?.NextAttackAt when a repeat
+        // is already active) must observe the schedule this hit just computed, never the stale
+        // pre-hit value - which it would if the reschedule happened only after WriteAsync below.
+        if (outcome.KilledByThisHit)
+        {
+            // Pinned unit_attack_timer_sub only re-arms the timer "if (ud->state.attack_continue
+            // && !status_isdead(*src))" (unit.cpp:3333) - a dead target never reschedules.
+            ClearRepeatAttackIfCurrent(expected);
+        }
+        else
+        {
+            var weaponTypeForDelay = equippedWeapon?.WeaponType;
+            var delayMs = AttackDelayCalculator.AttackDelayMs(effectiveStats, weaponTypeForDelay);
+            await _attackGate.WaitAsync(cancellationToken);
+            try
+            {
+                if (ReferenceEquals(_repeatAttack, expected)) expected.NextAttackAt = _timeProvider.GetUtcNow().AddMilliseconds(delayMs);
+            }
+            finally { _attackGate.Release(); }
+        }
+
+        var tick = unchecked((uint)Environment.TickCount);
+        var damageDealt = outcome.HpBefore - outcome.HpAfter;
+        MapLogger.Info(
+            $"[iRO MAP DEBUG] Attack accepted attackerAccountId={_accountId} targetActorId={expected.TargetActorId} damage={damageDealt} hpBefore={outcome.HpBefore} hpAfter={outcome.HpAfter} killed={outcome.KilledByThisHit} range={effectiveRangeForRangeCheck} clientDistance={ClientDistance.DistanceClient(dxForRangeCheck, dyForRangeCheck)}");
+
+        // dstSpeed is the TARGET's own dmotion (clif_damage's ddelay) - for a mob target that is
+        // MobDefinition.DamageMotion directly (see that field's own doc comment for the pinned
+        // trace); srcSpeed remains the existing capture-verified player-attacker value (460) -
+        // deriving the player's own real amotion is a separate, larger, weapon-speed-dependent
+        // pinned formula (status_base_amotion) out of this task's scope, not touched here.
+        var damagePacket = IroMonsterCombatPackets.BuildNotifyAct3(
+            _accountId,
+            expected.TargetActorId,
+            tick,
+            srcSpeed: 460,
+            dstSpeed: (uint)target.Spawn.Mob.DamageMotion,
+            damage: damageDealt,
+            div: 1,
+            actionType: 0);
+        await WriteAsync(damagePacket, cancellationToken);
+
+        if (outcome.KilledByThisHit)
+        {
+            MapLogger.Info($"[iRO MAP DEBUG] Monster died actorId={expected.TargetActorId} mob={target.Spawn.Mob.AegisName}");
+            var vanishPacket = IroMonsterCombatPackets.BuildNotifyVanish(expected.TargetActorId, PacketConstants.ZcNotifyVanishReasonDied);
+            await WriteAsync(vanishPacket, cancellationToken);
+            _visibleActorIds.MarkNotVisible(expected.TargetActorId);
+
+            foreach (var drop in outcome.QuestDrops)
+            {
+                if (!GeneratedItems.ById.TryGetValue(drop.ItemId, out var itemDefinition))
+                {
+                    MapLogger.Warning($"[iRO MAP DEBUG] Quest drop references unregistered itemId={drop.ItemId}; skipping client notification.");
+                    continue;
+                }
+
+                var inventorySession = new CharacterInventorySession(_accountId, _charId, _inventoryPersistence);
+                var addResult = await inventorySession.AddItemAsync(itemDefinition, (uint)drop.Count, cancellationToken);
+                if (!addResult.Success || addResult.Item is not { } addedRow || _inventory is not { } inventory)
+                {
+                    MapLogger.Warning($"[iRO MAP DEBUG] Inventory persistence failed for itemId={drop.ItemId}; not notifying client.");
+                    continue;
+                }
+
+                // Persistence succeeded - update the authoritative MapServer runtime snapshot with the
+                // CharServer-confirmed row BEFORE notifying the client (never the other way around: a
+                // client-visible 0x0B41 must never be sent while _inventory is left stale). IsNewRow
+                // decides slot assignment: a brand-new row gets the first free runtime slot (reusing
+                // a hole left by an earlier consume, mirroring pinned pc_additem); an existing stack's
+                // amount update preserves whatever slot its DurableId already occupies. _equipment is
+                // re-derived from the SAME updated snapshot for consistency, even though an ordinary
+                // Etc/Usable drop like Wood never changes the right-hand slot - there is exactly one
+                // place _equipment is derived from _inventory, never a second independently-maintained
+                // copy.
+                _inventory = addResult.IsNewRow
+                    ? inventory.WithNewItem(addResult.DurableId, addedRow.ItemId, addedRow.Amount, addedRow.Equip, addedRow.Identified, addedRow.Refine, addedRow.Favorite, addedRow.Bound)
+                    : inventory.WithUpdatedItem(addResult.DurableId, addedRow.ItemId, addedRow.Amount, addedRow.Equip, addedRow.Identified, addedRow.Refine, addedRow.Favorite, addedRow.Bound);
+                _equipment = CharacterEquipmentSnapshot.FromInventory(_inventory);
+
+                // client_index(): server-side runtime array position + 2 (clif.cpp:122-124). Read
+                // back from the snapshot by DurableId - the authoritative source of truth for this
+                // row's CURRENT runtime slot, never re-derived from anything CharServer returned.
+                var slotIndex = _inventory.Items.Single(i => i.DurableId == addResult.DurableId).SlotIndex;
+                var clientIndex = (ushort)(slotIndex + 2);
+                var pickupPacket = IroMonsterCombatPackets.BuildItemPickupAck(clientIndex, (ushort)drop.Count, itemDefinition.Id, itemType: 3);
+                MapLogger.Info($"[iRO MAP DEBUG] Sending 0x0B41 itemId={itemDefinition.Id} count={drop.Count} clientIndex={clientIndex}");
+                await WriteAsync(pickupPacket, cancellationToken);
+            }
+        }
+    }
+
+    // Clears _repeatAttack only if it is STILL the exact instance this hit was computed for -
+    // a concurrent replacing attack request (HandleIroAttackRequestAsync) or cancellation
+    // (TeleportTo/HandleIroMovementAsync) may already have installed a different RepeatAttackState
+    // (or null) between when this hit started and when it finished; that newer state must never be
+    // clobbered by a stale outcome belonging to the target it replaced. Synchronous (never awaits),
+    // so callers may invoke it directly without a surrounding _attackGate.WaitAsync of their own.
+    private void ClearRepeatAttackIfCurrent(RepeatAttackState expected)
+    {
+        _attackGate.Wait();
+        try
+        {
+            if (ReferenceEquals(_repeatAttack, expected)) _repeatAttack = null;
+        }
+        finally { _attackGate.Release(); }
+    }
+
+    // Narrow, synchronized read for the world monster-tick orchestrator (MapTcpServer) to pass
+    // into MonsterEngagementDomain.Evaluate - see PlayerCombatSnapshot's own doc comment for why
+    // this is deliberately narrow rather than exposing MapClientSession's full surface. Guarded by
+    // _movementGate (the SAME gate HandleIroMovementAsync/ProcessDueMovementAsync already use for
+    // _x/_y/_mapName) so a concurrent world tick reading this snapshot can never observe a torn
+    // position mid-movement-packet-processing - this is the "use the session's existing
+    // synchronization model" this task's own concurrency requirement calls for, not a new ad-hoc
+    // lock. Returns null once (not before) the character has been authenticated far enough to have
+    // gameplay state - a session mid-handshake is not yet a valid combat target, matching how
+    // MapTcpServer's _sessions dictionary itself only holds sessions that have reached RunAsync.
+    internal async Task<PlayerCombatSnapshot?> TryGetCombatSnapshotAsync(CancellationToken cancellationToken)
+    {
+        if (_gameplayState is null) return null;
+        var stats = _statusEffects.Recalculate(_gameplayState.State);
+        await _movementGate.WaitAsync(cancellationToken);
+        try
+        {
+            SyncPositionToNow();
+            var isWalking = _movement?.IsMoving ?? false;
+            return new PlayerCombatSnapshot(_accountId, _mapName, _x, _y, _gameplayState.State.CurrentHp > 0, isWalking, _gameplayState.State.BaseLevel, stats.Vitality, stats.Agility);
+        }
+        finally { _movementGate.Release(); }
+    }
+
+    // Authoritative mob-on-player basic-attack application, called by the world monster-tick
+    // orchestrator (MapTcpServer) once MonsterEngagementDomain.Evaluate has already decided (from a
+    // PlayerCombatSnapshot taken moments earlier) that this hit should happen. Re-validates
+    // liveness/map under _gameplayState's own MutateAsync (optimistic-concurrency: the mutation
+    // callback re-reads `expected.CurrentHp` itself) so a player who died, changed map, or received
+    // a DIFFERENT concurrent HP mutation between snapshot and this call cannot have this hit
+    // silently clobber that newer state - MutateAsync's own persisted-row compare-and-swap is
+    // exactly this project's "treat a stale snapshot as needing re-validation, not blind
+    // overwrite" pattern (see ICharacterGameplayStatePersistence.MutateAsync's own doc comment).
+    // Returns false (does nothing, sends nothing) if the player is no longer a valid target by the
+    // time the mutation actually runs - the orchestrator feeds that back into the mob's own target-
+    // unlock lifecycle exactly like a snapshot that was null/dead/wrong-map to begin with.
+    // Section 12's own responsibility split: this method is VICTIM-ONLY (authoritative HP mutation
+    // + the victim's own self SP_HP update) - it never sends the 0x08C8 combat action itself. The
+    // action is broadcast separately, to every AREA-visible observer (victim included), via
+    // MonsterAttackActionOutcome/MapTcpServer's own fan-out - see that record's own doc comment for
+    // why the two are split (pinned clif_damage's own AREA-vs-SELF distinction: the action is
+    // never victim-only, the HP parameter update never leaves the victim's own session).
+    //
+    // Section 7's own TOCTOU closure point: this is the ACTUAL hit-execution instant, re-validated
+    // fully here rather than trusting whatever snapshot the caller's earlier Evaluate/Chase-vs-
+    // Attack decision was based on - MutateAsync's own optimistic-concurrency compare-and-swap
+    // means a stale `expected` row (the player moved/mutated concurrently) is naturally rejected
+    // (returns null) rather than silently overwritten; `damage`/`isMiss` were themselves computed
+    // moments earlier by the caller from ITS OWN re-snapshot taken immediately before calling this
+    // method (MonsterEngagementTickProcessor's own re-snapshot-then-attack sequence), not from the
+    // original Evaluate-time snapshot - see that processor's own doc comment for the full sequence.
+    //
+    // Returns null when the mutation could not be applied (no gameplay state, or MutateAsync
+    // rejected a stale row) - the caller must NOT emit any attack action/outcome in that case
+    // (section 7: "do not emit a successful attack result" when the target is no longer
+    // attackable). Otherwise returns the HP AFTER this hit, and whether it actually changed (a
+    // miss/0-damage hit, or a hit against an already-dead player, changes nothing - see section
+    // 10's own "do not send an HP parameter update merely because the mob attempted an attack"
+    // requirement).
+    internal async Task<(uint HpAfter, bool HpChanged)?> ApplyIncomingMobBasicAttackAsync(uint damage, CancellationToken cancellationToken)
+    {
+        if (_gameplayState is null) return null;
+
+        var before = _gameplayState.State.CurrentHp;
+        var mutated = await _gameplayState.MutateAsync(current =>
+        {
+            if (current.CurrentHp == 0) return current; // Already dead - no further reduction (pinned status_isdead target check).
+            var after = damage >= current.CurrentHp ? 0u : current.CurrentHp - damage;
+            return current with { CurrentHp = after };
+        }, cancellationToken);
+
+        if (mutated is null) return null; // Persistence rejected the mutation (stale row) - treat as a normal "target no longer valid this tick", not an error.
+
+        // The SP_HP packet itself is NOT written here - see MonsterAttackActionOutcome's own doc
+        // comment for why the wire write is deferred to NotifyMonsterAttackOutcomeAsync, which sends
+        // it immediately after the action packet on the same fan-out call (matching pinned wire
+        // ordering: action always precedes the HP sync).
+        return (mutated.CurrentHp, mutated.CurrentHp != before);
+    }
+
+    // Pinned clif_parse_UseItem (clif.cpp:12077-12106) -> pc_useitem (pc.cpp:6450-6576).
+    // n = server_index(index) (client index - 2, matching every other equip/unequip/pickup
+    // path's convention) - the client supplies intent only; the authoritative item is resolved
+    // from THIS session's own CharacterInventorySnapshot at that slot, never trusted from the
+    // client. AccountId is validated against the authenticated session (pinned clif_parse_UseItem
+    // itself never re-validates the field - the request is scoped to sd via fd - but Athena's
+    // packet still carries it, so it is checked defensively rather than ignored).
+    //
+    // This slice supports exactly one traced source-backed effect: a Type: Usable item whose
+    // pinned item_db Script is a getitem-only container (ItemDataCompiler.TryParseGetItemScript,
+    // e.g. First Aid Box 23484) - GeneratedItems.UsableItemDefinition.Grants is non-empty only
+    // for that narrow case. Any other resolved item (a different Usable with no Grants, a
+    // Healing/DelayConsume item, an unknown/non-usable slot) is rejected without mutation -
+    // implementing their real effects (itemheal, itemskill, status, etc.) is explicitly out of
+    // scope; this handler must never guess or fake a result for them.
+    //
+    // Ordering follows this project's own validate -> persist -> update runtime state -> notify
+    // rule (AGENTS.md), which is ALSO consistent with pinned pc_useitem's own real ordering for
+    // this exact case (clif_useitemack sent BEFORE pc_delitem at pc.cpp:6535-6536 - the ack must
+    // be constructed from the row's PRE-consume state/still-existing row, per clif_useitemack's
+    // own early-out at clif.cpp:4477 for a zeroed/absent row) - so persisting first and building
+    // the ack from the confirmed post-persist state produces the exact same wire values pinned
+    // source does for the amount-after-use case, without needing to special-case send-before-persist.
+    private async Task HandleIroUseItemRequestAsync(byte[] packet, CancellationToken cancellationToken)
+    {
+        if (!IroUseItemRequestPacket.TryParse(packet, out var request)) return;
+        if (request.AccountId != _accountId) return;
+        if (_inventory is not { } inventory || request.ClientIndex < 2) return;
+        var slotIndex = (uint)(request.ClientIndex - 2);
+
+        var row = inventory.Items.FirstOrDefault(i => i.SlotIndex == slotIndex);
+        if (row is null || !GeneratedItems.ById.TryGetValue(row.ItemId, out var itemDefinition))
+        {
+            MapLogger.Warning($"[iRO MAP DEBUG] Item-use rejected: no resolvable item at slotIndex={slotIndex}.");
+            return;
+        }
+
+        if (itemDefinition is not UsableItemDefinition { Grants.Count: > 0 } usable)
+        {
+            MapLogger.Warning(
+                $"[iRO MAP DEBUG] Item-use rejected: itemId={row.ItemId} has no source-backed use effect implemented in this slice.");
+            return;
+        }
+
+        // Fail closed on an incomplete container implementation: FirstaidBox10 (23485), for
+        // example, has a pinned getitem grant for 23486 ("Firstaid_Box_15"), which is
+        // intentionally not yet generated. Consuming the container and granting only the
+        // resolvable subset would silently destroy the source item and leave the character
+        // short the ungrantable one - never acceptable. Every grant must resolve BEFORE any
+        // consume/persist/notify happens, so an unimplemented container is rejected outright
+        // (no consume, no ack, no partial grants) while a fully-generated container (e.g.
+        // FirstAidBox/23484) remains fully executable.
+        foreach (var grant in usable.Grants)
+        {
+            if (!GeneratedItems.ById.ContainsKey(grant.ItemId))
+            {
+                MapLogger.Warning(
+                    $"[iRO MAP DEBUG] Item-use rejected: itemId={row.ItemId} has an unimplemented grant itemId={grant.ItemId}; container use is out of scope until all grants are generated.");
+                return;
+            }
+        }
+
+        var inventorySession = new CharacterInventorySession(_accountId, _charId, _inventoryPersistence);
+        var consumeResult = await inventorySession.ConsumeItemAsync(row.DurableId, 1, cancellationToken);
+        if (!consumeResult.Success)
+        {
+            MapLogger.Warning($"[iRO MAP DEBUG] Item-use persistence failed for itemId={row.ItemId} durableId={row.DurableId}; not notifying client.");
+            return;
+        }
+
+        // Persistence succeeded - update the authoritative runtime snapshot BEFORE granting the
+        // container's items or notifying the client (same rule the reward path already follows).
+        // RowDeleted leaves a HOLE at this row's former runtime slot (WithoutDurableId) - it does
+        // NOT compact/renumber later rows, mirroring pinned pc_delitem exactly; a later grant may
+        // reuse that exact hole via WithNewItem.
+        _inventory = consumeResult.RowDeleted
+            ? inventory.WithoutDurableId(row.DurableId)
+            : inventory.WithUpdatedItem(row.DurableId, row.ItemId, consumeResult.NewAmount, row.Equip, row.Identified, row.Refine, row.Favorite, row.Bound);
+        _equipment = CharacterEquipmentSnapshot.FromInventory(_inventory);
+
+        MapLogger.Info(
+            $"[iRO MAP DEBUG] Item-use consumed itemId={row.ItemId} durableId={row.DurableId} newAmount={consumeResult.NewAmount} rowDeleted={consumeResult.RowDeleted}.");
+
+        var ackPacket = IroUseItemPackets.BuildUseItemAck(request.ClientIndex, itemDefinition.ClientViewId, _accountId, consumeResult.NewAmount, success: true);
+        await WriteAsync(ackPacket, cancellationToken);
+
+        // Execute the source-backed getitem grants (script.cpp BUILDIN_FUNC(getitem)) - each
+        // grant is a normal authoritative inventory add through the SAME CharacterInventorySession/
+        // runtime-snapshot-update path the quest-drop reward loop already uses, including the
+        // SAME IsNewRow-driven slot assignment (first free slot - reusing the hole just left by
+        // this same consume, mirroring pinned pc_additem's own array-search behavior). A grant
+        // referencing an item id absent from the generated registry is a data/generation gap,
+        // logged and skipped rather than guessed at (matching the existing quest-drop convention)
+        // - it does NOT abort the remaining grants, since each is an independent getitem call in
+        // the pinned script, not a single atomic operation.
+        foreach (var grant in usable.Grants)
+        {
+            if (!GeneratedItems.ById.TryGetValue(grant.ItemId, out var grantedItem))
+            {
+                MapLogger.Warning($"[iRO MAP DEBUG] Item-use grant references unregistered itemId={grant.ItemId}; skipping.");
+                continue;
+            }
+
+            var grantResult = await inventorySession.AddItemAsync(grantedItem, grant.Amount, cancellationToken);
+            if (!grantResult.Success || grantResult.Item is not { } grantedRow)
+            {
+                MapLogger.Warning($"[iRO MAP DEBUG] Item-use grant persistence failed for itemId={grant.ItemId}; skipping.");
+                continue;
+            }
+
+            _inventory = grantResult.IsNewRow
+                ? _inventory.WithNewItem(grantResult.DurableId, grantedRow.ItemId, grantedRow.Amount, grantedRow.Equip, grantedRow.Identified, grantedRow.Refine, grantedRow.Favorite, grantedRow.Bound)
+                : _inventory.WithUpdatedItem(grantResult.DurableId, grantedRow.ItemId, grantedRow.Amount, grantedRow.Equip, grantedRow.Identified, grantedRow.Refine, grantedRow.Favorite, grantedRow.Bound);
+            _equipment = CharacterEquipmentSnapshot.FromInventory(_inventory);
+
+            var grantSlotIndex = _inventory.Items.Single(i => i.DurableId == grantResult.DurableId).SlotIndex;
+            var grantClientIndex = (ushort)(grantSlotIndex + 2);
+            // Pinned clif_additem (clif.cpp): p.nameid = client_nameid(actual item), p.type =
+            // itemtype(actual item) - never a hardcoded constant. Uses the SAME item-type mapper
+            // IroInventoryListPackets uses for full-inventory serialization, so a grant's pickup
+            // packet and its later reconnect/full-list packet can never disagree on item type.
+            var grantPickupPacket = IroMonsterCombatPackets.BuildItemPickupAck(grantClientIndex, (ushort)grant.Amount, grantedItem.ClientViewId, IroInventoryListPackets.ItemType(grantedItem));
+            MapLogger.Info($"[iRO MAP DEBUG] Sending 0x0B41 for item-use grant itemId={grant.ItemId} count={grant.Amount} clientIndex={grantClientIndex}");
+            await WriteAsync(grantPickupPacket, cancellationToken);
+        }
+    }
+
+    // Pinned clif_parse_EquipItem (clif.cpp:12113-12159): index = server_index(p->index)
+    // (client index - 2, clif.cpp:127-129) - never an item id. _inventory is guaranteed
+    // non-null once authenticated (CompleteIroAuthenticationAsync fails auth outright on an
+    // unsuccessful inventory read).
+    //
+    // Ordering matches pinned pc_equipitem exactly for the client-visible packets (ACK before
+    // appearance, clif.cpp:12168-12178) - the ONLY difference from rAthena is that Athena
+    // persists to CharServer and confirms success BEFORE sending either packet, whereas
+    // real rAthena's single in-memory process technically assigns the field after sending both
+    // (see CharacterEquipmentMutationService's own doc comment). Athena never reports success
+    // before the durable write is confirmed.
+    private async Task HandleEquipRequestAsync(byte[] packet, CancellationToken cancellationToken)
+    {
+        if (!IroEquipRequestPacket.TryParse(packet, out var request)) return;
+        if (_inventory is not { } inventory || request.ClientIndex < 2) return;
+        var slotIndex = (uint)(request.ClientIndex - 2);
+
+        var service = new CharacterEquipmentMutationService(_accountId, _charId, _inventoryListPersistence);
+        var (outcome, updated) = await service.EquipAsync(inventory, slotIndex, request.Position, GeneratedItems.ById, cancellationToken);
+        if (outcome is not { } equipOutcome) return; // invalid slot/index - pc_equipitem sends no ack either (clif.cpp:12154-12156 early-out)
+
+        var result = equipOutcome.Result switch
+        {
+            EquipMutationResult.Success => PacketConstants.EquipAckResultOk,
+            EquipMutationResult.FailLevel => PacketConstants.EquipAckResultFailLevel,
+            _ => PacketConstants.EquipAckResultFail,
+        };
+        await WriteAsync(IroEquipmentMutationPackets.BuildEquipAck(request.ClientIndex, equipOutcome.WearLocation, result), cancellationToken);
+
+        if (equipOutcome.Result != EquipMutationResult.Success || updated is null) return;
+
+        _inventory = updated;
+        _equipment = CharacterEquipmentSnapshot.FromInventory(updated);
+        await SendSelfWeaponAppearanceAsync(cancellationToken);
+    }
+
+    // Pinned clif_parse_UnequipItem (clif.cpp:12166-12189): index = server_index(p->index).
+    // Ordering matches pinned pc_unequipitem exactly for the client-visible packets
+    // (appearance BEFORE ACK, clif.cpp:12426-12452) - the reverse of the equip path. See
+    // HandleEquipRequestAsync's doc comment for the persist-before-report rationale.
+    private async Task HandleUnequipRequestAsync(byte[] packet, CancellationToken cancellationToken)
+    {
+        if (!IroUnequipRequestPacket.TryParse(packet, out var request)) return;
+        if (_inventory is not { } inventory || request.ClientIndex < 2) return;
+        var slotIndex = (uint)(request.ClientIndex - 2);
+
+        var targetItemId = inventory.Items.FirstOrDefault(i => i.SlotIndex == slotIndex)?.ItemId;
+        var oldEquip = inventory.Items.FirstOrDefault(i => i.SlotIndex == slotIndex)?.Equip;
+        var service = new CharacterEquipmentMutationService(_accountId, _charId, _inventoryListPersistence);
+        var (outcome, updated) = await service.UnequipAsync(inventory, slotIndex, cancellationToken);
+        if (outcome is not { } unequipOutcome)
+        {
+            MapLogger.Warning($"[iRO MAP DEBUG] Unequip rejected (unknown slotIndex={slotIndex}); no ack sent.");
+            return;
+        }
+
+        MapLogger.Info(
+            $"[iRO MAP DEBUG] Unequip persisted slotIndex={slotIndex} itemId={targetItemId} oldEquip={oldEquip} newEquip=0 success={unequipOutcome.Success}");
+
+        if (unequipOutcome.Success && updated is not null)
+        {
+            _inventory = updated;
+            _equipment = CharacterEquipmentSnapshot.FromInventory(updated);
+            MapLogger.Info("[iRO MAP DEBUG] Sending 0x01D7 (post-unequip appearance update).");
+            await SendSelfWeaponAppearanceAsync(cancellationToken);
+        }
+
+        var ackPacket = IroEquipmentMutationPackets.BuildUnequipAck(request.ClientIndex, unequipOutcome.WearLocation, unequipOutcome.Success);
+        MapLogger.Info(
+            $"[iRO MAP DEBUG] Sending 0x099A unequip ack bytes={Convert.ToHexString(ackPacket)} clientIndex={request.ClientIndex} wearLocation={unequipOutcome.WearLocation} success={unequipOutcome.Success}");
+        await WriteAsync(ackPacket, cancellationToken);
+        MapLogger.Info("[iRO MAP DEBUG] 0x099A unequip ack write completed.");
+    }
+
     private async Task HandleNpcInteractionAsync(byte[] packet, CancellationToken cancellationToken)
     {
-        if (!IroNpcDialoguePackets.TryParseInteraction(packet, out var actorId) || HasActiveScript || !_visibleActorIds.Contains(actorId) || !_worldMapRegistry.TryGetInteraction(actorId, _mapName, out var entity, out var script))
+        // A monster actor ID is never registered in _worldMapRegistry (NPC/warp actors only),
+        // so TryGetInteraction below already rejects it - monster actors are never routed into
+        // NPC script dispatch, intentionally, not by accident.
+        if (!IroNpcDialoguePackets.TryParseInteraction(packet, out var actorId) || HasActiveScript || !_visibleActorIds.IsActorVisible(actorId) || !_worldMapRegistry.TryGetInteraction(actorId, _mapName, out var entity, out var script))
         {
             MapLogger.Info($"[iRO MAP DEBUG] NPC interaction rejected actorId={actorId}");
             return;
@@ -1416,11 +2320,89 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
     private enum InstructionExecutionResult { Continue, Stop }
     private enum GeneratedContinuationKind { Next, Selection, Close2 }
 
+    // Pinned map_session_data::update_look(LOOK_WEAPON) (pc.cpp:623-647): the wire value is the
+    // equipped item's AliasName-resolved view_id, falling back to its own nameid - NOT the
+    // weapon_type enum (verified stock-iRO capture, kill-poring-heal-jobup frame 210: Knife
+    // 1201's LOOK_WEAPON val=1201, not 1=W_DAGGER). A confirmed-unarmed right hand sends 0
+    // (update_look's "Nothing equipped" branch), never skips the packet.
+    // _equipment is guaranteed non-null once authenticated (CompleteIroAuthenticationAsync
+    // fails auth outright on an unsuccessful equipment read - see
+    // ICharacterEquipmentPersistence/CharacterEquipmentReadResult), so this never runs with
+    // an unknown equipment state. Resolution goes through the one shared EquippedWeaponResolver
+    // path - no Knife-specific branching. An UnknownItem/NonWeaponInWeaponSlot resolution is a
+    // data/generation invariant violation, not a legitimate appearance case, so it is logged and
+    // skipped rather than guessed at.
+    private async Task SendSelfWeaponAppearanceAsync(CancellationToken cancellationToken)
+    {
+        if (_equipment is not { } equipment) return;
+
+        var resolution = EquippedWeaponResolver.Resolve(equipment, GeneratedItems.ById);
+        var weaponViewId = resolution.Resolution switch
+        {
+            EquippedWeaponResolution.Unarmed => (uint?)0,
+            EquippedWeaponResolution.Weapon => (uint)resolution.Weapon!.ClientViewId,
+            _ => null,
+        };
+        if (weaponViewId is null)
+        {
+            MapLogger.Warning($"[iRO MAP DEBUG] Equipped right-hand item did not resolve to a weapon (resolution={resolution.Resolution}); skipping 0x01D7.");
+            return;
+        }
+
+        var packet = IroCharacterAppearancePackets.BuildSpriteChangeWeapon(_accountId, weaponViewId.Value);
+        MapLogger.Info($"[iRO MAP DEBUG] Sending 0x01D7 self weapon look weaponViewId={weaponViewId.Value}");
+        await WriteAsync(packet, cancellationToken);
+    }
+
+    // Pinned clif_inventorylist(sd) (clif.cpp:3062-3143): sends the full authoritative
+    // CharInventory snapshot to the client's own inventory/equip window - split into
+    // equippable (0x0B39) and stackable (0x0B09) lists, bracketed by inventoryStart/End.
+    // _inventory is guaranteed non-null once authenticated (CompleteIroAuthenticationAsync
+    // fails auth outright on an unsuccessful inventory read), so this never runs with unknown
+    // inventory state. An item id absent from GeneratedItems.ById is a data/generation gap
+    // (never silently dropped from combat correctness, since it also never reaches
+    // EquippedWeaponResolver's right-hand path any differently) - logged and excluded from
+    // the client-facing list rather than guessed at, matching the existing 0x0B41 convention.
+    private async Task SendSelfInventoryAsync(CancellationToken cancellationToken)
+    {
+        if (_inventory is not { } inventory) return;
+
+        var equip = new List<(ushort ClientIndex, CharacterInventoryItem Item, IEquippableItemDefinition Definition)>();
+        var normal = new List<(ushort ClientIndex, CharacterInventoryItem Item, ItemDefinition Definition)>();
+        foreach (var item in inventory.Items)
+        {
+            if (!GeneratedItems.ById.TryGetValue(item.ItemId, out var definition))
+            {
+                MapLogger.Warning($"[iRO MAP DEBUG] Inventory row references unregistered itemId={item.ItemId}; excluding from 0x0B09/0x0B39.");
+                continue;
+            }
+
+            // client_index(): server-side array position + 2 (clif.cpp:122-124) - same
+            // convention as the existing 0x0B41 pickup path.
+            var clientIndex = (ushort)(item.SlotIndex + 2);
+            if (definition is IEquippableItemDefinition equippable)
+                equip.Add((clientIndex, item, equippable));
+            else
+                normal.Add((clientIndex, item, definition));
+        }
+
+        MapLogger.Info($"[iRO MAP DEBUG] Sending self inventory/equip list equipCount={equip.Count} normalCount={normal.Count}");
+        await WriteAsync(IroInventoryListPackets.BuildInventoryStart(), cancellationToken);
+        // Pinned clif_inventorylist (clif.cpp:3112-3130): when neither batch fills mid-loop
+        // (this slice's starter inventory never does), the normal-item flush happens BEFORE
+        // the equip-item flush - order matters, do not swap.
+        if (normal.Count > 0)
+            await WriteAsync(IroInventoryListPackets.BuildItemListNormal(normal), cancellationToken);
+        if (equip.Count > 0)
+            await WriteAsync(IroInventoryListPackets.BuildItemListEquip(equip), cancellationToken);
+        await WriteAsync(IroInventoryListPackets.BuildInventoryEnd(), cancellationToken);
+    }
+
     private async Task SendVisibleWarpActorsAsync(CancellationToken cancellationToken)
     {
         foreach (var actor in _worldMapRegistry.GetVisibleWarpActors(_mapName, _x, _y))
         {
-            if (!_visibleActorIds.Add(actor.ActorId))
+            if (!_visibleActorIds.TryMarkVisible(actor.ActorId))
             {
                 continue;
             }
@@ -1429,6 +2411,214 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
             MapLogger.Info(
                 $"[iRO MAP DEBUG] Sending NPC actor id={actor.ActorId} name='{actor.Name}' class={actor.SpriteClass} map='{actor.MapName}' x={actor.X} y={actor.Y}");
             await WriteAsync(packet, cancellationToken);
+        }
+    }
+
+    // Sends 0x09FF for every alive monster instance in range, reusing the same _visibleActorIds
+    // dedup set NPC/warp actors already share (one visibility-tracking collection, matching the
+    // one shared WorldActorIdAllocator namespace all actor kinds draw from - MapServerWorld.Build).
+    // Null _monsters (test-facing constructor default) means no monster runtime is composed for
+    // this session; the method is then a no-op rather than throwing, matching how existing tests
+    // exercise NPC/warp/dialogue behavior without ever touching monster state.
+    private async Task SendVisibleMonsterActorsAsync(CancellationToken cancellationToken)
+    {
+        if (_monsters is null) return;
+
+        foreach (var instance in _monsters.GetVisibleInstances(_mapName, _x, _y))
+        {
+            if (!_visibleActorIds.TryMarkVisible(instance.ActorId))
+            {
+                continue;
+            }
+
+            var mob = instance.Spawn.Mob;
+            var position = instance.GetPosition(); // One atomic snapshot - never torn between axes.
+            var packet = IroMonsterActorPackets.BuildStandEntry(
+                instance.ActorId,
+                (ushort)mob.Id,
+                (ushort)mob.WalkSpeed,
+                mob.Name,
+                position.X,
+                position.Y,
+                direction: 0,
+                currentHp: instance.CurrentHp,
+                maxHp: mob.MaxHp);
+            MapLogger.Info(
+                $"[iRO MAP DEBUG] Sending monster actor id={instance.ActorId} name='{mob.Name}' class={mob.Id} map='{instance.Map}' x={position.X} y={position.Y} hp={instance.CurrentHp}/{mob.MaxHp}");
+            await WriteAsync(packet, cancellationToken);
+        }
+    }
+
+    // Called by MapTcpServer's shared MonsterRuntime tick loop for every MonsterMovementChange
+    // reported this tick - see MonsterRuntime.ProcessTick's and MonsterMovementChangeKind's own doc
+    // comments for why WalkStarted/CellCrossed/WalkFinished are NOT interchangeable here. This is
+    // intentionally NOT driven from inside this session's own per-connection loop: monster movement
+    // is authoritative/shared world state (MobInstance), and different connected players observing
+    // the SAME walk must all originate from that one authoritative source (MapTcpServer's one tick,
+    // fanned out to every session), never from N independent per-session simulations of the same
+    // monster.
+    //
+    // Scoped to this session's own _mapName/_visibleActorIds (never global):
+    //   - Not yet visible but now within GetVisibleInstances' range of this session's OWN (_x,_y):
+    //     a monster can walk INTO a stationary player's visibility, which the existing
+    //     SendVisibleMonsterActorsAsync call sites (0x007D map-load, and after the PLAYER's own
+    //     movement) never re-check on their own - nothing re-invokes that scan when the player
+    //     hasn't moved. Pinned clif_spawn (clif.cpp, dispatches to clif_set_unit_walking when the
+    //     unit's ud.walktimer is active, else clif_set_unit_idle) means a monster discovered WHILE
+    //     already walking must receive the walking-entry (0x09FD) layout, landing it at its CURRENT
+    //     position with its real in-flight destination - never the plain 0x09FF standing entry,
+    //     and never a fabricated/fractional subcell value (BuildWalkEntry's own subX/subY=8 is the
+    //     only capture-verified value, reused as-is here, not re-derived from elapsed step
+    //     progress). A monster discovered while NOT walking still gets the ordinary 0x09FF.
+    //   - Already visible: only WalkStarted sends a packet (the capture-verified 0x09FD walk
+    //     entry). CellCrossed AND WalkFinished both send NOTHING: pinned unit_walktoxy_nextcell's
+    //     ordinary per-cell continuation always passes sendMove=false (unit.cpp:749 vs. the
+    //     sendMove=true initial call at unit.cpp:317), and reaching the end of the walkpath
+    //     (ud->walkpath.path_pos >= path_len) simply returns false with NO clif_fixpos/stop
+    //     notification for either a PC or a MOB (unit.cpp:186-192) - a normal completed walk is
+    //     silent on the wire past its own initial 0x09FD. The captured 0x0088 (ZC_STOPMOVE, frame
+    //     674 of kill-poring-heal-jobup.pcapng) occurs in a COMBAT sequence together with the
+    //     Poring's own attack-back, not as part of an ordinary idle walk's own completion - it is
+    //     evidence for the packet's layout and for SOME fix-position/interruption scenario, not
+    //     evidence that every natural walk completion sends it. BuildStopMove is kept available
+    //     (IroMonsterActorPackets) for a future source-backed movement-interruption/fixpos use case
+    //     (e.g. a walk cancelled by combat), just not wired to ordinary WalkFinished here.
+    //     Only MobInstance's own authoritative position is updated for CellCrossed/WalkFinished,
+    //     matching that the client is expected to already be animating the walk it was told about
+    //     once, at WalkStarted, exactly like a real rAthena client does.
+    //   - The reverse of the discovery case (a monster walking OUT of visibility while the player
+    //     stays still) has no capture-verified packet in this project: ai/iro-2026-wire.md documents
+    //     0x0080 ZC_NOTIFY_VANISH type=1 ("died") from a real capture, and separately notes pinned
+    //     source's own comment that type=0 means "out of sight" - but that specific type value has
+    //     NOT been independently captured/verified here. Sending it on inference alone would
+    //     violate this project's "no invented/unverified packet" rule, so it is deliberately NOT
+    //     implemented in this slice; a monster that walks out of a stationary player's visibility
+    //     range will incorrectly continue to appear to that client. This is a known, documented gap
+    //     (see this task's own report), not a silent omission.
+    public async Task NotifyMonsterMovedAsync(MonsterMovementChange change, CancellationToken cancellationToken)
+    {
+        var instance = change.Instance;
+        if (!string.Equals(instance.Map, _mapName, StringComparison.OrdinalIgnoreCase)) return;
+
+        var mob = instance.Spawn.Mob;
+        var position = instance.GetPosition();
+
+        if (!_visibleActorIds.IsActorVisible(instance.ActorId))
+        {
+            if (Math.Abs(position.X - _x) > 14 || Math.Abs(position.Y - _y) > 14) return;
+            if (!_visibleActorIds.TryMarkVisible(instance.ActorId)) return;
+
+            if (instance.IsWalking)
+            {
+                var walkingDiscoveryDestination = instance.MovementDestination;
+                var walkingDiscoveryPacket = IroMonsterActorPackets.BuildWalkEntry(
+                    instance.ActorId,
+                    (ushort)mob.Id,
+                    (ushort)mob.WalkSpeed,
+                    mob.Name,
+                    position.X,
+                    position.Y,
+                    walkingDiscoveryDestination.X,
+                    walkingDiscoveryDestination.Y,
+                    moveStartTime: (uint)Environment.TickCount,
+                    currentHp: instance.CurrentHp,
+                    maxHp: mob.MaxHp);
+                await WriteAsync(walkingDiscoveryPacket, cancellationToken);
+                return;
+            }
+
+            var standPacket = IroMonsterActorPackets.BuildStandEntry(
+                instance.ActorId,
+                (ushort)mob.Id,
+                (ushort)mob.WalkSpeed,
+                mob.Name,
+                position.X,
+                position.Y,
+                direction: 0,
+                currentHp: instance.CurrentHp,
+                maxHp: mob.MaxHp);
+            await WriteAsync(standPacket, cancellationToken);
+            return;
+        }
+
+        switch (change.Kind)
+        {
+            case MonsterMovementChangeKind.CellCrossed:
+            case MonsterMovementChangeKind.WalkFinished:
+                // Pinned unit_walktoxy_nextcell never resends the walk packet for an ordinary
+                // per-cell continuation (sendMove=false, unit.cpp:749), and reaching the end of the
+                // walkpath sends nothing at all (unit.cpp:186-192, no clif_fixpos) - see this
+                // method's own doc comment for why the captured 0x0088 does NOT apply here.
+                return;
+
+            case MonsterMovementChangeKind.ChaseInterrupted:
+                // Pinned mob_ai_sub_hard's own "target in range -> unit_stop_walking(md,
+                // USW_FIXPOS|USW_RELEASE_TARGET)" (unit.cpp:2165-2166): USW_FIXPOS makes pinned
+                // unit_stop_walking call clif_fixpos (unit.cpp:1732-1737) - this is the ONE case
+                // (combat interruption, never an ordinary WalkFinished) where the capture-verified
+                // 0x0088 is sent, at the mob's authoritative CURRENT cell.
+                var fixPosPacket = IroMonsterActorPackets.BuildStopMove(instance.ActorId, position.X, position.Y);
+                await WriteAsync(fixPosPacket, cancellationToken);
+                MapLogger.Info($"[iRO MAP DEBUG] Sent 0x0088 fixpos mobActorId={instance.ActorId} accountId={_accountId} mobPosition=({position.X},{position.Y})");
+                return;
+
+            case MonsterMovementChangeKind.WalkStarted:
+                var destination = instance.MovementDestination;
+                var walkPacket = IroMonsterActorPackets.BuildWalkEntry(
+                    instance.ActorId,
+                    (ushort)mob.Id,
+                    (ushort)mob.WalkSpeed,
+                    mob.Name,
+                    position.X,
+                    position.Y,
+                    destination.X,
+                    destination.Y,
+                    moveStartTime: (uint)Environment.TickCount,
+                    currentHp: instance.CurrentHp,
+                    maxHp: mob.MaxHp);
+                await WriteAsync(walkPacket, cancellationToken);
+                MapLogger.Info($"[iRO MAP DEBUG] Sent 0x09FD walk-entry mobActorId={instance.ActorId} accountId={_accountId} from=({position.X},{position.Y}) to=({destination.X},{destination.Y})");
+                return;
+        }
+    }
+
+    // Sends the COMPLETE wire outcome of one mob-on-player basic-attack hit - both the AREA-visible
+    // combat action and (victim-only) the resulting SP_HP update, in the exact order and gating
+    // pinned rAthena's own real attack path produces, traced (not assumed) from:
+    //   - battle.cpp:7399 "clif_damage(*src, *target, tick, wd.amotion, wd.dmotion, wd.damage,
+    //     ...)" - the 0x08C8 action is sent IMMEDIATELY/synchronously the instant the attack
+    //     executes, to AREA (clif.cpp:5297: "clif_send(&p, sizeof(p), &dst, AREA)" - every session
+    //     whose visibility already covers the mob receives it, victim included, regardless of who
+    //     else is the target).
+    //   - battle.cpp:7437 "battle_delay_damage(tick, wd.amotion, ...)" runs AFTER that clif_damage
+    //     call - the actual HP mutation (status_fix_damage -> status_damage -> pc_damage) is
+    //     genuinely DEFERRED until the attack-motion delay elapses, not simultaneous with the
+    //     action packet. This project does not model that extra delay (a disclosed simplification,
+    //     matching this slice's own scope boundary) but the RELATIVE ORDER - action always
+    //     observable before the resulting HP change - is preserved by sending both here, action
+    //     first, on the same call.
+    //   - pc.cpp:9682-9687 "void pc_damage(...) { ... if (hp) clif_updatestatus(*sd,SP_HP); else
+    //     return; }" - SP_HP is PLAYER-SELF-ONLY (clif_updatestatus targets exactly one session,
+    //     never AREA) and is skipped ENTIRELY when hp==0 - a miss/zero-damage hit never produces an
+    //     HP packet, matching this method's own HpChanged guard below exactly.
+    public async Task NotifyMonsterAttackOutcomeAsync(MonsterAttackActionOutcome action, CancellationToken cancellationToken)
+    {
+        if (!string.Equals(action.Map, _mapName, StringComparison.OrdinalIgnoreCase)) return;
+        if (!_visibleActorIds.IsActorVisible(action.MobActorId)) return;
+
+        var tick = unchecked((uint)Environment.TickCount);
+        var damagePacket = IroMonsterCombatPackets.BuildNotifyAct3(
+            action.MobActorId, action.VictimAccountId, tick, action.SrcSpeed, action.DstSpeed, action.Damage, div: 1, actionType: 0);
+        await WriteAsync(damagePacket, cancellationToken);
+        MapLogger.Info($"[iRO MAP DEBUG] Sent 0x08C8 combat action mobActorId={action.MobActorId} observerAccountId={_accountId} victimAccountId={action.VictimAccountId} damage={action.Damage} isMiss={action.IsMiss}");
+
+        // Self-only, action-then-HP order, HP==0 never sent - see this method's own doc comment
+        // for the exact pinned citations (pc.cpp:9682-9687, battle.cpp:7399/7437).
+        if (action.VictimAccountId == _accountId && action.HpChanged)
+        {
+            var hpPacket = IroCharacterProgressionPackets.Parameter(5, action.HpAfter); // SP_HP.
+            await WriteAsync(hpPacket, cancellationToken);
+            MapLogger.Info($"[iRO MAP DEBUG] Sent 0x00B0 SP_HP accountId={_accountId} hpAfter={action.HpAfter}");
         }
     }
 
@@ -1599,6 +2789,15 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
             Buffer.BlockCopy(payload, 0, packet, 2, payloadLength);
         }
 
+        // TEMPORARY framing-investigation instrumentation, scoped to only the equip/unequip
+        // opcodes under investigation - never logs auth/session traffic. Remove once the
+        // 0x0998 length question is resolved.
+        if (packetType is PacketConstants.IroCzReqWearEquip or PacketConstants.IroCzReqTakeoffEquip)
+        {
+            MapLogger.Info(
+                $"[iRO MAP DEBUG][FRAMING] Consumed packetType=0x{packetType:X4} declaredLength={length} bytes={Convert.ToHexString(packet)}");
+        }
+
         return packet;
     }
 
@@ -1611,7 +2810,24 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
         var read = 0;
         while (read < length)
         {
-            var bytes = await stream.ReadAsync(buffer.AsMemory(read, length - read), cancellationToken);
+            int bytes;
+            try
+            {
+                bytes = await stream.ReadAsync(buffer.AsMemory(read, length - read), cancellationToken);
+            }
+            catch (IOException ex) when (ex.InnerException is SocketException { SocketErrorCode: SocketError.ConnectionReset })
+            {
+                // An abrupt client-side close (TcpClient.Close()/Dispose() without a graceful
+                // shutdown, e.g. every test in this project's socket-based test suites) can
+                // surface as a TCP RST rather than a clean FIN - .NET reports that as a thrown
+                // ConnectionReset SocketException instead of ReadAsync returning 0. Both mean
+                // exactly the same thing to this session: the peer is gone. Treat it identically
+                // to every other disconnect path in this method (empty result -> RunAsync's
+                // packet.Length == 0 check -> ordinary session shutdown), rather than letting a
+                // routine disconnect surface as an unhandled exception out of RunAsync.
+                return Array.Empty<byte>();
+            }
+
             if (bytes == 0)
             {
                 return Array.Empty<byte>();
@@ -1628,6 +2844,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
         MapLogger.Warning(
             $"[iRO MAP DEBUG] Unsupported map client packet=0x{packetType:X4} len={packet.Length}");
     }
+
 
     private async Task WriteAsync(byte[] payload, CancellationToken cancellationToken)
     {
@@ -1655,5 +2872,22 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
         buffer[0] = (byte)(x >> 2);
         buffer[1] = (byte)((x << 6) | ((y >> 4) & 0x3f));
         buffer[2] = (byte)((y << 4) | (direction & 0x0f));
+    }
+
+    // Test-only default for the internal test-facing constructor (see its
+    // inventoryListPersistence parameter). Always reports a successful read with an empty
+    // inventory (confirmed unarmed), so tests that never pass inventoryListPersistence
+    // explicitly still authenticate successfully.
+    private sealed class AlwaysEmptyInventoryListPersistence : ICharacterInventoryListPersistence
+    {
+        internal static readonly AlwaysEmptyInventoryListPersistence Instance = new();
+        private static readonly CharacterInventoryReadResult Empty =
+            CharacterInventoryReadResult.Success(new CharacterInventorySnapshot(Array.Empty<CharacterInventoryItem>()));
+
+        public Task<CharacterInventoryReadResult> GetInventoryAsync(uint accountId, uint characterId, CancellationToken cancellationToken)
+            => Task.FromResult(Empty);
+
+        public Task<bool> SetItemEquipAsync(uint accountId, uint characterId, uint slotIndex, uint equip, CancellationToken cancellationToken)
+            => Task.FromResult(false);
     }
 }

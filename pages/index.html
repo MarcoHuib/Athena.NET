@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Athena.NET — Modern C#/.NET Ragnarok Online server</title>
+<meta name="description" content="Athena.NET is a modern C#/.NET Ragnarok Online server implementation focused on the official unmodified International Ragnarok Online client. Explore status, architecture and documentation.">
+<meta name="theme-color" content="#080b12">
+<link rel="canonical" href="https://athenanet.nl/">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Athena.NET — Modern iRO server in C#/.NET">
+<meta property="og:description" content="Stock iRO compatibility. Modern .NET architecture. No modified client required.">
+<meta property="og:url" content="https://athenanet.nl/">
+<meta property="og:image" content="https://raw.githubusercontent.com/MarcoHuib/Athena.NET/a7513e2defa2347d5ba20ff501436258d8503d04/docs/assets/logo.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="stylesheet" href="assets/styles.css">
+<script type="application/ld+json">{"@context": "https://schema.org", "@type": "SoftwareSourceCode", "name": "Athena.NET", "description": "A modern Ragnarok Online server written in C#/.NET for the official, unmodified International Ragnarok Online client.", "codeRepository": "https://github.com/MarcoHuib/Athena.NET", "programmingLanguage": "C#", "runtimePlatform": ".NET", "license": "https://github.com/MarcoHuib/Athena.NET/blob/a7513e2defa2347d5ba20ff501436258d8503d04/LICENSE", "url": "https://athenanet.nl/"}</script>
+</head>
+<body>
+
+<header class="nav">
+  <div class="container nav-inner">
+    <a class="brand" href="index.html" aria-label="Athena.NET home">
+      <span class="brand-mark"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 2 20 6.5v11L12 22l-8-4.5v-11L12 2Z" stroke="currentColor" stroke-width="1.6"/><path d="m8.2 15.4 3.8-7 3.8 7M9.5 13h5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></span>
+      <span>Athena.NET<small>modern iRO server</small></span>
+    </a>
+    <nav class="nav-links" aria-label="Primary">
+      <a href="index.html#project">Project</a>
+      <a href="index.html#architecture">Architecture</a>
+      <a href="index.html#status">Status</a>
+      <a href="docs.html">Documentation</a>
+    </nav>
+    <div class="nav-actions">
+      <a class="btn hide-mobile" href="https://github.com/MarcoHuib/Athena.NET/stargazers" target="_blank" rel="noopener">★ <span data-stars>Star</span></a>
+      <a class="btn primary" href="https://github.com/MarcoHuib/Athena.NET" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .7a11.3 11.3 0 0 0-3.57 22c.57.1.77-.25.77-.55v-2.17c-3.14.68-3.8-1.33-3.8-1.33-.51-1.31-1.25-1.66-1.25-1.66-1.03-.7.08-.69.08-.69 1.13.08 1.73 1.17 1.73 1.17 1.01 1.73 2.65 1.23 3.3.94.1-.73.4-1.23.72-1.51-2.5-.29-5.14-1.25-5.14-5.58 0-1.23.44-2.24 1.16-3.03-.12-.29-.5-1.44.11-2.99 0 0 .95-.3 3.1 1.16a10.8 10.8 0 0 1 5.65 0c2.16-1.46 3.1-1.16 3.1-1.16.62 1.55.23 2.7.12 2.99.72.79 1.15 1.8 1.15 3.03 0 4.34-2.64 5.29-5.16 5.57.41.35.77 1.04.77 2.1v3.16c0 .3.2.66.78.55A11.3 11.3 0 0 0 12 .7Z"/></svg> GitHub</a>
+    </div>
+  </div>
+</header>
+<main>
+<section class="hero">
+  <div class="container hero-grid">
+    <div>
+      <span class="eyebrow"><span class="dot"></span> Active development · stock iRO first</span>
+      <h1><span class="gradient-text">Athena.NET</span></h1>
+      <p class="hero-copy"><strong>A modern Ragnarok Online server, built from the ground up in C#/.NET.</strong> Designed for the official, unmodified International Ragnarok Online client with evidence-driven protocol support and clean architecture boundaries.</p>
+      <div class="hero-actions">
+        <a class="btn primary" href="https://github.com/MarcoHuib/Athena.NET" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .7a11.3 11.3 0 0 0-3.57 22c.57.1.77-.25.77-.55v-2.17c-3.14.68-3.8-1.33-3.8-1.33-.51-1.31-1.25-1.66-1.25-1.66-1.03-.7.08-.69.08-.69 1.13.08 1.73 1.17 1.73 1.17 1.01 1.73 2.65 1.23 3.3.94.1-.73.4-1.23.72-1.51-2.5-.29-5.14-1.25-5.14-5.58 0-1.23.44-2.24 1.16-3.03-.12-.29-.5-1.44.11-2.99 0 0 .95-.3 3.1 1.16a10.8 10.8 0 0 1 5.65 0c2.16-1.46 3.1-1.16 3.1-1.16.62 1.55.23 2.7.12 2.99.72.79 1.15 1.8 1.15 3.03 0 4.34-2.64 5.29-5.16 5.57.41.35.77 1.04.77 2.1v3.16c0 .3.2.66.78.55A11.3 11.3 0 0 0 12 .7Z"/></svg> View repository</a>
+        <a class="btn" href="docs.html">Explore documentation →</a>
+      </div>
+      <div class="micro-row">
+        <span><b class="tick">✓</b> Unmodified iRO client</span>
+        <span><b class="tick">✓</b> Modern C#/.NET</span>
+        <span><b class="tick">✓</b> Cross-platform</span>
+        <span><b class="tick">✓</b> Testable by design</span>
+      </div>
+    </div>
+    <div class="hero-panel" aria-label="Athena.NET project mark">
+      <div class="logo-wrap">
+        <img src="https://raw.githubusercontent.com/MarcoHuib/Athena.NET/a7513e2defa2347d5ba20ff501436258d8503d04/docs/assets/logo.png" alt="Athena.NET logo">
+      </div>
+      <div class="panel-footer">
+        <div class="mini-card"><b>Branch snapshot</b><span>feature/poring-live-wire</span></div>
+        <div class="mini-card"><b>Commit</b><span>a7513e2</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section compact" id="project">
+  <div class="container">
+    <div class="section-head">
+      <div><span class="section-kicker">Why Athena.NET</span><h2>Old world. New foundation.</h2></div>
+      <p>Athena.NET is not a port of rAthena. Mature projects are used as behavioral and research references while protocol handling, gameplay, persistence, world data and infrastructure are implemented as a new modern stack.</p>
+    </div>
+    <div class="grid-4">
+      <article class="card"><div class="icon">◎</div><h3>Official iRO first</h3><p>Compatibility work targets the current official International Ragnarok Online client instead of generic kRO compatibility.</p></article>
+      <article class="card"><div class="icon">⌁</div><h3>Evidence-driven</h3><p>Verified captures and proven runtime behavior take precedence over assumptions or copied packet tables.</p></article>
+      <article class="card"><div class="icon">&lt;/&gt;</div><h3>Modern .NET</h3><p>Current C#, async I/O, dependency injection, strongly typed domain code and automated tests.</p></article>
+      <article class="card"><div class="icon">◇</div><h3>Clean boundaries</h3><p>Protocol, gameplay, persistence, world data and infrastructure can evolve independently.</p></article>
+    </div>
+  </div>
+</section>
+
+<section class="section" id="status">
+  <div class="container">
+    <div class="section-head">
+      <div><span class="section-kicker">Project status</span><h2>A playable early-game vertical slice.</h2></div>
+      <p>The stock client can already treat Athena.NET like a real server across login, character selection, world entry and a focused slice of gameplay. It is still active development, not a production public-server release.</p>
+    </div>
+    <div class="status-grid">
+      <div class="status-item"><strong><span class="ok">●</span> LoginServer</strong><span>Stock iRO login flow</span></div><div class="status-item"><strong><span class="ok">●</span> CharServer</strong><span>Create, load, persist and select</span></div><div class="status-item"><strong><span class="ok">●</span> World entry</strong><span>Char → Map handoff and authentication</span></div><div class="status-item"><strong><span class="ok">●</span> NPCs & scripts</strong><span>Interactive NPC/script flows</span></div><div class="status-item"><strong><span class="ok">●</span> Quests</strong><span>Quest state and progression</span></div><div class="status-item"><strong><span class="ok">●</span> Monsters</strong><span>Spawn, visibility, death and respawn</span></div><div class="status-item"><strong><span class="ok">●</span> Renewal combat</strong><span>Basic player and monster combat foundations</span></div><div class="status-item"><strong><span class="ok">●</span> Drops & inventory</strong><span>Pickup and inventory flow</span></div><div class="status-item"><strong><span class="ok">●</span> Equipment</strong><span>Equip/unequip and persistence</span></div><div class="status-item"><strong><span class="ok">●</span> Item use</strong><span>Initial usable-item flows</span></div><div class="status-item"><strong><span class="ok">●</span> Progression</strong><span>EXP and Job EXP foundations</span></div><div class="status-item"><strong><span class="ok">●</span> Warps</strong><span>Initial same-server world transitions</span></div>
+    </div>
+  </div>
+</section>
+
+<section class="section compact">
+  <div class="container">
+    <div class="livewire">
+      <div>
+        <span class="section-kicker">Latest on poring-live-wire</span>
+        <h3>Monsters now have a clearer engagement domain.</h3>
+        <div class="commit">a7513e2 · snapshot 27 Aug 2026</div>
+        <p style="margin-top:12px">The latest branch head separates combat decision-making from orchestration and adds focused coverage around monster attacks.</p>
+      </div>
+      <div class="live-list">
+        <div class="live-point"><b>MonsterEngagementDomain</b><span>Centralized decisions for engaged monsters based on player state.</span></div>
+        <div class="live-point"><b>PlayerCombatSnapshot</b><span>Combat-relevant player state is captured for deterministic decisions.</span></div>
+        <div class="live-point"><b>Range & cooldowns</b><span>Target validity, attack distance and cooldown behavior are explicitly covered.</span></div>
+        <div class="live-point"><b>Tests at two levels</b><span>Unit coverage plus MapClientSession integration coverage for real orchestration.</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section" id="architecture">
+  <div class="container">
+    <div class="section-head">
+      <div><span class="section-kicker">Architecture</span><h2>Stabilize first. Distribute later.</h2></div>
+      <p>The architecture roadmap deliberately prevents protocol debugging, transport changes, identity migration and a distributed game-engine rewrite from happening at the same time.</p>
+    </div>
+    <div class="arch" aria-label="Current topology">
+      <div class="node"><b>Official iRO</b><small>Ragexe.exe</small></div><div class="arrow">→</div>
+      <div class="node"><b>LoginServer</b><small>legacy iRO TCP</small></div><div class="arrow">→</div>
+      <div class="node"><b>CharServer</b><small>character state</small></div><div class="arrow">→</div>
+      <div class="node"><b>MapServer</b><small>world runtime</small></div><div class="arrow">→</div>
+      <div class="node"><b>SQL Server</b><small>persistence</small></div>
+    </div>
+    <div class="phase-grid">
+      <div class="phase"><b>PHASE 0</b><strong>Stock iRO MVP</strong><span>Stable direct-TCP diagnostic baseline.</span></div>
+      <div class="phase"><b>PHASE 1</b><strong>Athena.Client</strong><span>Minimal protocol-opaque TCP proxy.</span></div>
+      <div class="phase"><b>PHASE 2</b><strong>Gateway + QUIC</strong><span>TLS 1.3 transport and controlled edge.</span></div>
+      <div class="phase"><b>PHASE 3</b><strong>Modern Identity</strong><span>ASP.NET Core Identity mapped to game sessions.</span></div>
+      <div class="phase"><b>PHASE 4</b><strong>Orleans</strong><span>Incremental distributed backend behind stable adapters.</span></div>
+    </div>
+  </div>
+</section>
+
+<section class="section compact">
+  <div class="container">
+    <div class="section-head">
+      <div><span class="section-kicker">Documentation</span><h2>The repository, made navigable.</h2></div>
+      <p>32 Markdown documents are indexed here, including public setup docs, architecture decisions, maintainer notes, world-data tooling and the deep iRO evidence files.</p>
+    </div>
+    <div class="docs-preview">
+      <a class="doc-card" href="docs/docs-architecture-roadmap.html"><small>Architecture</small><h3>Architecture roadmap</h3><p>Phase 0 through the future Orleans engine, with explicit exit gates.</p></a>
+      <a class="doc-card" href="docs/ai-iro-2026-wire.html"><small>Evidence</small><h3>iRO 2026 wire reference</h3><p>The detailed authority for proven stock-client wire behavior.</p></a>
+      <a class="doc-card" href="docs/tools-worlddataimporter-readme.html"><small>Tooling</small><h3>World Data Importer</h3><p>The conversion pipeline that turns reference data into Athena.NET world content.</p></a>
+    </div>
+    <div style="margin-top:18px"><a class="btn" href="docs.html">Browse all 32 documents →</a></div>
+  </div>
+</section>
+
+<section class="section">
+  <div class="container">
+    <div class="callout">
+      <div><h3>Follow Athena.NET where it actually happens.</h3><p>Star the repository, inspect the source and follow development directly on GitHub.</p></div>
+      <a class="btn primary" href="https://github.com/MarcoHuib/Athena.NET" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .7a11.3 11.3 0 0 0-3.57 22c.57.1.77-.25.77-.55v-2.17c-3.14.68-3.8-1.33-3.8-1.33-.51-1.31-1.25-1.66-1.25-1.66-1.03-.7.08-.69.08-.69 1.13.08 1.73 1.17 1.73 1.17 1.01 1.73 2.65 1.23 3.3.94.1-.73.4-1.23.72-1.51-2.5-.29-5.14-1.25-5.14-5.58 0-1.23.44-2.24 1.16-3.03-.12-.29-.5-1.44.11-2.99 0 0 .95-.3 3.1 1.16a10.8 10.8 0 0 1 5.65 0c2.16-1.46 3.1-1.16 3.1-1.16.62 1.55.23 2.7.12 2.99.72.79 1.15 1.8 1.15 3.03 0 4.34-2.64 5.29-5.16 5.57.41.35.77 1.04.77 2.1v3.16c0 .3.2.66.78.55A11.3 11.3 0 0 0 12 .7Z"/></svg> Open on GitHub</a>
+    </div>
+  </div>
+</section>
+</main>
+
+<footer>
+  <div class="container footer-inner">
+    <div class="legal">
+      <strong style="color:#dce2ee">Athena.NET</strong> is an unofficial server implementation and is not affiliated with, endorsed by, or sponsored by Gravity Co., Ltd. or WarpPortal.
+      Ragnarok Online and related names and assets belong to their respective owners.
+    </div>
+    <div class="footer-links">
+      <a href="https://github.com/MarcoHuib/Athena.NET">GitHub</a>
+      <a href="docs.html">Docs</a>
+      <a href="https://github.com/MarcoHuib/Athena.NET/blob/a7513e2defa2347d5ba20ff501436258d8503d04/LICENSE">License</a>
+    </div>
+  </div>
+</footer>
+<script src="assets/app.js"></script>
+</body>
+</html>

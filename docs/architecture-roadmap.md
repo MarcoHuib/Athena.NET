@@ -12,6 +12,7 @@ This roadmap is the parent document for:
 
 - `client-gateway-architecture.md` — the local Athena.Client, Athena.Gateway, QUIC, and modern Identity mapping.
 - `orleans-game-engine-architecture.md` — the later Microsoft Orleans distributed backend/game-engine architecture.
+- `game-content-map-lifecycle-architecture.md` — the agreed direction for game-content hot updates, map telemetry, map lifecycle (loaded/warm/lazy), one-map-one-runtime ownership, and future MapServer scaling.
 - `../ai/iro-2026-wire.md` — the authority for verified stock-iRO wire behavior.
 
 ---
@@ -93,6 +94,8 @@ The MVP is complete only when all of the following are working reliably with the
 - NPC interaction works.
 - The required Ragnarok maps/world data are loadable and reachable.
 - Map transitions do not require client modification.
+
+Phase 0 runs a single MapServer that loads all supported maps normally (no lazy loading, no multiple MapServers, no map channels/replicas) and adds map telemetry/observability so later lifecycle and scaling decisions are evidence-based rather than assumed. See `game-content-map-lifecycle-architecture.md` for the full agreed direction on game-content hot updates, map telemetry, map lifecycle policy, one-map-one-runtime ownership, and future MapServer scaling — none of which are Phase 0 requirements.
 
 ### In-game chat
 

@@ -16,10 +16,49 @@ internal static class MobDataCompiler
         int Id, string AegisName, string Name, int Level, uint Hp,
         int Attack, int Attack2, int Defense, int MagicDefense,
         int Str, int Agi, int Vit, int Int, int Dex, int Luk,
-        int AttackRange, int WalkSpeed, int AttackDelay,
-        long BaseExp, long JobExp);
+        int AttackRange, int WalkSpeed, int AttackDelay, int AttackMotion, int DamageMotion,
+        long BaseExp, long JobExp, MobModeData Mode);
 
-    internal sealed record MobSpawnData(string Map, int MobId, int Count, int RespawnDelayMs, string SourceFile, int SourceLine);
+    // Mirrors Athena.Net.MapServer.World.MobMode exactly (same bit values/names) - kept as a
+    // separate type per this project's existing WorldDataImporter/MapServer decoupling rule (see
+    // e.g. CompiledMapCellFlags's own doc comment for the same pattern): WorldDataImporter has no
+    // project reference to MapServer.
+    [Flags]
+    internal enum MobModeData
+    {
+        None = 0,
+        CanMove = 0x0000001,
+        NoRandomWalk = 0x0000020,
+        CanAttack = 0x0000080,
+        ChangeTargetMelee = 0x0001000,
+        ChangeTargetChase = 0x0002000,
+    }
+
+    // Pinned e_aegis_monstertype (legacy/rathena/src/map/mob.hpp:151-182) - the COMPLETE pinned
+    // Ai-preset-name -> raw e_mode bitmask table, reproduced in full even though this project's
+    // MobModeData only exposes two of the bits any given preset may set, so a future mob using a
+    // different Ai preset is decoded correctly rather than needing this table extended piecemeal.
+    private static readonly Dictionary<string, int> AiPresets = new(StringComparer.Ordinal)
+    {
+        ["01"] = 0x81, ["02"] = 0x83, ["03"] = 0x1089, ["04"] = 0x3885, ["05"] = 0x2085,
+        ["06"] = 0, ["07"] = 0x108B, ["08"] = 0x7085, ["09"] = 0x3095, ["10"] = 0x84,
+        ["11"] = 0x84, ["12"] = 0x2085, ["13"] = 0x308D, ["17"] = 0x91, ["19"] = 0x3095,
+        ["20"] = 0x3295, ["21"] = 0x3695, ["24"] = 0xA1, ["25"] = 0x1, ["26"] = 0xB695,
+        ["27"] = 0x8084, ["ABR_PASSIVE"] = 0x21, ["ABR_OFFENSIVE"] = 0xA5,
+    };
+
+    // Pinned MD_* bit values this project's MobModeData currently models (mmo.hpp:242-272) - used
+    // only to mask the raw Ai-preset+Modes: bitmask down to the bits Athena's generated model
+    // actually exposes; the full pinned e_mode has many more bits (MD_AGGRESSIVE, MD_LOOTER,
+    // MD_ASSIST, MD_MVP, etc.) that are correctly computed as part of the raw mask below but
+    // deliberately not surfaced in MobModeData yet (see that enum's own doc comment).
+    private const int ModeBitCanMove = 0x0000001;
+    private const int ModeBitNoRandomWalk = 0x0000020;
+    private const int ModeBitCanAttack = 0x0000080;
+    private const int ModeBitChangeTargetMelee = 0x0001000;
+    private const int ModeBitChangeTargetChase = 0x0002000;
+
+    internal sealed record MobSpawnData(string Map, int MobId, int Count, int RespawnDelayMs, string SourceFile, int SourceLine, short X, short Y, short Xs, short Ys);
 
     // Parses one `- Id: <n>` block out of mob_db.yml up to (not including) the
     // next top-level `- Id:` line. Defaults for fields absent from the pinned
@@ -56,9 +95,73 @@ internal static class MobDataCompiler
             (int)OptionalInt(block, "AttackRange", 0),
             (int)OptionalInt(block, "WalkSpeed", 150),
             (int)OptionalInt(block, "AttackDelay", 0),
+            // AttackMotion (amotion) and DamageMotion (dmotion) are pinned mob_db.yml scalars
+            // distinct from AttackDelay (adelay) - amotion is the attacker's attack-animation
+            // timing (clif_damage's own srcSpeed for a mob attacker), dmotion is this mob's OWN
+            // hit-reaction/walk-delay timing when IT is the target (clif_damage's own dstSpeed when
+            // a player attacks this mob) - see MobBasicAttackCalculator/IroMonsterCombatPackets
+            // call sites for where each is actually used. Never conflated with AttackDelay, which
+            // controls attack CADENCE (NextAttackAt), not animation/hit-reaction timing. Same
+            // mob.cpp:4946-4963 default-constructor rationale as AttackDelay's own comment: both
+            // genuinely default to 0/unset when the pinned block omits them.
+            (int)OptionalInt(block, "AttackMotion", 0),
+            (int)OptionalInt(block, "DamageMotion", 0),
             OptionalInt(block, "BaseExp", 0),
-            OptionalInt(block, "JobExp", 0));
+            OptionalInt(block, "JobExp", 0),
+            ReadMode(block));
     }
+
+    // Reproduces pinned MobDatabase::parseBodyNode's mode resolution exactly (mob.cpp:5446-5519):
+    // the pinned `Ai:` field resolves to one of the MONSTER_TYPE_NN preset bitmasks (the mob's
+    // BASE status.mode), then each pinned `Modes:` entry individually ORs (true) or AND-NOTs
+    // (false) its own bit on top of that preset - never treating the Modes: block as the complete
+    // mode by itself. A block with no `Ai:` field defaults to the same MONSTER_TYPE_06=0 pinned
+    // uses when the YAML field is entirely absent (mob.cpp default-constructs status.mode to 0
+    // before any conditional field ever runs).
+    private static MobModeData ReadMode(string block)
+    {
+        var raw = 0;
+
+        var aiMatch = ScalarRegex("Ai").Match(block);
+        if (aiMatch.Success)
+        {
+            var ai = aiMatch.Groups[1].Value.Trim();
+            raw = AiPresets.TryGetValue(ai, out var preset) ? preset : 0; // Unknown Ai defaults to MONSTER_TYPE_06=0, matching pinned invalidWarning fallback.
+        }
+
+        var modesMatch = ModesBlockRegex().Match(block);
+        if (modesMatch.Success)
+        {
+            foreach (Match entry in ModeEntryRegex().Matches(modesMatch.Groups[1].Value))
+            {
+                var name = entry.Groups["name"].Value;
+                var active = string.Equals(entry.Groups["value"].Value, "true", StringComparison.OrdinalIgnoreCase);
+                if (!ModeBitsByName.TryGetValue(name, out var bit)) continue; // Unmodeled bit (e.g. FixedItemDrop) - correctly ignored, not an error.
+                raw = active ? raw | bit : raw & ~bit;
+            }
+        }
+
+        var mode = MobModeData.None;
+        if ((raw & ModeBitCanMove) != 0) mode |= MobModeData.CanMove;
+        if ((raw & ModeBitNoRandomWalk) != 0) mode |= MobModeData.NoRandomWalk;
+        if ((raw & ModeBitCanAttack) != 0) mode |= MobModeData.CanAttack;
+        if ((raw & ModeBitChangeTargetMelee) != 0) mode |= MobModeData.ChangeTargetMelee;
+        if ((raw & ModeBitChangeTargetChase) != 0) mode |= MobModeData.ChangeTargetChase;
+        return mode;
+    }
+
+    // Only the mode names this project's MobModeData models are recognized here - every other
+    // pinned MD_* name (Aggressive, Looter, Assist, FixedItemDrop, Detector, ...) is silently
+    // skipped by ReadMode above, matching how a real Modes: block legitimately sets many bits this
+    // project's generated model does not yet expose (e.g. G_PORING's own Modes: FixedItemDrop).
+    private static readonly Dictionary<string, int> ModeBitsByName = new(StringComparer.Ordinal)
+    {
+        ["CanMove"] = ModeBitCanMove,
+        ["NoRandomWalk"] = ModeBitNoRandomWalk,
+        ["CanAttack"] = ModeBitCanAttack,
+        ["ChangeTargetMelee"] = ModeBitChangeTargetMelee,
+        ["ChangeTargetChase"] = ModeBitChangeTargetChase,
+    };
 
     // Parses the fixed rAthena spawn-declaration format:
     //   <map>,<x>,<y>[,<xs>,<ys>]\tmonster\t<Name>\t<MobId>,<Count>[,<Delay1>[,<Delay2>]]
@@ -73,10 +176,17 @@ internal static class MobDataCompiler
     // IMobSpawnCellSelector for how Athena's runtime handles this given it has
     // no GAT/collision data source at all (a genuine data gap, not a
     // deliberately-skipped feature).
-    // `excludedMaps` lets a caller drop rows for a map instance the runtime
-    // doesn't serve (e.g. base `int_land`, which the compiled Academy world
-    // never registers - Captain Carocc/Lumin placements already exclude it
-    // the same way), mirroring compile-npc-world's --exclude-placement.
+    // `excludedMaps` lets a caller drop rows for a map instance this MapServer
+    // build genuinely does not serve at all. It must NEVER be used merely
+    // because a row is a `duplicate(...)` family's generic/base template map
+    // (e.g. `int_land` for the int_land/int_land01..04 G_PORING family) - an
+    // earlier invocation of this command excluded `int_land` on the
+    // (by-then-stale) assumption that the compiled Academy world never
+    // registered anything there, mirroring a similar, since-corrected
+    // over-exclusion in compile-npc-world's --exclude-placement usage (see
+    // ai/world-data.md's "Runtime architecture" section and
+    // WorldMapRegistryFamilyTests/PoringRandomSpawnIntegrationTests for the
+    // regression coverage this caused).
     internal static IReadOnlyList<MobSpawnData> ReadMobSpawns(string spawnScriptText, string sourceFile, string mobName, IReadOnlySet<string>? excludedMaps = null)
     {
         var results = new List<MobSpawnData>();
@@ -91,13 +201,20 @@ internal static class MobDataCompiler
             var count = int.Parse(match.Groups["count"].Value, CultureInfo.InvariantCulture);
             var delayGroup = match.Groups["delay1"];
             var delay = delayGroup.Success ? int.Parse(delayGroup.Value, CultureInfo.InvariantCulture) : 0;
+            var x = short.Parse(match.Groups["x"].Value, CultureInfo.InvariantCulture);
+            var y = short.Parse(match.Groups["y"].Value, CultureInfo.InvariantCulture);
+            var xsGroup = match.Groups["xs"];
+            var ysGroup = match.Groups["ys"];
+            var xs = xsGroup.Success ? short.Parse(xsGroup.Value, CultureInfo.InvariantCulture) : (short)0;
+            var ys = ysGroup.Success ? short.Parse(ysGroup.Value, CultureInfo.InvariantCulture) : (short)0;
             results.Add(new MobSpawnData(
                 map,
                 int.Parse(match.Groups["mobid"].Value, CultureInfo.InvariantCulture),
                 count,
                 delay,
                 sourceFile,
-                i + 1));
+                i + 1,
+                x, y, xs, ys));
         }
         if (results.Count == 0) throw new ArgumentException($"No '{mobName}' monster spawn declarations were found in the pinned source.");
         return results;
@@ -141,8 +258,11 @@ internal static class MobDataCompiler
             .Append("        AttackRange: ").Append(mob.AttackRange).AppendLine(",")
             .Append("        WalkSpeed: ").Append(mob.WalkSpeed).AppendLine(",")
             .Append("        AttackDelay: ").Append(mob.AttackDelay).AppendLine(",")
+            .Append("        AttackMotion: ").Append(mob.AttackMotion).AppendLine(",")
+            .Append("        DamageMotion: ").Append(mob.DamageMotion).AppendLine(",")
             .Append("        BaseExp: ").Append(mob.BaseExp).AppendLine(",")
             .Append("        JobExp: ").Append(mob.JobExp).AppendLine(",")
+            .Append("        Mode: ").Append(FormatMode(mob.Mode)).AppendLine(",")
             .Append("        Source: new WorldSourceInfo(\"rAthena\", \"").Append(commit).Append("\", \"").Append(sourceFile).Append("\", ").Append(sourceLine).AppendLine("));")
             .AppendLine("}");
         return output.ToString();
@@ -172,10 +292,25 @@ internal static class MobDataCompiler
         {
             output.Append("        new(").Append(mobDefinitionExpression).Append(", \"").Append(spawn.Map).Append("\", ")
                 .Append(spawn.Count).Append(", ").Append(spawn.RespawnDelayMs)
-                .Append(", new WorldSourceInfo(\"rAthena\", \"").Append(commit).Append("\", \"").Append(spawn.SourceFile).Append("\", ").Append(spawn.SourceLine).AppendLine(")),");
+                .Append(", new WorldSourceInfo(\"rAthena\", \"").Append(commit).Append("\", \"").Append(spawn.SourceFile).Append("\", ").Append(spawn.SourceLine).Append(')')
+                .Append(", X: ").Append(spawn.X).Append(", Y: ").Append(spawn.Y).Append(", Xs: ").Append(spawn.Xs).Append(", Ys: ").Append(spawn.Ys).AppendLine("),");
         }
         output.AppendLine("    ];").AppendLine("}");
         return output.ToString();
+    }
+
+    // Emits a C# MobMode expression matching the generated definition's flags exactly - "None"
+    // when no modeled bit is set, otherwise a `|`-joined list of the modeled MobMode member names.
+    private static string FormatMode(MobModeData mode)
+    {
+        if (mode == MobModeData.None) return "MobMode.None";
+        var parts = new List<string>();
+        if (mode.HasFlag(MobModeData.CanMove)) parts.Add("MobMode.CanMove");
+        if (mode.HasFlag(MobModeData.NoRandomWalk)) parts.Add("MobMode.NoRandomWalk");
+        if (mode.HasFlag(MobModeData.CanAttack)) parts.Add("MobMode.CanAttack");
+        if (mode.HasFlag(MobModeData.ChangeTargetMelee)) parts.Add("MobMode.ChangeTargetMelee");
+        if (mode.HasFlag(MobModeData.ChangeTargetChase)) parts.Add("MobMode.ChangeTargetChase");
+        return string.Join(" | ", parts);
     }
 
     private static string RequiredScalar(string block, string field)
@@ -193,8 +328,17 @@ internal static class MobDataCompiler
         return match.Success ? long.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture) : defaultValue;
     }
 
-    private static readonly Regex SpawnLine = new(@"^(?<map>[A-Za-z0-9_]+),(?<x>-?\d+),(?<y>-?\d+)(?:,\d+,\d+)?\t+monster\t+(?<name>[^\t]+)\t+(?<mobid>\d+),(?<count>\d+)(?:,(?<delay1>\d+))?(?:,(?<delay2>\d+))?", RegexOptions.None);
+    private static readonly Regex SpawnLine = new(@"^(?<map>[A-Za-z0-9_]+),(?<x>-?\d+),(?<y>-?\d+)(?:,(?<xs>\d+),(?<ys>\d+))?\t+monster\t+(?<name>[^\t]+)\t+(?<mobid>\d+),(?<count>\d+)(?:,(?<delay1>\d+))?(?:,(?<delay2>\d+))?", RegexOptions.None);
     private static Regex SpawnLineRegex() => SpawnLine;
 
     private static Regex ScalarRegex(string field) => new($@"^    {Regex.Escape(field)}: (.+)$", RegexOptions.Multiline);
+
+    // Captures the raw text of a `    Modes:\n      Name: value\n      ...` block: every
+    // subsequent 6-space-indented line, stopping at the first line that is NOT indented that
+    // deeply (the next top-level `    Field:` entry or the next `  - Id:` block).
+    private static readonly Regex ModesBlock = new(@"^    Modes:\n((?:      .+\n?)*)", RegexOptions.Multiline);
+    private static Regex ModesBlockRegex() => ModesBlock;
+
+    private static readonly Regex ModeEntry = new(@"^\s*(?<name>\w+):\s*(?<value>true|false)\s*$", RegexOptions.Multiline);
+    private static Regex ModeEntryRegex() => ModeEntry;
 }

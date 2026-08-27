@@ -22,12 +22,19 @@ public readonly record struct EffectiveCharacterStats(
     int AttackSpeedBonus);
 
 // Per-session mutable status state. Each MapClientSession owns its own instance, so
-// concurrent sessions never share mutable status state. Expiration is computed lazily
-// on every read (ActiveStatuses / recalculation) against TimeProvider.GetUtcNow() -
-// there is no timer/Task.Delay per active status.
+// concurrent sessions never share mutable status state - but WITHIN one session,
+// MapClientSession's background RunStatusExpirationLoopAsync (reading NextExpiration/
+// ExpireDue) races against generated NPC scripts calling Start (via INpcScriptHost) on
+// other async paths of the SAME session. Dictionary<> is not safe for concurrent
+// readers/writers, so every _statuses access below is synchronized through one private
+// gate. Lock bodies are kept synchronous and small (no await inside the lock); operations
+// that must observe one coherent snapshot (e.g. Blessing + IncreaseAgi both read for the
+// same Recalculate call, or "identify due statuses" + "remove those exact statuses" in
+// ExpireDue) take the lock once for the whole operation rather than once per sub-step.
 public sealed class CharacterStatusEffectState(TimeProvider timeProvider)
 {
     private readonly Dictionary<ushort, ActiveStatus> _statuses = [];
+    private readonly Lock _gate = new();
     private readonly TimeProvider _timeProvider = timeProvider;
 
     public static class StatusIds
@@ -64,7 +71,8 @@ public sealed class CharacterStatusEffectState(TimeProvider timeProvider)
         if (statusId == StatusIds.Blessing) val2 = val1;
         else if (statusId == StatusIds.IncreaseAgi) val2 = 2 + val1;
         var expiresAt = _timeProvider.GetUtcNow().AddMilliseconds(durationMilliseconds);
-        _statuses[statusId] = new ActiveStatus(statusId, val1, val2, val3, expiresAt);
+        var status = new ActiveStatus(statusId, val1, val2, val3, expiresAt);
+        lock (_gate) { _statuses[statusId] = status; }
     }
 
     // Treats an already-expired status as inactive without removing it. Reads (TryGet,
@@ -74,7 +82,11 @@ public sealed class CharacterStatusEffectState(TimeProvider timeProvider)
     // 0x0196/0x0141) before the entry disappears. Only ExpireDue removes entries.
     public bool TryGet(ushort statusId, out ActiveStatus status)
     {
-        if (_statuses.TryGetValue(statusId, out status) && status.ExpiresAt > _timeProvider.GetUtcNow()) return true;
+        var now = _timeProvider.GetUtcNow();
+        lock (_gate)
+        {
+            if (_statuses.TryGetValue(statusId, out status) && status.ExpiresAt > now) return true;
+        }
         status = default;
         return false;
     }
@@ -85,17 +97,23 @@ public sealed class CharacterStatusEffectState(TimeProvider timeProvider)
     // client) rather than having them silently vanish. Already-expired-but-not-yet-`ExpireDue`d
     // entries are still returned by this dictionary's iteration (TryGet/Recalculate just treat
     // them as inactive), so nothing is lost between "became due" and "driver processed it".
+    // Identifying due statuses and removing them is one atomic critical section - never split
+    // across two lock acquisitions, or a concurrent Start could re-add a status between the
+    // "identify" and "remove" steps and have its fresh entry incorrectly removed.
     public IReadOnlyList<ActiveStatus> ExpireDue(DateTimeOffset now)
     {
-        List<ActiveStatus>? due = null;
-        foreach (var (id, status) in _statuses)
+        lock (_gate)
         {
-            if (status.ExpiresAt > now) continue;
-            (due ??= []).Add(status);
+            List<ActiveStatus>? due = null;
+            foreach (var (id, status) in _statuses)
+            {
+                if (status.ExpiresAt > now) continue;
+                (due ??= []).Add(status);
+            }
+            if (due is null) return [];
+            foreach (var status in due) _statuses.Remove(status.StatusId);
+            return due;
         }
-        if (due is null) return [];
-        foreach (var status in due) _statuses.Remove(status.StatusId);
-        return due;
     }
 
     // Earliest deadline among currently-stored statuses (whether or not already expired -
@@ -105,10 +123,13 @@ public sealed class CharacterStatusEffectState(TimeProvider timeProvider)
     {
         get
         {
-            DateTimeOffset? next = null;
-            foreach (var status in _statuses.Values)
-                if (next is null || status.ExpiresAt < next) next = status.ExpiresAt;
-            return next;
+            lock (_gate)
+            {
+                DateTimeOffset? next = null;
+                foreach (var status in _statuses.Values)
+                    if (next is null || status.ExpiresAt < next) next = status.ExpiresAt;
+                return next;
+            }
         }
     }
 
@@ -117,7 +138,10 @@ public sealed class CharacterStatusEffectState(TimeProvider timeProvider)
         get
         {
             var now = _timeProvider.GetUtcNow();
-            return _statuses.Values.Where(status => status.ExpiresAt > now).ToArray();
+            lock (_gate)
+            {
+                return _statuses.Values.Where(status => status.ExpiresAt > now).ToArray();
+            }
         }
     }
 
@@ -132,17 +156,35 @@ public sealed class CharacterStatusEffectState(TimeProvider timeProvider)
     //     status.cpp:8151-8152) and a +val1 attack-speed bonus (status_calc_aspd,
     //     status.cpp:8344-8345); both are unconditional (no RENEWAL/#ifdef guards around
     //     either SC_INCREASEAGI line in this pinned revision).
-    public EffectiveCharacterStats Recalculate(CharacterGameplayState baseState) =>
-        RecalculateFrom(baseState, id => TryGet(id, out var status) ? status : null);
+    //
+    // Reads Blessing and IncreaseAgi from ONE coherent snapshot taken under a single lock
+    // acquisition (SnapshotForRecalculate), rather than two independent TryGet calls each
+    // taking/releasing the gate - otherwise a Start racing between the two lookups could let
+    // one stat family observe an older dictionary state than the other.
+    public EffectiveCharacterStats Recalculate(CharacterGameplayState baseState)
+    {
+        var now = _timeProvider.GetUtcNow();
+        var snapshot = SnapshotForRecalculate();
+        return RecalculateFrom(baseState, id => snapshot.TryGetValue(id, out var status) && status.ExpiresAt > now ? status : null);
+    }
 
     // Effective stats as of just BEFORE an ExpireDue(now) removal, for the expiration driver's
     // "before" snapshot. Distinct from Recalculate(baseState) because by the time
     // ProcessDueStatusExpirationsAsync runs, the clock has already reached the statuses' own
     // ExpiresAt (that is what woke the scheduler), so a time-gated TryGet would already treat
     // them as inactive and produce a false "nothing changed" diff. This reads the raw stored
-    // entries (still present - ExpireDue has not run yet) unconditionally instead.
-    public EffectiveCharacterStats RecalculateBeforeExpiration(CharacterGameplayState baseState) =>
-        RecalculateFrom(baseState, id => _statuses.TryGetValue(id, out var status) ? status : null);
+    // entries (still present - ExpireDue has not run yet) unconditionally instead, from the
+    // same kind of single coherent snapshot Recalculate uses.
+    public EffectiveCharacterStats RecalculateBeforeExpiration(CharacterGameplayState baseState)
+    {
+        var snapshot = SnapshotForRecalculate();
+        return RecalculateFrom(baseState, id => snapshot.TryGetValue(id, out var status) ? status : null);
+    }
+
+    private Dictionary<ushort, ActiveStatus> SnapshotForRecalculate()
+    {
+        lock (_gate) { return new Dictionary<ushort, ActiveStatus>(_statuses); }
+    }
 
     private static EffectiveCharacterStats RecalculateFrom(CharacterGameplayState baseState, Func<ushort, ActiveStatus?> lookup)
     {

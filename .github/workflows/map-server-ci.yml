@@ -12,6 +12,8 @@ on:
       - ".github/workflows/map-server-ci.yml"
       - "Directory.Build.*"
       - "*.sln"
+      - "legacy/rathena"
+      - ".gitmodules"
   pull_request:
     paths:
       - "src/MapServer/**"
@@ -19,6 +21,8 @@ on:
       - ".github/workflows/map-server-ci.yml"
       - "Directory.Build.*"
       - "*.sln"
+      - "legacy/rathena"
+      - ".gitmodules"
   workflow_dispatch:
 
 jobs:
@@ -26,6 +30,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'

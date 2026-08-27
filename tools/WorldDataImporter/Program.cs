@@ -27,6 +27,7 @@ internal static class WorldDataImporterCli
                 "compile-mob-spawn" => await CompileMobSpawnAsync(args[1..]),
                 "compile-quest-drop" => await CompileQuestDropAsync(args[1..]),
                 "compile-item" => await CompileItemAsync(args[1..]),
+                "compile-map-collision" => await CompileMapCollisionAsync(args[1..]),
                 "capabilities" => await CapabilitiesAsync(args[1..]),
                 _ => throw new ArgumentException($"Unknown command '{args[0]}'."),
             };
@@ -87,7 +88,7 @@ internal static class WorldDataImporterCli
             ? [WorldEntityConverter.Convert(roots, filter)]
             : names.Select(name => WorldEntityConverter.Convert(roots, filter with { Name = name })).ToArray();
         var lowered=WorldLowerer.Lower(results.SelectMany(result => result.Entities));
-        var source=CSharpWorldEmitter.Emit(lowered,"6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca");
+        var source=CSharpWorldEmitter.Emit(lowered,options.Required("rathena-commit"));
         var output=Path.GetFullPath(options.Required("output")); Directory.CreateDirectory(Path.GetDirectoryName(output)!); await File.WriteAllTextAsync(output,source,new System.Text.UTF8Encoding(false));
         Console.WriteLine($"Generated {lowered.Warps.Count} strongly typed warp definitions into {output}."); return results.All(result => result.Unsupported.Count == 0)?0:1;
     }
@@ -123,7 +124,7 @@ internal static class WorldDataImporterCli
         if (!lowered.Success) throw new ArgumentException(string.Join(Environment.NewLine, lowered.Diagnostics.Where(diagnostic => diagnostic.Severity == "Error").Select(diagnostic => $"{diagnostic.Span.Start.File}:{diagnostic.Span.Start.Line}:{diagnostic.Span.Start.Column} {diagnostic.Code}: {diagnostic.Message}")));
         var actor = entity.Actor!; var className = ClassName(entity.Id, binding.Trigger);
         var metadata = new GeneratedNpcMetadata("Athena.Net.MapServer.Generated.World.Izlude", className, entity.Id, entity.Kind, actor.Name, actor.Map, actor.X, actor.Y, actor.Direction, actor.Class,
-            binding.RadiusX, binding.RadiusY, binding.Trigger, binding.BaseNpcName, CanonicalSourceFile(template.Source.File), template.Source.Line + 1, template.Source.Line, "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca", actor.EffectState);
+            binding.RadiusX, binding.RadiusY, binding.Trigger, binding.BaseNpcName, CanonicalSourceFile(template.Source.File), template.Source.Line + 1, template.Source.Line, options.Required("rathena-commit"), actor.EffectState);
         var generated = NpcScriptEmitter.Emit(lowered.Script!, metadata); var output = Path.GetFullPath(options.Required("output")); Directory.CreateDirectory(Path.GetDirectoryName(output)!); await File.WriteAllTextAsync(output, generated, new System.Text.UTF8Encoding(false));
         Console.WriteLine($"Generated executable {binding.Trigger} script '{entity.Id}' into {output}."); return 0;
     }
@@ -193,7 +194,7 @@ internal static class WorldDataImporterCli
             warpSelection = new WarpTriggerEmissionSelection(includedWarpPlacementIds);
         }
 
-        var emission = NpcWorldEmitter.Emit(conversion, selection, worldNamespace, scriptsNamespace, "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca", warpConversion, warpSelection);
+        var emission = NpcWorldEmitter.Emit(conversion, selection, worldNamespace, scriptsNamespace, options.Required("rathena-commit"), warpConversion, warpSelection);
 
         Directory.CreateDirectory(outputDir);
         var scriptsDir = Path.Combine(outputDir, "Scripts");
@@ -224,7 +225,7 @@ internal static class WorldDataImporterCli
         var map = options.Optional("map");
         var entities = names.SelectMany(name => WorldEntityConverter.Convert(roots, new(sourceFile, map, name, "npc")).Entities).ToArray();
         if (entities.Length != names.Count) throw new ArgumentException($"Expected {names.Count} actor definitions, found {entities.Length}.");
-        var generated = CSharpActorEmitter.Emit(entities, "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca");
+        var generated = CSharpActorEmitter.Emit(entities, options.Required("rathena-commit"));
         var output = Path.GetFullPath(options.Required("output")); Directory.CreateDirectory(Path.GetDirectoryName(output)!);
         await File.WriteAllTextAsync(output, generated, new System.Text.UTF8Encoding(false));
         Console.WriteLine($"Generated {entities.Length} actor definitions into {output}."); return 0;
@@ -234,6 +235,7 @@ internal static class WorldDataImporterCli
     {
         var options = CliOptions.Parse(args); var roots = options.All("source-root"); var names = options.All("name");
         if (roots.Count == 0 || names.Count == 0) throw new ArgumentException("compile-navigation requires --source-root and --name.");
+        var targetNamespace = options.Optional("namespace") ?? "Athena.Net.MapServer.Generated.World.Izlude";
         var declarations = RathenaSourceParser.Parse(roots);
         var templates = declarations.Where(value => value.Directive == "script").ToDictionary(value => value.Name, StringComparer.Ordinal);
         var rows = new List<string>();
@@ -257,7 +259,7 @@ internal static class WorldDataImporterCli
             }
             rows.Add($"        new(\"{DeterministicId.For("npc", instance.Map, instance.Name)}\", \"{instance.Map}\", {instance.X}, {instance.Y}, {rx}, {ry}, \"{destinationMap}\", {match.Groups["x"].Value}, {match.Groups["y"].Value}, \"{CanonicalSourceFile(instance.Source.File)}\", {instance.Source.Line}),");
         }
-        var source = "// <auto-generated>\n// Generated by Athena.WorldCompiler from pinned rAthena navigateto commands.\n// Do not edit this file directly.\n// </auto-generated>\nusing Athena.Net.MapServer.World;\nnamespace Athena.Net.MapServer.Generated.World.Izlude;\ninternal static class GeneratedTutorialNavigation\n{\n    internal static readonly NavigationDefinition[] All =\n    [\n" + string.Join('\n', rows.Order(StringComparer.Ordinal)) + "\n    ];\n}\n";
+        var source = "// <auto-generated>\n// Generated by Athena.WorldCompiler from pinned rAthena navigateto commands.\n// Do not edit this file directly.\n// </auto-generated>\nusing Athena.Net.MapServer.World;\nnamespace " + targetNamespace + ";\ninternal static class GeneratedTutorialNavigation\n{\n    internal static readonly NavigationDefinition[] All =\n    [\n" + string.Join('\n', rows.Order(StringComparer.Ordinal)) + "\n    ];\n}\n";
         var output = Path.GetFullPath(options.Required("output")); Directory.CreateDirectory(Path.GetDirectoryName(output)!); await File.WriteAllTextAsync(output, source, new System.Text.UTF8Encoding(false));
         Console.WriteLine($"Generated {rows.Count} navigation definitions into {output}."); return 0;
     }
@@ -358,6 +360,29 @@ internal static class WorldDataImporterCli
         return 0;
     }
 
+    // Offline .gat -> Athena collision artifact compiler (see MapCollisionCompiler/
+    // MapCollisionArtifactWriter's own doc comments for the pinned trace and format). The input
+    // .gat and the output artifact are BOTH expected to stay local/gitignored for now - see
+    // ai/world-data.md's "Map collision data" section for the licensing rationale; this command
+    // never reads/writes anywhere inside the committed repository tree by default.
+    private static async Task<int> CompileMapCollisionAsync(string[] args)
+    {
+        var options = CliOptions.Parse(args);
+        var inputPath = options.Required("input");
+        var mapName = options.Required("map");
+        var outputPath = Path.GetFullPath(options.Required("output"));
+
+        var gatBytes = await File.ReadAllBytesAsync(inputPath);
+        var compiled = MapCollisionCompiler.Compile(gatBytes, mapName);
+        var artifact = MapCollisionArtifactWriter.Write(compiled);
+
+        Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
+        await File.WriteAllBytesAsync(outputPath, artifact);
+
+        Console.WriteLine($"Compiled map '{mapName}' ({compiled.Width}x{compiled.Height}, {compiled.Cells.Length} cells) into {outputPath}.");
+        return 0;
+    }
+
     private static T AssertSingle<T>(IEnumerable<T> values, string description)
     {
         var array = values.ToArray(); return array.Length == 1 ? array[0] : throw new ArgumentException($"Expected one {description}, found {array.Length}.");
@@ -387,14 +412,15 @@ internal static class WorldDataImporterCli
         Console.Error.WriteLine("WorldDataImporter convert --source-root <folder> --output <entities-folder> [--source-file <path>] [--map <map>] [--name <name>] [--kind warp]");
         Console.Error.WriteLine("WorldDataImporter convert --source-root <folder> --all-compatible true --output <entities-folder> --report <report.json>");
         Console.Error.WriteLine("WorldDataImporter capabilities --source-root <folder> [--source-root <folder>] --output <report.json>");
-        Console.Error.WriteLine("WorldDataImporter compile --source-root <folder> --output <World.g.cs> [--source-file <path>] [--map <map>] [--name <name>] [--kind warp]");
-        Console.Error.WriteLine("WorldDataImporter compile-script --source-root <folder> --output <Npc.cs> --source-file <path> --map <map> --name <name> --kind <npc|warp> [--trigger OnClick|OnTouch]");
-        Console.Error.WriteLine("WorldDataImporter compile-actors --source-root <folder> --output <Actors.cs> --source-file <path> --map <map> --name <name> [--name <name>]");
-        Console.Error.WriteLine("WorldDataImporter compile-navigation --source-root <folder> --output <Navigation.cs> --name <name> [--name <name>]");
+        Console.Error.WriteLine("WorldDataImporter compile --source-root <folder> --rathena-commit <sha> --output <World.g.cs> [--source-file <path>] [--map <map>] [--name <name>] [--kind warp]");
+        Console.Error.WriteLine("WorldDataImporter compile-script --source-root <folder> --rathena-commit <sha> --output <Npc.cs> --source-file <path> --map <map> --name <name> --kind <npc|warp> [--trigger OnClick|OnTouch]");
+        Console.Error.WriteLine("WorldDataImporter compile-actors --source-root <folder> --rathena-commit <sha> --output <Actors.cs> --source-file <path> --map <map> --name <name> [--name <name>]");
+        Console.Error.WriteLine("WorldDataImporter compile-navigation --source-root <folder> --output <Navigation.cs> --name <name> [--name <name>] [--namespace <ns>]");
         Console.Error.WriteLine("WorldDataImporter compile-progression --rathena-root <folder> --output <Progression.cs>");
         Console.Error.WriteLine("WorldDataImporter compile-mob-spawn --rathena-root <folder> --rathena-commit <sha> --mob-id <id> --name <spawn-name> --spawn-file <path> [--exclude-map <map>] --class-name <n> --constant-name <n> --spawn-class-name <n> --spawn-array-name <n> --output-definition <Mob.cs> --output-spawns <MobSpawns.cs>");
         Console.Error.WriteLine("WorldDataImporter compile-quest-drop --rathena-root <folder> --rathena-commit <sha> --quest-id <id> --output <QuestDrops.cs>");
         Console.Error.WriteLine("WorldDataImporter compile-item --rathena-root <folder> --rathena-commit <sha> --item-id <id> [--item-db-file <path>] --class-name <n> --constant-name <n> --output <Item.cs>");
+        Console.Error.WriteLine("WorldDataImporter compile-map-collision --input <local.gat> --map <name> --output <local.athmap>");
     }
 }
 

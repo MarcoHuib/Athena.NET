@@ -21,6 +21,9 @@ public sealed class MapServerSession : IDisposable, ISession
         [PacketConstants.MapGameplayStateGetRequest] = MapCharacterGameplayStateProtocol.GetRequestLength,
         [PacketConstants.MapGameplayStateUpdateRequest] = MapCharacterGameplayStateProtocol.UpdateRequestLength,
         [PacketConstants.MapInventoryAddRequest] = MapInventoryAddProtocol.RequestLength,
+        [PacketConstants.MapInventoryListGetRequest] = MapInventoryListProtocol.GetRequestLength,
+        [PacketConstants.MapInventoryEquipUpdateRequest] = MapInventoryEquipUpdateProtocol.RequestLength,
+        [PacketConstants.MapInventoryConsumeRequest] = MapInventoryConsumeProtocol.RequestLength,
     };
 
     private readonly TcpClient _client;
@@ -116,6 +119,15 @@ public sealed class MapServerSession : IDisposable, ISession
                 break;
             case PacketConstants.MapInventoryAddRequest:
                 await HandleInventoryAddRequestAsync(packet, cancellationToken);
+                break;
+            case PacketConstants.MapInventoryListGetRequest:
+                await HandleInventoryListGetAsync(packet, cancellationToken);
+                break;
+            case PacketConstants.MapInventoryEquipUpdateRequest:
+                await HandleInventoryEquipUpdateAsync(packet, cancellationToken);
+                break;
+            case PacketConstants.MapInventoryConsumeRequest:
+                await HandleInventoryConsumeAsync(packet, cancellationToken);
                 break;
             default:
                 CharLogger.Warning($"Unknown map server packet 0x{packetType:X4}, disconnecting.");
@@ -356,6 +368,13 @@ public sealed class MapServerSession : IDisposable, ISession
         }
 
         uint newAmount = 0;
+        uint durableId = 0;
+        uint equip = 0;
+        var identified = false;
+        byte refine = 0;
+        byte favorite = 0;
+        byte bound = 0;
+        var isNewRow = false;
         var success = false;
         if (!IsInventoryAddRequestAuthorized(_authenticated, _ownedCharacters, request.AccountId, request.CharId, request.ItemId, request.Amount))
         {
@@ -380,16 +399,30 @@ public sealed class MapServerSession : IDisposable, ISession
                     {
                         row = new() { CharId = request.CharId, NameId = (uint)request.ItemId, Amount = request.Amount, Identify = 1 };
                         db.Inventory.Add(row);
+                        isNewRow = true;
                     }
                     else
                     {
                         row.Amount += request.Amount;
                     }
                     await db.SaveChangesAsync(cancellationToken);
+                    // DurableId (row.Id) is CharInventory's own real primary key - CharServer no
+                    // longer computes or returns any kind of runtime array position. MapServer
+                    // owns runtime SlotIndex entirely: for isNewRow it assigns a fresh slot
+                    // (reusing a hole if one exists); for an existing stack it looks up this
+                    // DurableId's CURRENT runtime slot in its own tracking and reuses it
+                    // unchanged - see ai/map-server.md "Durable row identity vs runtime
+                    // SlotIndex".
+                    durableId = row.Id;
                     newAmount = row.Amount;
                     success = true;
+                    equip = row.Equip;
+                    identified = row.Identify != 0;
+                    refine = row.Refine;
+                    favorite = row.Favorite;
+                    bound = row.Bound;
                     CharLogger.Info(
-                        $"Inventory-add succeeded charId={request.CharId} itemId={request.ItemId} newAmount={newAmount}.");
+                        $"Inventory-add succeeded charId={request.CharId} itemId={request.ItemId} newAmount={newAmount} durableId={durableId} isNewRow={isNewRow}.");
                 }
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
@@ -400,7 +433,9 @@ public sealed class MapServerSession : IDisposable, ISession
             }
         }
 
-        await WriteAsync(MapInventoryAddProtocol.BuildResponse(request.CharId, request.ItemId, newAmount, success), cancellationToken);
+        await WriteAsync(
+            MapInventoryAddProtocol.BuildResponse(request.CharId, request.ItemId, newAmount, durableId, equip, identified, refine, favorite, bound, isNewRow, success),
+            cancellationToken);
     }
 
     private async Task HandleGameplayStateGetAsync(byte[] packet, CancellationToken cancellationToken)
@@ -427,6 +462,118 @@ public sealed class MapServerSession : IDisposable, ISession
             }
         }
         await WriteAsync(MapCharacterGameplayStateProtocol.BuildResponse(PacketConstants.MapGameplayStateGetResponse, result, charId, state), cancellationToken);
+    }
+
+    private async Task HandleInventoryListGetAsync(byte[] packet, CancellationToken cancellationToken)
+    {
+        if (!MapInventoryListProtocol.TryParseGet(packet, out var accountId, out var charId)) return;
+        List<CharacterInventoryRowDto>? rows = null; byte result = 1;
+        if (IsGameplayStateRequestAuthorized(_authenticated, _ownedCharacters, accountId, charId))
+        {
+            try
+            {
+                await using var db = _dbFactory();
+                if (db is not null)
+                {
+                    // Stable enumeration order (CharInventoryOrdering.InStableOrder) used only as
+                    // the sequence MapServer assigns its initial dense runtime SlotIndex from at
+                    // login - DurableId (i.Id) is each row's real, authoritative identity.
+                    rows = await db.Inventory.AsNoTracking()
+                        .InStableOrder(charId)
+                        .Select(i => new CharacterInventoryRowDto(i.Id, (int)i.NameId, i.Amount, i.Equip, i.Identify != 0, i.Refine, i.Favorite, i.Bound))
+                        .ToListAsync(cancellationToken);
+                    result = 0;
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                CharLogger.Warning(
+                    $"Character inventory read rejected reason=database-error charId={charId} " +
+                    $"error={ex.GetType().Name}.");
+            }
+        }
+        await WriteAsync(MapInventoryListProtocol.BuildResponse(result, charId, rows), cancellationToken);
+    }
+
+    private async Task HandleInventoryEquipUpdateAsync(byte[] packet, CancellationToken cancellationToken)
+    {
+        if (!MapInventoryEquipUpdateProtocol.TryParseRequest(packet, out var accountId, out var charId, out var durableId, out var equip)) return;
+        var success = false;
+        if (IsGameplayStateRequestAuthorized(_authenticated, _ownedCharacters, accountId, charId))
+        {
+            try
+            {
+                await using var db = _dbFactory();
+                if (db is not null)
+                {
+                    // Resolved directly by its own real primary key - never a runtime slot.
+                    var row = await db.Inventory.FirstOrDefaultAsync(i => i.CharId == charId && i.Id == durableId, cancellationToken);
+                    if (row is not null)
+                    {
+                        row.Equip = equip;
+                        await db.SaveChangesAsync(cancellationToken);
+                        success = true;
+                    }
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                CharLogger.Warning(
+                    $"Character inventory equip update rejected reason=database-error charId={charId} " +
+                    $"durableId={durableId} error={ex.GetType().Name}.");
+            }
+        }
+        await WriteAsync(MapInventoryEquipUpdateProtocol.BuildResponse(success, charId, durableId), cancellationToken);
+    }
+
+    // Pinned pc_delitem (pc.cpp:6103-6128), restricted to this service's modeled checks: rejects
+    // if the row doesn't exist (by its own DurableId) or its Amount is less than the requested
+    // consume amount (pc.cpp:6107 - `sd->inventory...amount < amount` -> return 1/failure).
+    //
+    // Pinned pc_delitem does NOT shift/renumber later array positions - it `memset`s the row to
+    // zero in place, leaving that array index empty but still occupying it (pc.cpp:6114-6119).
+    // CharServer mirrors the durable-storage side of that exactly: deleting the row when Amount
+    // reaches zero, with NO reindexing of any kind - CharServer has no runtime slot concept to
+    // reindex in the first place. MapServer owns the resulting hole in ITS OWN runtime
+    // SlotIndex tracking and decides independently whether/when to reuse it - see
+    // ai/map-server.md "Durable row identity vs runtime SlotIndex".
+    private async Task HandleInventoryConsumeAsync(byte[] packet, CancellationToken cancellationToken)
+    {
+        if (!MapInventoryConsumeProtocol.TryParseRequest(packet, out var accountId, out var charId, out var durableId, out var amount)) return;
+        var success = false;
+        uint newAmount = 0;
+        var rowDeleted = false;
+        if (IsGameplayStateRequestAuthorized(_authenticated, _ownedCharacters, accountId, charId) && amount > 0)
+        {
+            try
+            {
+                await using var db = _dbFactory();
+                if (db is not null)
+                {
+                    var row = await db.Inventory.FirstOrDefaultAsync(i => i.CharId == charId && i.Id == durableId, cancellationToken);
+                    if (row is not null && row.Amount >= amount)
+                    {
+                        row.Amount -= amount;
+                        if (row.Amount == 0)
+                        {
+                            db.Inventory.Remove(row);
+                            rowDeleted = true;
+                        }
+                        await db.SaveChangesAsync(cancellationToken);
+                        newAmount = row.Amount;
+                        success = true;
+                        CharLogger.Info(
+                            $"Inventory-consume succeeded charId={charId} durableId={durableId} amount={amount} newAmount={newAmount} rowDeleted={rowDeleted}.");
+                    }
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                CharLogger.Warning(
+                    $"Inventory-consume rejected reason=database-error charId={charId} durableId={durableId} error={ex.GetType().Name}.");
+            }
+        }
+        await WriteAsync(MapInventoryConsumeProtocol.BuildResponse(success, charId, durableId, newAmount, rowDeleted), cancellationToken);
     }
 
     private async Task HandleGameplayStateUpdateAsync(byte[] packet, CancellationToken cancellationToken)

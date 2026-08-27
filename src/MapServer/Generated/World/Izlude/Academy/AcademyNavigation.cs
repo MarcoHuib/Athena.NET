@@ -16,5 +16,7 @@ internal static class GeneratedTutorialNavigation
         new("npc:iz_int03:iz_int03#intro_start", "iz_int03", 18, 30, 6, 6, "iz_int03", 52, 30, "legacy/rathena/npc/re/jobs/novice/academy.txt", 52),
         new("npc:iz_int04:iz_int04#intro_evt02", "iz_int04", 51, 30, 1, 1, "int_land04", 75, 100, "legacy/rathena/npc/re/jobs/novice/academy.txt", 64),
         new("npc:iz_int04:iz_int04#intro_start", "iz_int04", 18, 30, 6, 6, "iz_int04", 52, 30, "legacy/rathena/npc/re/jobs/novice/academy.txt", 53),
+        new("npc:iz_int:iz_int#intro_evt02", "iz_int", 51, 30, 1, 1, "int_land", 75, 100, "legacy/rathena/npc/re/jobs/novice/academy.txt", 55),
+        new("npc:iz_int:iz_int#intro_start", "iz_int", 18, 30, 6, 6, "iz_int", 52, 30, "legacy/rathena/npc/re/jobs/novice/academy.txt", 21),
     ];
 }

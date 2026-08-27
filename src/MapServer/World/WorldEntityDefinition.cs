@@ -28,6 +28,44 @@ public sealed record WarpAction(string Map, ushort X, ushort Y) : WorldActionDef
 public sealed record SetSavePointAction(string Map, ushort X, ushort Y) : WorldActionDefinition;
 public sealed record WorldSourceInfo(string Repository, string Commit, string File, int Line);
 
+// Pinned rAthena monster capability bits (legacy/rathena/src/common/mmo.hpp enum e_mode,
+// mmo.hpp:242-272). Only the bits this project's mob-movement/AI slice actually needs are modeled
+// so far - this is NOT the complete pinned e_mode bitmask (e.g. MD_AGGRESSIVE, MD_ASSIST,
+// MD_LOOTER, MD_MVP, etc. all exist in pinned source but have no Athena runtime behavior yet).
+// Extend this enum (never a mob-specific bool like "PoringCanMove") when a future slice needs
+// another bit - matching how MobDataCompiler already computes the FULL pinned mode value from
+// source and simply narrows which bits Athena's generated model currently exposes.
+[Flags]
+public enum MobMode
+{
+    None = 0,
+    // MD_CANMOVE (mmo.hpp:244, 0x0000001) - authorizes idle random walk (mob_randomwalk,
+    // mob.cpp:1673) and chase movement. Without this bit a mob must never be scheduled to walk,
+    // regardless of any other source-backed movement data (WalkSpeed, etc.) it happens to carry.
+    CanMove = 0x0000001,
+    // MD_NORANDOMWALK (mmo.hpp:249, 0x0000020) - explicitly suppresses idle random walk
+    // (mob_randomwalk's own early-return guard, mob.cpp:1687) even when MD_CANMOVE is also set.
+    NoRandomWalk = 0x0000020,
+    // MD_CANATTACK (mmo.hpp:251, 0x0000080) - pinned mob_ai_sub_hard's own target-acquisition gate
+    // ("if (md->attacked_id && mode&MD_CANATTACK)", mob.cpp:1937): a mob without this bit never
+    // promotes an attacker into a combat target at all, regardless of MD_AGGRESSIVE. Consulted by
+    // MonsterCombatCoordinator.Attack before calling MobInstance.TryAcquireTarget - see that call
+    // site's own doc comment.
+    CanAttack = 0x0000080,
+    // MD_CHANGETARGETMELEE (mmo.hpp:256, 0x0001000) - pinned mob_can_changetarget's own MSS_BERSERK
+    // case (mob.cpp:1242): whether a mob already attacking one target in melee range may switch to
+    // a DIFFERENT attacker. Consulted by MobInstance.TryAcquireTarget when MobCombatState is
+    // Berserk.
+    ChangeTargetMelee = 0x0001000,
+    // MD_CHANGETARGETCHASE (mmo.hpp:257, 0x0002000) - pinned mob_can_changetarget's own MSS_RUSH
+    // case (mob.cpp:1252): whether a mob already chasing one target may switch to a DIFFERENT
+    // attacker mid-chase. Consulted by MobInstance.TryAcquireTarget when MobCombatState is Rush -
+    // this is the bit G_PORING's real generated mode LACKS, which is why item 6's own acceptance
+    // criterion (a second attacker cannot steal an already-chasing G_PORING's target) holds without
+    // any mob-ID special case.
+    ChangeTargetChase = 0x0002000,
+}
+
 // Immutable, source-backed monster data (pinned rAthena db/re/mob_db.yml).
 // Renewal semantics: Attack -> rhw.atk (weapon-roll component when this mob
 // is the ATTACKER, irrelevant when it is the target), Defense -> hard DEF,
@@ -37,18 +75,43 @@ public sealed record WorldSourceInfo(string Repository, string Commit, string Fi
 // are 0 when the pinned block omits them entirely (rAthena YAML loader
 // default), matching a tutorial punching-bag mob - this is read from source,
 // never assumed nonzero because CharacterProgressionService exists.
+// `Mode` is derived exactly like pinned MobDatabase::parseBodyNode (mob.cpp:5446-5519): the
+// pinned `Ai:` field resolves to one of the MONSTER_TYPE_NN preset bitmasks (mob.hpp:151-164,
+// e.g. Ai=02 -> MONSTER_TYPE_02=0x83), which becomes the mob's base status.mode; any pinned
+// `Modes:` block entries then individually OR (true) or AND-NOT (false) additional bits on top of
+// that preset - never one flat "the Modes: block IS the mode" assumption, since a real mob's
+// effective mode is almost always dominated by its Ai preset, with Modes: only overriding specific
+// bits (e.g. G_PORING/2401 has Ai=02=0x83=MD_CANMOVE|MD_LOOTER|MD_CANATTACK and a Modes: block
+// that only sets FixedItemDrop=true - a bit this project's MobMode does not yet model).
+// AttackMotion (amotion) and DamageMotion (dmotion) are pinned mob_db.yml scalars distinct from
+// AttackDelay (adelay): AttackDelay controls attack CADENCE (this project's MobInstance.
+// NextAttackAt scheduling), never animation/hit-reaction timing. AttackMotion is THIS mob's own
+// attack-animation timing - used as clif_damage's srcSpeed when this mob is the ATTACKER
+// (mob->player combat). DamageMotion is THIS mob's own hit-reaction/walk-delay timing - used as
+// clif_damage's dstSpeed when this mob is the TARGET (player->mob combat). The two directions must
+// never be conflated: a mob's own DamageMotion is never a valid dstSpeed when THAT SAME mob is the
+// attacker (see MobBasicAttackCalculator/IroMonsterCombatPackets call sites).
 public sealed record MobDefinition(
     int Id, string AegisName, string Name, int Level, uint MaxHp,
     int Attack, int Attack2, int Defense, int MagicDefense,
     int Str, int Agi, int Vit, int Int, int Dex, int Luk,
-    int AttackRange, int WalkSpeed, int AttackDelay,
-    long BaseExp, long JobExp,
+    int AttackRange, int WalkSpeed, int AttackDelay, int AttackMotion, int DamageMotion,
+    long BaseExp, long JobExp, MobMode Mode,
     WorldSourceInfo Source);
 
 // One pinned `monster` spawn-line declaration (npc/re/mobs/*.txt), scoped to
 // a single map. `Count` instances are maintained on that map; `RespawnDelayMs`
 // is the pinned mob.delay1 (npc_parse_mob defaults to 5000 when unspecified).
-public sealed record MobSpawnDefinition(MobDefinition Mob, string Map, int Count, int RespawnDelayMs, WorldSourceInfo Source);
+// X/Y/Xs/Ys are the pinned declaration's own `<map>,<x>,<y>[,<xs>,<ys>]` fields
+// (mob.cpp mob_spawn / npc_parse_mob), preserved losslessly rather than
+// discarded at compile time - see IMobSpawnCellSelector for how a
+// map-wide-random declaration (X=0, Y=0, Xs=0, Ys=0, i.e. "xs+ys<1" per
+// pinned mob_spawn) is distinguished from a fixed/rectangular spawn area.
+// Xs/Ys default to 0 (not 1) when the pinned line omits them, matching the
+// pinned parser leaving spawn->xs/ys at their zero-initialized default in
+// that case (npc_parse_mob only assigns them when the optional 4th/5th
+// columns are present).
+public sealed record MobSpawnDefinition(MobDefinition Mob, string Map, int Count, int RespawnDelayMs, WorldSourceInfo Source, short X = 0, short Y = 0, short Xs = 0, short Ys = 0);
 
 // One pinned quest_db.yml `Drops:` entry (quest.cpp QuestDatabase::parseBodyNode
 // / quest_update_objective's drop-processing loop). This is intentionally NOT a

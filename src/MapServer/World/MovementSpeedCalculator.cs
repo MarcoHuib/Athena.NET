@@ -13,7 +13,7 @@ namespace Athena.Net.MapServer.World;
 //   speed = clamp(speed, MIN_WALK_SPEED=20, MAX_WALK_SPEED=1000)   (status.cpp:8223, mmo.hpp:95-96)
 // baseSpeed is DEFAULT_WALK_SPEED=150 (mmo.hpp:93) for every currently supported character - Athena
 // has no per-character stored base walk speed field, matching the "no invented state" rule the same
-// way BasicAttackCalculator treats POW=0 as the real default rather than an assumption.
+// way RenewalBasicAttackRules treats POW=0 as the real default rather than an assumption.
 //
 // Explicitly NOT modeled (would require status/item/skill state this codebase does not have):
 // mounts, carts, Berserk/Run/other haste statuses, slow statuses (Curse, Decrease AGI, etc.),

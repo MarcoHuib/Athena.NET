@@ -16,6 +16,7 @@ internal static class AcademyWorld
             new("npc:int_land02:captain carocc#intro_npc03_02", AcademyNpcs.CaptainCarocc.DefinitionId, "Captain Carocc#intro_npc03_02", "int_land02", 78, 103, 5, 873, 0, 0, 0),
             new("npc:int_land03:captain carocc#intro_npc03_03", AcademyNpcs.CaptainCarocc.DefinitionId, "Captain Carocc#intro_npc03_03", "int_land03", 78, 103, 5, 873, 0, 0, 0),
             new("npc:int_land04:captain carocc#intro_npc03_04", AcademyNpcs.CaptainCarocc.DefinitionId, "Captain Carocc#intro_npc03_04", "int_land04", 78, 103, 5, 873, 0, 0, 0),
+            new("npc:int_land:captain carocc#intro_npc03", AcademyNpcs.CaptainCarocc.DefinitionId, "Captain Carocc#intro_npc03", "int_land", 78, 103, 5, 873, 0, 0, 0),
         ]);
         world.AddNpc(AcademyNpcs.Lumin,
         [
@@ -23,6 +24,7 @@ internal static class AcademyWorld
             new("npc:int_land02:lumin#new_ship02", AcademyNpcs.Lumin.DefinitionId, "Lumin#new_ship02", "int_land02", 73, 100, 3, 639, 0, 0, 0),
             new("npc:int_land03:lumin#new_ship03", AcademyNpcs.Lumin.DefinitionId, "Lumin#new_ship03", "int_land03", 73, 100, 3, 639, 0, 0, 0),
             new("npc:int_land04:lumin#new_ship04", AcademyNpcs.Lumin.DefinitionId, "Lumin#new_ship04", "int_land04", 73, 100, 3, 639, 0, 0, 0),
+            new("npc:int_land:lumin#new_ship", AcademyNpcs.Lumin.DefinitionId, "Lumin#new_ship", "int_land", 73, 100, 3, 639, 0, 0, 0),
         ]);
         world.AddNpc(AcademyNpcs.WoundedSwordsmanIntroNpc01IzInt,
         [
@@ -30,6 +32,7 @@ internal static class AcademyWorld
             new("npc:iz_int02:wounded swordsman#intro_npc01_iz_int02", AcademyNpcs.WoundedSwordsmanIntroNpc01IzInt.DefinitionId, "Wounded Swordsman#intro_npc01_iz_int02", "iz_int02", 56, 32, 3, 687, 5, 5, 0),
             new("npc:iz_int03:wounded swordsman#intro_npc01_iz_int03", AcademyNpcs.WoundedSwordsmanIntroNpc01IzInt.DefinitionId, "Wounded Swordsman#intro_npc01_iz_int03", "iz_int03", 56, 32, 3, 687, 5, 5, 0),
             new("npc:iz_int04:wounded swordsman#intro_npc01_iz_int04", AcademyNpcs.WoundedSwordsmanIntroNpc01IzInt.DefinitionId, "Wounded Swordsman#intro_npc01_iz_int04", "iz_int04", 56, 32, 3, 687, 5, 5, 0),
+            new("npc:iz_int:wounded swordsman#intro_npc01_iz_int", AcademyNpcs.WoundedSwordsmanIntroNpc01IzInt.DefinitionId, "Wounded Swordsman#intro_npc01_iz_int", "iz_int", 56, 32, 3, 687, 5, 5, 0),
         ]);
         world.AddNpc(AcademyNpcs.WoundedSwordsmanIntroNpc02IzInt,
         [
@@ -41,7 +44,11 @@ internal static class AcademyWorld
         ]);
         world.AddWarpTrigger(AcademyWarpTriggers.IntroToIzlude,
         [
+            new("warp:int_land01:intro_to_izlude_a", AcademyWarpTriggers.IntroToIzlude.DefinitionId, "#intro_to_izlude_a", "int_land01", 49, 57, 0, 2, 2),
+            new("warp:int_land02:intro_to_izlude_b", AcademyWarpTriggers.IntroToIzlude.DefinitionId, "#intro_to_izlude_b", "int_land02", 49, 57, 0, 2, 2),
+            new("warp:int_land03:intro_to_izlude_c", AcademyWarpTriggers.IntroToIzlude.DefinitionId, "#intro_to_izlude_c", "int_land03", 49, 57, 0, 2, 2),
             new("warp:int_land04:intro_to_izlude_d", AcademyWarpTriggers.IntroToIzlude.DefinitionId, "#intro_to_izlude_d", "int_land04", 49, 57, 0, 2, 2),
+            new("warp:int_land:intro_to_izlude", AcademyWarpTriggers.IntroToIzlude.DefinitionId, "#intro_to_izlude", "int_land", 49, 57, 0, 2, 2),
         ]);
         world.AddWarpTrigger(AcademyWarpTriggers.ShipOut,
         [
@@ -49,6 +56,7 @@ internal static class AcademyWorld
             new("warp:iz_int02:ship_out02", AcademyWarpTriggers.ShipOut.DefinitionId, "#ship_out02", "iz_int02", 56, 15, 0, 1, 1),
             new("warp:iz_int03:ship_out03", AcademyWarpTriggers.ShipOut.DefinitionId, "#ship_out03", "iz_int03", 56, 15, 0, 1, 1),
             new("warp:iz_int04:ship_out04", AcademyWarpTriggers.ShipOut.DefinitionId, "#ship_out04", "iz_int04", 56, 15, 0, 1, 1),
+            new("warp:iz_int:ship_out", AcademyWarpTriggers.ShipOut.DefinitionId, "#ship_out", "iz_int", 56, 15, 0, 1, 1),
         ]);
     }
 }

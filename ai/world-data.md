@@ -9,15 +9,41 @@ Current pipeline:
 
 `pinned rAthena -> lexer/parser/semantics/lowering -> deterministic C# -> normal dotnet build -> WorldMapRegistry -> MapClientSession`
 
-The intentionally supported runtime slice is:
+The intentionally supported runtime slice covers the COMPLETE `iz_int`/`int_land`
+tutorial family — the generic/base maps (`iz_int`, `int_land`) and all four
+instanced duplicates (`iz_int01..04`, `int_land01..04`) alike, since
+`start_point` config can place a new character on any of the five `iz_int*`
+variants and each must be a functionally equivalent tutorial slice. This was
+NOT always true: an earlier `compile-npc-world`/`compile-navigation`
+regeneration invocation used `--exclude-placement`/`--warp-exclude-placement`
+to drop the generic/base template placements of several pinned
+`duplicate(...)` families, leaving generic `iz_int` (one of the five valid
+`start_point` destinations) without a visible Wounded Swordsman, without
+`#ship_out`, and downstream without Captain Carocc/Lumin/`#intro_to_izlude`
+on generic `int_land` either — a regeneration-selection bug, not an
+intentional narrower slice. See `tools/WorldDataImporter/README.md`'s
+`compile-npc-world`/`compile-navigation` sections for the corrected
+invocations and `WorldMapRegistryFamilyTests`
+(`tests/MapServer.Tests/World/`) for the regression coverage.
 
-- `iz_int/#room_out` and `#room_in`, pinned `izlude.txt:57,63`;
-- active instance variants `iz_int03/#room_out03` and `#room_in03`, pinned
-  `izlude.txt:60,66`;
-- `iz_int03/#ship_out03`, pinned duplicate at `izlude.txt:80`, generated
-  executable `OnTouch` with savepoint and transfer to `int_land03`;
-- `int_land04/#intro_to_izlude_d`, generated executable `OnTouch`;
-- `iz_int/Wounded Swordsman#intro_npc02_iz_int`, generated executable `OnClick`.
+Representative examples (every one of these has a `01`/`02`/`03`/`04`
+counterpart on the matching instanced map):
+
+- `iz_int/#room_out` and `#room_in`, pinned `izlude.txt:57,63` (instanced
+  variants e.g. `iz_int03/#room_out03`/`#room_in03`, pinned `izlude.txt:60,66`);
+- `iz_int/#ship_out`, pinned template at `izlude.txt:69`, generated executable
+  `OnTouch` with savepoint and transfer to `int_land` (instanced duplicate
+  e.g. `iz_int03/#ship_out03` -> `int_land03`, pinned `izlude.txt:80`);
+- `int_land/#intro_to_izlude`, pinned template at `izlude.txt:83`, generated
+  executable `OnTouch` with transfer to `izlude` (instanced duplicates use the
+  pinned lettered suffixes, e.g. `int_land04/#intro_to_izlude_d` -> `izlude_d`,
+  NOT a numeric `04` suffix — `StrNpcInfo(2)`-derived at runtime, not a
+  per-instance branch);
+- `iz_int/Wounded Swordsman#intro_npc01_iz_int` (class 687, generated
+  executable `OnClick`, initially visible — no `cloakonnpc()` in its pinned
+  `OnInit`) and `iz_int/Wounded Swordsman#intro_npc02_iz_int` (class 688,
+  generated executable `OnClick`, initially cloaked via pinned `OnInit:
+  cloakonnpc()`).
 
 `GeneratedScriptRegistry` owns explicit script factories and entity metadata.
 Generated and custom scripts share `INpcScript`, `ScriptContext`, world entities,
@@ -39,11 +65,20 @@ name.
 Which of those placements/behaviors actually reach a particular generated
 world slice is a separate, later "emission selection" step (`compile-npc-world`'s
 `--exclude-placement`/`--no-behavior` flags), applied strictly after the
-converter returns its lossless result. This is how the Academy slice keeps
-Captain Carocc and Lumin actor-only today even though pinned rAthena contains
-real, non-trivial click dialogue for both — their scripts deliberately remain
-unregistered pending real healing/EXP/status-effect/inventory runtime support,
-which is an emission-time decision, not something the converter encodes.
+converter returns its lossless result. Placement and behavior are
+orthogonal: `--exclude-placement` drops a specific NPC/warp instance's
+ACTOR entirely (only appropriate when that literal instance/map is not part
+of the intended generated world at all — never merely because a placement is
+a `duplicate(...)` family's generic/base template row), while `--no-behavior`
+keeps a definition's actor(s) visible/interactable-looking but withholds its
+script registration. This is how the Academy slice keeps Lumin actor-only
+today even though pinned rAthena contains real, non-trivial click dialogue
+for it — its script deliberately remains unregistered pending real inventory
+runtime support, which is an emission-time decision (`--no-behavior
+'Lumin#new_ship'`), not something the converter encodes. Captain Carocc's
+script IS registered (dialogue/quest/heal/status/EXP runtime capabilities all
+exist), and both NPCs' actors are placed on every `int_land`/`int_land01..04`
+map, not only the instanced duplicates.
 
 `WorldRegistryBuilder.AddNpc(NpcDefinition, IReadOnlyList<NpcPlacement>)` is
 the runtime registration entry point generated `AcademyWorld.Register(builder)`
@@ -75,6 +110,29 @@ in `Academy/AcademyWarps.cs` (renamed from `RequiredWarps.cs`, content
 unchanged). Tutorial `navigateto` placement data lives in
 `Academy/AcademyNavigation.cs` (renamed from `TutorialNavigation.cs`, content
 unchanged — it has no rAthena duplicate relationship to model).
+
+### Navigation lifecycle across the `iz_int` -> `int_land` transition
+
+Pinned `iz_int#intro_start`/`iz_int01..04#intro_start` (`academy.txt:21-53`)
+starts one navigation (`iz_int -> 52,30`); pinned `iz_int#intro_evt02`/
+`iz_int01..04#intro_evt02` (`academy.txt:55-64`) starts a SECOND, separate
+navigation once the player reaches `51,30` (`int_land -> 75,100`), which is
+still active while the player walks through `#ship_out` and loads `int_land`
+— pinned source contains no third `navigateto`/cancel call anywhere in this
+path. `MapClientSession`'s `CzNotifyActorInit` handler (map-loaded) calls
+`GetNavigationAt(_mapName, _x, _y)` again on every map load, including
+`int_land`'s own load — `AcademyNavigation.All` has zero `int_land` entries,
+so that lookup is empty there and no third navigation packet is ever sent.
+Arrows visibly persisting after the `#ship_out` warp is therefore the
+EXPECTED re-display of the second (`intro_evt02`) navigation's proven wire
+packet (`0x08E2`, ground-arrow rendering — see `ai/iro-2026-wire.md`'s
+capture-verified structure), not a duplication/accumulation bug. There is no
+capture evidence anywhere in this repository of an official iRO
+cancel/clear-navigation packet or of official iRO client behavior differing
+from this pinned script here, so no such packet is synthesized — see
+`WorldMapRegistryFamilyTests.NoThirdNavigation_IsSynthesizedWhenIntLandItselfLoads`
+for the regression proof, and `MapClientSession`'s `[iRO MAP DEBUG] Sending
+0x08E2 navigation ...` log line for runtime diagnosis of this exact sequence.
 
 The former `data/world/entities`, `data/world/dev`, and `data/world/warps.json`
 runtime datasets are removed. JSON files remaining under `data/world` are compiler
@@ -156,7 +214,9 @@ their breadth does not imply runtime support.
 
 ## Still missing
 
-The minimal `iz_int03` slice now also includes compiler-generated navigation targets, both Wounded Swordsman actor states/scripts, and definitions for the pinned `int_land03` Captain Carocc and Lumin duplicates. Captain Carocc's real pinned dialogue/quest/heal/status/EXP script is registered and executable, using the generic heal, temporary-status, and existing quest/progression runtime capabilities described below. Lumin remains actor-only: its script stays unregistered until real inventory runtime support exists; no no-op gameplay commands are used.
+The complete `iz_int`/`int_land` tutorial family (generic base maps plus all four instanced duplicates) includes compiler-generated navigation targets, both Wounded Swordsman actor states/scripts, and definitions for Captain Carocc and Lumin — not only the `iz_int03`/`int_land03` instanced variant, which was the only fully complete member before a regeneration-selection fix restored the generic/base and remaining instanced placements (see the "Runtime architecture" section above and `WorldMapRegistryFamilyTests`). Captain Carocc's real pinned dialogue/quest/heal/status/EXP script is registered and executable on every map in the family, using the generic heal, temporary-status, and existing quest/progression runtime capabilities described below. Lumin remains actor-only on every map in the family: its script stays unregistered until real inventory runtime support exists; no no-op gameplay commands are used.
+
+Separately, pinned `Wounded Swordsman#intro_npc02_iz_int`'s `OnInit: questinfo(...)` is a genuine, still-open capability gap: rAthena's `questinfo(QTYPE_QUEST, QMARK_YELLOW, ...)` drives a client-facing quest-marker icon above the NPC, which Athena does not yet emit any packet for. This is NOT implemented here — no packet has been synthesized without capture/wire evidence (see `ai/iro-2026-wire.md`'s evidence-priority rule) — and remains distinct from the navigation-arrow (`navigateto`) capability, which IS implemented and generated from pinned source via `compile-navigation`/`AcademyNavigation.cs`.
 
 ## Heal and temporary status effects
 
@@ -227,24 +287,22 @@ misattributed frame and has been retracted (see `ai/iro-2026-wire.md`).
 
 ### Verified stock-iRO evidence
 
-None found for combat itself. The supplied
-`npc-interaction-npc's_v2.pcapng`/`npc-interaction-heal-action.pcapng`
-captures (already cited above and in `ai/iro-2026-wire.md`) contain movement,
-warps, and extensive NPC/tutorial dialogue, but **no attack-initiation
-packet, no damage packet, no monster-death packet, and no item-acquisition
-packet correlated to a monster actor**. `ai/iro-2026-wire.md`'s own "Verified
-NPC dialogue evidence" section already states this explicitly: "Quest
-traffic, combat, and item acquisition in this capture remain future evidence
-without runtime support." This branch did not find a stronger capture. The
-only reusable *proven* wire fact for monster visibility is `0x09FF`
-(`ZC_NOTIFY_STANDENTRY`)'s field layout for a WARPNPC actor (object type `6`,
-speed sentinel `300`, HP sentinels `0xFFFFFFFF`) — and that layout is
-**object-type-specific**: pinned rAthena (`clif.cpp:1200` et al.) sends
-`objecttype = 0x5` (`NPC_MOB_TYPE`) for a real monster, with real current/max
-HP, not the `6`/sentinel-HP shape Athena's existing `IroWorldActorPackets.
-BuildWorldActor` already sends for NPCs/warps. Reusing that serializer
-unchanged for a monster would not be proven; a real monster-visibility packet
-is left as an explicit, isolated evidence gap rather than invented.
+`kill-poring-heal-jobup.pcapng` (see `ai/iro-2026-wire.md`'s "Verified monster
+combat wire evidence" section for the full frame-by-frame table) closes this
+gap: a real stock iRO client kills G_PORING (actor `0x00001E9D`) on
+`128.241.92.42:4506` and receives Wood. Proven: monster appearance (`0x09FF`,
+object type 5, real HP fields), actor-info correlation (`0x0368`/`0x0ADF`),
+attack request (`0x0437`), damage response (`0x08C8`, exact `ZC_NOTIFY_ACT3`
+match), death (`0x0080` type=1 "died"), and item-pickup acknowledgement
+(`0x0B41`, exact `ZC_ITEM_PICKUP_ACK` match). The earlier finding below (that
+the WARPNPC `0x09FF` serializer must not be reused unchanged for a monster)
+is confirmed by this capture and remains accurate: a monster's `0x09FF` uses
+`objecttype=5` and a real, HP-state-dependent sentinel, not WARPNPC's
+`objecttype=6`/always-`0xFFFFFFFF` shape - see `IroMonsterActorPackets`
+(distinct from `IroWorldActorPackets.BuildWorldActor`). Respawn/reappearance
+for this actor was not itself captured (the player moved away first); that
+one behavior remains inferred from pinned source, not independently
+capture-verified.
 
 ### Pinned rAthena semantics
 
@@ -390,13 +448,42 @@ already follow. Respawn uses `TimeProvider`-driven due-time checks
 (`MonsterRegistry.ProcessDueRespawns`), not one `Timer`/`Task.Delay` per
 monster.
 
-Not wired: no client packet handler drives `MonsterCombatCoordinator.Attack`
-from a live socket (no verified attack-request packet ID/layout exists), and
-no monster-specific `0x09FF` variant is sent to make a spawned instance
-visible to a real client (see evidence gap above). `MapClientSession` now
-carries an optional `MonsterRegistry` field (populated on the live path via
-`MapServerWorld`, `null` on the test-facing constructor's default), but no
-packet handler reads it yet.
+Now wired end-to-end on the live client path (`feature/poring-live-wire`,
+verified against `kill-poring-heal-jobup.pcapng` - see `ai/iro-2026-wire.md`).
+`MapClientSession.HandleIroAttackRequestAsync` parses the proven `0x0437`
+request, resolves the target through the existing `MonsterRegistry`, and
+calls the existing unmodified `MonsterCombatCoordinator.Attack` - no damage
+calculation happens in networking code. Results are represented (not
+recalculated) by `IroMonsterCombatPackets` (`0x08C8` damage, `0x0080`
+death, `0x0B41` item pickup) and `IroMonsterActorPackets` (`0x09FF` monster
+appearance, distinct from the NPC/warp `IroWorldActorPackets` serializer -
+see the evidence section above for why). `MapServerWorld.Build()` now also
+composes one `MonsterCombatCoordinator` (over the same shared
+`MonsterRegistry`/`WorldActorIdAllocator`) and threads it into
+`MapClientSession` alongside the pre-existing `MonsterRegistry` field.
+Monster visibility (`0x09FF`) is sent from the same call sites that already
+send NPC/warp visibility (post-`0x007D` map-load, post-movement), sharing the
+existing `_visibleActorIds` dedup set. Monster actor IDs are never routed
+into NPC script dispatch (`_worldMapRegistry.TryGetInteraction` simply never
+matches a monster ID, since monsters were never registered there - not a new
+exclusion rule). Respawn re-visibility reuses the existing
+`MonsterRegistry.ProcessDueRespawns`/`0x09FF`-emission path the next time a
+session sends visibility to a map containing the respawned instance; no new
+scheduler was added, and this specific behavior is pinned-source-inferred
+rather than independently capture-verified (see evidence section above).
+
+The captured `0x0B41`'s `Index` field required one small, deliberately
+minimal protocol extension: pinned `client_index()` (`clif.cpp:122-124`) is
+server-side inventory array position + 2, and neither Athena's
+`CharInventory` schema nor real rAthena's own SQL schema persists that
+position as a column - it is derived from row-insertion order at grant time.
+The internal MapServer<->CharServer `0x2b31`/`0x2b32` protocol
+(`MapInventoryAddProtocol`) and `ICharacterInventoryPersistence`/
+`CharacterInventorySession`/`InventoryAddResult` now carry an additional
+`SlotIndex` (server-side, 0-based) alongside the pre-existing
+`Success`/`NewAmount` fields; the `+2` wire transform is applied only at the
+point `MapClientSession` serializes `0x0B41`, not inside the persistence
+layer.
 
 ### Inventory persistence guarantees — precise scope
 
@@ -436,3 +523,411 @@ NOT claimed, and explicitly out of scope for this branch:
 
 Expand the runtime only through tested vertical slices; do not restore bulk JSON
 runtime data as a shortcut.
+
+## Map geometry: direct pinned rAthena map_cache.dat import (normal path)
+
+Athena's NORMAL source of map geometry/collision data is pinned rAthena's own
+`legacy/rathena/db/map_cache.dat`, read directly at MapServer startup —
+**not** a manually extracted client `.gat` file, and **not** an offline
+per-map conversion step. rAthena already ships this server-side dataset
+(map dimensions + per-cell static terrain, itself built from client
+GAT/RSW resources by rAthena's own offline `src/tool/mapcache.cpp`) inside
+the pinned checkout, so a developer never needs an installed Ragnarok
+client, a GRF, or `.gat` extraction to get real map geometry into Athena.
+
+This pinned `map_cache.dat` is **server-side reference data from the pinned
+rAthena version**, not a claim of authoritative current-iRO map content —
+Athena's stock-iRO wire-authority rules (`ai/iro-2026-wire.md`) are
+unchanged by this section; nothing here asserts a captured/verified iRO
+fact.
+
+### Runtime architecture
+
+```
+legacy/rathena/db/map_cache.dat  (pinned reference data, read as-is)
+        |
+RathenaMapCacheReader.ReadAll/ReadAllFromFile   (src/MapServer/World/RathenaMapCacheReader.cs)
+        |  (parses the pinned container format directly into runtime types —
+        |   no intermediate Athena artifact/container format for this path)
+        v
+MapCollisionMap[]  (existing runtime type, reused verbatim)
+        |
+MapCollisionStartupLoader.Load(artifacts, mapCachePath)
+        v
+IMapCollisionProvider  (MapCollisionProvider, keyed by each map's own real name)
+```
+
+`RathenaMapCacheReader` reads and decompresses the whole file exactly once,
+at MapServer startup — never per session, never per lookup. The resulting
+`MapCollisionMap` instances are immutable and shared for the server's
+lifetime, exactly like every other startup-composed dependency
+(`GameplayRuleServices`, `MonsterRegistry`, etc.). Gameplay code
+(`MapClientSession`, `MonsterRegistry`, pathfinding) only ever sees the
+generic `IMapCollisionProvider`/`MapCollisionMap` abstractions — nothing
+outside `RathenaMapCacheReader`/`MapCollisionStartupLoader` knows the pinned
+binary layout exists.
+
+No alias mechanism is needed for this source: pinned `map_cache.dat` already
+declares `int_land`/`int_land01`/`int_land02`/`int_land03`/`int_land04` as
+five separate, independent, real records (confirmed by direct inspection of
+the pinned file, not inferred from `legacy/openkore`'s client-side resource
+table) — each logical Athena map name this project uses already has its own
+row in the pinned cache with real geometry. The `.gat`/`.athmap` alias
+mechanism described later in this document exists only for that secondary
+path, where a single physical client resource genuinely is shared across
+several logical map names; it does not apply here. (Not every map name
+Athena might eventually want has a record in the shipped `map_cache.dat` —
+e.g. plain `prontera` IS declared in pinned rAthena's own map list
+(`conf/maps_athena.conf:201`, `map: prontera`), but has no corresponding
+record in this pinned checkout's `db/map_cache.dat`; `izlude` likewise has no
+bare-name record, only instanced variants such as `izlude_a`/`izlude_in`.
+This is a gap in the shipped, prebuilt cache file specifically — a cache
+rebuild (`mapcache` tool, out of scope here) would need to run against real
+client resources to add such a map — not an alias gap Athena's reader needs
+to bridge, and not evidence that rAthena itself never declares that map.)
+
+### Pinned reader/writer trace
+
+Traced against `legacy/rathena` at `e985006171d2eb320ee512a653f4c83aea3d81b6`,
+independently cross-checked against the real pinned `map_cache.dat` (1288
+maps) byte-for-byte:
+
+- `map.cpp:156-159` (`struct map_cache_main_header`) + `map.cpp:3672-3717`
+  (`map_readfromcache`) + `map.cpp:3640-3666` (`map_init_mapcache` — whole
+  file read into memory, no streaming): main header is `file_size` (`uint32`
+  LE) + `map_count` (`uint16` LE), but the first real record starts at byte
+  offset **8**, not 6 — ordinary C structure-alignment padding pinned
+  `map_readfromcache` already accounts for via `sizeof(struct
+  map_cache_main_header)` (`map.cpp:3677`) on its target platform/compiler.
+  Confirmed against the real pinned file: with `map_count=1288`, every
+  declared record length only lines up exactly against `file_size` when the
+  first record starts at offset 8.
+- `map.cpp:162-167` (`struct map_cache_map_info`), repeated `map_count`
+  times back-to-back, each immediately followed by that record's own
+  compressed payload (`map.cpp:3679-3687` walks entries by jumping `len`
+  bytes past each record — not a fixed stride): `name` (12-byte NUL-padded
+  ASCII, `MAP_NAME_LENGTH` = `mmo.hpp:163`, never includes a `.gat`
+  extension), `xs`/`ys` (`int16` LE each), `len` (`int32` LE, the
+  COMPRESSED payload's byte length).
+- `grfio.cpp:245-255` (`decode_zip`/`encode_zip`): standard zlib
+  `compress()`/`uncompress()` — an RFC 1950 zlib-wrapped deflate stream, not
+  raw deflate or gzip. .NET's `ZLibStream` speaks this container directly.
+- `map.cpp:3710-3711`: decompresses to exactly `xs*ys` bytes, one raw GAT
+  cell-type byte per cell, in `x + y*xs` row-major order — the same flat
+  index `MapCollisionMap.GetCell` already uses, so no coordinate transform
+  is needed.
+- `map.cpp:3280-3299` (`map_gat2cell`): the raw GAT type byte → static bit
+  mapping (see "Pinned trace" below for the exact per-type semantics) —
+  IDENTICAL to the direct-`.gat` path's mapping, because `map_cache.dat`'s
+  payload is nothing more than the same raw GAT type bytes
+  `src/tool/mapcache.cpp`'s `read_map` already extracts from a client
+  `.gat`, zlib-compressed and bundled with every other map into one
+  container. Both import paths are alternate INPUT ENCODINGS of identical
+  underlying cell semantics, not two independent formats.
+- `map_readfromcache` (`map.cpp:3692-3693`) treats `xs<=0`/`ys<=0` as "skip
+  this record, keep scanning" because its pinned caller linear-scans a
+  shared file for one specific map name and a malformed OTHER entry must
+  not abort that search. `RathenaMapCacheReader` instead fails the WHOLE
+  load loudly on any malformed record: Athena loads every map in one pass
+  at startup rather than probing per name, so a malformed record is
+  definitionally a corrupt input file, never "some other map I don't care
+  about."
+
+### Configuration
+
+`map_cache_path: <path>` (`MapConfig.MapCachePath`/`MapConfigLoader`) is the
+normal key — e.g. `map_cache_path: legacy/rathena/db/map_cache.dat` for
+local development. A missing or malformed configured file fails MapServer
+startup loudly (`MapCollisionStartupLoader` throws `InvalidOperationException`),
+never silently falling back to `EmptyMapCollisionProvider`. Configuring both
+`map_cache_path` and one or more `map_collision_artifact` lines is itself a
+startup configuration error — `MapConfigLoader.Load` throws rather than
+picking an implicit precedence, since silently choosing one source over the
+other could hide a real operator mistake. Configuring neither key preserves
+the original default: `EmptyMapCollisionProvider.Instance`, exactly as
+before this section's runtime existed.
+
+No production packaging/copy step (e.g. bundling `map_cache.dat` into a
+published MapServer output directory) exists yet — `map_cache_path` today
+points at a local filesystem path (typically directly at the pinned
+submodule checkout for development). Revisit packaging when a real
+production deployment target requires MapServer to run without the
+`legacy/rathena` submodule present.
+
+### Still missing
+
+Same as the "Still missing (explicitly deferred)" list at the end of this
+document — this section only proves Athena *knows* real map geometry now.
+Random monster spawn, pathfinding, movement, and wandering are unchanged and
+still do not consume this data.
+
+## Investigation (in progress): G_PORING spawns visually on water/mountain on generic `int_land`
+
+Live testing against the unmodified current iRO client (PACKETVER 20220406) reported that some
+generic-`int_land` G_PORING spawns visually appear on water/mountain/unreachable-looking terrain.
+**This is not yet resolved** - the investigation below establishes one data point and the
+diagnostic tooling needed to pin down the actual suspect instance; it does NOT yet establish
+whether pinned `map_cache.dat` and the current iRO client's real geometry disagree.
+
+### What is established so far
+
+Ten G_PORING coordinates sampled from the 2026-08-27 runtime startup log (all visible spawns on
+generic `int_land` at that moment, not confirmed to include the specific instance that looked wrong
+on screen) all decode to raw GAT type **0** (plain `Walkable`, not `Water`, not a wall) in the real
+pinned `legacy/rathena/db/map_cache.dat` `int_land` record: `(63,69)`, `(69,70)`, `(68,53)`,
+`(74,58)`, `(65,61)`, `(75,71)`, `(68,60)`, `(56,61)`, `(70,72)`, `(77,53)`. None are type 3
+(`Walkable|Water`). This rules out an Athena reader/coordinate bug for these ten specific
+coordinates (the reported flags exactly match what `map_cache.dat` itself stores there) and rules
+out "landed on a Water cell" for these ten specifically - but **it has not been proven that any of
+these ten is the actual instance the tester saw standing on water/mountain**. A screenshot
+correlates a visual position to a report, not to one of these ten sampled coordinates.
+
+Separately, `int_land` itself is a small, mostly-blocked map: 19600 total cells, 16801 type 1
+(wall, ~86%), only 2742 type 0 (walkable, ~14%), and 57 type 3 (walkable water) - so a uniform
+random pick among all `IsTraversalCell` cells is inherently confined to that narrow ~14% walkable
+footprint, which will look visually tight/scattered regardless of RNG behavior. This is
+context, not a conclusion about the reported instance.
+
+### What remains to be done
+
+The next step is to use the diagnostic tooling below to identify the SPECIFIC actorId a tester
+observes as visually wrong (by hovering/clicking it in the stock client) and inspect its exact
+live cell state. Only once that specific instance's coordinate and cell flags are known can the
+three-way classification (A: Athena bug / B: matches pinned source, including possibly Water / C:
+pinned-source-vs-current-iRO-client mismatch) be applied to the actual reported instance rather
+than to an unrelated sample. Settling case C specifically would additionally need either: the live
+stock iRO client refusing/redirecting a click-to-move request onto that exact coordinate (a real
+client pathing refusal onto a cell pinned `map_cache.dat` marks walkable would be concrete evidence
+of a genuine source-version mismatch), or a real client-side `.gat`/`.rsw` extraction for
+`int_land` compared cell-by-cell against the pinned record.
+
+No blanket "forbid Water", "require grass", hardcoded region, or invented "same connected
+component" spawn-legality rule has been added while this remains open, since pinned
+`map_search_freecell`'s normal (non-`flag&2`) call path (used by ordinary `mob_spawn`,
+`battle_config.no_spawn_on_player?4:0`, never `2`) only checks the individual candidate cell's own
+`CELL_CHKREACH`, never `unit_can_reach_pos`/connected-component reachability from an anchor point
+(`map.cpp:1798-1867`, `mob.cpp:1149`) - inventing a stronger rule here would itself be an unproven
+deviation from pinned semantics, and would do so before the actual reported instance has even been
+identified.
+
+### Diagnostics added
+
+- `RathenaCompatibleMobSpawnCellSelector.TrySelectCell` logs `[iRO MAP DEBUG][MONSTER CELL]` for
+  every accepted initial-spawn or respawn cell (mob AegisName, map, x/y, raw `MapCellFlags`, and
+  the four derived predicates) - useful for seeing what was CHOSEN at spawn/respawn time, but
+  cannot answer "what is at actorId N right now": `WorldActorIdAllocator` assigns the real actorId
+  in `MonsterRegistry`'s constructor only AFTER `TrySelectCell` already returned a position, so the
+  selector itself never observes the actorId.
+- `MonsterSpatialInspector` (`src/MapServer/World/MonsterSpatialInspector.cs`) is the small,
+  reusable, READ-ONLY spatial-inspection capability that closes that gap: given an actorId and map
+  name, it resolves the live `MobInstance` via `MonsterRegistry.TryGetInstance`, reads its CURRENT
+  `GetPosition()` (reflecting the latest respawn, not the original spawn), and looks up that exact
+  cell's static state via the already-composed `IMapCollisionProvider` - never re-parsing
+  `map_cache.dat`, never threaded into `MonsterRegistry` itself merely for logging. Composed once
+  in `MapServerWorld.Build` alongside the rest of the live world.
+- `MapClientSession`'s existing proven `0x0368` actor-info-request handler (already used for
+  monster-name lookup on click/hover) now calls `MonsterSpatialInspector.TryDescribe` for the
+  clicked/hovered actorId and logs the same `[iRO MAP DEBUG][MONSTER CELL]` line - this is the live
+  flow a tester uses to identify one specific visually-suspicious instance: stock-client
+  hover/click -> `0x0368` -> actorId -> `MonsterSpatialInspector` -> position + cell flags -> log
+  line, entirely independent of whether the player can physically walk there.
+- All of the above are diagnostic-only: none change spawn eligibility, cell semantics, or any
+  gameplay behavior.
+
+## Map collision data import + runtime collision foundation (secondary/debug tooling)
+
+This section documents an ALTERNATE, secondary collision-data import path —
+a direct `.gat` → Athena artifact (`.athmap`) compiler — kept available for
+debugging the format, synthetic tests, or a map genuinely absent from the
+pinned `map_cache.dat`. **It is not the normal path**; see the
+`map_cache.dat` section above for that. Nothing in current MapServer startup
+requires an `.athmap` file: an operator configures either `map_cache_path`
+or `map_collision_artifact` lines, never both.
+
+### Pinned trace
+
+Traced against `legacy/rathena` at `e985006171d2eb320ee512a653f4c83aea3d81b6`:
+
+- `map.hpp:788-810` (`struct mapcell`): the pinned STATIC terrain state is exactly three bits —
+  `walkable`, `shootable`, `water` — kept architecturally separate from eight DYNAMIC runtime bits
+  on the same struct (`npc`, `basilica`, `landprotector`, `novending`, `nochat`, `maelstrom`,
+  `icewall`, `nobuyingstore`). Athena's imported artifact/runtime model preserves only the static
+  three; the dynamic bits remain an unmodeled MapServer runtime concern, never part of imported
+  data.
+- `map.cpp:3323-3395` (`map_getcellp`): every static `cell_chk` value used by spawn/pathfinding
+  code is fully derivable from those three bits alone — `CELL_CHKWALL = !walkable && !shootable`,
+  `CELL_CHKWATER = water`, `CELL_CHKCLIFF = !walkable && shootable`, `CELL_CHKPASS`/`CELL_CHKREACH
+  = walkable`, `CELL_CHKNOPASS`/`CELL_CHKNOREACH = !walkable` (the `CELL_NOSTACK` build-time
+  stacking-limit refinement on `CHKPASS`/`CHKNOPASS` is not modeled, matching a non-default rAthena
+  build option). This proves one byte per cell (not one walkability bit) is the correct minimum —
+  collapsing to a single bit would silently discard the water/shootable distinction real source
+  code branches on.
+- `map.cpp:3280-3299` (`map_gat2cell`/`map_cell2gat`): the raw GAT type ↔ static-bit mapping. GAT
+  types 0/2/4/6 → `Walkable|Shootable` (2/4/6 are rAthena's own "???"/unused-but-present types,
+  behaviorally identical to plain ground); type 1 → none (wall); type 3 →
+  `Walkable|Shootable|Water`; type 5 → `Shootable` only (a snipable gap/cliff).
+- `src/tool/mapcache.cpp:68-116` (`read_map`): the offline mapcache-building tool's own `.gat`
+  reader — 6-byte file signature, `width`/`height` as little-endian `uint32` at offsets 6/10, then
+  one 20-byte record per cell (4 unused corner-height floats + a little-endian `uint32` GAT type at
+  the record's `+16` offset). rAthena's own reader never validates the signature bytes; Athena's
+  importer does, as a "fail clearly on malformed input" strengthening, not a ported rAthena check.
+  The mapcache tool also folds in a `.rsw` water-height adjustment (`mapcache.cpp:107-108`,
+  promoting a walkable-but-below-water-level cell to type 3) that Athena's importer does not
+  reproduce — a disclosed, narrow omission, not a scope failure (a `.gat` cell already encoded as
+  type 3 is unaffected).
+
+Direct `.gat` was chosen as the import input over rAthena's multi-map, zlib-compressed,
+GRF-dependent `map_cache.dat` container: a single `.gat` file is self-contained, requires no
+external GRF/RSW tooling, and every static semantic Athena needs (the three `mapcell` bits) is
+present in it directly.
+
+### Format/artifact boundary
+
+```
+local .gat file (never committed)
+        |
+tools/WorldDataImporter  compile-map-collision
+        |  (MapCollisionCompiler: .gat -> CompiledMapCollision;
+        |   MapCollisionArtifactWriter: CompiledMapCollision -> bytes)
+        v
+local Athena collision artifact, "*.athmap" (never committed)
+        |
+MapServer  (MapCollisionArtifact.Read: bytes -> MapCollisionMap)
+        v
+IMapCollisionProvider (runtime, immutable after load)
+```
+
+`WorldDataImporter` has no project reference to `MapServer` (an explicit constraint for this
+slice), so the compiled-data type (`CompiledMapCollision`/`CompiledMapCellFlags`) and its writer
+(`MapCollisionArtifactWriter`) live entirely in `tools/WorldDataImporter/Compiler/` and are
+independent of the MapServer-side reader (`MapCollisionArtifact.Read`) and runtime type
+(`MapCollisionMap`/`MapCellFlags` in `src/MapServer/World/MapCollision.cs`). The two sides agree on
+one binary layout (magic `"AMC1"`, map-name length + UTF-8 name, `int32` width/height, then
+`width*height` cell bytes) and are kept in sync by
+`MapCollisionCompilerTests.MapCollisionRoundTrip_MatchesRuntimeReader`, which decodes the writer's
+own output against the exact byte layout the runtime reader expects.
+
+CLI usage:
+
+```bash
+dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- compile-map-collision \
+    --input /local/path/int_land03.gat \
+    --map int_land03 \
+    --output /local/generated/int_land03.athmap
+```
+
+### Runtime API
+
+`src/MapServer/World/MapCollision.cs`:
+
+- `[Flags] MapCellFlags : byte { None, Walkable, Shootable, Water }`
+- `MapCollisionMap` — immutable per-map grid: `MapName`, `Width`, `Height`, `IsInBounds(x,y)`,
+  `GetCell(x,y)` (throws `ArgumentOutOfRangeException` for an out-of-bounds cell — this is
+  deliberately NOT the same outcome as a genuinely blocked in-bounds cell), plus `IsWalkable`/
+  `IsShootable`/`IsWater` convenience wrappers over `GetCell`.
+- `IMapCollisionProvider { bool TryGetMap(string mapName, out MapCollisionMap map) }` —
+  `TryGetMap` returning `false` for an unknown map is a distinct outcome from a known map's blocked
+  cell; callers must not conflate "no data for this map" with "this cell is blocked".
+- `EmptyMapCollisionProvider.Instance` — the current production default; resolves no map at all.
+- `MapCollisionProvider` — simple immutable in-memory provider, case-insensitive-ordinal map-name
+  lookup (matching every other map-name comparison in this codebase). Two constructors: one keyed
+  directly by each map's own `MapName` (the common "each map is its own resource" case), and one
+  taking an explicit logical-name → `MapCollisionMap` dictionary so several logical names can
+  share exactly one loaded map/cell array (see "Logical map name -> physical client collision
+  resource" below) — `MapCollisionStartupLoader` uses the latter.
+- `MapCollisionStartupLoader.Load(IReadOnlyList<MapCollisionArtifactConfig>)`
+  (`src/MapServer/World/MapCollisionStartupLoader.cs`) — the only place a real artifact file is
+  read from disk; see "Composition/ownership" below.
+
+### Logical map name -> physical client collision resource
+
+Athena's Academy world declares five separate LOGICAL map names for the tutorial G_PORING slice -
+`int_land`, `int_land01`, `int_land02`, `int_land03`, `int_land04` (`npc/re/mobs/int_land.txt:11-15`,
+`AcademyMobSpawns.cs`, `AcademyNavigation.cs`). These are genuinely separate server-side map
+instances (distinct NPC placements, distinct navigation targets, distinct monster spawn groups),
+but they are NOT five separate physical client map resources. `legacy/openkore`'s
+`resnametable.txt` - checked across every regional client table that carries an int_land entry
+(bRO, tRO, kRO Zero, kRO Sakray, aRO, ROla, cRO, laRO, translated kRO_english; the iRO-specific
+table has no int_land entry of its own, but every other regional table agrees) - unanimously
+remaps `int_land01.gat`/`int_land02.gat`/`int_land03.gat`/`int_land04.gat` (and the matching
+`.gnd`/`.rsw`) to the single physical resource `int_land.gat`. This independently confirms
+`ai/map-server.md`'s own earlier finding for `int_land01` specifically ("resource tables alias it
+to `int_land`") and extends it to all five logical names. Consequently: importing ONE `int_land.gat`
+file produces collision data valid for all five logical Athena map names, and the runtime must
+share that one loaded `MapCollisionMap`/cell array across all five logical registrations rather
+than importing (or duplicating in memory) five copies.
+
+### Composition/ownership
+
+`MapServerWorld.Build` (`src/MapServer/World/MapServerWorld.cs`) takes an optional
+`collisionProvider` parameter, defaulting to `EmptyMapCollisionProvider.Instance` (the same
+behavior as before this section existed). `MapServerWorld` carries a `Collision` property
+alongside `Maps`/`Monsters`/`Combat`. `MapClientSession` does not open files and has no path to
+`.gat`/artifact parsing.
+
+`MapServerApp.RunAsync` calls `MapCollisionStartupLoader.Load(mergedConfig.CollisionArtifacts,
+mergedConfig.MapCachePath)` once, at the same composition point every other startup dependency
+(gameplay rules, the monster registry, etc.) is built, and passes the result into
+`MapServerWorld.Build`. `MapCollisionStartupLoader.Load` now branches on which of the two mutually
+exclusive sources is configured (see the `map_cache.dat` section above for the normal
+`map_cache_path` branch); this artifact-based branch is what runs when one or more
+`map_collision_artifact: <path>|<map1>,<map2>,...` lines are configured instead. Zero configured
+lines/path is still the default and still resolves to `EmptyMapCollisionProvider.Instance` -
+unconfigured startup behavior is unchanged. This branch reads each configured artifact file exactly
+once via `MapCollisionArtifact.ReadFile` and registers the SAME loaded `MapCollisionMap` instance
+under every logical map name listed for that artifact (never re-parsing the file per alias, never
+duplicating the cell array) - this is how the `int_land`/`int_land01..04` aliasing above is served
+without five in-memory copies. A configured artifact that is missing, malformed, or whose logical
+map name collides with another artifact's registration makes `MapCollisionStartupLoader.Load`
+throw `InvalidOperationException`, failing MapServer startup outright rather than silently running
+with partial/absent collision data an operator believed was loaded.
+
+### Local/gitignored data strategy and licensing
+
+Per this project's Gravity-asset rule, BOTH the proprietary source `.gat` file and any real
+collision artifact derived from real client map data must stay local and gitignored — never
+committed, in this branch or any future one, unless a separate, explicit licensing decision is
+made. Nothing under version control in this repository is or references real Gravity map bytes;
+every test fixture is a tiny synthetic byte array built in-test (see `MapCollisionCompilerTests`/
+`MapCollisionTests`/`MapCollisionStartupLoaderTests`). No real `.gat`/GRF/client installation was
+found anywhere in this development environment as of this writing (checked common local paths,
+`~/Downloads`, and a full filesystem search for `.gat`/`.grf`) - the real-map validation this
+section's runtime plumbing exists to support (real dimensions, cell counts, and known-coordinate
+sanity checks against `int_land.gat`) remains an outstanding manual step for whoever has legitimate
+access to a real client installation; see the developer-facing instructions in
+`conf/templates/map_athena.conf`.
+
+### Pinned traversal-boundary distinction (raw artifact bounds vs. gameplay bounds)
+
+`MapCollisionMap.IsInBounds`/`GetCell` expose the RAW imported bounds: every `(x,y)` with
+`0 <= x < Width` and `0 <= y < Height` is readable, including the final row/column, and returns
+the map's real stored terrain byte there. This is deliberately narrower than nothing and wider
+than pinned rAthena's own gameplay-traversal check: `map_getcellp` (`map.cpp:3329-3331`,
+`"NOTE: this intentionally overrides the last row and column"`) treats `x >= xs-1` or `y >= ys-1`
+as always `CELL_CHKNOPASS`/never-`CELL_CHKREACH` for traversal purposes, regardless of that cell's
+real stored value. A future spawn-selection/pathfinding/`CELL_CHK*`-equivalent consumer built on
+top of this artifact must apply that `x < Width-1` / `y < Height-1` restriction itself; narrowing
+`MapCollisionMap`'s own bounds to hide the final row/column would silently discard genuine
+imported terrain data from every caller, not just gameplay-traversal ones (see
+`MapCollisionTests.RawArtifactBounds_IncludeTheFinalRowAndColumn_UnlikePinnedGameplayTraversalBounds`).
+
+### Still missing (explicitly deferred)
+
+- GAT-backed random monster spawn (`map_search_freecell`/`CELL_CHKREACH`) — `MobSpawnCellSelector`
+  is unchanged; `UnverifiedFallbackMobSpawnCellSelector` remains the only spawn-cell source.
+- A* pathfinding (`path_search`/`CELL_CHKNOPASS`) — `MovementPathProvider` is unchanged;
+  `UnverifiedGridLineMovementPathProvider` remains the only path source.
+- Collision-aware player movement.
+- Passive monster wandering (`mob_randomwalk`/`CELL_CHKPASS`) — not implemented; `MobInstance.X/Y`
+  remain immutable after construction.
+- Monster chasing/combat AI/retaliation.
+- Proactive world-to-session broadcast (a monster's own state change reaching an already-connected
+  session without that session first acting) — still does not exist anywhere in MapServer.
+- A real, developer-verified `.gat` import and coordinate sanity check for THIS (secondary)
+  `.gat`/`.athmap` path specifically — its startup loading branch (`MapCollisionStartupLoader`/
+  `map_collision_artifact` config) is implemented and tested against synthetic fixtures, but has
+  not yet been exercised against a real client resource in this environment (none is available -
+  see "Local/gitignored data strategy" above). This is no longer the blocking gap for real map
+  geometry in general: the `map_cache.dat` section above proves real geometry (including
+  `int_land`/`int_land01..04`) via the normal `map_cache_path` source, tested against the actual
+  pinned `legacy/rathena/db/map_cache.dat`.

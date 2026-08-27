@@ -11,17 +11,17 @@ internal static class AcademyNpcs
     internal static readonly NpcDefinition CaptainCarocc = new(
         "npcdef:legacy/rathena/npc/re/jobs/novice/academy.txt:captain carocc#intro_npc03", "Captain Carocc#intro_npc03",
         [new("OnClick", static () => new Athena.Net.MapServer.Generated.World.Izlude.Academy.Scripts.CaptainCaroccOnClickScript())],
-        new("rAthena", "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca", "legacy/rathena/npc/re/jobs/novice/academy.txt", 133));
+        new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/jobs/novice/academy.txt", 133));
     internal static readonly NpcDefinition Lumin = new(
         "npcdef:legacy/rathena/npc/re/jobs/novice/academy.txt:lumin#new_ship", "Lumin#new_ship",
         [],
-        new("rAthena", "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca", "legacy/rathena/npc/re/jobs/novice/academy.txt", 245));
+        new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/jobs/novice/academy.txt", 245));
     internal static readonly NpcDefinition WoundedSwordsmanIntroNpc01IzInt = new(
         "npcdef:legacy/rathena/npc/re/jobs/novice/academy.txt:wounded swordsman#intro_npc01_iz_int", "Wounded Swordsman#intro_npc01_iz_int",
         [new("OnClick", static () => new Athena.Net.MapServer.Generated.World.Izlude.Academy.Scripts.WoundedSwordsmanIntroNpc01IzIntOnClickScript())],
-        new("rAthena", "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca", "legacy/rathena/npc/re/jobs/novice/academy.txt", 67));
+        new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/jobs/novice/academy.txt", 67));
     internal static readonly NpcDefinition WoundedSwordsmanIntroNpc02IzInt = new(
         "npcdef:legacy/rathena/npc/re/jobs/novice/academy.txt:wounded swordsman#intro_npc02_iz_int", "Wounded Swordsman#intro_npc02_iz_int",
         [new("OnClick", static () => new Athena.Net.MapServer.Generated.World.Izlude.Academy.Scripts.WoundedSwordsmanIntroNpc02IzIntOnClickScript())],
-        new("rAthena", "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca", "legacy/rathena/npc/re/jobs/novice/academy.txt", 88));
+        new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/jobs/novice/academy.txt", 88));
 }

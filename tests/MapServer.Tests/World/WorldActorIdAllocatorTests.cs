@@ -1,3 +1,5 @@
+using Athena.Net.MapServer.Gameplay.Rules;
+using Athena.Net.MapServer.Gameplay.Rules.Renewal;
 using Athena.Net.MapServer.World;
 
 namespace Athena.Net.MapServer.Tests.World;
@@ -29,7 +31,7 @@ public sealed class WorldActorIdAllocatorTests
         // not two independently-numbered ones - this test would fail if that wiring regressed back
         // to two separate `new WorldActorIdAllocator()` calls (as it did before this fix), since
         // both would then start from 110,000,000 and immediately collide.
-        var world = MapServerWorld.Build();
+        var world = MapServerWorld.Build(new GameplayRuleServices(new RenewalBasicAttackRules()));
 
         var npcAndWarpActorIds = world.Maps
             .GetVisibleWarpActors("iz_int01", 0, 0, range: ushort.MaxValue)

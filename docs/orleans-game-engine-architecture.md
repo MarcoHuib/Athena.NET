@@ -236,13 +236,15 @@ The first design should favor **coarse consistency boundaries for hot gameplay**
 
 A `MapInstanceGrain` is the proposed initial owner of active map simulation.
 
-Example keys:
+A normal world map has exactly one active `MapInstanceGrain`/runtime per logical world — grain keys are not per-channel by default (see `game-content-map-lifecycle-architecture.md`, "One logical map = one active runtime"). Example keys:
 
 ```text
-prontera:channel-1
-iz_int03:channel-1
+prontera
+izlude
 instance:88421
 ```
+
+`instance:88421` is a genuinely separate concept: an instanced dungeon/event copy, not a channel/replica of a normal map.
 
 Possible active state:
 
@@ -458,29 +460,21 @@ This is the intended scaling model.
 
 # Hot maps
 
-A single `MapInstanceGrain` is intentionally a single consistency boundary.
+A single `MapInstanceGrain` is intentionally a single consistency boundary, and one logical normal map has exactly one active `MapInstanceGrain` (see `game-content-map-lifecycle-architecture.md`, "One logical map = one active runtime" and "Relation to Orleans"). Do not pre-partition every map.
 
-Do not pre-partition every map.
-
-First measure realistic Ragnarok loads.
-
-If one map becomes a hotspot, possible later strategies include:
-
-### Channels
-
-```text
-prontera:1
-prontera:2
-prontera:3
-```
+First measure realistic Ragnarok loads. The primary scaling lever is **dedicated placement**: assign a hot map's single grain/runtime to suitable silo capacity, or move the whole authoritative map to a different MapServer/silo entirely — never replicate the normal map into multiple concurrently-active copies as a default scaling strategy.
 
 ### Dedicated placement
 
-Allow selected hot map activations to run on suitable silo capacity.
+Allow selected hot map activations to run on suitable silo capacity. This mirrors the future non-Orleans MapServer scaling strategy of assigning complete maps to dedicated MapServers once telemetry proves a bottleneck.
 
 ### Region partitioning
 
 Only consider spatial partitioning when profiling proves it necessary. Cross-region movement/visibility/combat makes this substantially more complicated.
+
+### Channels — explicit future gameplay feature only
+
+Player-visible channels/replicas of a normal map (`prontera:1`, `prontera:2`, `prontera:3`) are **not** the preferred scalability solution and must not be introduced as an infrastructure scaling trick. They may be considered only as a far-future, explicit gameplay feature — one players deliberately opt into, with clear expectations about who they can see and interact with — and only after dedicated placement and region partitioning have been shown insufficient.
 
 ---
 
