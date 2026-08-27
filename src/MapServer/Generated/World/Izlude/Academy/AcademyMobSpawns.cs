@@ -13,6 +13,7 @@ internal static class AcademyMobSpawns
 {
     internal static readonly MobSpawnDefinition[] GPoringSpawns =
     [
+        new(GeneratedMobs.GPoring, "int_land", 40, 5000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/int_land.txt", 11), X: 0, Y: 0, Xs: 0, Ys: 0),
         new(GeneratedMobs.GPoring, "int_land01", 40, 5000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/int_land.txt", 12), X: 0, Y: 0, Xs: 0, Ys: 0),
         new(GeneratedMobs.GPoring, "int_land02", 40, 5000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/int_land.txt", 13), X: 0, Y: 0, Xs: 0, Ys: 0),
         new(GeneratedMobs.GPoring, "int_land03", 40, 5000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/int_land.txt", 14), X: 0, Y: 0, Xs: 0, Ys: 0),

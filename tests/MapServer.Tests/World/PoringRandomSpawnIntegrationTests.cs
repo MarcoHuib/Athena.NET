@@ -6,11 +6,19 @@ namespace Athena.Net.MapServer.Tests.World;
 
 // Real end-to-end validation (ai/world-data.md task requirement: prove this against the ACTUAL
 // pinned legacy/rathena/db/map_cache.dat, not only synthetic fixtures) that the pinned
-// `int_land04,0,0 monster Poring 2401,40,5000` declaration (npc/re/mobs/int_land.txt:15) now
-// resolves to real, collision-backed random spawn cells rather than
-// UnverifiedFallbackMobSpawnCellSelector's artificial deterministic row.
+// `int_land{,01,02,03,04},0,0 monster Poring 2401,40,5000` declarations
+// (npc/re/mobs/int_land.txt:11-15) resolve to real, collision-backed random spawn cells rather
+// than UnverifiedFallbackMobSpawnCellSelector's artificial deterministic row - across the COMPLETE
+// int_land family, not just the *0N instanced duplicates. An earlier compile-mob-spawn
+// regeneration invocation used --exclude-map int_land on the (by-then-stale) assumption that
+// generic int_land was never registered by the compiled Academy world; once Captain Carocc/Lumin/
+// #intro_to_izlude were restored there (see WorldMapRegistryFamilyTests), that exclusion silently
+// left the generic int_land tutorial destination with zero Porings - this suite is parameterized
+// across all five family members specifically to catch that class of regression again.
 public sealed class PoringRandomSpawnIntegrationTests
 {
+    public static TheoryData<string> Suffixes => new("", "01", "02", "03", "04");
+
     private static string FindRepositoryRoot()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
@@ -25,38 +33,50 @@ public sealed class PoringRandomSpawnIntegrationTests
         return new MapCollisionProvider(maps);
     }
 
-    [Fact]
-    public void RealPinnedMapCache_ContainsIntLand04()
+    [Theory]
+    [MemberData(nameof(Suffixes))]
+    public void RealPinnedMapCache_ContainsEachIntLandFamilyMember_AsItsOwnIndependentRecord(string suffix)
     {
         var provider = LoadRealMapCache();
+        var mapName = "int_land" + suffix;
 
-        Assert.True(provider.TryGetMap("int_land04", out var map));
+        Assert.True(provider.TryGetMap(mapName, out var map), $"map_cache.dat has no record for '{mapName}'");
         Assert.Equal(140, map.Width);
         Assert.Equal(140, map.Height);
     }
 
-    [Fact]
-    public void AllFortyGPoringInstances_OnIntLand04_ReceiveValidCollisionBackedCells()
+    [Theory]
+    [MemberData(nameof(Suffixes))]
+    public void GPoringSpawns_ContainsExactlyOneMapWideDeclarationPerFamilyMember(string suffix)
     {
-        var provider = LoadRealMapCache();
-        var selector = new RathenaCompatibleMobSpawnCellSelector(provider);
-        provider.TryGetMap("int_land04", out var map);
+        var mapName = "int_land" + suffix;
 
-        // GeneratedMobs.GPoring / AcademyMobSpawns.GPoringSpawns are the real generated data this
-        // task's compile-mob-spawn regeneration produced from the pinned declaration - not a
-        // hand-written duplicate of it.
-        var spawn = Assert.Single(AcademyMobSpawns.GPoringSpawns, s => s.Map == "int_land04");
+        var spawn = Assert.Single(AcademyMobSpawns.GPoringSpawns, s => s.Map == mapName);
         Assert.Same(GeneratedMobs.GPoring, spawn.Mob);
+        Assert.Equal(2401, spawn.Mob.Id);
         Assert.Equal(40, spawn.Count);
+        Assert.Equal(5000, spawn.RespawnDelayMs);
         Assert.Equal(0, spawn.X);
         Assert.Equal(0, spawn.Y);
         Assert.Equal(0, spawn.Xs);
         Assert.Equal(0, spawn.Ys);
+    }
+
+    [Theory]
+    [MemberData(nameof(Suffixes))]
+    public void AllFortyGPoringInstances_OnEachFamilyMember_ReceiveValidCollisionBackedCells(string suffix)
+    {
+        var provider = LoadRealMapCache();
+        var selector = new RathenaCompatibleMobSpawnCellSelector(provider);
+        var mapName = "int_land" + suffix;
+        provider.TryGetMap(mapName, out var map);
+
+        var spawn = Assert.Single(AcademyMobSpawns.GPoringSpawns, s => s.Map == mapName);
 
         var positions = new List<(ushort X, ushort Y)>();
         for (var i = 0; i < spawn.Count; i++)
         {
-            Assert.True(selector.TrySelectCell(spawn, i, out var position), $"instance {i} failed to find a valid cell");
+            Assert.True(selector.TrySelectCell(spawn, i, out var position), $"instance {i} on '{mapName}' failed to find a valid cell");
             positions.Add((position.X, position.Y));
 
             // Every produced cell passes the same static reachability predicate real gameplay code
@@ -82,19 +102,21 @@ public sealed class PoringRandomSpawnIntegrationTests
         _ = positions.Distinct().Count();
     }
 
-    [Fact]
-    public void MonsterRegistry_ComposedWithRealCollisionData_PlacesIntLand04PoringsOnValidCells()
+    [Theory]
+    [MemberData(nameof(Suffixes))]
+    public void MonsterRegistry_ComposedWithRealCollisionData_PlacesFamilyMemberPoringsOnValidCells(string suffix)
     {
         // End-to-end through the actual composition path (MonsterRegistry + the real generated
         // spawn data + the real pinned collision provider), not just the selector in isolation.
         var provider = LoadRealMapCache();
-        provider.TryGetMap("int_land04", out var map);
+        var mapName = "int_land" + suffix;
+        provider.TryGetMap(mapName, out var map);
         var selector = new RathenaCompatibleMobSpawnCellSelector(provider);
-        var allSpawns = AcademyMobSpawns.GPoringSpawns.Where(s => s.Map == "int_land04").ToArray();
+        var spawns = AcademyMobSpawns.GPoringSpawns.Where(s => s.Map == mapName).ToArray();
 
-        var registry = new MonsterRegistry(allSpawns, new WorldActorIdAllocator(), selector, TimeProvider.System);
+        var registry = new MonsterRegistry(spawns, new WorldActorIdAllocator(), selector, TimeProvider.System);
 
-        var instances = registry.AllInstances.Where(i => i.Map == "int_land04").ToArray();
+        var instances = registry.AllInstances.Where(i => i.Map == mapName).ToArray();
         Assert.Equal(40, instances.Length);
         foreach (var instance in instances)
         {
@@ -103,13 +125,15 @@ public sealed class PoringRandomSpawnIntegrationTests
         }
     }
 
-    [Fact]
-    public void Respawn_OnIntLand04_ReselectsAFreshValidCellEachTime()
+    [Theory]
+    [MemberData(nameof(Suffixes))]
+    public void Respawn_OnEachFamilyMember_ReselectsAFreshValidCellEachTime(string suffix)
     {
         var provider = LoadRealMapCache();
-        provider.TryGetMap("int_land04", out var map);
+        var mapName = "int_land" + suffix;
+        provider.TryGetMap(mapName, out var map);
         var selector = new RathenaCompatibleMobSpawnCellSelector(provider);
-        var spawn = new MobSpawnDefinition(GeneratedMobs.GPoring, "int_land04", 1, 5000, new("rAthena", "abc", "x.txt", 1));
+        var spawn = new MobSpawnDefinition(GeneratedMobs.GPoring, mapName, 1, 5000, new("rAthena", "abc", "x.txt", 1));
         var clock = new FakeTimeProvider();
         var registry = new MonsterRegistry([spawn], new WorldActorIdAllocator(), selector, clock);
         var instance = registry.AllInstances.Single();
@@ -122,5 +146,29 @@ public sealed class PoringRandomSpawnIntegrationTests
         Assert.True(instance.IsAlive);
         var position = instance.GetPosition();
         Assert.True(map.IsTraversalCell(position.X, position.Y));
+    }
+
+    // Composition-level invariant proving the exact regression this task fixes cannot recur
+    // silently: the full generated Academy mob world must contain 40 Porings for EVERY int_land
+    // family member (5 x 40 = 200 total), never just the *0N instanced duplicates (4 x 40 = 160,
+    // the exact count observed at runtime before this fix).
+    [Fact]
+    public void GeneratedAcademyMobWorld_ContainsFortyPoringsPerIntLandFamilyMember_TwoHundredTotal()
+    {
+        var intLandFamily = new[] { "int_land", "int_land01", "int_land02", "int_land03", "int_land04" };
+
+        foreach (var mapName in intLandFamily)
+        {
+            var spawn = Assert.Single(AcademyMobSpawns.GPoringSpawns, s => s.Map == mapName);
+            Assert.Equal(40, spawn.Count);
+        }
+
+        var totalGPoringInstances = AcademyMobSpawns.GPoringSpawns
+            .Where(s => intLandFamily.Contains(s.Map))
+            .Sum(s => s.Count);
+        Assert.Equal(200, totalGPoringInstances);
+
+        // No stray sixth entry and no map outside the family sneaking into GPoringSpawns.
+        Assert.Equal(intLandFamily.Length, AcademyMobSpawns.GPoringSpawns.Length);
     }
 }

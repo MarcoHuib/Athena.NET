@@ -73,10 +73,17 @@ internal static class MobDataCompiler
     // IMobSpawnCellSelector for how Athena's runtime handles this given it has
     // no GAT/collision data source at all (a genuine data gap, not a
     // deliberately-skipped feature).
-    // `excludedMaps` lets a caller drop rows for a map instance the runtime
-    // doesn't serve (e.g. base `int_land`, which the compiled Academy world
-    // never registers - Captain Carocc/Lumin placements already exclude it
-    // the same way), mirroring compile-npc-world's --exclude-placement.
+    // `excludedMaps` lets a caller drop rows for a map instance this MapServer
+    // build genuinely does not serve at all. It must NEVER be used merely
+    // because a row is a `duplicate(...)` family's generic/base template map
+    // (e.g. `int_land` for the int_land/int_land01..04 G_PORING family) - an
+    // earlier invocation of this command excluded `int_land` on the
+    // (by-then-stale) assumption that the compiled Academy world never
+    // registered anything there, mirroring a similar, since-corrected
+    // over-exclusion in compile-npc-world's --exclude-placement usage (see
+    // ai/world-data.md's "Runtime architecture" section and
+    // WorldMapRegistryFamilyTests/PoringRandomSpawnIntegrationTests for the
+    // regression coverage this caused).
     internal static IReadOnlyList<MobSpawnData> ReadMobSpawns(string spawnScriptText, string sourceFile, string mobName, IReadOnlySet<string>? excludedMaps = null)
     {
         var results = new List<MobSpawnData>();

@@ -39,8 +39,9 @@ public sealed class MapServerWorldGameplayRulesTests
         // (see MapServerWorld.Build's own doc comment on the explicit either/or selector choice),
         // which throws for any generated spawn map the provider doesn't cover - so this provider
         // must supply every map the real composed AcademyMobSpawns.GPoringSpawns reference
-        // (int_land01..04), each large enough to satisfy the pinned map-edge margin.
-        var maps = new[] { "int_land01", "int_land02", "int_land03", "int_land04" }
+        // (int_land/01/02/03/04 - the FULL family, not just the *0N instanced duplicates), each
+        // large enough to satisfy the pinned map-edge margin.
+        var maps = new[] { "int_land", "int_land01", "int_land02", "int_land03", "int_land04" }
             .Select(name => new MapCollisionMap(name, 100, 100, Enumerable.Repeat(MapCellFlags.Walkable, 100 * 100).ToArray()));
         var provider = new MapCollisionProvider(maps);
 
@@ -69,12 +70,16 @@ public sealed class MapServerWorldGameplayRulesTests
     [Fact]
     public void Build_WithRealButIncompleteCollisionProvider_ThrowsForUncoveredSpawnMap_NeverFallsBackSilently()
     {
-        var map = new MapCollisionMap("int_land03", 100, 100, Enumerable.Repeat(MapCellFlags.Walkable, 100 * 100).ToArray());
-        var provider = new MapCollisionProvider([map]); // int_land01/02/04 deliberately uncovered.
+        // Covers every int_land family member EXCEPT the generic base map, so this specifically
+        // guards against silently tolerating a missing generic/base map (the exact shape of the
+        // regression this task fixes) rather than an arbitrary uncovered instanced duplicate.
+        var maps = new[] { "int_land01", "int_land02", "int_land03", "int_land04" }
+            .Select(name => new MapCollisionMap(name, 100, 100, Enumerable.Repeat(MapCellFlags.Walkable, 100 * 100).ToArray()));
+        var provider = new MapCollisionProvider(maps); // Generic int_land deliberately uncovered.
 
         var exception = Assert.Throws<InvalidOperationException>(
             () => MapServerWorld.Build(new GameplayRuleServices(new RenewalBasicAttackRules()), collisionProvider: provider));
-        Assert.Contains("int_land01", exception.Message);
+        Assert.Contains("int_land", exception.Message);
     }
 
     // MapServerWorld.Build takes whatever IBasicAttackRules implementation the
@@ -82,6 +87,25 @@ public sealed class MapServerWorldGameplayRulesTests
     // against, so a caller could construct a bundle from any IBasicAttackRules
     // implementation without MapServerWorld caring. This is the whole point of the
     // composition boundary: MapServerWorld only ever sees the interface.
+    // Test oracle, not a hardcoded runtime behavior: the CURRENT generated Academy mob slice
+    // declares exactly 40 G_PORING per int_land family member (int_land/01/02/03/04 - 5 maps), so
+    // the composed production world must contain exactly 200 G_PORING instances today. This
+    // catches a regeneration regression that silently drops one family member (as happened when
+    // an earlier compile-mob-spawn invocation excluded generic int_land, producing 160 instead of
+    // 200) without asserting anything about future mob content this branch doesn't know about.
+    [Fact]
+    public void Build_DefaultComposition_ProducesTwoHundredGPoringInstances_AcrossTheFullIntLandFamily()
+    {
+        var world = MapServerWorld.Build(new GameplayRuleServices(new RenewalBasicAttackRules()));
+
+        var intLandFamily = new[] { "int_land", "int_land01", "int_land02", "int_land03", "int_land04" };
+        var gPoringOnFamily = world.Monsters.AllInstances.Where(instance => intLandFamily.Contains(instance.Map)).ToArray();
+
+        Assert.Equal(200, gPoringOnFamily.Length);
+        foreach (var mapName in intLandFamily)
+            Assert.Equal(40, gPoringOnFamily.Count(instance => instance.Map == mapName));
+    }
+
     [Fact]
     public void Build_UsesWhicheverBasicAttackRulesImplementationTheBundleCarries()
     {

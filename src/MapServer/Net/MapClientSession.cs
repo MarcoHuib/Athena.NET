@@ -726,7 +726,11 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
                     await SendVisibleWarpActorsAsync(cancellationToken);
                     await SendVisibleMonsterActorsAsync(cancellationToken);
                     foreach (var navigation in _worldMapRegistry.GetNavigationAt(_mapName, _x, _y))
+                    {
+                        MapLogger.Info(
+                            $"[iRO MAP DEBUG] Sending 0x08E2 navigation entityId='{navigation.EntityId}' current='{_mapName}'({_x},{_y}) -> dest='{navigation.DestinationMap}'({navigation.DestinationX},{navigation.DestinationY})");
                         await WriteAsync(IroNpcDialoguePackets.BuildNavigateTo(navigation.DestinationMap, navigation.DestinationX, navigation.DestinationY), cancellationToken);
+                    }
                     break;
                 }
 

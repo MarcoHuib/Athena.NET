@@ -132,6 +132,27 @@ public sealed class WorldMapRegistryFamilyTests
         Assert.Equal((intLand, (ushort)75, (ushort)100), (evt02.DestinationMap, evt02.DestinationX, evt02.DestinationY));
     }
 
+    // Pinned rAthena's tutorial deliberately starts a SECOND navigation
+    // (iz_int#intro_evt02 -> int_land 75,100) that survives the #ship_out transition - the client
+    // is expected to keep showing that arrow until it reaches int_land 75,100, not until the map
+    // changes. This test proves Athena does NOT synthesize a THIRD navigation once int_land itself
+    // loads (MapClientSession's CzNotifyActorInit handler calls GetNavigationAt(_mapName, _x, _y)
+    // again on every map load, including int_land - AcademyNavigation.All has zero int_land
+    // entries, so that lookup is empty there): the "arrows outside the first room" observation is
+    // consistent with pinned source re-showing the SAME second navigation, not a
+    // duplicated/accumulated one. See ai/iro-2026-wire.md for the one proven 0x08E2 wire fact
+    // (ground-arrow rendering); no capture evidence exists for a cancel/clear packet, so none is
+    // invented here.
+    [Theory]
+    [MemberData(nameof(Suffixes))]
+    public void NoThirdNavigation_IsSynthesizedWhenIntLandItselfLoads(string suffix)
+    {
+        var intLand = "int_land" + suffix;
+
+        Assert.Empty(WorldMapRegistry.Tutorial.GetNavigationAt(intLand, 75, 100));
+        Assert.Empty(WorldMapRegistry.Tutorial.GetNavigationAt(intLand, 85, 107));
+    }
+
     // Proves no member of the configured start-point family has a silently truncated route: every
     // generic/instanced variant must have its full NPC/warp/navigation set, not just the *0N
     // duplicates a prior emission-selection invocation happened to include.

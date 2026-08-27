@@ -111,6 +111,29 @@ unchanged). Tutorial `navigateto` placement data lives in
 `Academy/AcademyNavigation.cs` (renamed from `TutorialNavigation.cs`, content
 unchanged — it has no rAthena duplicate relationship to model).
 
+### Navigation lifecycle across the `iz_int` -> `int_land` transition
+
+Pinned `iz_int#intro_start`/`iz_int01..04#intro_start` (`academy.txt:21-53`)
+starts one navigation (`iz_int -> 52,30`); pinned `iz_int#intro_evt02`/
+`iz_int01..04#intro_evt02` (`academy.txt:55-64`) starts a SECOND, separate
+navigation once the player reaches `51,30` (`int_land -> 75,100`), which is
+still active while the player walks through `#ship_out` and loads `int_land`
+— pinned source contains no third `navigateto`/cancel call anywhere in this
+path. `MapClientSession`'s `CzNotifyActorInit` handler (map-loaded) calls
+`GetNavigationAt(_mapName, _x, _y)` again on every map load, including
+`int_land`'s own load — `AcademyNavigation.All` has zero `int_land` entries,
+so that lookup is empty there and no third navigation packet is ever sent.
+Arrows visibly persisting after the `#ship_out` warp is therefore the
+EXPECTED re-display of the second (`intro_evt02`) navigation's proven wire
+packet (`0x08E2`, ground-arrow rendering — see `ai/iro-2026-wire.md`'s
+capture-verified structure), not a duplication/accumulation bug. There is no
+capture evidence anywhere in this repository of an official iRO
+cancel/clear-navigation packet or of official iRO client behavior differing
+from this pinned script here, so no such packet is synthesized — see
+`WorldMapRegistryFamilyTests.NoThirdNavigation_IsSynthesizedWhenIntLandItselfLoads`
+for the regression proof, and `MapClientSession`'s `[iRO MAP DEBUG] Sending
+0x08E2 navigation ...` log line for runtime diagnosis of this exact sequence.
+
 The former `data/world/entities`, `data/world/dev`, and `data/world/warps.json`
 runtime datasets are removed. JSON files remaining under `data/world` are compiler
 reports only. Pinned `legacy/rathena` is authoritative and remains available for

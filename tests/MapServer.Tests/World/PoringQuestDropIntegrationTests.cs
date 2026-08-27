@@ -77,7 +77,7 @@ public sealed class PoringQuestDropIntegrationTests
     {
         var clock = new FakeTimeProvider();
         var registry = new MonsterRegistry(
-            [AcademyMobSpawns.GPoringSpawns[2]], // int_land03, matching real generated data.
+            [AcademyMobSpawns.GPoringSpawns.Single(s => s.Map == "int_land03")], // matching real generated data.
             new WorldActorIdAllocator(),
             new FixedCellSelector(50, 50),
             clock);
