@@ -82,7 +82,14 @@ internal sealed class MonsterEngagementTickProcessor(
                 // client's perspective, indistinguishable from any other newly (re)started walk.
                 (movementChanges ??= []).Add(new MonsterMovementChange(mob, MonsterMovementChangeKind.WalkStarted));
                 var reachedCell = mob.GetPosition();
-                MapLogger.Info($"[iRO MAP DEBUG] Mob chase retarget applied mobActorId={mob.ActorId} previousCell=({mobPositionBeforeAdvance.X},{mobPositionBeforeAdvance.Y}) reachedCell=({reachedCell.X},{reachedCell.Y}) newDestination=({mob.MovementDestination.X},{mob.MovementDestination.Y}) wire=0x09FD");
+                // "outcome=" (not "wire="): this call only computes the outcome and returns it in
+                // MonsterEngagementTickResult - it does not itself write anything to any session.
+                // The actual packet write (and the ONLY place a 0x09FD send genuinely happens) is
+                // MapClientSession.NotifyMonsterMovedAsync, called later by MapTcpServer's own
+                // fan-out loop over this method's return value - logging "wire=0x09FD" here, before
+                // that fan-out ever runs, previously implied a transmission that had not (and, if
+                // the caller ever again forgot to consume the result, would never) actually happened.
+                MapLogger.Info($"[iRO MAP DEBUG] Mob chase retarget applied mobActorId={mob.ActorId} previousCell=({mobPositionBeforeAdvance.X},{mobPositionBeforeAdvance.Y}) reachedCell=({reachedCell.X},{reachedCell.Y}) newDestination=({mob.MovementDestination.X},{mob.MovementDestination.Y}) outcome=WalkStarted");
             }
             else if (crossed.Count > 0)
             {
@@ -127,14 +134,22 @@ internal sealed class MonsterEngagementTickProcessor(
                     if (interrupted)
                     {
                         (movementChanges ??= []).Add(new MonsterMovementChange(mob, MonsterMovementChangeKind.ChaseInterrupted));
-                        MapLogger.Info($"[iRO MAP DEBUG] Mob chase interrupted mobActorId={mob.ActorId} mobPosition=({mobPositionAtInterrupt.X},{mobPositionAtInterrupt.Y}) wire=0x0088");
+                        // "outcome=" not "wire=" - see the identical note on the retarget-applied
+                        // log above; the actual 0x0088 write happens later, inside
+                        // MapClientSession.NotifyMonsterMovedAsync, via MapTcpServer's own fan-out
+                        // over this method's returned MonsterEngagementTickResult.
+                        MapLogger.Info($"[iRO MAP DEBUG] Mob chase interrupted mobActorId={mob.ActorId} mobPosition=({mobPositionAtInterrupt.X},{mobPositionAtInterrupt.Y}) outcome=ChaseInterrupted");
                     }
 
                     var action = await TryApplyAttackAsync(sessions, mob, targetAccountId, now, cancellationToken);
                     if (action is { } outcome)
                     {
                         (attackActions ??= []).Add(outcome);
-                        MapLogger.Info($"[iRO MAP DEBUG] Mob attack accepted mobActorId={mob.ActorId} targetAccountId={targetAccountId} damage={outcome.Damage} isMiss={outcome.IsMiss} hpChanged={outcome.HpChanged} nextAttackAt={mob.NextAttackAt:O} wire=0x08C8");
+                        // "outcome=" not "wire=" - the actual 0x08C8 (and any following self-only
+                        // SP_HP) write happens later, inside
+                        // MapClientSession.NotifyMonsterAttackOutcomeAsync, via MapTcpServer's own
+                        // fan-out over this method's returned MonsterEngagementTickResult.
+                        MapLogger.Info($"[iRO MAP DEBUG] Mob attack accepted mobActorId={mob.ActorId} targetAccountId={targetAccountId} damage={outcome.Damage} isMiss={outcome.IsMiss} hpChanged={outcome.HpChanged} nextAttackAt={mob.NextAttackAt:O} outcome=AttackAccepted");
                     }
                     else
                     {
@@ -229,7 +244,10 @@ internal sealed class MonsterEngagementTickProcessor(
         if (path.Count < 2) return false; // No real path (target unreachable this tick) - matches unit_walktobl's own silent-failure contract.
         if (!mob.TryStartChase(path, mob.Spawn.Mob.WalkSpeed, now)) return false;
         mob.EnterChaseState();
-        MapLogger.Info($"[iRO MAP DEBUG] Mob chase started mobActorId={mob.ActorId} from=({position.X},{position.Y}) destination=({chase.DestinationX},{chase.DestinationY}) wire=0x09FD");
+        // "outcome=" not "wire=" - see the identical note on the other logs in this file; the
+        // actual 0x09FD write happens later, inside MapClientSession.NotifyMonsterMovedAsync, via
+        // MapTcpServer's own fan-out over this method's WalkStarted return value.
+        MapLogger.Info($"[iRO MAP DEBUG] Mob chase started mobActorId={mob.ActorId} from=({position.X},{position.Y}) destination=({chase.DestinationX},{chase.DestinationY}) outcome=WalkStarted");
         return true;
     }
 

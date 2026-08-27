@@ -2559,6 +2559,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
                 // 0x0088 is sent, at the mob's authoritative CURRENT cell.
                 var fixPosPacket = IroMonsterActorPackets.BuildStopMove(instance.ActorId, position.X, position.Y);
                 await WriteAsync(fixPosPacket, cancellationToken);
+                MapLogger.Info($"[iRO MAP DEBUG] Sent 0x0088 fixpos mobActorId={instance.ActorId} accountId={_accountId} mobPosition=({position.X},{position.Y})");
                 return;
 
             case MonsterMovementChangeKind.WalkStarted:
@@ -2576,6 +2577,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
                     currentHp: instance.CurrentHp,
                     maxHp: mob.MaxHp);
                 await WriteAsync(walkPacket, cancellationToken);
+                MapLogger.Info($"[iRO MAP DEBUG] Sent 0x09FD walk-entry mobActorId={instance.ActorId} accountId={_accountId} from=({position.X},{position.Y}) to=({destination.X},{destination.Y})");
                 return;
         }
     }
@@ -2608,6 +2610,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
         var damagePacket = IroMonsterCombatPackets.BuildNotifyAct3(
             action.MobActorId, action.VictimAccountId, tick, action.SrcSpeed, action.DstSpeed, action.Damage, div: 1, actionType: 0);
         await WriteAsync(damagePacket, cancellationToken);
+        MapLogger.Info($"[iRO MAP DEBUG] Sent 0x08C8 combat action mobActorId={action.MobActorId} observerAccountId={_accountId} victimAccountId={action.VictimAccountId} damage={action.Damage} isMiss={action.IsMiss}");
 
         // Self-only, action-then-HP order, HP==0 never sent - see this method's own doc comment
         // for the exact pinned citations (pc.cpp:9682-9687, battle.cpp:7399/7437).
@@ -2615,6 +2618,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
         {
             var hpPacket = IroCharacterProgressionPackets.Parameter(5, action.HpAfter); // SP_HP.
             await WriteAsync(hpPacket, cancellationToken);
+            MapLogger.Info($"[iRO MAP DEBUG] Sent 0x00B0 SP_HP accountId={_accountId} hpAfter={action.HpAfter}");
         }
     }
 

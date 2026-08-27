@@ -81,63 +81,119 @@ public sealed class MapTcpServer
             while (!cancellationToken.IsCancellationRequested)
             {
                 await Task.Delay(MonsterTickInterval, cancellationToken);
-
-                // A respawned instance was removed from every session's own _visibleActorIds when
-                // it died (existing vanish-on-death handling) and nothing else re-discovers it -
-                // idle-walk AI does not run again for MinRandomWalkTimeMs+ (4000ms+) after a fresh
-                // respawn, so waiting for a walk to accidentally re-trigger discovery would leave a
-                // respawned, stationary-so-far Poring invisible to any session already looking at
-                // its spawn area for seconds. Reported respawns are fanned out THIS SAME tick,
-                // reusing NotifyMonsterMovedAsync's own "not yet visible, but now in range" discovery
-                // path (CellCrossed is the correct Kind here: the instance is not walking - a fresh
-                // respawn's idle-walk timer has not fired yet - so this always resolves to a plain
-                // 0x09FF stand entry, never a spurious 0x09FD).
-                var respawned = _world.Monsters.ProcessDueRespawns();
-                var changed = _world.MonsterRuntime.ProcessTick();
-
-                await _engagementProcessor.ProcessAsync(_sessions.Values.ToArray(), cancellationToken);
-
-                if (changed.Count == 0 && respawned.Count == 0) continue;
-
-                foreach (var session in _sessions.Values)
-                {
-                    foreach (var change in changed)
-                    {
-                        try
-                        {
-                            await session.NotifyMonsterMovedAsync(change, cancellationToken);
-                        }
-                        catch (IOException)
-                        {
-                            // Client disconnected; HandleClientAsync's own cleanup removes it from _sessions.
-                        }
-                        catch (OperationCanceledException)
-                        {
-                            // Server shutdown.
-                        }
-                    }
-
-                    foreach (var instance in respawned)
-                    {
-                        try
-                        {
-                            await session.NotifyMonsterMovedAsync(new MonsterMovementChange(instance, MonsterMovementChangeKind.CellCrossed), cancellationToken);
-                        }
-                        catch (IOException)
-                        {
-                            // Client disconnected; HandleClientAsync's own cleanup removes it from _sessions.
-                        }
-                        catch (OperationCanceledException)
-                        {
-                            // Server shutdown.
-                        }
-                    }
-                }
+                await ProcessOneMonsterTickAsync(_sessions.Values.ToArray(), cancellationToken);
             }
         }
         catch (OperationCanceledException)
         {
             // Shutdown
+        }
+    }
+
+    // The exact per-tick body RunMonsterTickLoopAsync's own Task.Delay loop calls - extracted so a
+    // test can drive ONE production tick deterministically (e.g. under a ControllableTimeProvider)
+    // without needing to race a real 100ms Task.Delay via the private loop above, and WITHOUT any
+    // test-only production API for session membership (see this project's own rejected
+    // TeleportForTestAsync precedent - MapClientSession/MapTcpServer must never grow a method whose
+    // sole purpose is test setup). `sessions` is an explicit parameter for exactly this reason: the
+    // real caller above passes this instance's own live `_sessions.Values`, and a test passes
+    // whatever real, already-authenticated MapClientSession instances it already constructed
+    // itself - both go through the IDENTICAL fan-out algorithm below, unchanged.
+    internal async Task ProcessOneMonsterTickAsync(IReadOnlyCollection<MapClientSession> sessions, CancellationToken cancellationToken)
+    {
+        // A respawned instance was removed from every session's own _visibleActorIds when it died
+        // (existing vanish-on-death handling) and nothing else re-discovers it - idle-walk AI does
+        // not run again for MinRandomWalkTimeMs+ (4000ms+) after a fresh respawn, so waiting for a
+        // walk to accidentally re-trigger discovery would leave a respawned, stationary-so-far
+        // Poring invisible to any session already looking at its spawn area for seconds. Reported
+        // respawns are fanned out THIS SAME tick, reusing NotifyMonsterMovedAsync's own "not yet
+        // visible, but now in range" discovery path (CellCrossed is the correct Kind here: the
+        // instance is not walking - a fresh respawn's idle-walk timer has not fired yet - so this
+        // always resolves to a plain 0x09FF stand entry, never a spurious 0x09FD).
+        var respawned = _world.Monsters.ProcessDueRespawns();
+        var changed = _world.MonsterRuntime.ProcessTick();
+        var engagementResult = await _engagementProcessor.ProcessAsync(sessions, cancellationToken);
+
+        // Every world-visible movement change this tick, from EITHER source (idle-walk AI or
+        // combat engagement) - both flow through the exact same NotifyMonsterMovedAsync
+        // visibility/wire-mapping path below, since from a session's own perspective a chase-driven
+        // walk start is indistinguishable from an idle-walk one. Without including
+        // engagementResult.MovementChanges here, a combat-driven chase/attack-interruption is
+        // computed and logged by the processor but never actually reaches any client - the exact
+        // live bug this fan-out exists to close (0x09FD/0x0088 "sent" only in the log, never on the
+        // wire).
+        if (changed.Count == 0 && respawned.Count == 0 && engagementResult.MovementChanges.Count == 0 && engagementResult.AttackActions.Count == 0) return;
+
+        foreach (var session in sessions)
+        {
+            foreach (var change in changed)
+            {
+                try
+                {
+                    await session.NotifyMonsterMovedAsync(change, cancellationToken);
+                }
+                catch (IOException)
+                {
+                    // Client disconnected; HandleClientAsync's own cleanup removes it from _sessions.
+                }
+                catch (OperationCanceledException)
+                {
+                    // Server shutdown.
+                }
+            }
+
+            foreach (var change in engagementResult.MovementChanges)
+            {
+                try
+                {
+                    await session.NotifyMonsterMovedAsync(change, cancellationToken);
+                }
+                catch (IOException)
+                {
+                    // Client disconnected; HandleClientAsync's own cleanup removes it from _sessions.
+                }
+                catch (OperationCanceledException)
+                {
+                    // Server shutdown.
+                }
+            }
+
+            foreach (var instance in respawned)
+            {
+                try
+                {
+                    await session.NotifyMonsterMovedAsync(new MonsterMovementChange(instance, MonsterMovementChangeKind.CellCrossed), cancellationToken);
+                }
+                catch (IOException)
+                {
+                    // Client disconnected; HandleClientAsync's own cleanup removes it from _sessions.
+                }
+                catch (OperationCanceledException)
+                {
+                    // Server shutdown.
+                }
+            }
+
+            // NotifyMonsterAttackOutcomeAsync owns its own visibility/victim rules internally
+            // (AREA-visible 0x08C8 gated on _visibleActorIds, self-only SP_HP gated on
+            // VictimAccountId+HpChanged, map-mismatch guard) - this loop only needs to call it once
+            // per session per outcome, exactly like the movement fan-out above; no duplicate gating
+            // logic belongs here.
+            foreach (var action in engagementResult.AttackActions)
+            {
+                try
+                {
+                    await session.NotifyMonsterAttackOutcomeAsync(action, cancellationToken);
+                }
+                catch (IOException)
+                {
+                    // Client disconnected; HandleClientAsync's own cleanup removes it from _sessions.
+                }
+                catch (OperationCanceledException)
+                {
+                    // Server shutdown.
+                }
+            }
         }
     }
 
