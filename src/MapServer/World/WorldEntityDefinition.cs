@@ -48,7 +48,16 @@ public sealed record MobDefinition(
 // One pinned `monster` spawn-line declaration (npc/re/mobs/*.txt), scoped to
 // a single map. `Count` instances are maintained on that map; `RespawnDelayMs`
 // is the pinned mob.delay1 (npc_parse_mob defaults to 5000 when unspecified).
-public sealed record MobSpawnDefinition(MobDefinition Mob, string Map, int Count, int RespawnDelayMs, WorldSourceInfo Source);
+// X/Y/Xs/Ys are the pinned declaration's own `<map>,<x>,<y>[,<xs>,<ys>]` fields
+// (mob.cpp mob_spawn / npc_parse_mob), preserved losslessly rather than
+// discarded at compile time - see IMobSpawnCellSelector for how a
+// map-wide-random declaration (X=0, Y=0, Xs=0, Ys=0, i.e. "xs+ys<1" per
+// pinned mob_spawn) is distinguished from a fixed/rectangular spawn area.
+// Xs/Ys default to 0 (not 1) when the pinned line omits them, matching the
+// pinned parser leaving spawn->xs/ys at their zero-initialized default in
+// that case (npc_parse_mob only assigns them when the optional 4th/5th
+// columns are present).
+public sealed record MobSpawnDefinition(MobDefinition Mob, string Map, int Count, int RespawnDelayMs, WorldSourceInfo Source, short X = 0, short Y = 0, short Xs = 0, short Ys = 0);
 
 // One pinned quest_db.yml `Drops:` entry (quest.cpp QuestDatabase::parseBodyNode
 // / quest_update_objective's drop-processing loop). This is intentionally NOT a

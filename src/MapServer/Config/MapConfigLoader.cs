@@ -23,6 +23,8 @@ public static class MapConfigLoader
         var consoleLogFilePath = "./log/map-msg_log.log";
         var timestampFormat = string.Empty;
         var gameplayRuleSet = RagnarokRuleSet.Renewal;
+        var collisionArtifacts = new List<MapCollisionArtifactConfig>();
+        string? mapCachePath = null;
 
         if (!File.Exists(path))
         {
@@ -147,6 +149,39 @@ public static class MapConfigLoader
                         $"Invalid gameplay_ruleset value '{value}' in '{path}'. Valid values: {string.Join(", ", Enum.GetNames<RagnarokRuleSet>())}.");
                 }
             }
+            else if (key.Equals("map_collision_artifact", StringComparison.OrdinalIgnoreCase))
+            {
+                // Repeatable key (unlike every other key here, which overwrites a single scalar):
+                // "map_collision_artifact: <path>|<map1>,<map2>,...". Malformed lines fail loudly
+                // rather than being silently skipped - an operator who mistypes this line must not
+                // end up with a server that quietly runs without the collision data they configured.
+                var pipe = value.IndexOf('|');
+                if (pipe <= 0 || pipe == value.Length - 1)
+                {
+                    throw new InvalidOperationException(
+                        $"Invalid map_collision_artifact value '{value}' in '{path}'. Expected '<path>|<map1>,<map2>,...'.");
+                }
+
+                var artifactPath = value[..pipe].Trim();
+                var maps = value[(pipe + 1)..].Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+                if (artifactPath.Length == 0 || maps.Length == 0)
+                {
+                    throw new InvalidOperationException(
+                        $"Invalid map_collision_artifact value '{value}' in '{path}'. Expected '<path>|<map1>,<map2>,...'.");
+                }
+
+                collisionArtifacts.Add(new MapCollisionArtifactConfig(artifactPath, maps));
+            }
+            else if (key.Equals("map_cache_path", StringComparison.OrdinalIgnoreCase))
+            {
+                mapCachePath = value;
+            }
+        }
+
+        if (mapCachePath is { Length: > 0 } && collisionArtifacts.Count > 0)
+        {
+            throw new InvalidOperationException(
+                $"'{path}' configures both map_cache_path and map_collision_artifact. Configure only one map geometry source.");
         }
 
         return new MapConfig
@@ -164,6 +199,8 @@ public static class MapConfigLoader
             ConsoleLogFilePath = consoleLogFilePath,
             TimestampFormat = timestampFormat,
             GameplayRuleSet = gameplayRuleSet,
+            CollisionArtifacts = collisionArtifacts,
+            MapCachePath = mapCachePath,
         };
     }
 

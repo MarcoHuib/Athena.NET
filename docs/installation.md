@@ -15,6 +15,60 @@ Example structure:
 }
 ```
 
+## Git submodules
+
+Athena.NET uses `legacy/rathena` and `legacy/openkore` as **pinned** Git submodules. The Athena.NET repository — not the submodules' own `main` branches — determines exactly which commit of each is used. This is intentional: it keeps the reference code reproducible across clones and over time.
+
+For a new clone, either fetch submodules in one step:
+
+```sh
+git clone --recurse-submodules <repository-url>
+```
+
+or initialize them after a normal clone:
+
+```sh
+git clone <repository-url>
+cd Athena.NET
+git submodule update --init --recursive
+```
+
+For a repository you already have checked out:
+
+```sh
+git submodule update --init --recursive
+```
+
+Run this again after `git pull` or after switching branches (`git checkout <branch>`) if the pinned submodule commits changed between commits/branches:
+
+```sh
+git pull
+git submodule update --init --recursive
+```
+
+```sh
+git checkout <branch>
+git submodule update --init --recursive
+```
+
+**Do not** run the following as part of normal setup — it replaces the pinned commits with each submodule's latest `main`:
+
+```sh
+git submodule update --remote
+```
+
+**Do not** manually update the submodules in place either:
+
+```sh
+# inside legacy/rathena or legacy/openkore — do not do this
+git checkout main
+git pull
+```
+
+After initialization, `legacy/rathena` and `legacy/openkore` will typically be in a **detached HEAD** state. This is normal and expected for a pinned submodule: it means the submodule is checked out at exactly the commit Athena.NET specifies, not tracking a branch.
+
+Upgrading `legacy/rathena` or `legacy/openkore` to a different commit is a deliberate dependency update, not routine maintenance. It should be done explicitly and recorded as its own Athena.NET commit/PR that updates the submodule's gitlink.
+
 ## Local development (Aspire)
 
 Use Aspire for local dev when you want the dashboard and managed dependencies.

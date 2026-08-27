@@ -2132,18 +2132,19 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
             }
 
             var mob = instance.Spawn.Mob;
+            var position = instance.GetPosition(); // One atomic snapshot - never torn between axes.
             var packet = IroMonsterActorPackets.BuildStandEntry(
                 instance.ActorId,
                 (ushort)mob.Id,
                 (ushort)mob.WalkSpeed,
                 mob.Name,
-                instance.X,
-                instance.Y,
+                position.X,
+                position.Y,
                 direction: 0,
                 currentHp: instance.CurrentHp,
                 maxHp: mob.MaxHp);
             MapLogger.Info(
-                $"[iRO MAP DEBUG] Sending monster actor id={instance.ActorId} name='{mob.Name}' class={mob.Id} map='{instance.Map}' x={instance.X} y={instance.Y} hp={instance.CurrentHp}/{mob.MaxHp}");
+                $"[iRO MAP DEBUG] Sending monster actor id={instance.ActorId} name='{mob.Name}' class={mob.Id} map='{instance.Map}' x={position.X} y={position.Y} hp={instance.CurrentHp}/{mob.MaxHp}");
             await WriteAsync(packet, cancellationToken);
         }
     }

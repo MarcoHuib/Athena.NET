@@ -167,6 +167,33 @@ public sealed class MobDataCompilerTests
     }
 
     [Fact]
+    public void ReadMobSpawns_XYZeroWithNoXsYs_ParsesAsMapWideRandomDeclaration()
+    {
+        var spawns = MobDataCompiler.ReadMobSpawns(SpawnFixture, "npc/re/mobs/int_land.txt", "Poring");
+
+        Assert.All(spawns, spawn =>
+        {
+            Assert.Equal(0, spawn.X);
+            Assert.Equal(0, spawn.Y);
+            Assert.Equal(0, spawn.Xs);
+            Assert.Equal(0, spawn.Ys);
+        });
+    }
+
+    [Fact]
+    public void ReadMobSpawns_ExplicitCenterAndAreaFields_ArePreserved()
+    {
+        const string rectangularFixture = "prontera,150,180,10,12\tmonster\tPoring\t1002,5,5000\n";
+        var spawns = MobDataCompiler.ReadMobSpawns(rectangularFixture, "x.txt", "Poring");
+
+        var spawn = Assert.Single(spawns);
+        Assert.Equal(150, spawn.X);
+        Assert.Equal(180, spawn.Y);
+        Assert.Equal(10, spawn.Xs);
+        Assert.Equal(12, spawn.Ys);
+    }
+
+    [Fact]
     public void ReadMobSpawns_ExcludedMapIsFiltered()
     {
         var spawns = MobDataCompiler.ReadMobSpawns(SpawnFixture, "npc/re/mobs/int_land.txt", "Poring", new HashSet<string> { "int_land" });
@@ -205,5 +232,6 @@ public sealed class MobDataCompilerTests
         Assert.Equal(first, second);
         Assert.Contains("abc123", first);
         Assert.Contains("int_land04", first);
+        Assert.Contains("X: 0, Y: 0, Xs: 0, Ys: 0", first);
     }
 }

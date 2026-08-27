@@ -19,7 +19,7 @@ internal static class MobDataCompiler
         int AttackRange, int WalkSpeed, int AttackDelay,
         long BaseExp, long JobExp);
 
-    internal sealed record MobSpawnData(string Map, int MobId, int Count, int RespawnDelayMs, string SourceFile, int SourceLine);
+    internal sealed record MobSpawnData(string Map, int MobId, int Count, int RespawnDelayMs, string SourceFile, int SourceLine, short X, short Y, short Xs, short Ys);
 
     // Parses one `- Id: <n>` block out of mob_db.yml up to (not including) the
     // next top-level `- Id:` line. Defaults for fields absent from the pinned
@@ -91,13 +91,20 @@ internal static class MobDataCompiler
             var count = int.Parse(match.Groups["count"].Value, CultureInfo.InvariantCulture);
             var delayGroup = match.Groups["delay1"];
             var delay = delayGroup.Success ? int.Parse(delayGroup.Value, CultureInfo.InvariantCulture) : 0;
+            var x = short.Parse(match.Groups["x"].Value, CultureInfo.InvariantCulture);
+            var y = short.Parse(match.Groups["y"].Value, CultureInfo.InvariantCulture);
+            var xsGroup = match.Groups["xs"];
+            var ysGroup = match.Groups["ys"];
+            var xs = xsGroup.Success ? short.Parse(xsGroup.Value, CultureInfo.InvariantCulture) : (short)0;
+            var ys = ysGroup.Success ? short.Parse(ysGroup.Value, CultureInfo.InvariantCulture) : (short)0;
             results.Add(new MobSpawnData(
                 map,
                 int.Parse(match.Groups["mobid"].Value, CultureInfo.InvariantCulture),
                 count,
                 delay,
                 sourceFile,
-                i + 1));
+                i + 1,
+                x, y, xs, ys));
         }
         if (results.Count == 0) throw new ArgumentException($"No '{mobName}' monster spawn declarations were found in the pinned source.");
         return results;
@@ -172,7 +179,8 @@ internal static class MobDataCompiler
         {
             output.Append("        new(").Append(mobDefinitionExpression).Append(", \"").Append(spawn.Map).Append("\", ")
                 .Append(spawn.Count).Append(", ").Append(spawn.RespawnDelayMs)
-                .Append(", new WorldSourceInfo(\"rAthena\", \"").Append(commit).Append("\", \"").Append(spawn.SourceFile).Append("\", ").Append(spawn.SourceLine).AppendLine(")),");
+                .Append(", new WorldSourceInfo(\"rAthena\", \"").Append(commit).Append("\", \"").Append(spawn.SourceFile).Append("\", ").Append(spawn.SourceLine).Append(')')
+                .Append(", X: ").Append(spawn.X).Append(", Y: ").Append(spawn.Y).Append(", Xs: ").Append(spawn.Xs).Append(", Ys: ").Append(spawn.Ys).AppendLine("),");
         }
         output.AppendLine("    ];").AppendLine("}");
         return output.ToString();
@@ -193,7 +201,7 @@ internal static class MobDataCompiler
         return match.Success ? long.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture) : defaultValue;
     }
 
-    private static readonly Regex SpawnLine = new(@"^(?<map>[A-Za-z0-9_]+),(?<x>-?\d+),(?<y>-?\d+)(?:,\d+,\d+)?\t+monster\t+(?<name>[^\t]+)\t+(?<mobid>\d+),(?<count>\d+)(?:,(?<delay1>\d+))?(?:,(?<delay2>\d+))?", RegexOptions.None);
+    private static readonly Regex SpawnLine = new(@"^(?<map>[A-Za-z0-9_]+),(?<x>-?\d+),(?<y>-?\d+)(?:,(?<xs>\d+),(?<ys>\d+))?\t+monster\t+(?<name>[^\t]+)\t+(?<mobid>\d+),(?<count>\d+)(?:,(?<delay1>\d+))?(?:,(?<delay2>\d+))?", RegexOptions.None);
     private static Regex SpawnLineRegex() => SpawnLine;
 
     private static Regex ScalarRegex(string field) => new($@"^    {Regex.Escape(field)}: (.+)$", RegexOptions.Multiline);

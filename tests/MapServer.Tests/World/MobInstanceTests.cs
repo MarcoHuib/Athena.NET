@@ -13,6 +13,8 @@ public sealed class MobInstanceTests
     private static MobSpawnDefinition MakeSpawn(uint maxHp = 55, int respawnMs = 5000) =>
         new(MakeMob(maxHp), "int_land01", 40, respawnMs, new("rAthena", "abc", "npc/re/mobs/int_land.txt", 12));
 
+    private static (bool Success, MobPosition Position) Fixed(ushort x, ushort y) => (true, new MobPosition(x, y));
+
     [Fact]
     public void Spawn_CreatesAliveInstance_WithFullHp()
     {
@@ -90,7 +92,7 @@ public sealed class MobInstanceTests
         instance.ApplyDamage(55);
         instance.TryScheduleRespawn(1000);
 
-        Assert.False(instance.TryRespawn(500));
+        Assert.False(instance.TryRespawn(500, () => Fixed(0, 0)));
         Assert.False(instance.IsAlive);
     }
 
@@ -101,7 +103,7 @@ public sealed class MobInstanceTests
         instance.ApplyDamage(55);
         instance.TryScheduleRespawn(1000);
 
-        Assert.True(instance.TryRespawn(1000));
+        Assert.True(instance.TryRespawn(1000, () => Fixed(0, 0)));
         Assert.True(instance.IsAlive);
         Assert.Equal(55u, instance.CurrentHp);
     }
@@ -113,14 +115,110 @@ public sealed class MobInstanceTests
         instance.ApplyDamage(55);
         instance.TryScheduleRespawn(1000);
 
-        Assert.True(instance.TryRespawn(1000));
-        Assert.False(instance.TryRespawn(1000)); // Already alive; nothing left to respawn.
+        Assert.True(instance.TryRespawn(1000, () => Fixed(0, 0)));
+        Assert.False(instance.TryRespawn(1000, () => Fixed(0, 0))); // Already alive; nothing left to respawn.
     }
 
     [Fact]
     public void TryRespawn_WhileAlive_Fails()
     {
         var instance = new MobInstance(1, MakeSpawn(), 0, 0);
-        Assert.False(instance.TryRespawn(999999));
+        Assert.False(instance.TryRespawn(999999, () => Fixed(0, 0)));
+    }
+
+    [Fact]
+    public void TryRespawn_AppliesTheSelectedPosition()
+    {
+        var instance = new MobInstance(1, MakeSpawn(), 10, 10);
+        instance.ApplyDamage(55);
+        instance.TryScheduleRespawn(1000);
+
+        Assert.True(instance.TryRespawn(1000, () => Fixed(77, 88)));
+
+        var position = instance.GetPosition();
+        Assert.Equal((ushort)77, position.X);
+        Assert.Equal((ushort)88, position.Y);
+    }
+
+    [Fact]
+    public void TryRespawn_BeforeDueTime_DoesNotInvokeSelector()
+    {
+        var instance = new MobInstance(1, MakeSpawn(), 10, 10);
+        instance.ApplyDamage(55);
+        instance.TryScheduleRespawn(1000);
+
+        var invoked = false;
+        instance.TryRespawn(500, () => { invoked = true; return Fixed(0, 0); });
+
+        Assert.False(invoked);
+        var position = instance.GetPosition();
+        Assert.Equal((ushort)10, position.X);
+        Assert.Equal((ushort)10, position.Y);
+    }
+
+    [Fact]
+    public void TryRespawn_SelectorReportsTemporaryFailure_LeavesInstanceDeadAndRespawnScheduled()
+    {
+        // Matches pinned mob_spawn's own "search failed, reschedule via mob_delayspawn, try again
+        // later" behavior (mob.cpp:1152-1159) - a false selector result must not force an
+        // arbitrary/placeholder position, and must not clear the scheduled respawn so a later
+        // ProcessDueRespawns sweep can simply try again.
+        var instance = new MobInstance(1, MakeSpawn(), 10, 10);
+        instance.ApplyDamage(55);
+        instance.TryScheduleRespawn(1000);
+
+        var result = instance.TryRespawn(1000, () => (false, default));
+
+        Assert.False(result);
+        Assert.False(instance.IsAlive);
+        var position = instance.GetPosition();
+        Assert.Equal((ushort)10, position.X);
+        Assert.Equal((ushort)10, position.Y);
+
+        // The next sweep can still succeed once the selector starts returning a real cell.
+        Assert.True(instance.TryRespawn(1000, () => Fixed(20, 30)));
+        Assert.True(instance.IsAlive);
+    }
+
+    [Fact]
+    public void GetPosition_ReadsXAndYTogetherAsOnePair()
+    {
+        var instance = new MobInstance(1, MakeSpawn(), 12, 34);
+        var position = instance.GetPosition();
+
+        Assert.Equal((ushort)12, position.X);
+        Assert.Equal((ushort)34, position.Y);
+    }
+
+    [Fact]
+    public void CreatePending_IsNotAlive_AndHasZeroHp()
+    {
+        var instance = MobInstance.CreatePending(1, MakeSpawn(), dueTimestamp: 1000);
+
+        Assert.False(instance.IsAlive);
+        Assert.Equal(0u, instance.CurrentHp);
+    }
+
+    [Fact]
+    public void CreatePending_RespawnsThroughTheNormalRetryPath()
+    {
+        var instance = MobInstance.CreatePending(1, MakeSpawn(), dueTimestamp: 1000);
+
+        Assert.True(instance.TryRespawn(1000, () => Fixed(15, 25)));
+
+        Assert.True(instance.IsAlive);
+        Assert.Equal(55u, instance.CurrentHp);
+        var position = instance.GetPosition();
+        Assert.Equal((ushort)15, position.X);
+        Assert.Equal((ushort)25, position.Y);
+    }
+
+    [Fact]
+    public void CreatePending_BeforeDueTime_DoesNotRespawn()
+    {
+        var instance = MobInstance.CreatePending(1, MakeSpawn(), dueTimestamp: 1000);
+
+        Assert.False(instance.TryRespawn(500, () => Fixed(15, 25)));
+        Assert.False(instance.IsAlive);
     }
 }

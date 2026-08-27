@@ -4,7 +4,43 @@ namespace Athena.Net.MapServer.Tests.World;
 
 internal sealed class FixedCellSelector(ushort x, ushort y) : IMobSpawnCellSelector
 {
-    public (ushort X, ushort Y) SelectCell(MobSpawnDefinition spawn, int instanceIndex) => (x, y);
+    public bool TrySelectCell(MobSpawnDefinition spawn, int instanceIndex, out MobPosition position)
+    {
+        position = new MobPosition(x, y);
+        return true;
+    }
+}
+
+// Always reports the source-backed random search as exhausted (see IMobSpawnCellSelector's own
+// doc comment on why this is a genuine TEMPORARY failure, distinct from a missing/unsupported
+// declaration) - used to prove MonsterRegistry never throws or fabricates a coordinate for this
+// outcome, at both initial spawn and respawn.
+internal sealed class AlwaysExhaustedCellSelector : IMobSpawnCellSelector
+{
+    public bool TrySelectCell(MobSpawnDefinition spawn, int instanceIndex, out MobPosition position)
+    {
+        position = default;
+        return false;
+    }
+}
+
+// Fails the first `failuresBeforeSuccess` calls (exhausted search), then succeeds with the given
+// fixed cell - proves a later retry (initial-spawn "pending" instance reaching
+// ProcessDueRespawns, or an already-Dead instance's own next respawn attempt) can still recover.
+internal sealed class EventuallySucceedsCellSelector(int failuresBeforeSuccess, ushort x, ushort y) : IMobSpawnCellSelector
+{
+    private int _calls;
+
+    public bool TrySelectCell(MobSpawnDefinition spawn, int instanceIndex, out MobPosition position)
+    {
+        if (_calls++ < failuresBeforeSuccess)
+        {
+            position = default;
+            return false;
+        }
+        position = new MobPosition(x, y);
+        return true;
+    }
 }
 
 public sealed class MonsterRegistryTests
@@ -123,5 +159,77 @@ public sealed class MonsterRegistryTests
         Assert.Equal(1, respawned);
         Assert.True(fast.IsAlive);
         Assert.False(slow.IsAlive);
+    }
+
+    [Fact]
+    public void Construction_SelectorReportsExhaustedSearch_DoesNotThrow_CreatesPendingInstance()
+    {
+        // Pinned mob_spawn does not treat exhausting its random-attempt budget as a fatal
+        // configuration error - it schedules mob_delayspawn and retries later. Athena matches
+        // that at startup: exhaustion produces a non-alive "pending" instance rather than an
+        // exception or a fabricated coordinate.
+        var spawn = new MobSpawnDefinition(MakeMob(), "int_land01", 1, 5000, new("rAthena", "abc", "x.txt", 1));
+
+        var registry = new MonsterRegistry([spawn], new WorldActorIdAllocator(), new AlwaysExhaustedCellSelector(), new FakeTimeProvider());
+
+        var instance = Assert.Single(registry.AllInstances);
+        Assert.False(instance.IsAlive);
+    }
+
+    [Fact]
+    public void Construction_PendingInstance_HasAUniqueActorIdAndIsExcludedFromVisibility()
+    {
+        var spawn = new MobSpawnDefinition(MakeMob(), "int_land01", 2, 5000, new("rAthena", "abc", "x.txt", 1));
+
+        var registry = new MonsterRegistry([spawn], new WorldActorIdAllocator(), new AlwaysExhaustedCellSelector(), new FakeTimeProvider());
+
+        Assert.Equal(2, registry.AllInstances.Count);
+        var ids = registry.AllInstances.Select(i => i.ActorId).ToArray();
+        Assert.Equal(ids.Length, ids.Distinct().Count());
+        Assert.Empty(registry.GetVisibleInstances("int_land01", 50, 50, range: 200));
+    }
+
+    [Fact]
+    public void ProcessDueRespawns_RetriesAPendingInstance_UntilTheSelectorSucceeds()
+    {
+        var clock = new FakeTimeProvider();
+        var spawn = new MobSpawnDefinition(MakeMob(), "int_land01", 1, 5000, new("rAthena", "abc", "x.txt", 1));
+        var selector = new EventuallySucceedsCellSelector(failuresBeforeSuccess: 2, x: 77, y: 88);
+
+        var registry = new MonsterRegistry([spawn], new WorldActorIdAllocator(), selector, clock);
+        var instance = Assert.Single(registry.AllInstances);
+        Assert.False(instance.IsAlive); // Initial spawn attempt (call #1) failed - pending.
+
+        Assert.Equal(0, registry.ProcessDueRespawns()); // Call #2 still fails.
+        Assert.False(instance.IsAlive);
+
+        Assert.Equal(1, registry.ProcessDueRespawns()); // Call #3 succeeds.
+        Assert.True(instance.IsAlive);
+        var position = instance.GetPosition();
+        Assert.Equal((ushort)77, position.X);
+        Assert.Equal((ushort)88, position.Y);
+    }
+
+    [Fact]
+    public void ProcessDueRespawns_DeadInstance_SelectorReportsExhaustedSearch_StaysDeadAndRetriesNextSweep()
+    {
+        var clock = new FakeTimeProvider();
+        var spawn = new MobSpawnDefinition(MakeMob(), "int_land01", 1, 1000, new("rAthena", "abc", "x.txt", 1));
+        var registry = new MonsterRegistry([spawn], new WorldActorIdAllocator(), new FixedCellSelector(50, 50), clock);
+        var instance = registry.AllInstances[0];
+        instance.ApplyDamage(55);
+        registry.ScheduleRespawnIfNeeded(instance);
+        clock.Advance(TimeSpan.FromMilliseconds(1500));
+
+        // Swap in a selector that always reports exhaustion by driving TryRespawn directly through
+        // the same closure shape ProcessDueRespawns uses, proving the temporary-failure path never
+        // throws and never revives the instance.
+        Assert.False(instance.TryRespawn(clock.GetUtcNow().UtcTicks, () => (false, default)));
+        Assert.False(instance.IsAlive);
+
+        // The existing respawn scheduling is untouched, so a normal registry sweep can still
+        // succeed afterwards.
+        Assert.Equal(1, registry.ProcessDueRespawns());
+        Assert.True(instance.IsAlive);
     }
 }

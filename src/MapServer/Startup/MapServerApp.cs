@@ -38,7 +38,13 @@ public static class MapServerApp
         var gameplayOptions = new GameplayOptions { RuleSet = mergedConfig.GameplayRuleSet };
         MapLogger.Status($"Gameplay ruleset: {gameplayOptions.RuleSet}");
         var gameplayRules = GameplayRulesFactory.Create(gameplayOptions);
-        var world = MapServerWorld.Build(gameplayRules);
+        // Fails startup loudly (does not fall back to EmptyMapCollisionProvider) if the configured
+        // map_cache_path/map_collision_artifact source is missing/malformed/duplicated - see
+        // MapCollisionStartupLoader's own doc comment. An unconfigured server (neither key set) is
+        // unaffected: Load returns EmptyMapCollisionProvider.Instance, the same default
+        // MapServerWorld.Build already used.
+        var collisionProvider = MapCollisionStartupLoader.Load(mergedConfig.CollisionArtifacts, mergedConfig.MapCachePath);
+        var world = MapServerWorld.Build(gameplayRules, collisionProvider: collisionProvider);
         var connector = new CharServerConnector(configStore);
         var mapServer = new MapTcpServer(configStore, connector, world);
 

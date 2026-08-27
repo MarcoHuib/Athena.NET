@@ -463,3 +463,338 @@ NOT claimed, and explicitly out of scope for this branch:
 
 Expand the runtime only through tested vertical slices; do not restore bulk JSON
 runtime data as a shortcut.
+
+## Map geometry: direct pinned rAthena map_cache.dat import (normal path)
+
+Athena's NORMAL source of map geometry/collision data is pinned rAthena's own
+`legacy/rathena/db/map_cache.dat`, read directly at MapServer startup —
+**not** a manually extracted client `.gat` file, and **not** an offline
+per-map conversion step. rAthena already ships this server-side dataset
+(map dimensions + per-cell static terrain, itself built from client
+GAT/RSW resources by rAthena's own offline `src/tool/mapcache.cpp`) inside
+the pinned checkout, so a developer never needs an installed Ragnarok
+client, a GRF, or `.gat` extraction to get real map geometry into Athena.
+
+This pinned `map_cache.dat` is **server-side reference data from the pinned
+rAthena version**, not a claim of authoritative current-iRO map content —
+Athena's stock-iRO wire-authority rules (`ai/iro-2026-wire.md`) are
+unchanged by this section; nothing here asserts a captured/verified iRO
+fact.
+
+### Runtime architecture
+
+```
+legacy/rathena/db/map_cache.dat  (pinned reference data, read as-is)
+        |
+RathenaMapCacheReader.ReadAll/ReadAllFromFile   (src/MapServer/World/RathenaMapCacheReader.cs)
+        |  (parses the pinned container format directly into runtime types —
+        |   no intermediate Athena artifact/container format for this path)
+        v
+MapCollisionMap[]  (existing runtime type, reused verbatim)
+        |
+MapCollisionStartupLoader.Load(artifacts, mapCachePath)
+        v
+IMapCollisionProvider  (MapCollisionProvider, keyed by each map's own real name)
+```
+
+`RathenaMapCacheReader` reads and decompresses the whole file exactly once,
+at MapServer startup — never per session, never per lookup. The resulting
+`MapCollisionMap` instances are immutable and shared for the server's
+lifetime, exactly like every other startup-composed dependency
+(`GameplayRuleServices`, `MonsterRegistry`, etc.). Gameplay code
+(`MapClientSession`, `MonsterRegistry`, pathfinding) only ever sees the
+generic `IMapCollisionProvider`/`MapCollisionMap` abstractions — nothing
+outside `RathenaMapCacheReader`/`MapCollisionStartupLoader` knows the pinned
+binary layout exists.
+
+No alias mechanism is needed for this source: pinned `map_cache.dat` already
+declares `int_land`/`int_land01`/`int_land02`/`int_land03`/`int_land04` as
+five separate, independent, real records (confirmed by direct inspection of
+the pinned file, not inferred from `legacy/openkore`'s client-side resource
+table) — each logical Athena map name this project uses already has its own
+row in the pinned cache with real geometry. The `.gat`/`.athmap` alias
+mechanism described later in this document exists only for that secondary
+path, where a single physical client resource genuinely is shared across
+several logical map names; it does not apply here. (Not every map name
+Athena might eventually want has a record in the shipped `map_cache.dat` —
+e.g. plain `prontera` IS declared in pinned rAthena's own map list
+(`conf/maps_athena.conf:201`, `map: prontera`), but has no corresponding
+record in this pinned checkout's `db/map_cache.dat`; `izlude` likewise has no
+bare-name record, only instanced variants such as `izlude_a`/`izlude_in`.
+This is a gap in the shipped, prebuilt cache file specifically — a cache
+rebuild (`mapcache` tool, out of scope here) would need to run against real
+client resources to add such a map — not an alias gap Athena's reader needs
+to bridge, and not evidence that rAthena itself never declares that map.)
+
+### Pinned reader/writer trace
+
+Traced against `legacy/rathena` at `e985006171d2eb320ee512a653f4c83aea3d81b6`,
+independently cross-checked against the real pinned `map_cache.dat` (1288
+maps) byte-for-byte:
+
+- `map.cpp:156-159` (`struct map_cache_main_header`) + `map.cpp:3672-3717`
+  (`map_readfromcache`) + `map.cpp:3640-3666` (`map_init_mapcache` — whole
+  file read into memory, no streaming): main header is `file_size` (`uint32`
+  LE) + `map_count` (`uint16` LE), but the first real record starts at byte
+  offset **8**, not 6 — ordinary C structure-alignment padding pinned
+  `map_readfromcache` already accounts for via `sizeof(struct
+  map_cache_main_header)` (`map.cpp:3677`) on its target platform/compiler.
+  Confirmed against the real pinned file: with `map_count=1288`, every
+  declared record length only lines up exactly against `file_size` when the
+  first record starts at offset 8.
+- `map.cpp:162-167` (`struct map_cache_map_info`), repeated `map_count`
+  times back-to-back, each immediately followed by that record's own
+  compressed payload (`map.cpp:3679-3687` walks entries by jumping `len`
+  bytes past each record — not a fixed stride): `name` (12-byte NUL-padded
+  ASCII, `MAP_NAME_LENGTH` = `mmo.hpp:163`, never includes a `.gat`
+  extension), `xs`/`ys` (`int16` LE each), `len` (`int32` LE, the
+  COMPRESSED payload's byte length).
+- `grfio.cpp:245-255` (`decode_zip`/`encode_zip`): standard zlib
+  `compress()`/`uncompress()` — an RFC 1950 zlib-wrapped deflate stream, not
+  raw deflate or gzip. .NET's `ZLibStream` speaks this container directly.
+- `map.cpp:3710-3711`: decompresses to exactly `xs*ys` bytes, one raw GAT
+  cell-type byte per cell, in `x + y*xs` row-major order — the same flat
+  index `MapCollisionMap.GetCell` already uses, so no coordinate transform
+  is needed.
+- `map.cpp:3280-3299` (`map_gat2cell`): the raw GAT type byte → static bit
+  mapping (see "Pinned trace" below for the exact per-type semantics) —
+  IDENTICAL to the direct-`.gat` path's mapping, because `map_cache.dat`'s
+  payload is nothing more than the same raw GAT type bytes
+  `src/tool/mapcache.cpp`'s `read_map` already extracts from a client
+  `.gat`, zlib-compressed and bundled with every other map into one
+  container. Both import paths are alternate INPUT ENCODINGS of identical
+  underlying cell semantics, not two independent formats.
+- `map_readfromcache` (`map.cpp:3692-3693`) treats `xs<=0`/`ys<=0` as "skip
+  this record, keep scanning" because its pinned caller linear-scans a
+  shared file for one specific map name and a malformed OTHER entry must
+  not abort that search. `RathenaMapCacheReader` instead fails the WHOLE
+  load loudly on any malformed record: Athena loads every map in one pass
+  at startup rather than probing per name, so a malformed record is
+  definitionally a corrupt input file, never "some other map I don't care
+  about."
+
+### Configuration
+
+`map_cache_path: <path>` (`MapConfig.MapCachePath`/`MapConfigLoader`) is the
+normal key — e.g. `map_cache_path: legacy/rathena/db/map_cache.dat` for
+local development. A missing or malformed configured file fails MapServer
+startup loudly (`MapCollisionStartupLoader` throws `InvalidOperationException`),
+never silently falling back to `EmptyMapCollisionProvider`. Configuring both
+`map_cache_path` and one or more `map_collision_artifact` lines is itself a
+startup configuration error — `MapConfigLoader.Load` throws rather than
+picking an implicit precedence, since silently choosing one source over the
+other could hide a real operator mistake. Configuring neither key preserves
+the original default: `EmptyMapCollisionProvider.Instance`, exactly as
+before this section's runtime existed.
+
+No production packaging/copy step (e.g. bundling `map_cache.dat` into a
+published MapServer output directory) exists yet — `map_cache_path` today
+points at a local filesystem path (typically directly at the pinned
+submodule checkout for development). Revisit packaging when a real
+production deployment target requires MapServer to run without the
+`legacy/rathena` submodule present.
+
+### Still missing
+
+Same as the "Still missing (explicitly deferred)" list at the end of this
+document — this section only proves Athena *knows* real map geometry now.
+Random monster spawn, pathfinding, movement, and wandering are unchanged and
+still do not consume this data.
+
+## Map collision data import + runtime collision foundation (secondary/debug tooling)
+
+This section documents an ALTERNATE, secondary collision-data import path —
+a direct `.gat` → Athena artifact (`.athmap`) compiler — kept available for
+debugging the format, synthetic tests, or a map genuinely absent from the
+pinned `map_cache.dat`. **It is not the normal path**; see the
+`map_cache.dat` section above for that. Nothing in current MapServer startup
+requires an `.athmap` file: an operator configures either `map_cache_path`
+or `map_collision_artifact` lines, never both.
+
+### Pinned trace
+
+Traced against `legacy/rathena` at `e985006171d2eb320ee512a653f4c83aea3d81b6`:
+
+- `map.hpp:788-810` (`struct mapcell`): the pinned STATIC terrain state is exactly three bits —
+  `walkable`, `shootable`, `water` — kept architecturally separate from eight DYNAMIC runtime bits
+  on the same struct (`npc`, `basilica`, `landprotector`, `novending`, `nochat`, `maelstrom`,
+  `icewall`, `nobuyingstore`). Athena's imported artifact/runtime model preserves only the static
+  three; the dynamic bits remain an unmodeled MapServer runtime concern, never part of imported
+  data.
+- `map.cpp:3323-3395` (`map_getcellp`): every static `cell_chk` value used by spawn/pathfinding
+  code is fully derivable from those three bits alone — `CELL_CHKWALL = !walkable && !shootable`,
+  `CELL_CHKWATER = water`, `CELL_CHKCLIFF = !walkable && shootable`, `CELL_CHKPASS`/`CELL_CHKREACH
+  = walkable`, `CELL_CHKNOPASS`/`CELL_CHKNOREACH = !walkable` (the `CELL_NOSTACK` build-time
+  stacking-limit refinement on `CHKPASS`/`CHKNOPASS` is not modeled, matching a non-default rAthena
+  build option). This proves one byte per cell (not one walkability bit) is the correct minimum —
+  collapsing to a single bit would silently discard the water/shootable distinction real source
+  code branches on.
+- `map.cpp:3280-3299` (`map_gat2cell`/`map_cell2gat`): the raw GAT type ↔ static-bit mapping. GAT
+  types 0/2/4/6 → `Walkable|Shootable` (2/4/6 are rAthena's own "???"/unused-but-present types,
+  behaviorally identical to plain ground); type 1 → none (wall); type 3 →
+  `Walkable|Shootable|Water`; type 5 → `Shootable` only (a snipable gap/cliff).
+- `src/tool/mapcache.cpp:68-116` (`read_map`): the offline mapcache-building tool's own `.gat`
+  reader — 6-byte file signature, `width`/`height` as little-endian `uint32` at offsets 6/10, then
+  one 20-byte record per cell (4 unused corner-height floats + a little-endian `uint32` GAT type at
+  the record's `+16` offset). rAthena's own reader never validates the signature bytes; Athena's
+  importer does, as a "fail clearly on malformed input" strengthening, not a ported rAthena check.
+  The mapcache tool also folds in a `.rsw` water-height adjustment (`mapcache.cpp:107-108`,
+  promoting a walkable-but-below-water-level cell to type 3) that Athena's importer does not
+  reproduce — a disclosed, narrow omission, not a scope failure (a `.gat` cell already encoded as
+  type 3 is unaffected).
+
+Direct `.gat` was chosen as the import input over rAthena's multi-map, zlib-compressed,
+GRF-dependent `map_cache.dat` container: a single `.gat` file is self-contained, requires no
+external GRF/RSW tooling, and every static semantic Athena needs (the three `mapcell` bits) is
+present in it directly.
+
+### Format/artifact boundary
+
+```
+local .gat file (never committed)
+        |
+tools/WorldDataImporter  compile-map-collision
+        |  (MapCollisionCompiler: .gat -> CompiledMapCollision;
+        |   MapCollisionArtifactWriter: CompiledMapCollision -> bytes)
+        v
+local Athena collision artifact, "*.athmap" (never committed)
+        |
+MapServer  (MapCollisionArtifact.Read: bytes -> MapCollisionMap)
+        v
+IMapCollisionProvider (runtime, immutable after load)
+```
+
+`WorldDataImporter` has no project reference to `MapServer` (an explicit constraint for this
+slice), so the compiled-data type (`CompiledMapCollision`/`CompiledMapCellFlags`) and its writer
+(`MapCollisionArtifactWriter`) live entirely in `tools/WorldDataImporter/Compiler/` and are
+independent of the MapServer-side reader (`MapCollisionArtifact.Read`) and runtime type
+(`MapCollisionMap`/`MapCellFlags` in `src/MapServer/World/MapCollision.cs`). The two sides agree on
+one binary layout (magic `"AMC1"`, map-name length + UTF-8 name, `int32` width/height, then
+`width*height` cell bytes) and are kept in sync by
+`MapCollisionCompilerTests.MapCollisionRoundTrip_MatchesRuntimeReader`, which decodes the writer's
+own output against the exact byte layout the runtime reader expects.
+
+CLI usage:
+
+```bash
+dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- compile-map-collision \
+    --input /local/path/int_land03.gat \
+    --map int_land03 \
+    --output /local/generated/int_land03.athmap
+```
+
+### Runtime API
+
+`src/MapServer/World/MapCollision.cs`:
+
+- `[Flags] MapCellFlags : byte { None, Walkable, Shootable, Water }`
+- `MapCollisionMap` — immutable per-map grid: `MapName`, `Width`, `Height`, `IsInBounds(x,y)`,
+  `GetCell(x,y)` (throws `ArgumentOutOfRangeException` for an out-of-bounds cell — this is
+  deliberately NOT the same outcome as a genuinely blocked in-bounds cell), plus `IsWalkable`/
+  `IsShootable`/`IsWater` convenience wrappers over `GetCell`.
+- `IMapCollisionProvider { bool TryGetMap(string mapName, out MapCollisionMap map) }` —
+  `TryGetMap` returning `false` for an unknown map is a distinct outcome from a known map's blocked
+  cell; callers must not conflate "no data for this map" with "this cell is blocked".
+- `EmptyMapCollisionProvider.Instance` — the current production default; resolves no map at all.
+- `MapCollisionProvider` — simple immutable in-memory provider, case-insensitive-ordinal map-name
+  lookup (matching every other map-name comparison in this codebase). Two constructors: one keyed
+  directly by each map's own `MapName` (the common "each map is its own resource" case), and one
+  taking an explicit logical-name → `MapCollisionMap` dictionary so several logical names can
+  share exactly one loaded map/cell array (see "Logical map name -> physical client collision
+  resource" below) — `MapCollisionStartupLoader` uses the latter.
+- `MapCollisionStartupLoader.Load(IReadOnlyList<MapCollisionArtifactConfig>)`
+  (`src/MapServer/World/MapCollisionStartupLoader.cs`) — the only place a real artifact file is
+  read from disk; see "Composition/ownership" below.
+
+### Logical map name -> physical client collision resource
+
+Athena's Academy world declares five separate LOGICAL map names for the tutorial G_PORING slice -
+`int_land`, `int_land01`, `int_land02`, `int_land03`, `int_land04` (`npc/re/mobs/int_land.txt:11-15`,
+`AcademyMobSpawns.cs`, `AcademyNavigation.cs`). These are genuinely separate server-side map
+instances (distinct NPC placements, distinct navigation targets, distinct monster spawn groups),
+but they are NOT five separate physical client map resources. `legacy/openkore`'s
+`resnametable.txt` - checked across every regional client table that carries an int_land entry
+(bRO, tRO, kRO Zero, kRO Sakray, aRO, ROla, cRO, laRO, translated kRO_english; the iRO-specific
+table has no int_land entry of its own, but every other regional table agrees) - unanimously
+remaps `int_land01.gat`/`int_land02.gat`/`int_land03.gat`/`int_land04.gat` (and the matching
+`.gnd`/`.rsw`) to the single physical resource `int_land.gat`. This independently confirms
+`ai/map-server.md`'s own earlier finding for `int_land01` specifically ("resource tables alias it
+to `int_land`") and extends it to all five logical names. Consequently: importing ONE `int_land.gat`
+file produces collision data valid for all five logical Athena map names, and the runtime must
+share that one loaded `MapCollisionMap`/cell array across all five logical registrations rather
+than importing (or duplicating in memory) five copies.
+
+### Composition/ownership
+
+`MapServerWorld.Build` (`src/MapServer/World/MapServerWorld.cs`) takes an optional
+`collisionProvider` parameter, defaulting to `EmptyMapCollisionProvider.Instance` (the same
+behavior as before this section existed). `MapServerWorld` carries a `Collision` property
+alongside `Maps`/`Monsters`/`Combat`. `MapClientSession` does not open files and has no path to
+`.gat`/artifact parsing.
+
+`MapServerApp.RunAsync` calls `MapCollisionStartupLoader.Load(mergedConfig.CollisionArtifacts,
+mergedConfig.MapCachePath)` once, at the same composition point every other startup dependency
+(gameplay rules, the monster registry, etc.) is built, and passes the result into
+`MapServerWorld.Build`. `MapCollisionStartupLoader.Load` now branches on which of the two mutually
+exclusive sources is configured (see the `map_cache.dat` section above for the normal
+`map_cache_path` branch); this artifact-based branch is what runs when one or more
+`map_collision_artifact: <path>|<map1>,<map2>,...` lines are configured instead. Zero configured
+lines/path is still the default and still resolves to `EmptyMapCollisionProvider.Instance` -
+unconfigured startup behavior is unchanged. This branch reads each configured artifact file exactly
+once via `MapCollisionArtifact.ReadFile` and registers the SAME loaded `MapCollisionMap` instance
+under every logical map name listed for that artifact (never re-parsing the file per alias, never
+duplicating the cell array) - this is how the `int_land`/`int_land01..04` aliasing above is served
+without five in-memory copies. A configured artifact that is missing, malformed, or whose logical
+map name collides with another artifact's registration makes `MapCollisionStartupLoader.Load`
+throw `InvalidOperationException`, failing MapServer startup outright rather than silently running
+with partial/absent collision data an operator believed was loaded.
+
+### Local/gitignored data strategy and licensing
+
+Per this project's Gravity-asset rule, BOTH the proprietary source `.gat` file and any real
+collision artifact derived from real client map data must stay local and gitignored — never
+committed, in this branch or any future one, unless a separate, explicit licensing decision is
+made. Nothing under version control in this repository is or references real Gravity map bytes;
+every test fixture is a tiny synthetic byte array built in-test (see `MapCollisionCompilerTests`/
+`MapCollisionTests`/`MapCollisionStartupLoaderTests`). No real `.gat`/GRF/client installation was
+found anywhere in this development environment as of this writing (checked common local paths,
+`~/Downloads`, and a full filesystem search for `.gat`/`.grf`) - the real-map validation this
+section's runtime plumbing exists to support (real dimensions, cell counts, and known-coordinate
+sanity checks against `int_land.gat`) remains an outstanding manual step for whoever has legitimate
+access to a real client installation; see the developer-facing instructions in
+`conf/templates/map_athena.conf`.
+
+### Pinned traversal-boundary distinction (raw artifact bounds vs. gameplay bounds)
+
+`MapCollisionMap.IsInBounds`/`GetCell` expose the RAW imported bounds: every `(x,y)` with
+`0 <= x < Width` and `0 <= y < Height` is readable, including the final row/column, and returns
+the map's real stored terrain byte there. This is deliberately narrower than nothing and wider
+than pinned rAthena's own gameplay-traversal check: `map_getcellp` (`map.cpp:3329-3331`,
+`"NOTE: this intentionally overrides the last row and column"`) treats `x >= xs-1` or `y >= ys-1`
+as always `CELL_CHKNOPASS`/never-`CELL_CHKREACH` for traversal purposes, regardless of that cell's
+real stored value. A future spawn-selection/pathfinding/`CELL_CHK*`-equivalent consumer built on
+top of this artifact must apply that `x < Width-1` / `y < Height-1` restriction itself; narrowing
+`MapCollisionMap`'s own bounds to hide the final row/column would silently discard genuine
+imported terrain data from every caller, not just gameplay-traversal ones (see
+`MapCollisionTests.RawArtifactBounds_IncludeTheFinalRowAndColumn_UnlikePinnedGameplayTraversalBounds`).
+
+### Still missing (explicitly deferred)
+
+- GAT-backed random monster spawn (`map_search_freecell`/`CELL_CHKREACH`) — `MobSpawnCellSelector`
+  is unchanged; `UnverifiedFallbackMobSpawnCellSelector` remains the only spawn-cell source.
+- A* pathfinding (`path_search`/`CELL_CHKNOPASS`) — `MovementPathProvider` is unchanged;
+  `UnverifiedGridLineMovementPathProvider` remains the only path source.
+- Collision-aware player movement.
+- Passive monster wandering (`mob_randomwalk`/`CELL_CHKPASS`) — not implemented; `MobInstance.X/Y`
+  remain immutable after construction.
+- Monster chasing/combat AI/retaliation.
+- Proactive world-to-session broadcast (a monster's own state change reaching an already-connected
+  session without that session first acting) — still does not exist anywhere in MapServer.
+- A real, developer-verified `.gat` import and coordinate sanity check for THIS (secondary)
+  `.gat`/`.athmap` path specifically — its startup loading branch (`MapCollisionStartupLoader`/
+  `map_collision_artifact` config) is implemented and tested against synthetic fixtures, but has
+  not yet been exercised against a real client resource in this environment (none is available -
+  see "Local/gitignored data strategy" above). This is no longer the blocking gap for real map
+  geometry in general: the `map_cache.dat` section above proves real geometry (including
+  `int_land`/`int_land01..04`) via the normal `map_cache_path` source, tested against the actual
+  pinned `legacy/rathena/db/map_cache.dat`.

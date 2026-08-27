@@ -195,7 +195,11 @@ public sealed class MapClientSessionMonsterCombatTests
 
     private sealed class FixedCellSelector(ushort x, ushort y) : IMobSpawnCellSelector
     {
-        public (ushort X, ushort Y) SelectCell(MobSpawnDefinition spawn, int index) => (x, y);
+        public bool TrySelectCell(MobSpawnDefinition spawn, int index, out MobPosition position)
+        {
+            position = new MobPosition(x, y);
+            return true;
+        }
     }
 
     [Fact]
@@ -895,7 +899,11 @@ public sealed class MapClientSessionMonsterCombatTests
 
     private sealed class SequentialCellSelector(params (ushort X, ushort Y)[] cells) : IMobSpawnCellSelector
     {
-        public (ushort X, ushort Y) SelectCell(MobSpawnDefinition spawn, int index) => cells[index];
+        public bool TrySelectCell(MobSpawnDefinition spawn, int index, out MobPosition position)
+        {
+            position = new MobPosition(cells[index].X, cells[index].Y);
+            return true;
+        }
     }
 
     [Fact]

@@ -88,8 +88,8 @@ public sealed class MonsterCombatCoordinatorTests
         coordinator.Attack(instance, StrongAttacker(), 1, null, ActiveOnly(Quest21008));
 
         clock.Advance(TimeSpan.FromMilliseconds(5000));
-        Assert.False(instance.TryRespawn(clock.GetUtcNow().UtcTicks - 1)); // Not due yet at an earlier instant.
-        Assert.True(instance.TryRespawn(clock.GetUtcNow().UtcTicks));
+        Assert.False(instance.TryRespawn(clock.GetUtcNow().UtcTicks - 1, () => (true, new MobPosition(0, 0)))); // Not due yet at an earlier instant.
+        Assert.True(instance.TryRespawn(clock.GetUtcNow().UtcTicks, () => (true, new MobPosition(0, 0))));
         Assert.True(instance.IsAlive);
     }
 

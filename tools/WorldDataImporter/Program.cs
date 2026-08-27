@@ -27,6 +27,7 @@ internal static class WorldDataImporterCli
                 "compile-mob-spawn" => await CompileMobSpawnAsync(args[1..]),
                 "compile-quest-drop" => await CompileQuestDropAsync(args[1..]),
                 "compile-item" => await CompileItemAsync(args[1..]),
+                "compile-map-collision" => await CompileMapCollisionAsync(args[1..]),
                 "capabilities" => await CapabilitiesAsync(args[1..]),
                 _ => throw new ArgumentException($"Unknown command '{args[0]}'."),
             };
@@ -358,6 +359,29 @@ internal static class WorldDataImporterCli
         return 0;
     }
 
+    // Offline .gat -> Athena collision artifact compiler (see MapCollisionCompiler/
+    // MapCollisionArtifactWriter's own doc comments for the pinned trace and format). The input
+    // .gat and the output artifact are BOTH expected to stay local/gitignored for now - see
+    // ai/world-data.md's "Map collision data" section for the licensing rationale; this command
+    // never reads/writes anywhere inside the committed repository tree by default.
+    private static async Task<int> CompileMapCollisionAsync(string[] args)
+    {
+        var options = CliOptions.Parse(args);
+        var inputPath = options.Required("input");
+        var mapName = options.Required("map");
+        var outputPath = Path.GetFullPath(options.Required("output"));
+
+        var gatBytes = await File.ReadAllBytesAsync(inputPath);
+        var compiled = MapCollisionCompiler.Compile(gatBytes, mapName);
+        var artifact = MapCollisionArtifactWriter.Write(compiled);
+
+        Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
+        await File.WriteAllBytesAsync(outputPath, artifact);
+
+        Console.WriteLine($"Compiled map '{mapName}' ({compiled.Width}x{compiled.Height}, {compiled.Cells.Length} cells) into {outputPath}.");
+        return 0;
+    }
+
     private static T AssertSingle<T>(IEnumerable<T> values, string description)
     {
         var array = values.ToArray(); return array.Length == 1 ? array[0] : throw new ArgumentException($"Expected one {description}, found {array.Length}.");
@@ -395,6 +419,7 @@ internal static class WorldDataImporterCli
         Console.Error.WriteLine("WorldDataImporter compile-mob-spawn --rathena-root <folder> --rathena-commit <sha> --mob-id <id> --name <spawn-name> --spawn-file <path> [--exclude-map <map>] --class-name <n> --constant-name <n> --spawn-class-name <n> --spawn-array-name <n> --output-definition <Mob.cs> --output-spawns <MobSpawns.cs>");
         Console.Error.WriteLine("WorldDataImporter compile-quest-drop --rathena-root <folder> --rathena-commit <sha> --quest-id <id> --output <QuestDrops.cs>");
         Console.Error.WriteLine("WorldDataImporter compile-item --rathena-root <folder> --rathena-commit <sha> --item-id <id> [--item-db-file <path>] --class-name <n> --constant-name <n> --output <Item.cs>");
+        Console.Error.WriteLine("WorldDataImporter compile-map-collision --input <local.gat> --map <name> --output <local.athmap>");
     }
 }
 
