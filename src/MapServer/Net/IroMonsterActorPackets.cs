@@ -162,4 +162,20 @@ internal static class IroMonsterActorPackets
         buffer[4] = (byte)dstY;
         buffer[5] = (byte)((subX << 4) | (subY & 0x0f));
     }
+
+    // Capture-verified (kill-poring-heal-jobup.pcapng frame 674, ai/iro-2026-wire.md): ZC_STOPMOVE
+    // (0x0088, clif.cpp:2204), fixed 10 bytes: id.L x.W y.W. Captured stopping the SAME Poring the
+    // 0x09FD in frame 566 was walking, landing at its walk's own destination (75,57) - used here to
+    // notify a client that an already-visible, already-walking monster's walk just finished
+    // (MonsterMovementChangeKind.WalkFinished), so the client's own local walk animation/prediction
+    // is corrected to the authoritative final cell rather than drifting from missed/late updates.
+    internal static byte[] BuildStopMove(uint actorId, ushort x, ushort y)
+    {
+        var packet = new byte[PacketConstants.ZcStopMoveLength];
+        BinaryPrimitives.WriteInt16LittleEndian(packet, PacketConstants.ZcStopMove);
+        BinaryPrimitives.WriteUInt32LittleEndian(packet.AsSpan(2), actorId);
+        BinaryPrimitives.WriteUInt16LittleEndian(packet.AsSpan(6), x);
+        BinaryPrimitives.WriteUInt16LittleEndian(packet.AsSpan(8), y);
+        return packet;
+    }
 }

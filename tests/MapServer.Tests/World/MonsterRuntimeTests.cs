@@ -226,7 +226,7 @@ public sealed class MonsterRuntimeTests
         instance.ApplyDamage(9999);
         registry.ScheduleRespawnIfNeeded(instance);
         clock.Advance(TimeSpan.FromMilliseconds(1500));
-        Assert.Equal(1, registry.ProcessDueRespawns());
+        Assert.Single(registry.ProcessDueRespawns());
         Assert.True(instance.IsAlive);
         Assert.False(instance.IsWalking);
 
@@ -240,6 +240,203 @@ public sealed class MonsterRuntimeTests
         }
 
         Assert.True(walkedAgain, "A respawned G_PORING never walked again.");
+    }
+
+    // Pinned mob_randomwalk's candidate loop combines CELL_CHKPASS && unit_walktoxy as ONE success
+    // condition (mob.cpp:1704) - an individually walkable-but-UNREACHABLE candidate must not end
+    // the search. This map places a single isolated walkable cell (fully enclosed by walls, so
+    // IsTraversalCell is true but no path can ever reach it) directly at the mob's forced-first
+    // "random" candidate offset - a scheduler that stops at cell-validity alone would keep failing
+    // forever (TryStartIdleWalk never succeeds); this test proves the search instead continues past
+    // it to a genuinely reachable candidate.
+    [Fact]
+    public void ProcessTick_FirstCandidateIsWalkableButUnreachable_ContinuesSearchingUntilAReachableOneIsFound()
+    {
+        var width = 40;
+        var height = 40;
+        var cells = Enumerable.Repeat(MapCellFlags.Walkable, width * height).ToArray();
+        var map = new MapCollisionMap("test_map", width, height, cells);
+
+        ushort spawnX = 20, spawnY = 20;
+        // Isolated unreachable cell at a fixed, forced-first-candidate offset (+3,+3 from spawn) -
+        // walled on all four orthogonal sides (diagonal-adjacent cells alone can't reach it either,
+        // since a diagonal move requires at least one open orthogonal neighbor - see
+        // RathenaCompatibleMovementPathProvider's own corner-cutting doc comment).
+        var trap = new MapCellFlags[width * height];
+        Array.Copy(cells, trap, cells.Length);
+        void Block(int x, int y) => trap[x + y * width] = MapCellFlags.None;
+        Block(spawnX + 2, spawnY + 3);
+        Block(spawnX + 4, spawnY + 3);
+        Block(spawnX + 3, spawnY + 2);
+        Block(spawnX + 3, spawnY + 4);
+        var trappedMap = new MapCollisionMap("test_map", width, height, trap);
+
+        // MonsterRuntime calls this once for dx then once for dy per idle-walk-search attempt
+        // (TryFindIdleWalkPath's own doc comment) - alternating 3,3,3,3,... forces every attempt's
+        // "random" first candidate to be the unreachable trapped cell at offset (+3,+3).
+        var randomInclusiveRange = (int min, int max) => 3;
+
+        var clock = new FakeTimeProvider();
+        var spawn = MakeSpawn();
+        var registry = new MonsterRegistry([spawn], new WorldActorIdAllocator(), new FixedCellSelector(spawnX, spawnY), clock);
+        var provider = new MapCollisionProvider([trappedMap]);
+        var pathProvider = new RathenaCompatibleMovementPathProvider(provider);
+        var runtime = new MonsterRuntime(registry, provider, pathProvider, clock, randomInclusiveRange);
+        var instance = registry.AllInstances[0];
+
+        var walked = false;
+        for (var i = 0; i < 20 && !walked; i++)
+        {
+            clock.Advance(TimeSpan.FromSeconds(5));
+            runtime.ProcessTick();
+            walked = instance.IsWalking;
+        }
+
+        Assert.True(walked, "The idle-walk search gave up instead of continuing past the unreachable first candidate.");
+        var destination = instance.MovementDestination;
+        Assert.False(destination.X == spawnX + 3 && destination.Y == spawnY + 3, "Walked toward the unreachable trapped cell.");
+        Assert.True(trappedMap.IsTraversalCell(destination.X, destination.Y));
+    }
+
+    [Fact]
+    public void ProcessTick_IdleWalkFailsToFindAnyDestination_ReschedulesSoonRatherThanWaitingTheFullPostSuccessDelay()
+    {
+        // The mob is fully enclosed by a wall of blocked cells covering its entire 15x15 search
+        // square - CELL_CHKPASS fails for every candidate, so no path is ever even attempted.
+        // Pinned mob_ai_sub_hard's post-failure reschedule (mob.cpp:2058-2066, "next_walktime =
+        // tick + rnd()%1000") must fire - a MUCH shorter delay than the post-success
+        // MIN_RANDOMWALKTIME(4000)+jitter+walk-duration reschedule a successful walk would use.
+        var width = 40;
+        var height = 40;
+        var cells = Enumerable.Repeat(MapCellFlags.Walkable, width * height).ToArray();
+        ushort spawnX = 20, spawnY = 20;
+        for (var dy = -8; dy <= 8; dy++)
+        {
+            for (var dx = -8; dx <= 8; dx++)
+            {
+                if (dx == 0 && dy == 0) continue;
+                var x = spawnX + dx;
+                var y = spawnY + dy;
+                if (x >= 0 && y >= 0 && x < width && y < height) cells[x + y * width] = MapCellFlags.None;
+            }
+        }
+        var map = new MapCollisionMap("test_map", width, height, cells);
+
+        var clock = new FakeTimeProvider();
+        var spawn = MakeSpawn();
+        var registry = new MonsterRegistry([spawn], new WorldActorIdAllocator(), new FixedCellSelector(spawnX, spawnY), clock);
+        var provider = new MapCollisionProvider([map]);
+        var pathProvider = new RathenaCompatibleMovementPathProvider(provider);
+        var runtime = new MonsterRuntime(registry, provider, pathProvider, clock, randomJitterMs: () => 0);
+        var instance = registry.AllInstances[0];
+
+        // First due-tick: initializes _nextIdleWalkTimestamp (pinned INVALID_TIMER branch), no walk.
+        clock.Advance(TimeSpan.FromMilliseconds(4000));
+        runtime.ProcessTick();
+        Assert.False(instance.IsWalking);
+
+        // Second due-tick: the search fails (fully enclosed), triggering the SHORT post-failure
+        // reschedule (tick + rnd()%1000 = +0ms here) rather than the long post-success one.
+        clock.Advance(TimeSpan.FromMilliseconds(4000));
+        runtime.ProcessTick();
+        Assert.False(instance.IsWalking);
+
+        // Reopen a single path out (so a NEXT search attempt can actually succeed) without
+        // advancing the clock any further, then immediately re-tick: the search retry only
+        // fires from here because IsIdleWalkDue's own `_nextIdleWalkTimestamp` was already
+        // satisfied by `now` at the SAME instant the failed search above ran (jitter pinned to
+        // 0ms) - proving the reschedule was short, not the ~4000ms+ MIN_RANDOMWALKTIME a
+        // post-success reschedule would have required before this retry could possibly succeed.
+        cells[(spawnX + 1) + spawnY * width] = MapCellFlags.Walkable;
+        runtime.ProcessTick();
+
+        Assert.True(instance.IsWalking, "Idle-walk retry did not fire again immediately after a failed search - the post-failure reschedule (tick + rnd()%1000, here +0ms) appears not to have applied.");
+    }
+
+    [Fact]
+    public void ProcessTick_NewlyStartedWalk_IsReportedAsWalkStarted()
+    {
+        var map = MakeAllWalkableMap("test_map", 40);
+        var spawn = MakeSpawn();
+        var (runtime, registry, clock) = MakeRuntime([spawn], 20, 20, map);
+        var instance = registry.AllInstances[0];
+
+        MonsterMovementChange? found = null;
+        for (var i = 0; i < 20 && found is null; i++)
+        {
+            clock.Advance(TimeSpan.FromSeconds(5));
+            var changes = runtime.ProcessTick();
+            found = changes.Count > 0 ? changes[0] : null;
+        }
+
+        Assert.NotNull(found);
+        Assert.Equal(MonsterMovementChangeKind.WalkStarted, found!.Value.Kind);
+        Assert.Same(instance, found.Value.Instance);
+    }
+
+    [Fact]
+    public void ProcessTick_MidWalkCellCrossing_IsReportedAsCellCrossed_NotWalkStarted()
+    {
+        var map = MakeAllWalkableMap("test_map", 40);
+        // A longer straight walk (several cells) so at least one ordinary mid-walk crossing tick
+        // exists between "just started" and "just finished".
+        var spawn = MakeSpawn();
+        var (runtime, registry, clock) = MakeRuntime([spawn], 20, 20, map);
+        var instance = registry.AllInstances[0];
+
+        MonsterMovementChangeKind? startedKind = null;
+        for (var i = 0; i < 20 && startedKind is null; i++)
+        {
+            clock.Advance(TimeSpan.FromSeconds(5));
+            var changes = runtime.ProcessTick();
+            if (changes.Count > 0) startedKind = changes[0].Kind;
+        }
+        Assert.Equal(MonsterMovementChangeKind.WalkStarted, startedKind);
+        Assert.True(instance.IsWalking);
+
+        // Advance by exactly one cell's worth of time (never enough to finish the whole walk,
+        // guaranteed by only ever having started a walk of more than 1 cell above) and confirm the
+        // reported kind for THIS tick is CellCrossed, not WalkStarted again.
+        MonsterMovementChangeKind? midWalkKind = null;
+        for (var i = 0; i < 30 && instance.IsWalking && midWalkKind is null; i++)
+        {
+            clock.Advance(TimeSpan.FromMilliseconds(400));
+            var changes = runtime.ProcessTick();
+            if (changes.Count > 0)
+            {
+                midWalkKind = changes[0].Kind;
+                if (!instance.IsWalking) midWalkKind = null; // That tick actually finished the walk - keep looking for a genuine mid-walk crossing.
+            }
+        }
+
+        Assert.Equal(MonsterMovementChangeKind.CellCrossed, midWalkKind);
+    }
+
+    [Fact]
+    public void ProcessTick_LastCellOfAWalk_IsReportedAsWalkFinished()
+    {
+        var map = MakeAllWalkableMap("test_map", 40);
+        var spawn = MakeSpawn();
+        var (runtime, registry, clock) = MakeRuntime([spawn], 20, 20, map);
+        var instance = registry.AllInstances[0];
+
+        for (var i = 0; i < 20 && !instance.IsWalking; i++)
+        {
+            clock.Advance(TimeSpan.FromSeconds(5));
+            runtime.ProcessTick();
+        }
+        Assert.True(instance.IsWalking);
+
+        MonsterMovementChangeKind? finishedKind = null;
+        for (var i = 0; i < 200 && instance.IsWalking; i++)
+        {
+            clock.Advance(TimeSpan.FromMilliseconds(400));
+            var changes = runtime.ProcessTick();
+            if (changes.Count > 0 && !instance.IsWalking) finishedKind = changes[0].Kind;
+        }
+
+        Assert.False(instance.IsWalking);
+        Assert.Equal(MonsterMovementChangeKind.WalkFinished, finishedKind);
     }
 
     [Fact]

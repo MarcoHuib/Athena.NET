@@ -208,31 +208,49 @@ public sealed class MobInstance
     // initializing next_walktime (mob.cpp:1682) and after a walk completes (mob.cpp:1766).
     internal const long MinRandomWalkTimeMs = 4000;
 
+    // Pinned mob_ai_sub_hard's own post-failure rescheduling for a mob_randomwalk call that
+    // returned false (mob.cpp:2058-2066): "if (md->next_walktime < md->ud.canmove_tick)
+    // next_walktime = ud.canmove_tick; else next_walktime = tick + rnd()%1000". The
+    // `ud.canmove_tick` branch (a temporary movement-lock expiry, e.g. from stun/knockback) is NOT
+    // modeled by this project's MobInstance - there is no equivalent movement-lock concept here yet
+    // (out of scope for this idle-movement slice, same boundary as aggro/attack AI) - so this always
+    // takes the `tick + rnd()%1000` branch, which is also pinned source's own actual behavior for
+    // every mob that ISN'T currently movement-locked (the overwhelmingly common case this project's
+    // idle-walk slice cares about). Called by MonsterRuntime when NO candidate destination AND real
+    // path both succeeded this due-tick, so a stuck-in-a-corner or momentarily unreachable mob is
+    // retried again soon rather than being stuck until its much longer post-success reschedule.
+    public void RescheduleAfterFailedIdleWalk(long now, Func<long> jitterMs)
+    {
+        lock (_gate)
+        {
+            _nextIdleWalkTimestamp = now + jitterMs();
+        }
+    }
+
     // Starts an idle walk along an already-computed path (the caller - MonsterRuntime - is
     // responsible for running the pinned 15x15 candidate search and RathenaCompatibleMovementPathProvider;
-    // see IsIdleWalkDue's own doc comment for why that split exists). `cellDurationMs` should be
-    // the mob's own WalkSpeed (or WalkSpeed*14/10 for a diagonal step - CharacterMovementState
-    // already only supports one uniform per-cell duration, matching this project's existing
-    // player-movement model; see that type's own doc comment) - MonsterRuntime supplies it rather
-    // than this method reading Spawn.Mob.WalkSpeed itself, keeping this method a pure state
-    // transition. Does nothing (returns false) if the mob died or started walking via another
-    // path between IsIdleWalkDue returning true and this call - re-validated here under the same
-    // lock rather than trusted from the caller's earlier check.
-    public bool TryStartIdleWalk(IReadOnlyList<(ushort X, ushort Y)> path, int cellDurationMs, long now, DateTimeOffset nowOffset)
+    // see IsIdleWalkDue's own doc comment for why that split exists). `orthogonalStepMs` is the
+    // mob's own WalkSpeed - CharacterMovementState derives each individual step's actual duration
+    // (orthogonal vs. diagonal) from it internally; see that type's own doc comment. `jitterMs` is
+    // caller-injected (rather than this method calling Random directly) so tests can drive the
+    // exact pinned `rnd()%1000` jitter deterministically. Does nothing (returns false) if the mob
+    // died or started walking via another path between IsIdleWalkDue returning true and this call -
+    // re-validated here under the same lock rather than trusted from the caller's earlier check.
+    public bool TryStartIdleWalk(IReadOnlyList<(ushort X, ushort Y)> path, int orthogonalStepMs, long now, DateTimeOffset nowOffset, Func<long> jitterMs)
     {
         lock (_gate)
         {
             if (_state != MobLifecycleState.Alive || _movement.IsMoving) return false;
-            _movement.StartWalk(path, cellDurationMs, nowOffset);
+            _movement.StartWalk(path, orthogonalStepMs, nowOffset);
             _position = new MobPosition(_movement.CurrentX, _movement.CurrentY);
-            // Matches pinned mob_randomwalk's own post-walk-start rescheduling (mob.cpp:1766):
+            // Pinned mob_randomwalk's own post-walk-start rescheduling (mob.cpp:1766):
             // "next_walktime = tick + rnd()%1000 + MIN_RANDOMWALKTIME + unit_get_walkpath_time" -
             // the NEXT idle-walk consideration is scheduled for after this walk's own expected
-            // duration completes, not from `now`. Approximated here as cellDurationMs*(path.Count-1)
-            // for the just-started walk's own total travel time (this project's CharacterMovementState
-            // uses one uniform per-cell duration rather than pinned's per-step diagonal-aware sum -
-            // see cellDurationMs's own doc comment above).
-            _nextIdleWalkTimestamp = now + cellDurationMs * Math.Max(0, path.Count - 1) + MinRandomWalkTimeMs;
+            // duration completes, not from `now`. Uses CharacterMovementState.TotalWalkPathTimeMs
+            // (the EXACT pinned unit_get_walkpath_time sum over each step's own orthogonal/diagonal
+            // duration) rather than a uniform orthogonalStepMs*(path.Count-1) approximation, which
+            // undercounts any walk containing a diagonal step.
+            _nextIdleWalkTimestamp = now + jitterMs() + MinRandomWalkTimeMs + CharacterMovementState.TotalWalkPathTimeMs(path, orthogonalStepMs);
             return true;
         }
     }

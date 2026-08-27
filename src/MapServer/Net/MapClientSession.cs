@@ -2201,36 +2201,46 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
         }
     }
 
-    // Called by MapTcpServer's shared MonsterRuntime tick loop for every instance whose position
-    // changed this tick (newly started walk OR crossed at least one cell) - see
-    // MonsterRuntime.ProcessTick's own doc comment. This is intentionally NOT driven from inside
-    // this session's own per-connection loop: monster movement is authoritative/shared world state
-    // (MobInstance), and different connected players observing the SAME walk must all originate
-    // from that one authoritative source (MapTcpServer's one tick, fanned out to every session),
-    // never from N independent per-session simulations of the same monster.
+    // Called by MapTcpServer's shared MonsterRuntime tick loop for every MonsterMovementChange
+    // reported this tick - see MonsterRuntime.ProcessTick's and MonsterMovementChangeKind's own doc
+    // comments for why WalkStarted/CellCrossed/WalkFinished are NOT interchangeable here. This is
+    // intentionally NOT driven from inside this session's own per-connection loop: monster movement
+    // is authoritative/shared world state (MobInstance), and different connected players observing
+    // the SAME walk must all originate from that one authoritative source (MapTcpServer's one tick,
+    // fanned out to every session), never from N independent per-session simulations of the same
+    // monster.
     //
-    // Two cases, both scoped to this session's own _mapName/_visibleActorIds (never global):
-    //   - Already visible: send the capture-verified 0x09FD walk packet (BuildWalkEntry - see that
-    //     method's own doc comment for the exact kill-poring-heal-jobup.pcapng frame 566 evidence).
+    // Scoped to this session's own _mapName/_visibleActorIds (never global):
     //   - Not yet visible but now within GetVisibleInstances' range of this session's OWN (_x,_y):
     //     a monster can walk INTO a stationary player's visibility, which the existing
     //     SendVisibleMonsterActorsAsync call sites (0x007D map-load, and after the PLAYER's own
     //     movement) never re-check on their own - nothing re-invokes that scan when the player
-    //     hasn't moved. Send the same 0x09FF stand entry a freshly-discovered monster always gets,
-    //     landing it at its CURRENT position (not the walk's destination) - matching that this is
-    //     "discovering an already-in-progress monster", not the start of a walk from this client's
-    //     point of view.
-    //   - The reverse (a monster walking OUT of visibility while the player stays still) has no
-    //     capture-verified packet in this project: ai/iro-2026-wire.md documents 0x0080
-    //     ZC_NOTIFY_VANISH type=1 ("died") from a real capture, and separately notes pinned
+    //     hasn't moved. Pinned clif_spawn (clif.cpp, dispatches to clif_set_unit_walking when the
+    //     unit's ud.walktimer is active, else clif_set_unit_idle) means a monster discovered WHILE
+    //     already walking must receive the walking-entry (0x09FD) layout, landing it at its CURRENT
+    //     position with its real in-flight destination - never the plain 0x09FF standing entry,
+    //     and never a fabricated/fractional subcell value (BuildWalkEntry's own subX/subY=8 is the
+    //     only capture-verified value, reused as-is here, not re-derived from elapsed step
+    //     progress). A monster discovered while NOT walking still gets the ordinary 0x09FF.
+    //   - Already visible: WalkStarted and WalkFinished each send exactly one packet (0x09FD /
+    //     0x0088 respectively - see BuildStopMove's own doc comment for its capture evidence).
+    //     CellCrossed sends NOTHING: pinned unit_walktoxy_nextcell's ordinary per-cell continuation
+    //     call always passes sendMove=false (unit.cpp:749 vs. the sendMove=true initial call at
+    //     unit.cpp:317) - only MobInstance's own authoritative position is updated for a
+    //     CellCrossed change, matching that the client is expected to already be animating the
+    //     walk it was told about once, at WalkStarted, exactly like a real rAthena client does.
+    //   - The reverse of the discovery case (a monster walking OUT of visibility while the player
+    //     stays still) has no capture-verified packet in this project: ai/iro-2026-wire.md documents
+    //     0x0080 ZC_NOTIFY_VANISH type=1 ("died") from a real capture, and separately notes pinned
     //     source's own comment that type=0 means "out of sight" - but that specific type value has
     //     NOT been independently captured/verified here. Sending it on inference alone would
     //     violate this project's "no invented/unverified packet" rule, so it is deliberately NOT
     //     implemented in this slice; a monster that walks out of a stationary player's visibility
     //     range will incorrectly continue to appear to that client. This is a known, documented gap
     //     (see this task's own report), not a silent omission.
-    public async Task NotifyMonsterMovedAsync(MobInstance instance, CancellationToken cancellationToken)
+    public async Task NotifyMonsterMovedAsync(MonsterMovementChange change, CancellationToken cancellationToken)
     {
+        var instance = change.Instance;
         if (!string.Equals(instance.Map, _mapName, StringComparison.OrdinalIgnoreCase)) return;
 
         var mob = instance.Spawn.Mob;
@@ -2240,6 +2250,25 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
         {
             if (Math.Abs(position.X - _x) > 14 || Math.Abs(position.Y - _y) > 14) return;
             if (!_visibleActorIds.Add(instance.ActorId)) return;
+
+            if (instance.IsWalking)
+            {
+                var walkingDiscoveryDestination = instance.MovementDestination;
+                var walkingDiscoveryPacket = IroMonsterActorPackets.BuildWalkEntry(
+                    instance.ActorId,
+                    (ushort)mob.Id,
+                    (ushort)mob.WalkSpeed,
+                    mob.Name,
+                    position.X,
+                    position.Y,
+                    walkingDiscoveryDestination.X,
+                    walkingDiscoveryDestination.Y,
+                    moveStartTime: (uint)Environment.TickCount,
+                    currentHp: instance.CurrentHp,
+                    maxHp: mob.MaxHp);
+                await WriteAsync(walkingDiscoveryPacket, cancellationToken);
+                return;
+            }
 
             var standPacket = IroMonsterActorPackets.BuildStandEntry(
                 instance.ActorId,
@@ -2255,27 +2284,35 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
             return;
         }
 
-        // Already visible, and MonsterRuntime.ProcessTick only reports instances whose position
-        // just changed (see its own doc comment) - normally always walking here. Still guarded
-        // explicitly (rather than assumed) so a direct caller passing an instance that finished
-        // its walk in between never sends a stale/meaningless 0x09FD for a monster that is, from
-        // the client's perspective, simply standing still where it already was.
-        if (!instance.IsWalking) return;
+        switch (change.Kind)
+        {
+            case MonsterMovementChangeKind.CellCrossed:
+                // Pinned unit_walktoxy_nextcell's ordinary per-cell continuation never resends the
+                // walk packet (sendMove=false, unit.cpp:749) - see this method's own doc comment.
+                return;
 
-        var destination = instance.MovementDestination;
-        var walkPacket = IroMonsterActorPackets.BuildWalkEntry(
-            instance.ActorId,
-            (ushort)mob.Id,
-            (ushort)mob.WalkSpeed,
-            mob.Name,
-            position.X,
-            position.Y,
-            destination.X,
-            destination.Y,
-            moveStartTime: (uint)Environment.TickCount,
-            currentHp: instance.CurrentHp,
-            maxHp: mob.MaxHp);
-        await WriteAsync(walkPacket, cancellationToken);
+            case MonsterMovementChangeKind.WalkFinished:
+                var stopPacket = IroMonsterActorPackets.BuildStopMove(instance.ActorId, position.X, position.Y);
+                await WriteAsync(stopPacket, cancellationToken);
+                return;
+
+            case MonsterMovementChangeKind.WalkStarted:
+                var destination = instance.MovementDestination;
+                var walkPacket = IroMonsterActorPackets.BuildWalkEntry(
+                    instance.ActorId,
+                    (ushort)mob.Id,
+                    (ushort)mob.WalkSpeed,
+                    mob.Name,
+                    position.X,
+                    position.Y,
+                    destination.X,
+                    destination.Y,
+                    moveStartTime: (uint)Environment.TickCount,
+                    currentHp: instance.CurrentHp,
+                    maxHp: mob.MaxHp);
+                await WriteAsync(walkPacket, cancellationToken);
+                return;
+        }
     }
 
     private async Task PersistPositionIfDirtyAsync(CancellationToken cancellationToken)

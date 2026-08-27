@@ -70,6 +70,13 @@ public sealed class RathenaCompatibleMovementPathProvider(IMapCollisionProvider 
         while (openSet.Count > 0)
         {
             var current = openSet.Dequeue();
+            // A node can be re-enqueued after already being closed (see TryExpand's own doc
+            // comment on pinned add_path's reopening behavior) - a STALE heap entry for a node
+            // whose g_cost has since improved must be skipped here rather than reprocessed, which
+            // is why closed-set membership alone is not the reopening gate: only TryExpand may
+            // remove a node from `closed`, and it only does so when it is actually about to
+            // requeue a strictly-better entry, so a dequeued node still marked closed at this
+            // point is always a stale duplicate left behind by the priority queue.
             if (closed.Contains(current)) continue;
             closed.Add(current);
 
@@ -99,19 +106,29 @@ public sealed class RathenaCompatibleMovementPathProvider(IMapCollisionProvider 
     private static bool IsOpen(MapCollisionMap map, int x, int y) =>
         map.IsInBounds(x, y) && map.IsTraversalCell(x, y);
 
+    // Pinned add_path (path.cpp:219-244): a node already processed (open OR closed) is only
+    // updated when the new g_cost is STRICTLY better. Critically, a CLOSED node whose g_cost
+    // improves is explicitly reopened ("Put it in open set again", path.cpp:229-231) rather than
+    // left alone - this is deliberate given path_search's own inadmissible (overestimating)
+    // Manhattan*MOVE_COST heuristic (path.cpp:55), which does NOT guarantee closing a node in
+    // heuristic-order also fixes its true g_cost forever the way it would under an admissible
+    // heuristic. Reproduced here by simply removing the node from `closed` and re-enqueuing it -
+    // the stale heap entry left behind (if any) is safely skipped by the closed-set guard in the
+    // main loop above once this fresher entry is dequeued first (a strictly lower priority always
+    // sorts ahead of the stale one).
     private static void TryExpand(Node current, int nx, int ny, int stepCost, Node goal,
         PriorityQueue<Node, int> openSet, Dictionary<Node, int> gCost, Dictionary<Node, Node> parent,
         HashSet<Node> closed, MapCollisionMap map)
     {
         if (!IsOpen(map, nx, ny)) return;
         var neighbor = new Node(nx, ny);
-        if (closed.Contains(neighbor)) return;
 
         var tentativeG = gCost[current] + stepCost;
         if (gCost.TryGetValue(neighbor, out var existingG) && existingG <= tentativeG) return;
 
         gCost[neighbor] = tentativeG;
         parent[neighbor] = current;
+        closed.Remove(neighbor); // Reopen if this node had already been closed - see this method's own doc comment.
         openSet.Enqueue(neighbor, tentativeG + Heuristic(neighbor, goal));
     }
 

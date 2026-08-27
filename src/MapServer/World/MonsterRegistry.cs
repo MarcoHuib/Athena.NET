@@ -75,11 +75,17 @@ public sealed class MonsterRegistry
     // Applies any respawns whose due time has passed. Callers (a background
     // loop, or a test driving TimeProvider directly) invoke this rather than
     // one Timer per monster instance, matching CharacterStatusEffectState's
-    // "no timer per entry" scheduling philosophy.
-    public int ProcessDueRespawns()
+    // "no timer per entry" scheduling philosophy. Returns the instances that ACTUALLY respawned
+    // this call (not merely a count) - MapTcpServer's own live tick loop needs to know WHICH
+    // instances came back so it can fan out a fresh client-facing spawn/stand notification to any
+    // session whose visibility now covers the respawn position; a killer session had already
+    // removed the actor from its own _visibleActorIds on death (see
+    // MapClientSession's existing vanish-on-death handling), so nothing else re-discovers a
+    // respawned instance on its own once respawned.
+    public IReadOnlyList<MobInstance> ProcessDueRespawns()
     {
         var now = _timeProvider.GetUtcNow().UtcTicks;
-        var count = 0;
+        var respawned = new List<MobInstance>();
         foreach (var instance in _instances)
         {
             // instanceIndex=0: TrySelectCell's instanceIndex parameter only has meaning for the
@@ -95,8 +101,9 @@ public sealed class MonsterRegistry
             // to this same ProcessDueRespawns sweep will try again, exactly matching pinned
             // mob_spawn's own mob_delayspawn retry-later behavior without introducing any new
             // timer/scheduler.
-            if (instance.TryRespawn(now, () => _cellSelector.TrySelectCell(instance.Spawn, 0, out var position) ? (true, position) : (false, default))) count++;
+            if (instance.TryRespawn(now, () => _cellSelector.TrySelectCell(instance.Spawn, 0, out var position) ? (true, position) : (false, default)))
+                respawned.Add(instance);
         }
-        return count;
+        return respawned;
     }
 }

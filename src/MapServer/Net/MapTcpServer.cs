@@ -79,17 +79,43 @@ public sealed class MapTcpServer
             {
                 await Task.Delay(MonsterTickInterval, cancellationToken);
 
-                _world.Monsters.ProcessDueRespawns();
+                // A respawned instance was removed from every session's own _visibleActorIds when
+                // it died (existing vanish-on-death handling) and nothing else re-discovers it -
+                // idle-walk AI does not run again for MinRandomWalkTimeMs+ (4000ms+) after a fresh
+                // respawn, so waiting for a walk to accidentally re-trigger discovery would leave a
+                // respawned, stationary-so-far Poring invisible to any session already looking at
+                // its spawn area for seconds. Reported respawns are fanned out THIS SAME tick,
+                // reusing NotifyMonsterMovedAsync's own "not yet visible, but now in range" discovery
+                // path (CellCrossed is the correct Kind here: the instance is not walking - a fresh
+                // respawn's idle-walk timer has not fired yet - so this always resolves to a plain
+                // 0x09FF stand entry, never a spurious 0x09FD).
+                var respawned = _world.Monsters.ProcessDueRespawns();
                 var changed = _world.MonsterRuntime.ProcessTick();
-                if (changed.Count == 0) continue;
+                if (changed.Count == 0 && respawned.Count == 0) continue;
 
                 foreach (var session in _sessions.Values)
                 {
-                    foreach (var instance in changed)
+                    foreach (var change in changed)
                     {
                         try
                         {
-                            await session.NotifyMonsterMovedAsync(instance, cancellationToken);
+                            await session.NotifyMonsterMovedAsync(change, cancellationToken);
+                        }
+                        catch (IOException)
+                        {
+                            // Client disconnected; HandleClientAsync's own cleanup removes it from _sessions.
+                        }
+                        catch (OperationCanceledException)
+                        {
+                            // Server shutdown.
+                        }
+                    }
+
+                    foreach (var instance in respawned)
+                    {
+                        try
+                        {
+                            await session.NotifyMonsterMovedAsync(new MonsterMovementChange(instance, MonsterMovementChangeKind.CellCrossed), cancellationToken);
                         }
                         catch (IOException)
                         {

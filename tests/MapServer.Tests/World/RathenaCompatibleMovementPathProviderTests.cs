@@ -124,6 +124,58 @@ public sealed class RathenaCompatibleMovementPathProviderTests
         Assert.Empty(path);
     }
 
+    // Pinned add_path (path.cpp:219-244) explicitly REOPENS a node that was already closed once a
+    // strictly better g_cost is found for it ("Put it in open set again", path.cpp:229-231) -
+    // required precisely because path_search's own heuristic is deliberately inadmissible
+    // (Manhattan*MOVE_COST, path.cpp:55: "inadmissible (overestimating) heuristic used by game
+    // client"), so closing a node in heuristic-priority order does not guarantee its g_cost can
+    // never improve later, unlike under an admissible heuristic. This obstacle layout was found by
+    // brute-force search specifically because it makes A* close (5,9)/(6,9)/(7,9) with a
+    // suboptimal g_cost before later discovering a cheaper route through them - refusing to reopen
+    // (i.e. treating `closed` as a permanent barrier once set, the bug this test guards against)
+    // produces a real, different, and strictly MORE EXPENSIVE path on this exact map.
+    [Fact]
+    public void ComputePath_ReopensAClosedNodeWhenACheaperRouteIsLaterFound()
+    {
+        var map = MakeMapFromAscii("test_map",
+        [
+            "............",
+            ".........#..",
+            ".......#....",
+            "........#...",
+            "...#.....##.",
+            "....#.......",
+            ".....#......",
+            "............",
+            "............",
+            "............",
+            "..#.........",
+            "............",
+        ]);
+        var provider = new MapCollisionProvider([map]);
+        var pathfinder = new RathenaCompatibleMovementPathProvider(provider);
+
+        var path = pathfinder.ComputePath("test_map", 1, 1, 10, 10);
+
+        Assert.NotEmpty(path);
+        Assert.All(path, cell => Assert.True(map.IsTraversalCell(cell.X, cell.Y)));
+
+        var cost = 0;
+        for (var i = 1; i < path.Count; i++)
+        {
+            var dx = Math.Abs(path[i].X - path[i - 1].X);
+            var dy = Math.Abs(path[i].Y - path[i - 1].Y);
+            cost += dx == 1 && dy == 1 ? 14 : 10;
+        }
+
+        // Independently computed (Python A* reference reproducing this exact add_path reopening
+        // rule) optimal cost for this map/start/destination is 182. Refusing to reopen closed
+        // nodes finds a real but suboptimal 188-cost path instead - this assertion fails under
+        // that regression, proving reopening is actually exercised and actually matters here, not
+        // merely that "a path exists".
+        Assert.Equal(182, cost);
+    }
+
     [Fact]
     public void ComputePath_IllegalDiagonalCornerCut_IsRejected()
     {

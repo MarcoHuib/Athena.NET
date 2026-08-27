@@ -154,7 +154,7 @@ public sealed class MonsterRegistryTests
         registry.ScheduleRespawnIfNeeded(slow);
 
         clock.Advance(TimeSpan.FromMilliseconds(1500));
-        var respawned = registry.ProcessDueRespawns();
+        var respawned = registry.ProcessDueRespawns().Count;
 
         Assert.Equal(1, respawned);
         Assert.True(fast.IsAlive);
@@ -200,10 +200,10 @@ public sealed class MonsterRegistryTests
         var instance = Assert.Single(registry.AllInstances);
         Assert.False(instance.IsAlive); // Initial spawn attempt (call #1) failed - pending.
 
-        Assert.Equal(0, registry.ProcessDueRespawns()); // Call #2 still fails.
+        Assert.Empty(registry.ProcessDueRespawns()); // Call #2 still fails.
         Assert.False(instance.IsAlive);
 
-        Assert.Equal(1, registry.ProcessDueRespawns()); // Call #3 succeeds.
+        Assert.Single(registry.ProcessDueRespawns()); // Call #3 succeeds.
         Assert.True(instance.IsAlive);
         var position = instance.GetPosition();
         Assert.Equal((ushort)77, position.X);
@@ -229,7 +229,7 @@ public sealed class MonsterRegistryTests
 
         // The existing respawn scheduling is untouched, so a normal registry sweep can still
         // succeed afterwards.
-        Assert.Equal(1, registry.ProcessDueRespawns());
+        Assert.Single(registry.ProcessDueRespawns());
         Assert.True(instance.IsAlive);
     }
 }

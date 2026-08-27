@@ -110,7 +110,7 @@ public sealed class PoringQuestDropIntegrationTests
 
         // --- Respawn ---
         clock.Advance(TimeSpan.FromMilliseconds(target.Spawn.RespawnDelayMs + 1));
-        var respawnedCount = registry.ProcessDueRespawns();
+        var respawnedCount = registry.ProcessDueRespawns().Count;
         Assert.Equal(1, respawnedCount);
         Assert.True(target.IsAlive);
         Assert.Equal(target.Spawn.Mob.MaxHp, target.CurrentHp);
