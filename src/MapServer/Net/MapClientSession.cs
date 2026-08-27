@@ -106,6 +106,13 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
     // reference to that ONE shared scheduler, never a per-session copy.
     private readonly MonsterRuntime? _monsterRuntime;
     private readonly IMovementPathProvider _movementPathProvider;
+    // Same shared collision data every other collision-aware component uses (MonsterRuntime's own
+    // idle-walk pathfinding, RathenaCompatibleMovementPathProvider) - never a second independently
+    // loaded copy, never re-parsing map_cache.dat. Used by BasicAttackDistanceValidator's
+    // battle_check_range line-of-attack check (see PerformDueRepeatAttackAsync). Defaults to
+    // EmptyMapCollisionProvider.Instance on the test-facing path, matching this project's existing
+    // "collision-less means no real map is loaded" convention (MapServerWorld.Build's own default).
+    private readonly IMapCollisionProvider _collisionProvider;
     // Owns authoritative per-cell walk timing (see CharacterMovementState's own doc comment for the
     // rAthena unit_walktoxy_timer trace this replaces). _x/_y/_mapName remain the fields every other
     // handler in this class reads; SyncPositionFromMovement() is the one place that reconciles them
@@ -212,7 +219,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
     // namespace alongside the composed MonsterRegistry's shared one.
     public MapClientSession(int sessionId, TcpClient client, CharServerConnector charConnector, MapServerWorld world)
         : this(sessionId, client, charConnector, world.Maps, monsters: world.Monsters, combat: world.Combat, spatialInspector: world.SpatialInspector,
-               movementPathProvider: world.MovementPathProvider, monsterRuntime: world.MonsterRuntime)
+               movementPathProvider: world.MovementPathProvider, monsterRuntime: world.MonsterRuntime, collisionProvider: world.Collision)
     {
     }
 
@@ -231,7 +238,8 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
         ICharacterInventoryPersistence? inventoryPersistence = null,
         ICharacterInventoryListPersistence? inventoryListPersistence = null,
         MonsterSpatialInspector? spatialInspector = null,
-        MonsterRuntime? monsterRuntime = null)
+        MonsterRuntime? monsterRuntime = null,
+        IMapCollisionProvider? collisionProvider = null)
     {
         SessionId = sessionId;
         _client = client;
@@ -249,6 +257,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
         _monsterRuntime = monsterRuntime;
         _timeProvider = timeProvider ?? TimeProvider.System;
         _movementPathProvider = movementPathProvider ?? new UnverifiedGridLineMovementPathProvider();
+        _collisionProvider = collisionProvider ?? EmptyMapCollisionProvider.Instance;
         _statusEffects = new CharacterStatusEffectState(_timeProvider);
     }
 
@@ -277,7 +286,8 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
         ICharacterInventoryPersistence? inventoryPersistence = null,
         ICharacterInventoryListPersistence? inventoryListPersistence = null,
         MonsterSpatialInspector? spatialInspector = null,
-        MonsterRuntime? monsterRuntime = null)
+        MonsterRuntime? monsterRuntime = null,
+        IMapCollisionProvider? collisionProvider = null)
         : this(
             sessionId,
             client,
@@ -300,7 +310,8 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
             // gameplayStatePersistence.
             inventoryListPersistence ?? AlwaysEmptyInventoryListPersistence.Instance,
             spatialInspector,
-            monsterRuntime)
+            monsterRuntime,
+            collisionProvider)
     {
         _iroAuthRequested = iroAuthenticated;
         _authRequested = iroAuthenticated;
@@ -1274,6 +1285,61 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
             }
         }
 
+        // MANDATORY server-authoritative range re-check, run before EVERY hit (the very first one
+        // included - PerformDueRepeatAttackAsync is the ONE place every attack attempt, immediate
+        // or scheduled, actually executes; see RunRepeatAttackLoopAsync's own doc comment). Pinned
+        // unit_attack_timer_sub (unit.cpp:3251-3266): range=status_get_range(src), then a +1
+        // "chasing" bonus when the TARGET is currently walking (unit_is_walking(target) - the
+        // second half of that pinned condition, "target->type==BL_PC || !CELL_CHKICEWALL", is
+        // unconditionally true for every monster target in this project: Ice Wall is a Wizard
+        // skill-created cell state this codebase has no skill system to ever create, so
+        // CELL_CHKICEWALL can never be true here), then check_distance_client_bl(src,target,range)
+        // - a PC failing this sends clif_movetoattack (0x0139) and returns WITHOUT attacking
+        // (unit.cpp:3255-3258), never with any damage/HP mutation/quest-drop side effect. Player
+        // position is synced to real elapsed walking time FIRST (SyncPositionToNow) so a moving
+        // attacker's position is never read stale, exactly like a fresh movement request would.
+        SyncPositionToNow();
+        var targetPositionForRangeCheck = target.GetPosition();
+        var resolvedRange = BasicAttackRangeResolver.Resolve(equippedWeapon);
+        var effectiveRangeForRangeCheck = resolvedRange + (target.IsWalking ? 1 : 0);
+        var dxForRangeCheck = _x - targetPositionForRangeCheck.X;
+        var dyForRangeCheck = _y - targetPositionForRangeCheck.Y;
+        if (!ClientDistance.CheckDistanceClient(dxForRangeCheck, dyForRangeCheck, effectiveRangeForRangeCheck))
+        {
+            var clientDistance = ClientDistance.DistanceClient(dxForRangeCheck, dyForRangeCheck);
+            MapLogger.Info(
+                $"[iRO MAP DEBUG] Attack range rejected player=({_x},{_y}) targetActorId={expected.TargetActorId} target=({targetPositionForRangeCheck.X},{targetPositionForRangeCheck.Y}) weapon={(equippedWeapon is null ? "unarmed" : $"{equippedWeapon.AegisName}/{equippedWeapon.Id}")} range={effectiveRangeForRangeCheck} clientDistance={clientDistance}");
+            var failurePacket = IroCombatDistancePackets.BuildAttackFailureForDistance(
+                expected.TargetActorId, targetPositionForRangeCheck.X, targetPositionForRangeCheck.Y, _x, _y, (ushort)effectiveRangeForRangeCheck);
+            await WriteAsync(failurePacket, cancellationToken);
+            // Pinned unit_attack_timer_sub's far-away branch never re-arms ud->attacktimer - only
+            // the tail AFTER a real hit lands does that (unit.cpp:3333, "if (attack_continue &&
+            // !status_isdead)"). The repeat-attack intent is therefore cleared here, not merely
+            // skipped-for-one-tick: a far-away 0x0437 must not become a background loop that keeps
+            // re-checking range/spamming 0x0139 while the player is still out of range - the stock
+            // client is expected to walk closer on its own and send a NEW 0x0437 when it does,
+            // which HandleIroAttackRequestAsync already handles as an ordinary fresh attack request.
+            ClearRepeatAttackIfCurrent(expected);
+            return;
+        }
+
+        // battle_check_range's own line-of-attack/obstacle check (battle.cpp:8215-8235), run AFTER
+        // the client-distance check per pinned unit_attack_timer_sub's own ordering (unit.cpp:3251-
+        // 3268: check_distance_client_bl first, THEN battle_check_range). For this project's only
+        // currently-modeled weapon (Knife, Range=1) this is provably a no-op: battle_check_range's
+        // own distance_bl(Chebyshev)<2 short-circuit (battle.cpp:8228-8229) always fires whenever
+        // check_distance_client already passed for a range<=1 weapon (circular distance is always
+        // >= Chebyshev distance for the same offset) - see BasicAttackDistanceValidator's own doc
+        // comment. Implemented faithfully anyway (not skipped) so a future higher-range weapon is
+        // already source-correct around walls/obstacles without revisiting this method.
+        if (!BasicAttackDistanceValidator.HasDirectAttackPath(_collisionProvider, _mapName, _x, _y, targetPositionForRangeCheck.X, targetPositionForRangeCheck.Y, effectiveRangeForRangeCheck))
+        {
+            MapLogger.Info(
+                $"[iRO MAP DEBUG] Attack range rejected (no direct attack path) player=({_x},{_y}) targetActorId={expected.TargetActorId} target=({targetPositionForRangeCheck.X},{targetPositionForRangeCheck.Y}) range={effectiveRangeForRangeCheck}");
+            ClearRepeatAttackIfCurrent(expected);
+            return;
+        }
+
         // QuestDropResolver requires each distinct QuestId its generated rules mention to be
         // resolved beforehand through the real persistence interface (see its own doc comment) -
         // Athena has no materialized "all active quests" concept anywhere else either.
@@ -1321,7 +1387,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
         var tick = unchecked((uint)Environment.TickCount);
         var damageDealt = outcome.HpBefore - outcome.HpAfter;
         MapLogger.Info(
-            $"[iRO MAP DEBUG] Attack accepted attackerAccountId={_accountId} targetActorId={expected.TargetActorId} damage={damageDealt} hpBefore={outcome.HpBefore} hpAfter={outcome.HpAfter} killed={outcome.KilledByThisHit}");
+            $"[iRO MAP DEBUG] Attack accepted attackerAccountId={_accountId} targetActorId={expected.TargetActorId} damage={damageDealt} hpBefore={outcome.HpBefore} hpAfter={outcome.HpAfter} killed={outcome.KilledByThisHit} range={effectiveRangeForRangeCheck} clientDistance={ClientDistance.DistanceClient(dxForRangeCheck, dyForRangeCheck)}");
 
         var damagePacket = IroMonsterCombatPackets.BuildNotifyAct3(
             _accountId,

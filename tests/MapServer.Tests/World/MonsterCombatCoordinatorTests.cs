@@ -20,7 +20,7 @@ public sealed class MonsterCombatCoordinatorTests
 
     private static WeaponItemDefinition MakeKnife() => new(
         Id: 1201, AegisName: "Knife", Name: "Knife", Stackable: false, ClientViewId: 1201,
-        Attack: 17, WeaponLevel: 1, WeaponType: WeaponType.Dagger, EquipLocation: 0x000002,
+        Attack: 17, WeaponLevel: 1, WeaponType: WeaponType.Dagger, Range: 1, EquipLocation: 0x000002,
         Source: new("rAthena", "abc", "db/re/item_db_equip.yml", 1));
 
     private static Func<uint, CharacterQuestStatus> ActiveOnly(uint questId) => id => id == questId ? CharacterQuestStatus.Active : CharacterQuestStatus.Absent;

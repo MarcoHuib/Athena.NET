@@ -29,6 +29,7 @@ internal static class GeneratedItems
         Attack: 17,
         WeaponLevel: 1,
         WeaponType: WeaponType.Dagger,
+        Range: 1,
         EquipLocation: 0x000002,
         Source: new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/re/item_db_equip.yml", 0));
 

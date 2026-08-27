@@ -127,6 +127,14 @@ public static class PacketConstants
     public const short ZcItemPickupAck = 0x0b41;
     public const int ZcItemPickupAckLength = 70;
     public const byte ZcItemPickupResultSuccess = 0;
+    // PINNED-SOURCE-BACKED, NOT capture-verified (no stock-iRO capture of this packet has been
+    // independently obtained yet - see IroCombatDistancePackets.BuildAttackFailureForDistance's
+    // own doc comment). Struct PACKET_ZC_ATTACK_FAILURE_FOR_DISTANCE (packets_struct.hpp:5419-
+    // 5426): PacketType.W targetAID.L targetXPos.W targetYPos.W xPos.W yPos.W currentAttRange.W =
+    // 2+4+2+2+2+2+2 = 16 bytes, fixed length (no name/variable-length trailer). Header
+    // DEFINE_PACKET_HEADER(ZC_ATTACK_FAILURE_FOR_DISTANCE, 0x0139).
+    public const short ZcAttackFailureForDistance = 0x0139;
+    public const int ZcAttackFailureForDistanceLength = 16;
     // Traced pinned rAthena: sendLookType (packets_struct.hpp:317, PACKETVER >= 4, pinned build
     // satisfies this). PACKET_ZC_SPRITE_CHANGE (packets_struct.hpp:2591), wide-field variant
     // (PACKETVER_RE_NUM >= 20180704, pinned build satisfies this): packetType.W AID.L type.B

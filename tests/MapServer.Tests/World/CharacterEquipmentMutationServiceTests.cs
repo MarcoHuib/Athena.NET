@@ -9,7 +9,7 @@ public sealed class CharacterEquipmentMutationServiceTests
     private const uint CharId = 9;
 
     private static readonly WeaponItemDefinition Knife = new(
-        1201, "Knife", "Knife", Stackable: false, ClientViewId: 1201, Attack: 17, WeaponLevel: 1, WeaponType.Dagger, EquipLocation: 0x000002,
+        1201, "Knife", "Knife", Stackable: false, ClientViewId: 1201, Attack: 17, WeaponLevel: 1, WeaponType.Dagger, Range: 1, EquipLocation: 0x000002,
         new WorldSourceInfo("rAthena", "abc", "db/re/item_db_equip.yml", 1));
 
     private static readonly ArmorItemDefinition CottonShirt = new(

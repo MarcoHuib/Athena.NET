@@ -17,6 +17,7 @@ public sealed class ItemDataCompilerTests
             Locations:
               Right_Hand: true
             Attack: 17
+            Range: 1
             WeaponLevel: 1
           - Id: 1202
             AegisName: Sword
@@ -119,6 +120,41 @@ public sealed class ItemDataCompilerTests
         Assert.True(item.Stackable == false);
         Assert.Equal(17, item.Attack);
         Assert.Equal(1, item.WeaponLevel);
+    }
+
+    // Pinned item_db_equip.yml header: "Range  Weapon's attack range. (Default: 0)". Read
+    // generically for every Type: Weapon row - no mob/item-id-specific range check exists
+    // anywhere in ItemDataCompiler (Range is read the same way for every weapon, exactly like
+    // Attack/WeaponLevel).
+    [Fact]
+    public void ReadItemDefinition_Knife1201_RangeIsOneFromPinnedSource()
+    {
+        var item = ItemDataCompiler.ReadItemDefinition(ItemDbFixture, 1201);
+        Assert.Equal(1, item.Range);
+    }
+
+    [Fact]
+    public void ReadItemDefinition_WeaponWithoutExplicitRange_DefaultsToZero()
+    {
+        // Sword (1202) has no Range column in the fixture - pinned default is 0.
+        var item = ItemDataCompiler.ReadItemDefinition(ItemDbFixture, 1202);
+        Assert.Equal(0, item.Range);
+    }
+
+    [Fact]
+    public void ReadItemDefinition_NonWeaponHasNullRange()
+    {
+        var item = ItemDataCompiler.ReadItemDefinition(ItemDbFixture, 6008);
+        Assert.Null(item.Range);
+    }
+
+    [Fact]
+    public void Generate_Weapon_EmitsRangeField()
+    {
+        var item = ItemDataCompiler.ReadItemDefinition(ItemDbFixture, 1201);
+        var generated = ItemDataCompiler.Generate(item, "abc123", "AcademyItems", "Knife", "db/re/item_db_equip.yml", 7);
+
+        Assert.Contains("Range: 1", generated);
     }
 
     [Fact]

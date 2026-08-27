@@ -232,7 +232,7 @@ public sealed class CharacterInventorySessionTests
     {
         var persistence = new FakeInventoryPersistence();
         var session = new CharacterInventorySession(1, 100, persistence);
-        var knife = new WeaponItemDefinition(1201, "Knife", "Knife", Stackable: false, ClientViewId: 1201, Attack: 17, WeaponLevel: 1, WeaponType.Dagger, EquipLocation: 0x000002, new("rAthena", "abc", "db/re/item_db_equip.yml", 1));
+        var knife = new WeaponItemDefinition(1201, "Knife", "Knife", Stackable: false, ClientViewId: 1201, Attack: 17, WeaponLevel: 1, WeaponType.Dagger, Range: 1, EquipLocation: 0x000002, new("rAthena", "abc", "db/re/item_db_equip.yml", 1));
         var cottonShirt = new ArmorItemDefinition(2301, "Cotton_Shirt", "Cotton Shirt", Stackable: false, ClientViewId: 2301, EquipLocation: 0x000010, new("rAthena", "abc", "db/re/item_db_equip.yml", 1));
         var firstAidBox = new UsableItemDefinition(23484, "Firstaid_Box_5", "First aid Box (5)", Stackable: true, ClientViewId: 23484, new("rAthena", "abc", "db/re/item_db_usable.yml", 1));
 

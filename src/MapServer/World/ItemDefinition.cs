@@ -79,6 +79,14 @@ public interface IEquippableItemDefinition
 // needs to branch on weapon type does so on the field's value, mirroring pinned
 // `sd->status.weapon`, not on C# type. See ItemDefinition.ClientViewId for the SEPARATE
 // client-facing appearance/identity value - never derive one from the other.
+// Range is the item_db_equip.yml `Range` column (file header: "Weapon's attack range. (Default:
+// 0)") - the pinned RAW per-item value, before status_calc_pc_'s own floor-at-1 clamp
+// (status.cpp:4216: "if(base_status->rhw.range < 1) base_status->rhw.range = 1;"). Consumers that
+// need the AUTHORITATIVE effective basic-attack range (what status_get_range/rhw.range actually
+// resolves to for combat) must apply that floor themselves - see BasicAttackRangeResolver - rather
+// than assuming every weapon's raw Range is already >=1. Read generically from the pinned Range
+// column for every Type: Weapon row (see ItemDataCompiler.ReadItemDefinition) - never
+// special-cased per item id.
 public sealed record WeaponItemDefinition(
     int Id,
     string AegisName,
@@ -88,6 +96,7 @@ public sealed record WeaponItemDefinition(
     int Attack,
     int WeaponLevel,
     WeaponType WeaponType,
+    int Range,
     uint EquipLocation,
     WorldSourceInfo Source)
     : ItemDefinition(Id, AegisName, Name, Stackable, ClientViewId, Source), IEquippableItemDefinition;
