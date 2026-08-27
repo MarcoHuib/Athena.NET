@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://athenanet.nl/</loc><lastmod>2026-08-27</lastmod></url>
+  <url><loc>https://athenanet.nl/docs.html</loc><lastmod>2026-08-27</lastmod></url>
+  <url><loc>https://athenanet.nl/docs/readme.html</loc><lastmod>2026-08-27</lastmod></url>
+  <url><loc>https://athenanet.nl/docs/onboarding.html</loc><lastmod>2026-08-27</lastmod></url>
+  <url><loc>https://athenanet.nl/docs/agents.html</loc><lastmod>2026-08-27</lastmod></url>
+  <url><loc>https://athenanet.nl/docs/claude.html</loc><lastmod>2026-08-27</lastmod></url>
+  <url><loc>https://athenanet.nl/docs/docs-installation.html</loc><lastmod>2026-08-27</lastmod></url>
+  <url><loc>https://athenanet.nl/docs/docs-configuration.html</loc><lastmod>2026-08-27</lastmod></url>
+  <url><loc>https://athenanet.nl/docs/docs-run-locally.html</loc><lastmod>2026-08-27</lastmod></url>
+  <url><loc>https://athenanet.nl/docs/docs-aspire.html</loc><lastmod>2026-08-27</lastmod></url>
+  <url><loc>https://athenanet.nl/docs/docs-docker-compose.html</loc><lastmod>2026-08-27</lastmod></url>
+  <url><loc>https://athenanet.nl/docs/docs-migrations.html</loc><lastmod>2026-08-27</lastmod></url>
+  <url><loc>https://athenanet.nl/docs/docs-sql-edge.html</loc><lastmod>2026-08-27</lastmod></url>
+  <url><loc>https://athenanet.nl/docs/docs-production.html</loc><lastmod>2026-08-27</lastmod></url>
+  <url><loc>https://athenanet.nl/docs/docs-architecture-roadmap.html</loc><lastmod>2026-08-27</lastmod></url>
+  <url><loc>https://athenanet.nl/docs/docs-client-gateway-architecture.html</loc><lastmod>2026-08-27</lastmod></url>
+  <url><loc>https://athenanet.nl/docs/docs-orleans-game-engine-architecture.html</loc><lastmod>2026-08-27</lastmod></url>
+  <url><loc>https://athenanet.nl/docs/docs-game-content-map-lifecycle-architecture.html</loc><lastmod>2026-08-27</lastmod></url>
+  <url><loc>https://athenanet.nl/docs/docs-checklists.html</loc><lastmod>2026-08-27</lastmod></url>
+  <url><loc>https://athenanet.nl/docs/docs-scripts.html</loc><lastmod>2026-08-27</lastmod></url>
+  <url><loc>https://athenanet.nl/docs/tools-worlddataimporter-readme.html</loc><lastmod>2026-08-27</lastmod></url>
+  <url><loc>https://athenanet.nl/docs/data-world-readme.html</loc><lastmod>2026-08-27</lastmod></url>
+  <url><loc>https://athenanet.nl/docs/src-mapserver-generated-readme.html</loc><lastmod>2026-08-27</lastmod></url>
+  <url><loc>https://athenanet.nl/docs/src-mapserver-gameplay-rules-prerenewal-readme.html</loc><lastmod>2026-08-27</lastmod></url>
+  <url><loc>https://athenanet.nl/docs/ai-readme.html</loc><lastmod>2026-08-27</lastmod></url>
+  <url><loc>https://athenanet.nl/docs/ai-iro-2026-wire.html</loc><lastmod>2026-08-27</lastmod></url>
+  <url><loc>https://athenanet.nl/docs/ai-login-server.html</loc><lastmod>2026-08-27</lastmod></url>
+  <url><loc>https://athenanet.nl/docs/ai-loginserver-parity.html</loc><lastmod>2026-08-27</lastmod></url>
+  <url><loc>https://athenanet.nl/docs/ai-char-server.html</loc><lastmod>2026-08-27</lastmod></url>
+  <url><loc>https://athenanet.nl/docs/ai-charserver-parity.html</loc><lastmod>2026-08-27</lastmod></url>
+  <url><loc>https://athenanet.nl/docs/ai-map-server.html</loc><lastmod>2026-08-27</lastmod></url>
+  <url><loc>https://athenanet.nl/docs/ai-mapserver-parity.html</loc><lastmod>2026-08-27</lastmod></url>
+  <url><loc>https://athenanet.nl/docs/ai-world-data.html</loc><lastmod>2026-08-27</lastmod></url>
+  <url><loc>https://athenanet.nl/docs/ai-data-and-tools.html</loc><lastmod>2026-08-27</lastmod></url>
+</urlset>
