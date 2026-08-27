@@ -614,6 +614,14 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
         IReadOnlyList<(ushort X, ushort Y)> crossed;
         PendingMovementArrival? arrival;
         string mapAtAdvance;
+        // Set only when a deferred retarget (HandleIroMovementAsync's own "mid-walk" branch) was
+        // actually consumed and applied THIS call - used purely to decide whether to send a fresh
+        // 0x0087 + visibility refresh below, after the gate is released (see this method's own
+        // "Movement retarget applied" diagnostic and requirement 1's pinned clif_walkok trace:
+        // unit_walktoxy_sub's own unit_walktoxy_nextcell(*bl, true, ...) call is exactly what makes
+        // clif_move+clif_walkok fire together at this cell boundary, carrying the REPLACEMENT path's
+        // src=reached-cell/dst=latest-requested-destination - never the stale click-time response).
+        (ushort FromX, ushort FromY, ResolvedMovementTarget Resolved)? appliedRetarget = null;
         await _movementGate.WaitAsync(cancellationToken);
         try
         {
@@ -624,10 +632,46 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
             _x = movement.CurrentX;
             _y = movement.CurrentY;
             _positionDirty = true;
+
+            // Pinned unit_walktoxy_timer's own change_walk_target check (unit.cpp:738-744), run
+            // immediately after this cell arrival, BEFORE ever considering _pendingArrival for the
+            // walk's ORIGINAL destination - a pending retarget always takes priority the moment a
+            // cell boundary is reached, exactly matching pinned source's own ordering. Requirement
+            // 7: recompute (never reuse) the warp/script intersection here, from the cell the
+            // character ACTUALLY just reached - the ORIGINAL _pendingArrival is unconditionally
+            // replaced (or cleared to null, if the replacement path has none) by this recomputation,
+            // so a stale warp/OnTouch belonging to the walk that was just replaced can never fire.
+            var pendingRetarget = movement.ConsumePendingRetarget();
+            if (pendingRetarget is { } retarget)
+            {
+                var fromX = _x;
+                var fromY = _y;
+                var resolved = ResolveMovementTarget(fromX, fromY, retarget.X, retarget.Y);
+                movement.StartWalk(resolved.Path, CurrentCellDurationMs(), _timeProvider.GetUtcNow());
+                _pendingArrival = resolved.Arrival;
+                appliedRetarget = (fromX, fromY, resolved);
+            }
+
             arrival = movement.IsMoving ? null : _pendingArrival; // Only relevant once the walk actually finished.
             mapAtAdvance = _mapName;
         }
         finally { _movementGate.Release(); }
+
+        if (appliedRetarget is { } applied)
+        {
+            MapLogger.Info(
+                $"[iRO MAP DEBUG] Movement retarget applied from=({applied.FromX},{applied.FromY}) target=({applied.Resolved.TargetX},{applied.Resolved.TargetY})");
+            var retargetResponse = IroMovementPackets.BuildResponse(
+                unchecked((uint)Environment.TickCount), applied.FromX, applied.FromY, applied.Resolved.TargetX, applied.Resolved.TargetY);
+            MapLogger.Info(
+                $"[iRO MAP DEBUG] Sending 0x0087 len=12 from=({applied.FromX},{applied.FromY}) to=({applied.Resolved.TargetX},{applied.Resolved.TargetY}) (mid-walk retarget)");
+            await WriteAsync(retargetResponse, cancellationToken);
+            if (!applied.Resolved.IntersectsWarp && !applied.Resolved.IntersectsScript)
+            {
+                await SendVisibleWarpActorsAsync(cancellationToken);
+                await SendVisibleMonsterActorsAsync(cancellationToken);
+            }
+        }
 
         if (arrival is null) return;
 
@@ -986,6 +1030,42 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
         return MovementSpeedCalculator.CellDurationMs(haste);
     }
 
+    // Resolves a requested destination into: the actual movement target (truncated to the first
+    // warp/script-touch cell along the route, if any, exactly like the destination itself
+    // otherwise), the path to it from `fromX,fromY`, and the PendingMovementArrival to attach - one
+    // shared computation used both by a fresh walk start (HandleIroMovementAsync) and by applying a
+    // deferred mid-walk retarget at the cell boundary where it takes effect
+    // (ProcessDueMovementAsync) - requirement 7's "recompute pending arrival according to the
+    // ultimately active path" means this warp/script intersection logic must run again from
+    // wherever the character ACTUALLY is when the retarget is applied, never reused from click-time.
+    private readonly record struct ResolvedMovementTarget(
+        ushort TargetX, ushort TargetY, IReadOnlyList<(ushort X, ushort Y)> Path, PendingMovementArrival? Arrival,
+        bool IntersectsWarp, bool IntersectsScript, WarpIntersection Warp, ScriptTouchIntersection Script);
+
+    private ResolvedMovementTarget ResolveMovementTarget(ushort fromX, ushort fromY, ushort requestedX, ushort requestedY)
+    {
+        var intersectsWarp = _worldMapRegistry.TryFindFirstWarpAlongRoute(
+            _mapName, fromX, fromY, requestedX, requestedY, out var intersection);
+        ScriptTouchIntersection scriptIntersection = default;
+        var intersectsScript = !HasActiveScript && _worldMapRegistry.TryFindFirstScriptTouchEnterAlongRoute(
+            _mapName, fromX, fromY, requestedX, requestedY, out scriptIntersection);
+        if (intersectsWarp && intersectsScript && Distance(fromX, fromY, scriptIntersection.X, scriptIntersection.Y) < Distance(fromX, fromY, intersection.X, intersection.Y))
+            intersectsWarp = false;
+        else if (intersectsWarp)
+            intersectsScript = false;
+
+        var targetX = intersectsWarp ? intersection.X : intersectsScript ? scriptIntersection.X : requestedX;
+        var targetY = intersectsWarp ? intersection.Y : intersectsScript ? scriptIntersection.Y : requestedY;
+        var path = _movementPathProvider.ComputePath(_mapName, fromX, fromY, targetX, targetY);
+        PendingMovementArrival? arrival = intersectsWarp
+            ? new PendingWarpArrival(intersection.Warp)
+            : intersectsScript
+                ? new PendingScriptTouchArrival(scriptIntersection.Binding.Entity, scriptIntersection.Binding.Actor.ActorId, scriptIntersection.Binding.Script)
+                : null;
+
+        return new ResolvedMovementTarget(targetX, targetY, path, arrival, intersectsWarp, intersectsScript, intersection, scriptIntersection);
+    }
+
     private async Task HandleIroMovementAsync(byte[] packet, CancellationToken cancellationToken)
     {
         if (!IroMovementPackets.TryParseRequest(packet, out var request))
@@ -994,48 +1074,41 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
             return;
         }
 
-        // Advance any walk already in progress to the character's ACTUAL current cell before doing
-        // anything else - this is the fix for the diagnosed bug: a second movement request must
-        // retarget from wherever the character has really walked to by now, not from a previous
-        // request's destination that the client may not have visually reached yet (see
-        // CharacterMovementState.StartWalk's doc comment for the exact rAthena unit_walktoxy
-        // mid-walk-retarget citation this mirrors).
+        // Pinned unit_walktoxy (unit.cpp:888) unconditionally calls unit_stop_attack REGARDLESS of
+        // whether this becomes a fresh walk or a mid-walk retarget - a real client movement request
+        // always cancels any active repeat attack.
+        await _attackGate.WaitAsync(cancellationToken);
+        try { _repeatAttack = null; }
+        finally { _attackGate.Release(); }
+
+        // Pinned unit_walktoxy (unit.cpp:884-899): "ud->to_x = x; ud->to_y = y; ... if
+        // (ud->walktimer != INVALID_TIMER) { ud->state.change_walk_target = 1; return 1; }" - a
+        // retarget arriving WHILE a step is already in flight does not touch the in-flight step at
+        // all (no SyncPositionToNow/path recompute/StartWalk here): it only records the desired
+        // destination, deferring everything else to the next real cell boundary
+        // (ProcessDueMovementAsync's own ConsumePendingRetarget handling) - exactly matching pinned
+        // unit_walktoxy_timer's own change_walk_target check (unit.cpp:738-744). This is the fix for
+        // the live stutter/jump-forward bug: resetting _stepStartedAt here on every rapid 0x035F
+        // would discard whatever real progress had already elapsed through the current cell.
+        var movementState = EnsureMovementState();
+        if (movementState.IsMoving)
+        {
+            movementState.RequestRetarget(request.TargetX, request.TargetY);
+            MapLogger.Info(
+                $"[iRO MAP DEBUG] Movement retarget deferred current=({movementState.CurrentX},{movementState.CurrentY}) requested=({request.TargetX},{request.TargetY}) nextCell={movementState.NextCell} currentStepDueAt={movementState.NextStepDueAt:O}");
+            return;
+        }
+
+        // Not currently moving: matches pinned unit_walktoxy's OTHER branch (walktimer ==
+        // INVALID_TIMER) - unit_walktoxy_sub runs immediately, computing the path from wherever the
+        // character stands right now and beginning to walk it without waiting for any cell boundary.
         SyncPositionToNow();
         var fromX = _x;
         var fromY = _y;
         MapLogger.Info(
             $"[iRO MAP DEBUG] Movement request from=({fromX},{fromY}) target=({request.TargetX},{request.TargetY})");
 
-        // Pinned unit_walktoxy (unit.cpp:888) unconditionally calls unit_stop_attack before
-        // starting a walk - a real client movement request cancels any active repeat attack.
-        await _attackGate.WaitAsync(cancellationToken);
-        try { _repeatAttack = null; }
-        finally { _attackGate.Release(); }
-
-        var intersectsWarp = _worldMapRegistry.TryFindFirstWarpAlongRoute(
-            _mapName,
-            fromX,
-            fromY,
-            request.TargetX,
-            request.TargetY,
-            out var intersection);
-        ScriptTouchIntersection scriptIntersection = default;
-        var intersectsScript = !HasActiveScript && _worldMapRegistry.TryFindFirstScriptTouchEnterAlongRoute(
-            _mapName, fromX, fromY, request.TargetX, request.TargetY, out scriptIntersection);
-        if (intersectsWarp && intersectsScript && Distance(fromX, fromY, scriptIntersection.X, scriptIntersection.Y) < Distance(fromX, fromY, intersection.X, intersection.Y))
-            intersectsWarp = false;
-        else if (intersectsWarp)
-            intersectsScript = false;
-        var movementTargetX = intersectsWarp ? intersection.X : intersectsScript ? scriptIntersection.X : request.TargetX;
-        var movementTargetY = intersectsWarp ? intersection.Y : intersectsScript ? scriptIntersection.Y : request.TargetY;
-
-        // Start (or retarget) the timed walk from the current cell toward movementTarget, rather
-        // than jumping _x/_y there immediately. The wire response below still reports the full
-        // destination (unchanged, capture-proven 0x0087 semantics) - only the SERVER-authoritative
-        // position now advances gradually, matching rAthena. Computed before the response is sent so
-        // that, by the time a caller observes the response, the new walk is already authoritative -
-        // avoiding a race where a caller could read stale position between the write and this update.
-        var path = _movementPathProvider.ComputePath(_mapName, fromX, fromY, movementTargetX, movementTargetY);
+        var resolved = ResolveMovementTarget(fromX, fromY, request.TargetX, request.TargetY);
         var now = _timeProvider.GetUtcNow();
 
         // Warp/OnTouch must fire only when the destination cell is actually reached over real
@@ -1046,12 +1119,8 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
         await _movementGate.WaitAsync(cancellationToken);
         try
         {
-            EnsureMovementState().StartWalk(path, CurrentCellDurationMs(), now);
-            _pendingArrival = intersectsWarp
-                ? new PendingWarpArrival(intersection.Warp)
-                : intersectsScript
-                    ? new PendingScriptTouchArrival(scriptIntersection.Binding.Entity, scriptIntersection.Binding.Actor.ActorId, scriptIntersection.Binding.Script)
-                    : null;
+            movementState.StartWalk(resolved.Path, CurrentCellDurationMs(), now);
+            _pendingArrival = resolved.Arrival;
         }
         finally { _movementGate.Release(); }
         _positionDirty = true;
@@ -1061,20 +1130,20 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
             unchecked((uint)Environment.TickCount),
             fromX,
             fromY,
-            movementTargetX,
-            movementTargetY);
+            resolved.TargetX,
+            resolved.TargetY);
         MapLogger.Info(
-            $"[iRO MAP DEBUG] Sending 0x0087 len=12 from=({fromX},{fromY}) to=({movementTargetX},{movementTargetY})");
+            $"[iRO MAP DEBUG] Sending 0x0087 len=12 from=({fromX},{fromY}) to=({resolved.TargetX},{resolved.TargetY})");
         await WriteAsync(response, cancellationToken);
 
-        if (intersectsWarp)
+        if (resolved.IntersectsWarp)
         {
             MapLogger.Info(
-                $"[iRO MAP DEBUG] Movement path intersects warp map='{_mapName}' at=({intersection.X},{intersection.Y}) requestedTarget=({request.TargetX},{request.TargetY}) (deferred to actual arrival)");
+                $"[iRO MAP DEBUG] Movement path intersects warp map='{_mapName}' at=({resolved.Warp.X},{resolved.Warp.Y}) requestedTarget=({request.TargetX},{request.TargetY}) (deferred to actual arrival)");
         }
-        else if (intersectsScript)
+        else if (resolved.IntersectsScript)
         {
-            MapLogger.Info($"[iRO MAP DEBUG] Movement path intersects script trigger entity='{scriptIntersection.Binding.Entity.Id}' map='{_mapName}' at=({scriptIntersection.X},{scriptIntersection.Y}) (deferred to actual arrival)");
+            MapLogger.Info($"[iRO MAP DEBUG] Movement path intersects script trigger entity='{resolved.Script.Binding.Entity.Id}' map='{_mapName}' at=({resolved.Script.X},{resolved.Script.Y}) (deferred to actual arrival)");
         }
         else
         {
