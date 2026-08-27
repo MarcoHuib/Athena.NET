@@ -13,7 +13,8 @@ public sealed record MapAuthOkData(
     ushort Y,
     byte Direction,
     ushort Font,
-    byte Sex)
+    byte Sex,
+    string CharacterName = "")
 {
-    public const int MinimumLength = 2 + 2 + 4 + 4 + 4 + 4 + 4 + 1 + 4 + PacketConstants.MapNameLength + 2 + 2 + 1 + 2 + 1;
+    public const int MinimumLength = 2 + 2 + 4 + 4 + 4 + 4 + 4 + 1 + 4 + PacketConstants.MapNameLength + 2 + 2 + 1 + 2 + 1 + PacketConstants.NameLength;
 }

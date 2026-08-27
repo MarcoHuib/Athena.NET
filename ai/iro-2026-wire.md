@@ -379,6 +379,21 @@ byte 66 is the position: `tutorial03.BMP` with position 4 is followed later by a
 empty filename with position 255 to clear the image. Athena uses this exact layout
 for generated rAthena `cutin`; it does not invent a packet.
 
+### Focused Lumin interaction evidence
+
+The sanitized `lumin-packet-export.json` export from `Full-izlude.pcapng`
+(SHA-256 `ee3bcbf2429d944c512d2ced10ce9c8db099dec79ad499f23b977462a0af2ec9`)
+proves the existing dialogue lifecycle also applies to Lumin. Frame 6029 is
+client `0x0090` interaction; frames 6030/6032 split one `0x00B4` across TCP
+payloads; frames 6289/6292 split `0x00B7`; frame 6586 selects one-based menu
+index 2 with an opaque trailing byte; frames 6587/6589 include the active
+character's actual name in dialogue; frame 6610 sends structured `0x0229`
+effect state 4 for Lumin's actor before subsequent dialogue in the same TCP
+payload; and frame 6720 is client `0x0146` close. Frame 6275 independently
+uses `0x01B3` for `nov_lumin01.bmp`. The capture's actor ID, character name,
+dialogue wording, and opaque trailing bytes are evidence only and are never
+replayed or copied into generated content.
+
 ## Explicitly disproven assumptions for this target
 Do not reintroduce these without newer verified iRO evidence:
 - Login success is `0x0AC4` with 160-byte world entries. **Disproven.**

@@ -137,6 +137,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
     private uint _accountId;
     private uint _charId;
     private uint _loginId1;
+    private string _characterName = string.Empty;
     private string _mapName = string.Empty;
     private ushort _x;
     private ushort _y;
@@ -428,6 +429,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
         // inventory read - never a second independent CharServer fetch.
         _inventory = inventoryRead.Snapshot;
         _equipment = CharacterEquipmentSnapshot.FromInventory(_inventory!);
+        _characterName = authOk.CharacterName;
         _authenticated = true; _positionDirty = false;
         MapLogger.Info($"[iRO MAP DEBUG] 0x0C1F MapAuthNode authentication succeeded accountId={authOk.AccountId} charId={authOk.CharId} sessionMatch=true gameplayStateVersion={state.Version}");
         EnsureRuntimeLoopsStarted();
@@ -2153,6 +2155,11 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
 
     async Task INpcScriptHost.MesAsync(uint actorId, string text, CancellationToken cancellationToken) =>
         await WriteAsync(IroNpcDialoguePackets.BuildMessage(actorId, text), cancellationToken);
+
+    string INpcScriptHost.GetActiveCharacterName() =>
+        !string.IsNullOrWhiteSpace(_characterName)
+            ? _characterName
+            : throw new InvalidOperationException("The active authenticated character name is not loaded.");
 
     async Task INpcScriptHost.NextAsync(uint actorId, CancellationToken cancellationToken)
     {

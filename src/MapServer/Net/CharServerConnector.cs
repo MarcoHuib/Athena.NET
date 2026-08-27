@@ -480,7 +480,7 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
         return true;
     }
 
-    private static bool TryParseAuthOk(byte[] packet, out MapAuthOkData authOk)
+    internal static bool TryParseAuthOk(byte[] packet, out MapAuthOkData authOk)
     {
         authOk = default!;
         if (packet.Length < 4)
@@ -512,6 +512,7 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
         var direction = packet[49];
         var font = BinaryPrimitives.ReadUInt16LittleEndian(packet.AsSpan(50, 2));
         var sex = packet[52];
+        var characterName = ReadFixedString(packet.AsSpan(53, PacketConstants.NameLength));
 
         authOk = new MapAuthOkData(
             accountId,
@@ -526,7 +527,8 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
             y,
             direction,
             font,
-            sex);
+            sex,
+            characterName);
 
         return true;
     }

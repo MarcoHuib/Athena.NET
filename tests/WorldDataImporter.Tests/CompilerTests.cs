@@ -116,6 +116,71 @@ public sealed class CompilerTests
     }
 
     [Fact]
+    public void StrCharInfoName_LowersAsDistinctCharacterInfoAndEmitsInsideConcatenation()
+    {
+        var syntax = new RathenaParser("OnClick: mes \"[\" + strcharinfo(0) + \"]\"; mes \"I am \" + strcharinfo(0) + \"!\";", "fixture.txt").ParseCompilationUnit();
+        var lowered = RathenaScriptLowerer.LowerEvent(syntax, "OnClick");
+        Assert.True(lowered.Success, string.Join('\n', lowered.Diagnostics.Select(diagnostic => diagnostic.Message)));
+
+        var expressions = lowered.Script!.Statements.Cast<LoweredCommand>().Select(command => command.Arguments.Single()).ToArray();
+        Assert.All(expressions, expression => Assert.Contains(Flatten(expression), item => item is LoweredCharacterInfo { InfoType: 0 }));
+
+        var metadata = new GeneratedNpcMetadata("Athena.Generated", "CharacterNameScript", "npc:test:name", "Npc", "Name", "test", 1, 2, 0, 45, 0, 0, "OnClick", null, "fixture.txt", 1, 1, "commit");
+        var generated = NpcScriptEmitter.Emit(lowered.Script, metadata);
+        Assert.Equal(2, System.Text.RegularExpressions.Regex.Matches(generated, "context\\.StrCharInfo\\(0\\)").Count);
+        Assert.Contains("\"I am \" + context.StrCharInfo(0)", generated);
+    }
+
+    [Theory]
+    [InlineData("strcharinfo(1)")]
+    [InlineData("strcharinfo(.@mode)")]
+    public void StrCharInfoUnsupportedMode_FailsLoweringLoudly(string expression)
+    {
+        var syntax = new RathenaParser($"OnClick: mes {expression};", "fixture.txt").ParseCompilationUnit();
+        var lowered = RathenaScriptLowerer.LowerEvent(syntax, "OnClick");
+
+        Assert.False(lowered.Success);
+        var diagnostic = Assert.Single(lowered.Diagnostics, item => item.Code == "RAT4004");
+        Assert.Contains("Only strcharinfo(0)", diagnostic.Message);
+    }
+
+    [Fact]
+    public void StandaloneSelect_EmitsContinuationAndDiscardsResult()
+    {
+        var syntax = new RathenaParser("OnClick: select(\"One\", \"Two\");", "fixture.txt").ParseCompilationUnit();
+        var lowered = RathenaScriptLowerer.LowerEvent(syntax, "OnClick");
+        Assert.True(lowered.Success);
+        var metadata = new GeneratedNpcMetadata("Athena.Generated", "SelectScript", "npc:test:select", "Npc", "Select", "test", 1, 2, 0, 45, 0, 0, "OnClick", null, "fixture.txt", 1, 1, "commit");
+
+        var generated = NpcScriptEmitter.Emit(lowered.Script!, metadata);
+
+        Assert.Contains("await context.SelectAsync([\"One\", \"Two\"], cancellationToken);", generated);
+    }
+
+    [Fact]
+    public void End_EmitsTerminatingReturnInsteadOfFallingThrough()
+    {
+        var syntax = new RathenaParser("OnClick: if (1) { close2; end; } mes \"unreachable on branch\";", "fixture.txt").ParseCompilationUnit();
+        var lowered = RathenaScriptLowerer.LowerEvent(syntax, "OnClick");
+        Assert.True(lowered.Success);
+        var metadata = new GeneratedNpcMetadata("Athena.Generated", "EndScript", "npc:test:end", "Npc", "End", "test", 1, 2, 0, 45, 0, 0, "OnClick", null, "fixture.txt", 1, 1, "commit");
+
+        var generated = NpcScriptEmitter.Emit(lowered.Script!, metadata);
+
+        Assert.Contains("await context.Close2Async(cancellationToken);\n            return;", generated);
+    }
+
+    private static IEnumerable<LoweredScriptExpression> Flatten(LoweredScriptExpression expression)
+    {
+        yield return expression;
+        if (expression is LoweredBinary binary)
+        {
+            foreach (var item in Flatten(binary.Left)) yield return item;
+            foreach (var item in Flatten(binary.Right)) yield return item;
+        }
+    }
+
+    [Fact]
     public async Task RealAcademyWorld_GenerationIsDeterministicAndMatchesCompiledAcademyTree()
     {
         var repository = FindRepositoryRoot();
@@ -130,7 +195,6 @@ public sealed class CompilerTests
                 "--source-root", Path.Combine(repository, "legacy/rathena/npc/re/warps/cities"),
                 "--name", "Wounded Swordsman#intro_npc02_iz_int", "--name", "Wounded Swordsman#intro_npc01_iz_int",
                 "--name", "Captain Carocc#intro_npc03", "--name", "Lumin#new_ship",
-                "--no-behavior", "Lumin#new_ship",
                 "--warp-name", "#ship_out", "--warp-name", "#intro_to_izlude",
                 "--namespace", "Athena.Net.MapServer.Generated.World.Izlude.Academy",
                 "--rathena-commit", "e985006171d2eb320ee512a653f4c83aea3d81b6",
@@ -172,11 +236,17 @@ public sealed class CompilerTests
             Assert.Contains("await context.StartStatusAsync(RathenaConstants.SC_INCREASEAGI, 240000, 10, cancellationToken);", captainCaroccScript);
             Assert.Contains("await context.GrantExperienceAsync(600, 600, cancellationToken);", captainCaroccScript);
 
+            var luminScript = scriptFiles.Select(File.ReadAllText).Single(source => source.Contains("LuminOnClickScript"));
+            Assert.Contains("new QuestId(7471)", luminScript);
+            Assert.Contains("context.StrCharInfo(0)", luminScript);
+            Assert.Contains("await context.SetNpcCloakAsync(null, true, cancellationToken);", luminScript);
+
             var academyNpcs = await File.ReadAllTextAsync(Path.Combine(academyDir, "AcademyNpcs.cs"));
             Assert.Contains("\"Wounded Swordsman#intro_npc02_iz_int\"", academyNpcs);
             Assert.Contains("CaptainCarocc = new(", academyNpcs);
             Assert.Contains("static () => new Athena.Net.MapServer.Generated.World.Izlude.Academy.Scripts.CaptainCaroccOnClickScript()", academyNpcs);
             Assert.Contains("Lumin = new(", academyNpcs);
+            Assert.Contains("static () => new Athena.Net.MapServer.Generated.World.Izlude.Academy.Scripts.LuminOnClickScript()", academyNpcs);
 
             var academyWarpTriggers = await File.ReadAllTextAsync(Path.Combine(academyDir, "AcademyWarpTriggers.cs"));
             Assert.Contains("\"#ship_out\"", academyWarpTriggers);

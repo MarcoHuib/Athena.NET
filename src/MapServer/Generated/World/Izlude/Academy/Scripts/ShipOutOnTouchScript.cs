@@ -21,6 +21,7 @@ internal sealed class ShipOutOnTouchScript : INpcScript
         local_map = ("int_land" + local_num);
         await context.SetSavePointAsync(local_map, 77, 101, cancellationToken);
         await context.WarpAsync(local_map, 85, 107, cancellationToken);
+        return;
 #line default
     }
 }

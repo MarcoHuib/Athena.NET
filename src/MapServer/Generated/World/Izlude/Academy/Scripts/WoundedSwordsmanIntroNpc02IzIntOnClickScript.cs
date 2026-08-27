@@ -46,6 +46,7 @@ internal sealed class WoundedSwordsmanIntroNpc02IzIntOnClickScript : INpcScript
         await context.MesAsync("You can check your quest status there anytime.", cancellationToken);
         await context.Close2Async(cancellationToken);
         await context.CutinAsync("", (byte)255, cancellationToken);
+        return;
 #line default
     }
 }

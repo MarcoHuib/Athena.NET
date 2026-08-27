@@ -15,6 +15,7 @@ internal sealed record LoweredLiteral(object Value, SourceSpan Span) : LoweredSc
 internal sealed record LoweredVariable(string Name, RathenaVariableScope Scope, bool IsString, SourceSpan Span) : LoweredScriptExpression(Span);
 internal sealed record LoweredBinary(LoweredScriptExpression Left, TokenKind Operator, LoweredScriptExpression Right, SourceSpan Span) : LoweredScriptExpression(Span);
 internal sealed record LoweredCall(string Name, IReadOnlyList<LoweredScriptExpression> Arguments, SourceSpan Span) : LoweredScriptExpression(Span);
+internal sealed record LoweredCharacterInfo(int InfoType, SourceSpan Span) : LoweredScriptExpression(Span);
 internal sealed record LoweredIdentifier(string Name, SourceSpan Span) : LoweredScriptExpression(Span);
 
 internal sealed record ScriptLoweringResult(LoweredNpcScript? Script, IReadOnlyList<CompilerDiagnostic> Diagnostics)
@@ -30,7 +31,7 @@ internal static class RathenaScriptLowerer
     };
     private static readonly HashSet<string> Functions = new(StringComparer.OrdinalIgnoreCase)
     {
-        "select", "isbegin_quest", "strnpcinfo", "replacestr"
+        "select", "isbegin_quest", "strnpcinfo", "strcharinfo", "replacestr"
     };
 
     public static ScriptLoweringResult LowerEvent(CompilationUnitSyntax syntax, string eventName)
@@ -65,7 +66,7 @@ internal static class RathenaScriptLowerer
         ExpressionStatementSyntax { Expression: CallExpressionSyntax { Target: IdentifierExpressionSyntax identifier } call }
             when Commands.Contains(identifier.Name) => new LoweredCommand(identifier.Name.ToLowerInvariant(), call.Arguments.Select(argument => LowerExpression(argument, diagnostics)).ToArray(), false, call.Span),
         ExpressionStatementSyntax expression => UnsupportedStatement(expression, diagnostics),
-        CommandStatementSyntax command when Commands.Contains(command.Name) => new LoweredCommand(command.Name.ToLowerInvariant(), command.Arguments.Select(argument => LowerExpression(argument, diagnostics)).ToArray(), command.Name.Equals("close", StringComparison.OrdinalIgnoreCase), command.Span),
+        CommandStatementSyntax command when Commands.Contains(command.Name) => new LoweredCommand(command.Name.ToLowerInvariant(), command.Arguments.Select(argument => LowerExpression(argument, diagnostics)).ToArray(), command.Name.Equals("close", StringComparison.OrdinalIgnoreCase) || command.Name.Equals("end", StringComparison.OrdinalIgnoreCase), command.Span),
         _ => UnsupportedStatement(syntax, diagnostics),
     };
 
@@ -80,12 +81,22 @@ internal static class RathenaScriptLowerer
         LiteralExpressionSyntax literal => new LoweredLiteral(literal.Value, literal.Span),
         VariableExpressionSyntax variable when variable.Scope == RathenaVariableScope.Local => new LoweredVariable(variable.Name, variable.Scope, variable.IsString, variable.Span),
         BinaryExpressionSyntax binary => new LoweredBinary(LowerExpression(binary.Left, diagnostics), binary.Operator, LowerExpression(binary.Right, diagnostics), binary.Span),
+        CallExpressionSyntax { Target: IdentifierExpressionSyntax { Name: var name } } call when name.Equals("strcharinfo", StringComparison.OrdinalIgnoreCase) => LowerCharacterInfo(call, diagnostics),
         CallExpressionSyntax { Target: IdentifierExpressionSyntax identifier } call when Functions.Contains(identifier.Name) => new LoweredCall(identifier.Name.ToLowerInvariant(), call.Arguments.Select(argument => LowerExpression(argument, diagnostics)).ToArray(), call.Span),
         IdentifierExpressionSyntax identifier when identifier.Name.Equals("bc_self", StringComparison.OrdinalIgnoreCase) => new LoweredLiteral(3L, identifier.Span),
         IdentifierExpressionSyntax identifier when identifier.Name.Equals("nav_none", StringComparison.OrdinalIgnoreCase) => new LoweredLiteral(0L, identifier.Span),
         IdentifierExpressionSyntax identifier => new LoweredIdentifier(identifier.Name, identifier.Span),
         _ => UnsupportedExpression(syntax, diagnostics),
     };
+
+    private static LoweredScriptExpression LowerCharacterInfo(CallExpressionSyntax call, List<CompilerDiagnostic> diagnostics)
+    {
+        if (call.Arguments.Count == 1 && call.Arguments[0] is LiteralExpressionSyntax { Value: long mode } && mode == 0)
+            return new LoweredCharacterInfo(0, call.Span);
+
+        diagnostics.Add(new("RAT4004", "Error", "Only strcharinfo(0) (active character name) is supported for generated execution.", call.Span, "strcharinfo"));
+        return new LoweredCharacterInfo(0, call.Span);
+    }
 
     private static LoweredScriptExpression UnsupportedExpression(ExpressionSyntax expression, List<CompilerDiagnostic> diagnostics)
     {

@@ -17,6 +17,7 @@ internal sealed class WoundedSwordsmanIntroNpc01IzIntOnClickScript : INpcScript
         await context.NpcTalkAsync("Oh...", cancellationToken);
         await context.SetNpcCloakAsync(null, true, cancellationToken);
         await context.SetNpcCloakAsync(("Wounded Swordsman#intro_npc02_" + context.StrNpcInfo(4)), false, cancellationToken);
+        return;
 #line default
     }
 }

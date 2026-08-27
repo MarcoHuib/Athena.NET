@@ -13,4 +13,5 @@ public sealed record MapAuthNode(
     ushort Font,
     uint ExpirationTime,
     uint GroupId,
-    bool ChangingMapServers);
+    bool ChangingMapServers,
+    string CharacterName = "");
