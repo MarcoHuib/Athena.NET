@@ -1,5 +1,3 @@
-using Athena.Net.MapServer.Logging;
-
 namespace Athena.Net.MapServer.World;
 
 // Picks a spawn cell for a `MobSpawnDefinition`. Called both for a monster's initial spawn AND for
@@ -201,7 +199,6 @@ public sealed class RathenaCompatibleMobSpawnCellSelector(
             if (map.IsTraversalCell(x, y))
             {
                 position = new MobPosition((ushort)x, (ushort)y);
-                LogSelectedCellDiagnostics(spawn, map, position);
                 return true;
             }
         }
@@ -211,21 +208,5 @@ public sealed class RathenaCompatibleMobSpawnCellSelector(
         // placeholder coordinate - see this type's own doc comment.
         position = default;
         return false;
-    }
-
-    // Diagnostic-only (source-neutral: does not affect spawn eligibility - the cell was already
-    // accepted via IsTraversalCell above regardless of these values). Covers BOTH initial spawn
-    // and every respawn, since MonsterRegistry routes both through this same TrySelectCell call.
-    // See MapClientSession.LogMonsterCellDiagnostics for the matching 0x0368
-    // actor-info-click/hover diagnostic a tester can use to inspect an already-placed instance
-    // live, and ai/world-data.md for why this project does not ban Water or invent a stronger
-    // connectivity rule merely because a spawned cell looks visually suspicious.
-    private static void LogSelectedCellDiagnostics(MobSpawnDefinition spawn, MapCollisionMap map, MobPosition position)
-    {
-        var flags = map.GetCell(position.X, position.Y);
-        MapLogger.Info(
-            $"[iRO MAP DEBUG][MONSTER CELL] mob={spawn.Mob.AegisName} map='{spawn.Map}' x={position.X} y={position.Y} " +
-            $"flags='{flags}' walkable={map.IsWalkable(position.X, position.Y)} water={map.IsWater(position.X, position.Y)} " +
-            $"shootable={map.IsShootable(position.X, position.Y)} traversal={map.IsTraversalCell(position.X, position.Y)}");
     }
 }

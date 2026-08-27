@@ -13,7 +13,7 @@ public sealed class MonsterCombatCoordinatorTests
         Attack: 1, Attack2: 1, Defense: 2, MagicDefense: 5,
         Str: 6, Agi: 1, Vit: 1, Int: 0, Dex: 6, Luk: 5,
         AttackRange: 1, WalkSpeed: 400, AttackDelay: 1872,
-        BaseExp: 0, JobExp: 0,
+        BaseExp: 0, JobExp: 0, Mode: MobMode.CanMove,
         Source: new("rAthena", "abc", "db/re/mob_db.yml", 1));
 
     private static EffectiveCharacterStats StrongAttacker() => new(50, 9, 9, 9, 20, 9, 0, 0);

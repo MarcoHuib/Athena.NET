@@ -28,6 +28,26 @@ public sealed record WarpAction(string Map, ushort X, ushort Y) : WorldActionDef
 public sealed record SetSavePointAction(string Map, ushort X, ushort Y) : WorldActionDefinition;
 public sealed record WorldSourceInfo(string Repository, string Commit, string File, int Line);
 
+// Pinned rAthena monster capability bits (legacy/rathena/src/common/mmo.hpp enum e_mode,
+// mmo.hpp:242-272). Only the bits this project's mob-movement/AI slice actually needs are modeled
+// so far - this is NOT the complete pinned e_mode bitmask (e.g. MD_AGGRESSIVE, MD_ASSIST,
+// MD_LOOTER, MD_MVP, etc. all exist in pinned source but have no Athena runtime behavior yet).
+// Extend this enum (never a mob-specific bool like "PoringCanMove") when a future slice needs
+// another bit - matching how MobDataCompiler already computes the FULL pinned mode value from
+// source and simply narrows which bits Athena's generated model currently exposes.
+[Flags]
+public enum MobMode
+{
+    None = 0,
+    // MD_CANMOVE (mmo.hpp:244, 0x0000001) - authorizes idle random walk (mob_randomwalk,
+    // mob.cpp:1673) and chase movement. Without this bit a mob must never be scheduled to walk,
+    // regardless of any other source-backed movement data (WalkSpeed, etc.) it happens to carry.
+    CanMove = 0x0000001,
+    // MD_NORANDOMWALK (mmo.hpp:249, 0x0000020) - explicitly suppresses idle random walk
+    // (mob_randomwalk's own early-return guard, mob.cpp:1687) even when MD_CANMOVE is also set.
+    NoRandomWalk = 0x0000020,
+}
+
 // Immutable, source-backed monster data (pinned rAthena db/re/mob_db.yml).
 // Renewal semantics: Attack -> rhw.atk (weapon-roll component when this mob
 // is the ATTACKER, irrelevant when it is the target), Defense -> hard DEF,
@@ -37,12 +57,20 @@ public sealed record WorldSourceInfo(string Repository, string Commit, string Fi
 // are 0 when the pinned block omits them entirely (rAthena YAML loader
 // default), matching a tutorial punching-bag mob - this is read from source,
 // never assumed nonzero because CharacterProgressionService exists.
+// `Mode` is derived exactly like pinned MobDatabase::parseBodyNode (mob.cpp:5446-5519): the
+// pinned `Ai:` field resolves to one of the MONSTER_TYPE_NN preset bitmasks (mob.hpp:151-164,
+// e.g. Ai=02 -> MONSTER_TYPE_02=0x83), which becomes the mob's base status.mode; any pinned
+// `Modes:` block entries then individually OR (true) or AND-NOT (false) additional bits on top of
+// that preset - never one flat "the Modes: block IS the mode" assumption, since a real mob's
+// effective mode is almost always dominated by its Ai preset, with Modes: only overriding specific
+// bits (e.g. G_PORING/2401 has Ai=02=0x83=MD_CANMOVE|MD_LOOTER|MD_CANATTACK and a Modes: block
+// that only sets FixedItemDrop=true - a bit this project's MobMode does not yet model).
 public sealed record MobDefinition(
     int Id, string AegisName, string Name, int Level, uint MaxHp,
     int Attack, int Attack2, int Defense, int MagicDefense,
     int Str, int Agi, int Vit, int Int, int Dex, int Luk,
     int AttackRange, int WalkSpeed, int AttackDelay,
-    long BaseExp, long JobExp,
+    long BaseExp, long JobExp, MobMode Mode,
     WorldSourceInfo Source);
 
 // One pinned `monster` spawn-line declaration (npc/re/mobs/*.txt), scoped to

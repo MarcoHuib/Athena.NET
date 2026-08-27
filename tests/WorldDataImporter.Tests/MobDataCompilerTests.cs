@@ -89,6 +89,96 @@ public sealed class MobDataCompilerTests
         Assert.NotEqual("PORING", mob.AegisName);
     }
 
+    // Source-data regression coverage for the "prove G_PORING is allowed to move" requirement:
+    // pinned mob_db.yml's Id 2401 block has Ai: 02 and a Modes: block that ONLY sets
+    // FixedItemDrop=true (a bit this project's MobMode does not model) - the CanMove capability
+    // comes entirely from the Ai=02 preset (MONSTER_TYPE_02=0x83=MD_CANMOVE|MD_LOOTER|MD_CANATTACK,
+    // mob.hpp:153), NOT from an explicit Modes: entry. This proves the compiler actually resolves
+    // that preset rather than only ever reading an explicit Modes: override - a mob whose Modes:
+    // block never mentions CanMove at all must still correctly report MobMode.CanMove.
+    [Fact]
+    public void ReadMobDefinition_GPoring2401_ModeIsCanMove_DerivedFromAiPreset_NotFromModesBlock()
+    {
+        var mob = MobDataCompiler.ReadMobDefinition(MobDbFixture, 2401);
+
+        Assert.Equal(MobDataCompiler.MobModeData.CanMove, mob.Mode);
+    }
+
+    [Fact]
+    public void ReadMobDefinition_UnknownAiPreset_DefaultsToNoModeledCapability()
+    {
+        const string fixtureWithUnknownAi = """
+            Body:
+              - Id: 9999
+                AegisName: TEST_UNKNOWN_AI
+                Name: Test
+                Ai: XX
+            """;
+
+        var mob = MobDataCompiler.ReadMobDefinition(fixtureWithUnknownAi, 9999);
+
+        // Pinned MobDatabase::parseBodyNode defaults an unrecognized Ai value to MONSTER_TYPE_06=0
+        // (mob.cpp:5456-5458) rather than failing the whole block - reproduced here the same way.
+        Assert.Equal(MobDataCompiler.MobModeData.None, mob.Mode);
+    }
+
+    [Fact]
+    public void ReadMobDefinition_NoAiField_DefaultsToNoModeledCapability()
+    {
+        const string fixtureWithNoAi = """
+            Body:
+              - Id: 9998
+                AegisName: TEST_NO_AI
+                Name: Test
+            """;
+
+        var mob = MobDataCompiler.ReadMobDefinition(fixtureWithNoAi, 9998);
+
+        Assert.Equal(MobDataCompiler.MobModeData.None, mob.Mode);
+    }
+
+    [Fact]
+    public void ReadMobDefinition_ExplicitModesOverridesAiPreset()
+    {
+        // A Modes: entry naming a bit this project models (CanMove) must correctly OR/AND-NOT it
+        // on top of the Ai preset - proving the override mechanism itself, independent of which
+        // preset supplied the base value.
+        const string fixtureWithExplicitNoRandomWalk = """
+            Body:
+              - Id: 9997
+                AegisName: TEST_STATIONARY
+                Name: Test
+                Ai: 02
+                Modes:
+                  NoRandomWalk: true
+            """;
+
+        var mob = MobDataCompiler.ReadMobDefinition(fixtureWithExplicitNoRandomWalk, 9997);
+
+        Assert.Equal(MobDataCompiler.MobModeData.CanMove | MobDataCompiler.MobModeData.NoRandomWalk, mob.Mode);
+    }
+
+    [Fact]
+    public void ReadMobDefinition_GPoring2401_WalkSpeedRemains400FromSource()
+    {
+        var mob = MobDataCompiler.ReadMobDefinition(MobDbFixture, 2401);
+
+        Assert.Equal(400, mob.WalkSpeed);
+    }
+
+    [Fact]
+    public void GenerateMobDefinition_EmitsSourceBackedMobModeExpression_NoHardcodedMobIdCheck()
+    {
+        var mob = MobDataCompiler.ReadMobDefinition(MobDbFixture, 2401);
+        var generated = MobDataCompiler.GenerateMobDefinition(mob, "abc123", "AcademyMobs", "GPoring", "db/re/mob_db.yml", 42);
+
+        Assert.Contains("Mode: MobMode.CanMove,", generated);
+        // The generated source must never special-case this mob's numeric Id - the Mode value is
+        // computed once from pinned Ai/Modes: data and emitted as a plain expression.
+        Assert.DoesNotContain("2401 ==", generated);
+        Assert.DoesNotContain("== 2401", generated);
+    }
+
     [Fact]
     public void ReadMobDefinition_ReadsCombatStatsFromGeneratedData()
     {

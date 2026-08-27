@@ -31,5 +31,6 @@ internal static class GeneratedMobs
         AttackDelay: 1872,
         BaseExp: 0,
         JobExp: 0,
+        Mode: MobMode.CanMove,
         Source: new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/re/mob_db.yml", 0));
 }

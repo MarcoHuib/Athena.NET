@@ -14,7 +14,7 @@ namespace Athena.Net.MapServer.World;
 // fall back to WorldMapRegistry.Tutorial once this exists; that static
 // singleton remains only for existing tests/legacy standalone callers that
 // don't combine world data with a monster runtime.
-public sealed record MapServerWorld(WorldMapRegistry Maps, MonsterRegistry Monsters, MonsterCombatCoordinator Combat, IMapCollisionProvider Collision, MonsterSpatialInspector SpatialInspector)
+public sealed record MapServerWorld(WorldMapRegistry Maps, MonsterRegistry Monsters, MonsterCombatCoordinator Combat, IMapCollisionProvider Collision, MonsterSpatialInspector SpatialInspector, IMovementPathProvider MovementPathProvider, MonsterRuntime MonsterRuntime)
 {
     // `cellSelector` defaults to null, which means "explicitly choose ONE of the two selectors
     // based on `collisionProvider`'s identity, right here at composition time" - never an internal
@@ -60,7 +60,17 @@ public sealed record MapServerWorld(WorldMapRegistry Maps, MonsterRegistry Monst
         var questDrops = new QuestDropResolver(GeneratedQuestDrops.All);
         var combat = new MonsterCombatCoordinator(monsters, questDrops, gameplayRules.BasicAttackRules);
         var spatialInspector = new MonsterSpatialInspector(monsters, resolvedCollisionProvider);
-        return new MapServerWorld(maps, monsters, combat, resolvedCollisionProvider, spatialInspector);
+        // Same either/or composition rule as the mob spawn cell selector above (see that field's
+        // own doc comment): EmptyMapCollisionProvider.Instance keeps the collision-less placeholder
+        // path provider (the ONLY other IMovementPathProvider implementation, used by tests/dev
+        // fixtures - see that type's own doc comment); any real provider gets the collision-backed
+        // A* implementation. Player movement (MapClientSession) and monster idle movement
+        // (MonsterRuntime) both consume this SAME instance - one pathfinding foundation, not two.
+        IMovementPathProvider movementPathProvider = ReferenceEquals(resolvedCollisionProvider, EmptyMapCollisionProvider.Instance)
+            ? new UnverifiedGridLineMovementPathProvider()
+            : new RathenaCompatibleMovementPathProvider(resolvedCollisionProvider);
+        var monsterRuntime = new MonsterRuntime(monsters, resolvedCollisionProvider, movementPathProvider, timeProvider ?? TimeProvider.System);
+        return new MapServerWorld(maps, monsters, combat, resolvedCollisionProvider, spatialInspector, movementPathProvider, monsterRuntime);
     }
 
     // Production fail-closed guard: called explicitly by MapServerApp.RunAsync (the live

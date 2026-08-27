@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
@@ -10,10 +11,18 @@ namespace Athena.Net.MapServer.Net;
 
 public sealed class MapTcpServer
 {
+    // MonsterRuntime.ProcessTick's own doc comment: it expects to be invoked periodically "at a
+    // cadence far shorter than WalkSpeed so movement still looks smooth, not once per pinned-exact-
+    // cell-duration". WalkSpeed values in pinned mob_db.yml are on the order of hundreds of ms
+    // (G_PORING=400); 100ms gives several notification opportunities per cell without flooding
+    // connected clients on every server loop iteration.
+    private static readonly TimeSpan MonsterTickInterval = TimeSpan.FromMilliseconds(100);
+
     private readonly MapConfigStore _configStore;
     private readonly CharServerConnector _charConnector;
     private readonly MapServerWorld _world;
     private readonly TcpListener _listener;
+    private readonly ConcurrentDictionary<int, MapClientSession> _sessions = new();
     private int _nextSessionId;
 
     public MapTcpServer(MapConfigStore configStore, CharServerConnector charConnector, MapServerWorld world)
@@ -35,6 +44,8 @@ public sealed class MapTcpServer
         MapLogger.Status(
             $"WORLD: loaded {_world.Maps.EntityCount} world entities over {_world.Maps.MapCount} maps, {_world.Maps.StaticWarpCount} active warps, {_world.Maps.DynamicWarpActorCount} legacy dynamic/scripted warp actors, {_world.Monsters.AllInstances.Count} monster instances.");
 
+        var monsterTickLoop = RunMonsterTickLoopAsync(cancellationToken);
+
         try
         {
             while (!cancellationToken.IsCancellationRequested)
@@ -51,6 +62,50 @@ public sealed class MapTcpServer
         finally
         {
             _listener.Stop();
+            await monsterTickLoop;
+        }
+    }
+
+    // The single shared driver for both monster respawn processing and monster AI/movement
+    // (MonsterRegistry.ProcessDueRespawns / MonsterRuntime.ProcessTick) - see those methods' own
+    // doc comments for why neither may be driven by a per-monster Timer/Task. Every connected
+    // session observes the SAME authoritative MobInstance state from this ONE loop, matching the
+    // task requirement that monster movement seen by different players originates from one source.
+    private async Task RunMonsterTickLoopAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                await Task.Delay(MonsterTickInterval, cancellationToken);
+
+                _world.Monsters.ProcessDueRespawns();
+                var changed = _world.MonsterRuntime.ProcessTick();
+                if (changed.Count == 0) continue;
+
+                foreach (var session in _sessions.Values)
+                {
+                    foreach (var instance in changed)
+                    {
+                        try
+                        {
+                            await session.NotifyMonsterMovedAsync(instance, cancellationToken);
+                        }
+                        catch (IOException)
+                        {
+                            // Client disconnected; HandleClientAsync's own cleanup removes it from _sessions.
+                        }
+                        catch (OperationCanceledException)
+                        {
+                            // Server shutdown.
+                        }
+                    }
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Shutdown
         }
     }
 
@@ -66,6 +121,7 @@ public sealed class MapTcpServer
         using (client)
         await using (var session = new MapClientSession(sessionId, client, _charConnector, _world))
         {
+            _sessions[sessionId] = session;
             try
             {
                 await session.RunAsync(cancellationToken);
@@ -81,6 +137,10 @@ public sealed class MapTcpServer
             catch (Exception ex)
             {
                 MapLogger.Warning($"Client session error: {ex.Message}");
+            }
+            finally
+            {
+                _sessions.TryRemove(sessionId, out _);
             }
         }
 

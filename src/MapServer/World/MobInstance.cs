@@ -17,6 +17,18 @@ public sealed class MobInstance
     private MobLifecycleState _state;
     private long _deadUntilTimestamp;
     private MobPosition _position;
+    // Idle-walk scheduling/movement state - see TryStartIdleWalk/AdvanceMovement's own doc
+    // comments. `_nextIdleWalkTimestamp` mirrors pinned mob_data.next_walktime (mob.hpp) exactly:
+    // 0 means "not yet initialized" (pinned mob_randomwalk's own `INVALID_TIMER` sentinel check,
+    // mob.cpp:1681), matching that this instance has never been considered for an idle walk yet.
+    private long _nextIdleWalkTimestamp;
+    // Reuses CharacterMovementState as the SAME per-cell walk timing/lifecycle model player
+    // movement already uses (see that type's own doc comment) - mob idle movement and player
+    // movement share one timing/lifecycle mechanism, only the path SOURCE (idle AI vs. player
+    // click) and the collision-backed path COMPUTATION (RathenaCompatibleMovementPathProvider,
+    // shared by both) differ. Never null after construction; a freshly constructed/respawned
+    // instance's movement state simply has an empty path (IsMoving=false) until a walk starts.
+    private CharacterMovementState _movement;
 
     public MobInstance(uint actorId, MobSpawnDefinition spawn, ushort x, ushort y)
     {
@@ -25,6 +37,7 @@ public sealed class MobInstance
         _position = new MobPosition(x, y);
         _currentHp = spawn.Mob.MaxHp;
         _state = MobLifecycleState.Alive;
+        _movement = new CharacterMovementState(spawn.Map, x, y);
     }
 
     // Constructs an instance that could NOT be placed at creation time - the source-backed random
@@ -55,11 +68,15 @@ public sealed class MobInstance
     // (MobSpawnDefinition X=0,Y=0,Xs=0,Ys=0 - see IMobSpawnCellSelector) picks a FRESH valid cell
     // on every respawn, matching pinned mob_spawn re-running map_search_freecell on every call
     // rather than reusing the originally resolved coordinate - the declaration itself
-    // (Spawn.X/Y/Xs/Ys) stays the immutable pinned instruction; this is the current resolved
-    // runtime cell. Returning one MobPosition value (rather than exposing separate X/Y properties)
-    // means a caller physically cannot read one axis from a new position and the other from a
-    // stale one across a concurrent respawn - there is only one field to read, and it is always
-    // replaced as one atomic reference-copy under this instance's lock.
+    // (Spawn.X/Y/Xs/Ys) stays the immutable pinned instruction. `_position` is kept synchronized
+    // with `_movement`'s own current cell on every AdvanceMovement/TryStartIdleWalk/TryRespawn call
+    // (see those methods' own doc comments), so it is always correct to read directly here - during
+    // a walk this is the monster's actual current traversed cell, never the walk's final
+    // destination and never an instantaneous jump. Returning one MobPosition value (rather than
+    // exposing separate X/Y properties) means a caller physically cannot read one axis from a new
+    // position and the other from a stale one across a concurrent respawn/movement update - there
+    // is only one field to read, and it is always replaced as one atomic reference-copy under this
+    // instance's lock.
     public MobPosition GetPosition() { lock (_gate) return _position; }
 
     public uint CurrentHp { get { lock (_gate) return _currentHp; } }
@@ -139,7 +156,112 @@ public sealed class MobInstance
             _currentHp = Spawn.Mob.MaxHp;
             _deadUntilTimestamp = 0;
             _position = position;
+            // Reset movement state entirely on respawn: any in-flight walk from the PREVIOUS life
+            // must never continue to mutate a respawned instance's position (an old scheduled
+            // movement event must not move a respawned instance to where the dead instance was
+            // walking toward). `_nextIdleWalkTimestamp = 0` resets to the same "not yet
+            // initialized" state a freshly-constructed instance starts in, so idle AI treats a
+            // respawned instance exactly like a brand new spawn (matching pinned mob_spawn, which
+            // re-initializes next_walktime via the same INVALID_TIMER path for both a genuinely new
+            // spawn and a respawn - mob.cpp:1134-1143 calls mob_spawn for both).
+            _movement = new CharacterMovementState(Map, position.X, position.Y);
+            _nextIdleWalkTimestamp = 0;
             return true;
         }
     }
+
+    // Pinned mob_randomwalk's idle-walk-due check (mob.cpp:1673-1690), reproduced as a pure
+    // "is it time, and if so what candidate cells should the caller try" query - this method does
+    // NOT itself run the 15x15 candidate search or call the pathfinder; see
+    // MonsterRuntime.ProcessIdleMovement for why that responsibility lives at the scheduler level
+    // (it needs the real IMapCollisionProvider/IMovementPathProvider, which MobInstance
+    // deliberately has no dependency on, matching how TryRespawn's `selectPosition` callback keeps
+    // MobInstance free of IMobSpawnCellSelector too).
+    //
+    // Returns true only when: the mob is Alive, is not currently mid-walk (pinned mob_randomwalk
+    // never interrupts an in-progress walk to start another - it only runs its search when
+    // `!IsMoving`), and `now` has reached `_nextIdleWalkTimestamp`. On the VERY FIRST call for a
+    // freshly spawned/respawned instance (`_nextIdleWalkTimestamp == 0`, pinned mob.cpp:1681's
+    // `next_walktime == INVALID_TIMER` case), this method does NOT authorize a walk yet - it only
+    // initializes the timestamp to `now + jitter + MIN_RANDOMWALKTIME` and returns false, exactly
+    // matching pinned mob_randomwalk's own "initialize next_walktime and return 1 without walking"
+    // first-call behavior (mob.cpp:1680-1684; that pinned `return 1` means "the AI tick handled
+    // this mob successfully", not "a walk started").
+    public bool IsIdleWalkDue(long now, Func<long> randomJitterMs)
+    {
+        lock (_gate)
+        {
+            if (_state != MobLifecycleState.Alive || _movement.IsMoving) return false;
+
+            if (_nextIdleWalkTimestamp == 0)
+            {
+                _nextIdleWalkTimestamp = now + randomJitterMs() + MinRandomWalkTimeMs;
+                return false;
+            }
+
+            return now >= _nextIdleWalkTimestamp;
+        }
+    }
+
+    // MIN_RANDOMWALKTIME (mob.hpp:39) - the pinned minimum delay before an idle mob's NEXT random
+    // walk consideration, on top of which pinned mob.cpp adds `rnd()%1000` jitter both when
+    // initializing next_walktime (mob.cpp:1682) and after a walk completes (mob.cpp:1766).
+    internal const long MinRandomWalkTimeMs = 4000;
+
+    // Starts an idle walk along an already-computed path (the caller - MonsterRuntime - is
+    // responsible for running the pinned 15x15 candidate search and RathenaCompatibleMovementPathProvider;
+    // see IsIdleWalkDue's own doc comment for why that split exists). `cellDurationMs` should be
+    // the mob's own WalkSpeed (or WalkSpeed*14/10 for a diagonal step - CharacterMovementState
+    // already only supports one uniform per-cell duration, matching this project's existing
+    // player-movement model; see that type's own doc comment) - MonsterRuntime supplies it rather
+    // than this method reading Spawn.Mob.WalkSpeed itself, keeping this method a pure state
+    // transition. Does nothing (returns false) if the mob died or started walking via another
+    // path between IsIdleWalkDue returning true and this call - re-validated here under the same
+    // lock rather than trusted from the caller's earlier check.
+    public bool TryStartIdleWalk(IReadOnlyList<(ushort X, ushort Y)> path, int cellDurationMs, long now, DateTimeOffset nowOffset)
+    {
+        lock (_gate)
+        {
+            if (_state != MobLifecycleState.Alive || _movement.IsMoving) return false;
+            _movement.StartWalk(path, cellDurationMs, nowOffset);
+            _position = new MobPosition(_movement.CurrentX, _movement.CurrentY);
+            // Matches pinned mob_randomwalk's own post-walk-start rescheduling (mob.cpp:1766):
+            // "next_walktime = tick + rnd()%1000 + MIN_RANDOMWALKTIME + unit_get_walkpath_time" -
+            // the NEXT idle-walk consideration is scheduled for after this walk's own expected
+            // duration completes, not from `now`. Approximated here as cellDurationMs*(path.Count-1)
+            // for the just-started walk's own total travel time (this project's CharacterMovementState
+            // uses one uniform per-cell duration rather than pinned's per-step diagonal-aware sum -
+            // see cellDurationMs's own doc comment above).
+            _nextIdleWalkTimestamp = now + cellDurationMs * Math.Max(0, path.Count - 1) + MinRandomWalkTimeMs;
+            return true;
+        }
+    }
+
+    // Advances this instance's in-progress walk by whatever whole cells have elapsed by `now`
+    // (CharacterMovementState.AdvanceTo - see that type's own doc comment), keeping `_position`
+    // synchronized with the walk's current cell on every call. A dead instance's movement is never
+    // advanced (death must stop movement immediately - ApplyDamage's Alive->Dead transition does
+    // not itself clear `_movement`, but this guard means a walk in progress at the moment of death
+    // simply stops being advanced from here on, which is the observable effect required). Returns
+    // the newly crossed cells (possibly empty) for a caller that wants to know exactly which cells
+    // were just crossed (e.g. future per-cell trigger checks) - the current slice does not use
+    // this beyond updating `_position`.
+    public IReadOnlyList<(ushort X, ushort Y)> AdvanceMovement(DateTimeOffset now)
+    {
+        lock (_gate)
+        {
+            if (_state != MobLifecycleState.Alive) return [];
+            var crossed = _movement.AdvanceTo(now);
+            if (crossed.Count > 0) _position = new MobPosition(_movement.CurrentX, _movement.CurrentY);
+            return crossed;
+        }
+    }
+
+    // Read-only snapshot of movement state for a scheduler/wire-notification caller that needs to
+    // know whether this instance is currently walking and when its next per-cell step is due,
+    // without needing its own duplicate CharacterMovementState. Matches
+    // CharacterMovementState.NextStepDueAt's own "null means not moving" contract.
+    public bool IsWalking { get { lock (_gate) return _movement.IsMoving; } }
+    public DateTimeOffset? NextMovementStepDueAt { get { lock (_gate) return _movement.NextStepDueAt; } }
+    public (ushort X, ushort Y) MovementDestination { get { lock (_gate) return _movement.Destination; } }
 }
