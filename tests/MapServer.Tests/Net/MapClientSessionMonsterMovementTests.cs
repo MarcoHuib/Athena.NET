@@ -158,7 +158,7 @@ public sealed class MapClientSessionMonsterMovementTests
         using var _ = client;
         await MakeVisibleAsync(stream, target);
 
-        Assert.True(target.TryStartIdleWalk([(75, 51), (76, 51)], orthogonalStepMs: 400, now: 1, nowOffset: DateTimeOffset.UnixEpoch, jitterMs: () => 0));
+        Assert.True(target.TryStartIdleWalk([(75, 51), (76, 51)], orthogonalStepMs: 400, now: DateTimeOffset.UnixEpoch, jitterMs: () => 0));
 
         await session.NotifyMonsterMovedAsync(new MonsterMovementChange(target, MonsterMovementChangeKind.WalkStarted), CancellationToken.None);
 
@@ -181,7 +181,7 @@ public sealed class MapClientSessionMonsterMovementTests
         using var _ = client;
         await MakeVisibleAsync(stream, target);
 
-        Assert.True(target.TryStartIdleWalk([(75, 51), (76, 51)], orthogonalStepMs: 400, now: 1, nowOffset: DateTimeOffset.UnixEpoch, jitterMs: () => 0));
+        Assert.True(target.TryStartIdleWalk([(75, 51), (76, 51)], orthogonalStepMs: 400, now: DateTimeOffset.UnixEpoch, jitterMs: () => 0));
 
         await session.NotifyMonsterMovedAsync(new MonsterMovementChange(target, MonsterMovementChangeKind.CellCrossed), CancellationToken.None);
 
@@ -203,7 +203,7 @@ public sealed class MapClientSessionMonsterMovementTests
         using var _ = client;
         await MakeVisibleAsync(stream, target);
 
-        Assert.True(target.TryStartIdleWalk([(75, 51), (76, 51)], orthogonalStepMs: 400, now: 1, nowOffset: DateTimeOffset.UnixEpoch, jitterMs: () => 0));
+        Assert.True(target.TryStartIdleWalk([(75, 51), (76, 51)], orthogonalStepMs: 400, now: DateTimeOffset.UnixEpoch, jitterMs: () => 0));
         target.AdvanceMovement(DateTimeOffset.UnixEpoch.AddMilliseconds(400));
         Assert.False(target.IsWalking);
 
@@ -329,7 +329,7 @@ public sealed class MapClientSessionMonsterMovementTests
         var (client, stream, session, run, target) = await SetupAsync();
         using var _ = client;
 
-        Assert.True(target.TryStartIdleWalk([(75, 51), (76, 51)], orthogonalStepMs: 400, now: 1, nowOffset: DateTimeOffset.UnixEpoch, jitterMs: () => 0));
+        Assert.True(target.TryStartIdleWalk([(75, 51), (76, 51)], orthogonalStepMs: 400, now: DateTimeOffset.UnixEpoch, jitterMs: () => 0));
 
         await session.NotifyMonsterMovedAsync(new MonsterMovementChange(target, MonsterMovementChangeKind.WalkStarted), CancellationToken.None);
 
@@ -464,33 +464,25 @@ public sealed class MapClientSessionMonsterMovementTests
         await run.WaitAsync(TimeSpan.FromSeconds(5));
     }
 
-    // Concurrency regression for VisibleActorTracker (MapClientSession's own thread-safe wrapper
-    // around _visibleActorIds - see that type's own doc comment for why a plain HashSet<uint>
-    // stopped being safe once MapTcpServer's shared monster tick loop began calling
-    // NotifyMonsterMovedAsync concurrently with this session's other visibility-touching call
-    // sites). This test hammers the SAME session from many concurrent tasks performing exactly
-    // those operations at once for several seconds:
-    //   - repeated discovery/re-discovery of a batch of monster instances via NotifyMonsterMovedAsync
-    //     (the exact call MapTcpServer's tick loop makes, many instances/many overlapping calls);
-    //   - repeated 0x007D map-loaded packets from the client, which Clear() the visibility set and
-    //     re-populate it via SendVisibleMonsterActorsAsync (the exact "warp/map-change Clear" and
-    //     "player movement visibility scan" call sites);
-    //   - repeated 0x0368 actor-info requests (the "actor-info handling" call site), reading
-    //     IsActorVisible concurrently with all of the above.
-    // A HashSet<uint> under this exact concurrent read/Add/Remove/Clear pattern either throws
-    // (InvalidOperationException from a corrupted internal bucket structure) or produces duplicate
-    // discovery packets for the same actor within one visibility "generation" (two racing callers
-    // both observing "not yet visible" and both sending a stand/walk entry) - this test proves
-    // neither happens under real concurrent load, only under the VisibleActorTracker fix.
+    // Small, BOUNDED wiring test: NotifyMonsterMovedAsync correctly delegates visibility tracking
+    // to VisibleActorTracker for a modest batch of concurrent discovery calls - the actual
+    // concurrency INVARIANT (exactly-once discovery under real thread contention, no corruption)
+    // is proven separately and deterministically by VisibleActorTrackerTests, which needs no TCP
+    // session, no background reader, and no real-time hammering window at all. This test exists
+    // only to prove the WIRING (MapClientSession actually calls into the tracker correctly, one
+    // discovery packet per actor reaches the wire) - it deliberately does NOT try to reproduce the
+    // concurrency race itself, matching the split this project's own CI-flakiness investigation
+    // called for (mixing a real concurrency invariant with uncontrolled TCP backpressure/load
+    // timing was the actual source of the earlier flaky test's OperationCanceledException
+    // failures under CI load).
     [Fact]
-    public async Task VisibleActorTracker_ConcurrentDiscoveryRemovalAndClear_ProducesNoCorruptionOrDuplicateDiscovery()
+    public async Task NotifyMonsterMovedAsync_ConcurrentCallsForManyInstances_EachDiscoveredExactlyOnce()
     {
         const int monsterCount = 12;
         var allocator = new WorldActorIdAllocator();
         var spawns = Enumerable.Range(0, monsterCount)
             .Select(i => new MobSpawnDefinition(GeneratedMobs.GPoring, "int_land03", 1, 5000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "test", i)))
             .ToArray();
-        // Distinct cells all within the player's (75,51) 14-cell visibility range.
         var positions = Enumerable.Range(0, monsterCount).Select(i => (ushort)(68 + i)).ToArray();
         var registry = new MonsterRegistry(spawns, allocator, new SequentialCellSelector(positions), TimeProvider.System);
         var instances = registry.AllInstances;
@@ -498,136 +490,63 @@ public sealed class MapClientSessionMonsterMovementTests
         var (client, stream, session, run, _) = await SetupAsync(sharedRegistry: registry);
         using var _ = client;
 
-        var actorIdsById = instances.ToDictionary(i => i.ActorId);
         var discoveryCountsByActorId = new ConcurrentDictionary<uint, int>();
         var readerFailures = new ConcurrentBag<Exception>();
-        var stop = new CancellationTokenSource();
+        var expectedPacketCount = monsterCount; // Exactly one discovery packet per instance.
+        var received = 0;
+        var allReceived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        // Background reader: drains every dynamic packet (0x09FF/0x09FD stand/walk entries) plus
-        // whatever else arrives (0x0ADF actor-name replies from the concurrent 0x0368 requests) for
-        // the duration of the hammering, tallying discovery packets per actor ID. Reads are
-        // deliberately NOT individually bounded here (unlike this file's other helpers): the reader
-        // is racing an explicit `stop` signal, not waiting for a specific reply, so a real hang
-        // would show up as the overall test timing out via xunit's own test-method timeout rather
-        // than silently passing - the requirement this file's helpers protect against is a
-        // synchronization primitive being misread as proof of silence, which does not apply to a
-        // best-effort drain loop that is cancelled unconditionally at the end regardless of outcome.
         var readerTask = Task.Run(async () =>
         {
             try
             {
-                while (!stop.IsCancellationRequested)
+                while (received < expectedPacketCount)
                 {
-                    byte[] header;
-                    try { header = await ReadExact(stream, 4); }
-                    catch (OperationCanceledException) { return; }
-                    catch (IOException) { return; }
+                    var header = await ReadExact(stream, 4);
                     var packetId = BinaryPrimitives.ReadInt16LittleEndian(header);
                     var length = BinaryPrimitives.ReadUInt16LittleEndian(header.AsSpan(2));
                     var rest = length > 4 ? await ReadExact(stream, length - 4) : [];
-
                     if (packetId == 0x09ff || packetId == 0x09fd)
                     {
                         var actorId = BinaryPrimitives.ReadUInt32LittleEndian(rest.AsSpan(1));
                         discoveryCountsByActorId.AddOrUpdate(actorId, 1, (_, count) => count + 1);
+                        if (Interlocked.Increment(ref received) >= expectedPacketCount) allReceived.TrySetResult();
                     }
                 }
             }
             catch (Exception ex)
             {
                 readerFailures.Add(ex);
+                allReceived.TrySetException(ex);
             }
         });
 
-        // Concurrent hammering for a bounded real-time window: several independent tasks
-        // repeatedly performing the exact operations that raced on the old plain HashSet<uint>.
-        var hammerDuration = TimeSpan.FromSeconds(2);
-        var deadline = DateTime.UtcNow + hammerDuration;
-        var hammerTasks = new List<Task>();
-
-        // Tasks 1-4: repeatedly notify ALL instances as "moved" (CellCrossed - the discovery Kind;
-        // see NotifyMonsterMovedAsync's own doc comment) concurrently with each other - the exact
-        // shape of MapTcpServer's own tick-loop fan-out, run by 4 concurrent "ticks" at once to
-        // force the race the old HashSet<uint> could not survive.
-        for (var t = 0; t < 4; t++)
+        // A modest number of concurrent callers (not an unbounded real-time hammer) each notifying
+        // ALL instances at once - the exact shape of MapTcpServer's own tick-loop fan-out, run
+        // concurrently to exercise TryMarkVisible's own race window, bounded by a fixed loop count
+        // rather than a wall-clock duration.
+        var callers = Enumerable.Range(0, 4).Select(_ => Task.Run(async () =>
         {
-            hammerTasks.Add(Task.Run(async () =>
+            foreach (var instance in instances)
             {
-                while (DateTime.UtcNow < deadline)
-                {
-                    foreach (var instance in instances)
-                    {
-                        try
-                        {
-                            await session.NotifyMonsterMovedAsync(new MonsterMovementChange(instance, MonsterMovementChangeKind.CellCrossed), CancellationToken.None);
-                        }
-                        catch (IOException) { return; }
-                        catch (ObjectDisposedException) { return; }
-                    }
-                }
-            }));
-        }
-
-        // Task 5: repeatedly sends 0x007D (Clear() + SendVisibleMonsterActorsAsync re-discovery) -
-        // the "warp/map-change Clear" and "player movement visibility scan" call sites, racing
-        // directly against the discovery tasks above on the SAME underlying set.
-        hammerTasks.Add(Task.Run(async () =>
-        {
-            while (DateTime.UtcNow < deadline)
-            {
-                try { await WriteBoundedAsync(stream, [0x7d, 0x00, 0xaa]); }
-                catch (IOException) { return; }
-                catch (ObjectDisposedException) { return; }
+                try { await session.NotifyMonsterMovedAsync(new MonsterMovementChange(instance, MonsterMovementChangeKind.CellCrossed), CancellationToken.None); }
+                catch (IOException) { }
+                catch (ObjectDisposedException) { }
             }
         }));
 
-        // Task 6: repeatedly sends 0x0368 actor-info requests for a random subset of actors - the
-        // "actor-info handling" call site, reading IsActorVisible concurrently with all of the above.
-        hammerTasks.Add(Task.Run(async () =>
-        {
-            var random = new Random(12345);
-            while (DateTime.UtcNow < deadline)
-            {
-                var actorId = instances[random.Next(instances.Count)].ActorId;
-                var packet = new byte[7];
-                BinaryPrimitives.WriteInt16LittleEndian(packet, PacketConstants.IroCzActorInfoRequest);
-                BinaryPrimitives.WriteUInt32LittleEndian(packet.AsSpan(2), actorId);
-                try { await WriteBoundedAsync(stream, packet); }
-                catch (IOException) { return; }
-                catch (ObjectDisposedException) { return; }
-            }
-        }));
-
-        await Task.WhenAll(hammerTasks);
-        stop.Cancel();
-        try { await readerTask.WaitAsync(TimeSpan.FromSeconds(5)); } catch (OperationCanceledException) { } catch (TimeoutException) { }
+        await Task.WhenAll(callers);
+        await allReceived.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await readerTask.WaitAsync(TimeSpan.FromSeconds(5));
 
         Assert.Empty(readerFailures);
+        foreach (var instance in instances)
+            Assert.Equal(1, discoveryCountsByActorId.GetValueOrDefault(instance.ActorId));
 
         client.Close();
-        // A write racing the client-side close (e.g. NotifyMonsterMovedAsync's own WriteAsync,
-        // still catching up on the last hammer iteration when the socket closes) is an expected,
-        // ordinary teardown race - not the corruption this test is checking for - so a resulting
-        // IOException/SocketException on the session's own RunAsync task is tolerated here exactly
-        // like every other test in this file that closes the client while server-side work may
-        // still be in flight.
-        try { await run.WaitAsync(TimeSpan.FromSeconds(5)); }
-        catch (IOException) { }
-        catch (SocketException) { }
-
-        // The actual regression check: HashSet<uint> corruption under this exact concurrent
-        // pattern manifests as either a thrown exception during the hammering (caught above as a
-        // readerFailure or an unhandled task fault the awaited Task.WhenAll would have surfaced)
-        // or a discovery packet count that doesn't line up with "at least one, plausibly several
-        // across repeated 0x007D Clear() cycles, but never absent" for any actor that was ever in
-        // range the whole time. Every one of the monsterCount actors (all placed within visibility
-        // range for the session's entire lifetime) must have been discovered at least once.
-        foreach (var instance in instances)
-        {
-            Assert.True(discoveryCountsByActorId.TryGetValue(instance.ActorId, out var count) && count > 0,
-                $"actorId={instance.ActorId} was never discovered despite being in range for the whole hammering window.");
-        }
+        await run.WaitAsync(TimeSpan.FromSeconds(5));
     }
+
 
     private sealed class SequentialCellSelector(ushort[] cells) : IMobSpawnCellSelector
     {

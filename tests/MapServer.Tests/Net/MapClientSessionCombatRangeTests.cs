@@ -256,7 +256,7 @@ public sealed class MapClientSessionCombatRangeTests
         // the scenario this task's own regression requires: server-owned repeat-attack scheduling
         // must re-read the CURRENT monster position on every hit, not cache the position from when
         // the attack started.
-        Assert.True(target.TryStartIdleWalk([(76, 51), (95, 51)], orthogonalStepMs: 50, now: 1, nowOffset: DateTimeOffset.UnixEpoch, jitterMs: () => 0));
+        Assert.True(target.TryStartIdleWalk([(76, 51), (95, 51)], orthogonalStepMs: 50, now: DateTimeOffset.UnixEpoch, jitterMs: () => 0));
         target.AdvanceMovement(DateTimeOffset.UnixEpoch.AddMilliseconds(50));
         Assert.False(target.IsWalking); // Landed exactly on the far cell (95,51) - now well out of range.
 

@@ -23,13 +23,16 @@ namespace Athena.Net.MapServer.Gameplay.Rules.Renewal;
 //     G_PORING has no crit-relevant modeled state).
 //  2. battle_calc_defense_reduction (battle.cpp:4720-4884), RENEWAL branch, target is a PC
 //     (`tsd` set, battle.cpp:4806-4815): vit_def = def2 (the PLAYER's own def2, RENEWAL PC
-//     formula: floor((Level+Vit)/2 + Agi/5), status.cpp:2649-2656) - directly, no extra random
-//     term (that only applies pre-Renewal, battle.cpp:4808-4812 #ifndef RENEWAL). def1 is the
-//     player's hard DEF (status_get_def, gear-derived) - modeled as 0 here (a fresh Novice with no
-//     DEF-granting armor equipped), matching this project's other basic-attack calculators'
-//     existing "disclosed fresh-character defaults" convention (see RenewalBasicAttackRules' own
-//     doc comment) rather than silently approximating a nonzero value; extending this to real
-//     equipped armor is a clearly separate follow-up once Athena models armor DEF at all.
+//     formula, status.cpp:2649-2656: "stat = (int32)(((float)level + status->vit) / 2 +
+//     (float)status->agi / 5)" - ONE floating-point expression truncated to int ONCE at the end,
+//     NOT floor(Level+Vit)/2) as one integer division followed by a separate floor(Agi/5) - the
+//     two terms share a single truncation) - directly, no extra random term (that only applies
+//     pre-Renewal, battle.cpp:4808-4812 #ifndef RENEWAL). def1 is the player's hard DEF
+//     (status_get_def, gear-derived) - modeled as 0 here (a fresh Novice with no DEF-granting
+//     armor equipped), matching this project's other basic-attack calculators' existing
+//     "disclosed fresh-character defaults" convention (see RenewalBasicAttackRules' own doc
+//     comment) rather than silently approximating a nonzero value; extending this to real equipped
+//     armor is a clearly separate follow-up once Athena models armor DEF at all.
 //     damage = damage*(4000+def1)/(4000+10*def1) - vit_def (battle.cpp:4866-4867).
 //  3. battle_calc_attack (battle.cpp:6766, referenced by RenewalBasicAttackRules' own trace):
 //     damage < 1 is a miss/absorbed result (0 damage), no separate minimum-1 floor.
@@ -51,7 +54,7 @@ internal static class MobBasicAttackCalculator
         long damage = rollAtk(atkmin, atkmax);
 
         const int def1 = 0; // Disclosed simplification - see this type's own doc comment, step 2.
-        var def2 = (target.BaseLevel + target.Vitality) / 2;
+        var def2 = (int)((float)(target.BaseLevel + target.Vitality) / 2 + (float)target.Agility / 5);
         damage = damage * (4000 + def1) / (4000 + 10L * def1) - def2;
 
         return damage < 1 ? new BasicAttackDamageResult(0, IsMiss: true) : new BasicAttackDamageResult((uint)damage, IsMiss: false);

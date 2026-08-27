@@ -6,7 +6,7 @@ public sealed class MobInstanceTests
         Id: 2401, AegisName: "G_PORING", Name: "Poring", Level: 1, MaxHp: maxHp,
         Attack: 1, Attack2: 1, Defense: 2, MagicDefense: 5,
         Str: 6, Agi: 1, Vit: 1, Int: 0, Dex: 6, Luk: 5,
-        AttackRange: 1, WalkSpeed: 400, AttackDelay: 1872,
+        AttackRange: 1, WalkSpeed: 400, AttackDelay: 1872, AttackMotion: 672, DamageMotion: 480,
         BaseExp: 0, JobExp: 0, Mode: MobMode.CanMove,
         Source: new("rAthena", "abc", "db/re/mob_db.yml", 1));
 
@@ -193,7 +193,7 @@ public sealed class MobInstanceTests
     [Fact]
     public void CreatePending_IsNotAlive_AndHasZeroHp()
     {
-        var instance = MobInstance.CreatePending(1, MakeSpawn(), dueTimestamp: 1000);
+        var instance = MobInstance.CreatePending(1, MakeSpawn(), dueUtcTicks: 1000);
 
         Assert.False(instance.IsAlive);
         Assert.Equal(0u, instance.CurrentHp);
@@ -202,7 +202,7 @@ public sealed class MobInstanceTests
     [Fact]
     public void CreatePending_RespawnsThroughTheNormalRetryPath()
     {
-        var instance = MobInstance.CreatePending(1, MakeSpawn(), dueTimestamp: 1000);
+        var instance = MobInstance.CreatePending(1, MakeSpawn(), dueUtcTicks: 1000);
 
         Assert.True(instance.TryRespawn(1000, () => Fixed(15, 25)));
 
@@ -216,7 +216,7 @@ public sealed class MobInstanceTests
     [Fact]
     public void CreatePending_BeforeDueTime_DoesNotRespawn()
     {
-        var instance = MobInstance.CreatePending(1, MakeSpawn(), dueTimestamp: 1000);
+        var instance = MobInstance.CreatePending(1, MakeSpawn(), dueUtcTicks: 1000);
 
         Assert.False(instance.TryRespawn(500, () => Fixed(15, 25)));
         Assert.False(instance.IsAlive);
@@ -238,7 +238,7 @@ public sealed class MobInstanceTests
     {
         var instance = new MobInstance(1, MakeSpawn(), 0, 0);
 
-        var accepted = instance.TryAcquireTarget(500, allowChangeTargetWhileChasing: false);
+        var accepted = instance.TryAcquireTarget(500, mode: MobMode.None);
 
         Assert.True(accepted);
         Assert.True(instance.HasActiveTarget);
@@ -250,24 +250,24 @@ public sealed class MobInstanceTests
     public void TryAcquireTarget_SameAttackerAgainWhileLocked_RemainsAccepted()
     {
         var instance = new MobInstance(1, MakeSpawn(), 0, 0);
-        instance.TryAcquireTarget(500, allowChangeTargetWhileChasing: false);
+        instance.TryAcquireTarget(500, mode: MobMode.None);
 
-        var acceptedAgain = instance.TryAcquireTarget(500, allowChangeTargetWhileChasing: false);
+        var acceptedAgain = instance.TryAcquireTarget(500, mode: MobMode.None);
 
         Assert.True(acceptedAgain);
         Assert.Equal(500u, instance.Engagement.TargetAccountId);
     }
 
     // Item 6 / pinned mob_can_changetarget's MSS_RUSH case (mob.cpp:1251-1252): G_PORING's mode
-    // lacks MD_CHANGETARGETCHASE, so a caller must pass allowChangeTargetWhileChasing: false - a
+    // lacks MD_CHANGETARGETCHASE, so a caller must pass mode: MobMode.None - a
     // second, different attacker must NOT steal the target while the mob is chasing the first.
     [Fact]
     public void TryAcquireTarget_DifferentAttackerWhileChasing_WithoutChangeTargetChase_IsRejected()
     {
         var instance = new MobInstance(1, MakeSpawn(), 0, 0);
-        instance.TryAcquireTarget(500, allowChangeTargetWhileChasing: false);
+        instance.TryAcquireTarget(500, mode: MobMode.None);
 
-        var accepted = instance.TryAcquireTarget(600, allowChangeTargetWhileChasing: false);
+        var accepted = instance.TryAcquireTarget(600, mode: MobMode.None);
 
         Assert.False(accepted);
         Assert.Equal(500u, instance.Engagement.TargetAccountId); // Original target retained.
@@ -277,9 +277,9 @@ public sealed class MobInstanceTests
     public void TryAcquireTarget_DifferentAttackerWhileChasing_WithChangeTargetChase_Replaces()
     {
         var instance = new MobInstance(1, MakeSpawn(), 0, 0);
-        instance.TryAcquireTarget(500, allowChangeTargetWhileChasing: false);
+        instance.TryAcquireTarget(500, mode: MobMode.None);
 
-        var accepted = instance.TryAcquireTarget(600, allowChangeTargetWhileChasing: true);
+        var accepted = instance.TryAcquireTarget(600, mode: MobMode.ChangeTargetChase);
 
         Assert.True(accepted);
         Assert.Equal(600u, instance.Engagement.TargetAccountId);
@@ -291,7 +291,7 @@ public sealed class MobInstanceTests
         var instance = new MobInstance(1, MakeSpawn(), 0, 0);
         instance.ApplyDamage(55);
 
-        Assert.False(instance.TryAcquireTarget(500, allowChangeTargetWhileChasing: false));
+        Assert.False(instance.TryAcquireTarget(500, mode: MobMode.None));
         Assert.False(instance.HasActiveTarget);
     }
 
@@ -299,9 +299,9 @@ public sealed class MobInstanceTests
     public void TryUnlockTarget_WhenLocked_ClearsTargetAndReturnsToIdle()
     {
         var instance = new MobInstance(1, MakeSpawn(), 0, 0);
-        instance.TryAcquireTarget(500, allowChangeTargetWhileChasing: false);
+        instance.TryAcquireTarget(500, mode: MobMode.None);
 
-        var unlocked = instance.TryUnlockTarget(1000, () => 0);
+        var unlocked = instance.TryUnlockTarget(DateTimeOffset.UnixEpoch, () => 0);
 
         Assert.True(unlocked);
         Assert.False(instance.HasActiveTarget);
@@ -313,7 +313,7 @@ public sealed class MobInstanceTests
     {
         var instance = new MobInstance(1, MakeSpawn(), 0, 0);
 
-        Assert.False(instance.TryUnlockTarget(1000, () => 0));
+        Assert.False(instance.TryUnlockTarget(DateTimeOffset.UnixEpoch, () => 0));
     }
 
     // Requirement 7 / pinned mob_dead's own target unlock (mob.cpp:3863) - a killing hit must
@@ -322,7 +322,7 @@ public sealed class MobInstanceTests
     public void ApplyDamage_Lethal_ClearsEngagementState()
     {
         var instance = new MobInstance(1, MakeSpawn(), 0, 0);
-        instance.TryAcquireTarget(500, allowChangeTargetWhileChasing: false);
+        instance.TryAcquireTarget(500, mode: MobMode.None);
         instance.EnterAttackState();
 
         instance.ApplyDamage(55);
@@ -336,7 +336,7 @@ public sealed class MobInstanceTests
     public void TryRespawn_ClearsAnyStaleEngagementFromThePreviousLife()
     {
         var instance = new MobInstance(1, MakeSpawn(), 10, 10);
-        instance.TryAcquireTarget(500, allowChangeTargetWhileChasing: false);
+        instance.TryAcquireTarget(500, mode: MobMode.None);
         instance.ApplyDamage(55); // Already clears via death, but exercise the respawn path independently too.
         instance.TryScheduleRespawn(1000);
 
@@ -360,7 +360,7 @@ public sealed class MobInstanceTests
     public void EnterAttackState_WhileTargeted_TransitionsToBerserk()
     {
         var instance = new MobInstance(1, MakeSpawn(), 0, 0);
-        instance.TryAcquireTarget(500, allowChangeTargetWhileChasing: false);
+        instance.TryAcquireTarget(500, mode: MobMode.None);
 
         instance.EnterAttackState();
 
@@ -371,7 +371,7 @@ public sealed class MobInstanceTests
     public void EnterChaseState_FromBerserk_ReturnsToRush()
     {
         var instance = new MobInstance(1, MakeSpawn(), 0, 0);
-        instance.TryAcquireTarget(500, allowChangeTargetWhileChasing: false);
+        instance.TryAcquireTarget(500, mode: MobMode.None);
         instance.EnterAttackState();
 
         instance.EnterChaseState();
@@ -380,15 +380,16 @@ public sealed class MobInstanceTests
     }
 
     [Fact]
-    public void NextAttackTimestamp_DefaultsToNull_UntilScheduled()
+    public void NextAttackAt_DefaultsToNull_UntilScheduled()
     {
         var instance = new MobInstance(1, MakeSpawn(), 0, 0);
 
-        Assert.Null(instance.NextAttackTimestamp);
+        Assert.Null(instance.NextAttackAt);
 
-        instance.ScheduleNextAttack(5000);
+        var dueAt = DateTimeOffset.UnixEpoch.AddMilliseconds(5000);
+        instance.ScheduleNextAttack(dueAt);
 
-        Assert.Equal(5000L, instance.NextAttackTimestamp);
+        Assert.Equal(dueAt, instance.NextAttackAt);
     }
 
     // Pinned unit_stop_walking's own immediate halt (unit.cpp:1695-1751) - StopChase must not wait
@@ -409,5 +410,89 @@ public sealed class MobInstanceTests
         // the path was genuinely truncated, not merely retargeted-to-apply-later.
         var crossed = instance.AdvanceMovement(DateTimeOffset.UnixEpoch.AddSeconds(10));
         Assert.Empty(crossed);
+    }
+
+    // ===== Mandatory timing tests (unit-mismatch regression) =====
+    //
+    // An earlier revision passed DateTimeOffset.UtcTicks (100-nanosecond ticks) into these
+    // scheduling APIs while adding raw MILLISECOND constants (MinRandomWalkTimeMs=4000, mob_db
+    // AttackDelay=1872) directly - 4000 ticks is 0.4ms, not 4000ms. These tests prove the
+    // CORRECTED DateTimeOffset-based APIs require the REAL millisecond duration to elapse, not an
+    // amount 10,000x smaller - each test's own "just before" assertion is the one that would have
+    // silently passed under the old bug (a 0.4ms deadline is always already in the past by the time
+    // any test process even reaches the assertion), so the "at/after" assertion alone would not
+    // have caught the regression.
+
+    [Fact]
+    public void IsIdleWalkDue_MinRandomWalkTime4000Ms_NotDueOneMillisecondEarly()
+    {
+        var instance = new MobInstance(1, MakeSpawn(), 0, 0);
+        var epoch = DateTimeOffset.UnixEpoch;
+        instance.IsIdleWalkDue(epoch, () => 0); // First call only initializes the deadline (epoch + 0 + 4000ms).
+
+        var dueAtExactly3999Ms = instance.IsIdleWalkDue(epoch.AddMilliseconds(3999), () => 0);
+
+        Assert.False(dueAtExactly3999Ms, "MIN_RANDOMWALKTIME=4000ms must not be satisfied by 3999ms - this would pass trivially under the old ticks-as-milliseconds bug.");
+    }
+
+    [Fact]
+    public void IsIdleWalkDue_MinRandomWalkTime4000Ms_IsDueAtExactly4000Ms()
+    {
+        var instance = new MobInstance(1, MakeSpawn(), 0, 0);
+        var epoch = DateTimeOffset.UnixEpoch;
+        instance.IsIdleWalkDue(epoch, () => 0);
+
+        var dueAtExactly4000Ms = instance.IsIdleWalkDue(epoch.AddMilliseconds(4000), () => 0);
+
+        Assert.True(dueAtExactly4000Ms);
+    }
+
+    [Fact]
+    public void ScheduleNextAttack_RealAttackDelay1872Ms_EvaluateWaitsAt1871Ms_AttacksAt1872Ms()
+    {
+        var instance = new MobInstance(1, MakeSpawn(), 0, 0);
+        var epoch = DateTimeOffset.UnixEpoch;
+        instance.ScheduleNextAttack(epoch.AddMilliseconds(1872));
+
+        Assert.NotNull(instance.NextAttackAt);
+        Assert.True(epoch.AddMilliseconds(1871) < instance.NextAttackAt); // 1871ms has not yet reached the deadline.
+        Assert.True(epoch.AddMilliseconds(1872) >= instance.NextAttackAt); // 1872ms has reached it exactly.
+    }
+
+    // The critical regression case the task's own correction specifically calls out: with the
+    // shared 100ms world tick loop, the OLD ticks-as-milliseconds bug would have made a 1872ms
+    // AttackDelay expire after roughly 0.1872ms - i.e. already expired by the very first 100ms
+    // tick. This test proves a single 100ms advance from scheduling time does NOT reach a REAL
+    // 1872ms deadline (Engagement/NextAttackAt is checked directly here; the full Evaluate-level
+    // Wait/Attack transition is covered by MonsterEngagementDomainTests using the same real API).
+    [Fact]
+    public void ScheduleNextAttack_RealAttackDelay1872Ms_OneHundredMillisecondWorldTick_DoesNotExpireTheCooldown()
+    {
+        var instance = new MobInstance(1, MakeSpawn(), 0, 0);
+        var epoch = DateTimeOffset.UnixEpoch;
+        instance.ScheduleNextAttack(epoch.AddMilliseconds(1872));
+
+        var afterOneWorldTick = epoch.AddMilliseconds(100);
+
+        Assert.True(afterOneWorldTick < instance.NextAttackAt, "A single 100ms world tick must never expire a real 1872ms attack cooldown.");
+    }
+
+    // Combat unlock -> idle-walk resumption timing: TryUnlockTarget's own reschedule
+    // (now + jitter + MinRandomWalkTimeMs) must require the REAL 4000ms+ to elapse before the next
+    // idle walk becomes due - never satisfied by the very next 100ms world tick after unlock.
+    [Fact]
+    public void TryUnlockTarget_ScheduledIdleWalkResumption_IsNotDueOnTheVeryNextHundredMillisecondTick()
+    {
+        var instance = new MobInstance(1, MakeSpawn(), 0, 0);
+        var epoch = DateTimeOffset.UnixEpoch;
+        instance.TryAcquireTarget(500, mode: MobMode.None);
+
+        instance.TryUnlockTarget(epoch, () => 0); // Schedules resumption at epoch + 4000ms (jitter=0).
+
+        var oneWorldTickLater = instance.IsIdleWalkDue(epoch.AddMilliseconds(100), () => 0);
+        Assert.False(oneWorldTickLater, "Unlocking from combat must not permit an idle random walk on the very next 100ms world tick.");
+
+        var afterRealMinRandomWalkTime = instance.IsIdleWalkDue(epoch.AddMilliseconds(4000), () => 0);
+        Assert.True(afterRealMinRandomWalkTime, "Idle random walk must become due once the REAL 4000ms MIN_RANDOMWALKTIME has elapsed since unlock.");
     }
 }

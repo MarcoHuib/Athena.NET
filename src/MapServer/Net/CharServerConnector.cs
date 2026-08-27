@@ -199,7 +199,15 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
         if (!_pendingQuestStates.TryAdd(key, pending)) return null;
         using var registration = cancellationToken.Register(() => pending.TrySetCanceled(cancellationToken));
         var packet = MapQuestStateProtocol.BuildRequest(accountId, charId, questId, operation);
-        MapLogger.Info($"Persisting quest charId={charId} questId={questId} state={operation}.");
+        // Section 14's own terminology fix: operation==Absent(0) is the CharServer wire protocol's
+        // READ opcode (GetQuestStateAsync's own call site below) - only operations 1 (Active) or 2
+        // (Completed) actually WRITE the quest row. The live log previously said "Persisting quest
+        // ... state=Absent" for every ordinary read, which reads as if an active quest were being
+        // repeatedly reset to Absent - it never was; that was always just the read request's own
+        // (overloaded) opcode value, never a write. See CharacterQuestStateTests for the regression.
+        MapLogger.Info(operation == CharacterQuestStatus.Absent
+            ? $"Reading quest state charId={charId} questId={questId}."
+            : $"Persisting quest charId={charId} questId={questId} state={operation}.");
         try { await connection.WriteAsync(packet, cancellationToken); return await pending.Task; }
         finally { _pendingQuestStates.TryRemove(key, out _); }
     }
@@ -424,8 +432,13 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
         if (!MapQuestStateProtocol.TryParseResponse(packet, out var charId, out var questId, out var state)) return false;
         if (_pendingQuestStates.TryRemove((charId, questId), out var pending))
             pending.TrySetResult(state);
-        if (state is not null) MapLogger.Info($"Quest persistence succeeded charId={charId} questId={questId} state={state}.");
-        else MapLogger.Warning($"Quest persistence failed charId={charId} questId={questId}.");
+        // This response handles BOTH read (GetQuestStateAsync) and write (SetQuestStateAsync)
+        // requests, keyed only by (charId, questId) - the operation itself is not tracked here, so
+        // "state" below is simply the resulting/current row value CharServer returned, never
+        // implying a write occurred (see SendQuestStateRequestAsync's own request-side log for the
+        // operation-aware "Reading" vs "Persisting" distinction).
+        if (state is not null) MapLogger.Info($"Quest state response received charId={charId} questId={questId} state={state}.");
+        else MapLogger.Warning($"Quest state request failed charId={charId} questId={questId}.");
         return true;
     }
 

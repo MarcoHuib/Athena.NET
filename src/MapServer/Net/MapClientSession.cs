@@ -12,45 +12,6 @@ namespace Athena.Net.MapServer.Net;
 
 public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
 {
-    // Thread-safe wrapper around this session's "which actor IDs has this client already been told
-    // exist" set. Before MapTcpServer's shared monster tick loop existed, _visibleActorIds was only
-    // ever touched from this session's own sequential packet-handling/background-loop code, so a
-    // plain HashSet<uint> was safe. It no longer is: NotifyMonsterMovedAsync is now called from
-    // MapTcpServer's OWN background tick loop, concurrently with this session's packet loop (actor-
-    // info handling, death/vanish handling, warp/map-change Clear, repeat-attack processing) and its
-    // own player-movement visibility scan - several independent call sites that can race on the same
-    // HashSet<uint>, which is not safe to read/mutate concurrently under any circumstance (not just
-    // "give wrong answers" - literally undefined/corrupting behavior for concurrent Add/Remove).
-    //
-    // A single `lock` (not a full lock-free/concurrent-collection design) is deliberately the
-    // smallest correct fix here: every operation below is O(1)-ish HashSet work with no I/O, so
-    // holding the lock for the whole operation is cheap and never blocks on a network write -
-    // callers must never call these while already holding this lock or vice versa, and every method
-    // here returns before any WriteAsync/await happens in the caller.
-    //
-    // TryMarkVisible folds the pre-existing "Contains, then if false Add" pattern several call
-    // sites used into ONE atomic operation (HashSet<T>.Add already reports whether the item was
-    // newly added) - that combined check+add is exactly the operation that must be atomic under
-    // concurrency: two racing callers must never both observe "not yet visible" and both send a
-    // discovery packet for the same actor.
-    private sealed class VisibleActorTracker
-    {
-        private readonly Lock _gate = new();
-        private readonly HashSet<uint> _actorIds = [];
-
-        public bool IsActorVisible(uint actorId) { lock (_gate) return _actorIds.Contains(actorId); }
-
-        // Returns true only when THIS call is the one that actually added actorId (matching
-        // HashSet<T>.Add's own "returns true if the element is added" contract) - a caller uses
-        // this to decide whether IT is responsible for sending the one-time discovery packet.
-        public bool TryMarkVisible(uint actorId) { lock (_gate) return _actorIds.Add(actorId); }
-
-        public void MarkNotVisible(uint actorId) { lock (_gate) _actorIds.Remove(actorId); }
-
-        public void Clear() { lock (_gate) _actorIds.Clear(); }
-    }
-
-
     private static readonly Dictionary<short, int> PacketLengths = new()
     {
         [PacketConstants.CzEnter] = 19,
@@ -993,6 +954,19 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
     // caught by EnsureMovementState's now-removed map-mismatch check, which is exactly the bug this
     // helper fixes: MapClientSessionWarpTests.MovementIntoTutorialDoor_... teleports within
     // "iz_int03", so map-equality alone cannot detect that the previous walk state is stale.
+    // Test-only wrapper around TeleportTo, gated identically to every production caller of that
+    // method (see _movementGate's own doc comment) - lets a test simulate "the player's
+    // authoritative position changed concurrently" (e.g. a real movement/warp packet landing
+    // between MonsterEngagementTickProcessor's own Evaluate and its later attack-execution
+    // snapshot) without reflecting into private state or duplicating TeleportTo's own
+    // movement-state-reset logic.
+    internal async Task TeleportForTestAsync(string map, ushort x, ushort y, CancellationToken cancellationToken)
+    {
+        await _movementGate.WaitAsync(cancellationToken);
+        try { TeleportTo(map, x, y); }
+        finally { _movementGate.Release(); }
+    }
+
     private void TeleportTo(string map, ushort x, ushort y)
     {
         _mapName = map;
@@ -1299,6 +1273,22 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
         }
     }
 
+    // Resolves each distinct QuestId GeneratedQuestDrops.All mentions through the real persistence
+    // interface (see QuestDropResolver's own doc comment) - Athena has no materialized "all active
+    // quests" concept anywhere else either. Only called from MonsterCombatCoordinator.AttackAsync's
+    // own `killed` branch (see PerformDueRepeatAttackAsync's own call site) - never on an ordinary
+    // non-lethal hit, which is the section 15 optimization this extraction exists for.
+    private async Task<Func<uint, CharacterQuestStatus>> ResolveActiveQuestStatesAsync(CancellationToken cancellationToken)
+    {
+        var questStates = new Dictionary<uint, CharacterQuestStatus>();
+        foreach (var rule in GeneratedQuestDrops.All)
+        {
+            if (questStates.ContainsKey(rule.QuestId)) continue;
+            questStates[rule.QuestId] = await _questPersistence.GetQuestStateAsync(_accountId, _charId, rule.QuestId, cancellationToken) ?? CharacterQuestStatus.Absent;
+        }
+        return questId => questStates.GetValueOrDefault(questId, CharacterQuestStatus.Absent);
+    }
+
     // Executes exactly one authoritative hit for the repeat-attack state active at the time the
     // loop woke. Reschedules the next hit (or clears the state on death/target-loss) BEFORE
     // sending any wire notification for this hit - the pinned unit_attack_timer_sub tail
@@ -1414,24 +1404,21 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
             return;
         }
 
-        // QuestDropResolver requires each distinct QuestId its generated rules mention to be
-        // resolved beforehand through the real persistence interface (see its own doc comment) -
-        // Athena has no materialized "all active quests" concept anywhere else either.
-        var questStates = new Dictionary<uint, CharacterQuestStatus>();
-        foreach (var rule in GeneratedQuestDrops.All)
-        {
-            if (questStates.ContainsKey(rule.QuestId)) continue;
-            questStates[rule.QuestId] = await _questPersistence.GetQuestStateAsync(_accountId, _charId, rule.QuestId, cancellationToken) ?? CharacterQuestStatus.Absent;
-        }
+        // Section 15: quest-state CharServer roundtrips are only genuinely needed when THIS hit
+        // kills the target (QuestDropResolver.ResolveDrops is only ever reached on death) - the
+        // resolver below is only invoked by AttackAsync's own `killed` branch, so an ordinary
+        // non-lethal hit never touches CharServer for quest state at all (the live log's own
+        // observed "quest-state roundtrip on every hit" pattern this fixes).
+        Task<Func<uint, CharacterQuestStatus>> ResolveQuestStatesAsync() => ResolveActiveQuestStatesAsync(cancellationToken);
 
         var effectiveStats = _statusEffects.Recalculate(_gameplayState.State);
-        var outcome = _combat.Attack(
+        var outcome = await _combat.AttackAsync(
             target,
             _accountId,
             effectiveStats,
             _gameplayState.State.BaseLevel,
             equippedWeapon,
-            questId => questStates.GetValueOrDefault(questId, CharacterQuestStatus.Absent));
+            ResolveQuestStatesAsync);
         if (!outcome.Accepted) { ClearRepeatAttackIfCurrent(expected); return; }
 
         // Reschedule (or clear, on death) the repeat-attack runtime state BEFORE any wire
@@ -1464,12 +1451,17 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
         MapLogger.Info(
             $"[iRO MAP DEBUG] Attack accepted attackerAccountId={_accountId} targetActorId={expected.TargetActorId} damage={damageDealt} hpBefore={outcome.HpBefore} hpAfter={outcome.HpAfter} killed={outcome.KilledByThisHit} range={effectiveRangeForRangeCheck} clientDistance={ClientDistance.DistanceClient(dxForRangeCheck, dyForRangeCheck)}");
 
+        // dstSpeed is the TARGET's own dmotion (clif_damage's ddelay) - for a mob target that is
+        // MobDefinition.DamageMotion directly (see that field's own doc comment for the pinned
+        // trace); srcSpeed remains the existing capture-verified player-attacker value (460) -
+        // deriving the player's own real amotion is a separate, larger, weapon-speed-dependent
+        // pinned formula (status_base_amotion) out of this task's scope, not touched here.
         var damagePacket = IroMonsterCombatPackets.BuildNotifyAct3(
             _accountId,
             expected.TargetActorId,
             tick,
             srcSpeed: 460,
-            dstSpeed: 480,
+            dstSpeed: (uint)target.Spawn.Mob.DamageMotion,
             damage: damageDealt,
             div: 1,
             actionType: 0);
@@ -1559,7 +1551,8 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
         try
         {
             SyncPositionToNow();
-            return new PlayerCombatSnapshot(_accountId, _mapName, _x, _y, _gameplayState.State.CurrentHp > 0, _gameplayState.State.BaseLevel, stats.Vitality);
+            var isWalking = _movement?.IsMoving ?? false;
+            return new PlayerCombatSnapshot(_accountId, _mapName, _x, _y, _gameplayState.State.CurrentHp > 0, isWalking, _gameplayState.State.BaseLevel, stats.Vitality, stats.Agility);
         }
         finally { _movementGate.Release(); }
     }
@@ -1576,10 +1569,34 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
     // Returns false (does nothing, sends nothing) if the player is no longer a valid target by the
     // time the mutation actually runs - the orchestrator feeds that back into the mob's own target-
     // unlock lifecycle exactly like a snapshot that was null/dead/wrong-map to begin with.
-    internal async Task<bool> ApplyIncomingMobBasicAttackAsync(uint mobActorId, string mobAegisName, uint damage, bool isMiss, CancellationToken cancellationToken)
+    // Section 12's own responsibility split: this method is VICTIM-ONLY (authoritative HP mutation
+    // + the victim's own self SP_HP update) - it never sends the 0x08C8 combat action itself. The
+    // action is broadcast separately, to every AREA-visible observer (victim included), via
+    // MonsterAttackActionOutcome/MapTcpServer's own fan-out - see that record's own doc comment for
+    // why the two are split (pinned clif_damage's own AREA-vs-SELF distinction: the action is
+    // never victim-only, the HP parameter update never leaves the victim's own session).
+    //
+    // Section 7's own TOCTOU closure point: this is the ACTUAL hit-execution instant, re-validated
+    // fully here rather than trusting whatever snapshot the caller's earlier Evaluate/Chase-vs-
+    // Attack decision was based on - MutateAsync's own optimistic-concurrency compare-and-swap
+    // means a stale `expected` row (the player moved/mutated concurrently) is naturally rejected
+    // (returns null) rather than silently overwritten; `damage`/`isMiss` were themselves computed
+    // moments earlier by the caller from ITS OWN re-snapshot taken immediately before calling this
+    // method (MonsterEngagementTickProcessor's own re-snapshot-then-attack sequence), not from the
+    // original Evaluate-time snapshot - see that processor's own doc comment for the full sequence.
+    //
+    // Returns null when the mutation could not be applied (no gameplay state, or MutateAsync
+    // rejected a stale row) - the caller must NOT emit any attack action/outcome in that case
+    // (section 7: "do not emit a successful attack result" when the target is no longer
+    // attackable). Otherwise returns the HP AFTER this hit, and whether it actually changed (a
+    // miss/0-damage hit, or a hit against an already-dead player, changes nothing - see section
+    // 10's own "do not send an HP parameter update merely because the mob attempted an attack"
+    // requirement).
+    internal async Task<(uint HpAfter, bool HpChanged)?> ApplyIncomingMobBasicAttackAsync(uint damage, CancellationToken cancellationToken)
     {
-        if (_gameplayState is null) return false;
+        if (_gameplayState is null) return null;
 
+        var before = _gameplayState.State.CurrentHp;
         var mutated = await _gameplayState.MutateAsync(current =>
         {
             if (current.CurrentHp == 0) return current; // Already dead - no further reduction (pinned status_isdead target check).
@@ -1587,19 +1604,13 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
             return current with { CurrentHp = after };
         }, cancellationToken);
 
-        if (mutated is null) return false; // Persistence rejected the mutation (stale row) - treat as a normal "target no longer valid this tick", not an error.
+        if (mutated is null) return null; // Persistence rejected the mutation (stale row) - treat as a normal "target no longer valid this tick", not an error.
 
-        MapLogger.Info(
-            $"[iRO MAP DEBUG] Mob attack accepted mobActorId={mobActorId} mob='{mobAegisName}' targetAccountId={_accountId} damage={damage} isMiss={isMiss} hpAfter={mutated.CurrentHp}");
-
-        var tick = unchecked((uint)Environment.TickCount);
-        var damagePacket = IroMonsterCombatPackets.BuildNotifyAct3(
-            mobActorId, _accountId, tick, srcSpeed: 460, dstSpeed: 480, damage: damage, div: 1, actionType: 0);
-        await WriteAsync(damagePacket, cancellationToken);
-
-        var hpPacket = IroCharacterProgressionPackets.Parameter(5, mutated.CurrentHp); // SP_HP.
-        await WriteAsync(hpPacket, cancellationToken);
-        return true;
+        // The SP_HP packet itself is NOT written here - see MonsterAttackActionOutcome's own doc
+        // comment for why the wire write is deferred to NotifyMonsterAttackOutcomeAsync, which sends
+        // it immediately after the action packet on the same fan-out call (matching pinned wire
+        // ordering: action always precedes the HP sync).
+        return (mutated.CurrentHp, mutated.CurrentHp != before);
     }
 
     // Pinned clif_parse_UseItem (clif.cpp:12077-12106) -> pc_useitem (pc.cpp:6450-6576).
@@ -2544,6 +2555,16 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
                 // method's own doc comment for why the captured 0x0088 does NOT apply here.
                 return;
 
+            case MonsterMovementChangeKind.ChaseInterrupted:
+                // Pinned mob_ai_sub_hard's own "target in range -> unit_stop_walking(md,
+                // USW_FIXPOS|USW_RELEASE_TARGET)" (unit.cpp:2165-2166): USW_FIXPOS makes pinned
+                // unit_stop_walking call clif_fixpos (unit.cpp:1732-1737) - this is the ONE case
+                // (combat interruption, never an ordinary WalkFinished) where the capture-verified
+                // 0x0088 is sent, at the mob's authoritative CURRENT cell.
+                var fixPosPacket = IroMonsterActorPackets.BuildStopMove(instance.ActorId, position.X, position.Y);
+                await WriteAsync(fixPosPacket, cancellationToken);
+                return;
+
             case MonsterMovementChangeKind.WalkStarted:
                 var destination = instance.MovementDestination;
                 var walkPacket = IroMonsterActorPackets.BuildWalkEntry(
@@ -2560,6 +2581,44 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
                     maxHp: mob.MaxHp);
                 await WriteAsync(walkPacket, cancellationToken);
                 return;
+        }
+    }
+
+    // Sends the COMPLETE wire outcome of one mob-on-player basic-attack hit - both the AREA-visible
+    // combat action and (victim-only) the resulting SP_HP update, in the exact order and gating
+    // pinned rAthena's own real attack path produces, traced (not assumed) from:
+    //   - battle.cpp:7399 "clif_damage(*src, *target, tick, wd.amotion, wd.dmotion, wd.damage,
+    //     ...)" - the 0x08C8 action is sent IMMEDIATELY/synchronously the instant the attack
+    //     executes, to AREA (clif.cpp:5297: "clif_send(&p, sizeof(p), &dst, AREA)" - every session
+    //     whose visibility already covers the mob receives it, victim included, regardless of who
+    //     else is the target).
+    //   - battle.cpp:7437 "battle_delay_damage(tick, wd.amotion, ...)" runs AFTER that clif_damage
+    //     call - the actual HP mutation (status_fix_damage -> status_damage -> pc_damage) is
+    //     genuinely DEFERRED until the attack-motion delay elapses, not simultaneous with the
+    //     action packet. This project does not model that extra delay (a disclosed simplification,
+    //     matching this slice's own scope boundary) but the RELATIVE ORDER - action always
+    //     observable before the resulting HP change - is preserved by sending both here, action
+    //     first, on the same call.
+    //   - pc.cpp:9682-9687 "void pc_damage(...) { ... if (hp) clif_updatestatus(*sd,SP_HP); else
+    //     return; }" - SP_HP is PLAYER-SELF-ONLY (clif_updatestatus targets exactly one session,
+    //     never AREA) and is skipped ENTIRELY when hp==0 - a miss/zero-damage hit never produces an
+    //     HP packet, matching this method's own HpChanged guard below exactly.
+    public async Task NotifyMonsterAttackOutcomeAsync(MonsterAttackActionOutcome action, CancellationToken cancellationToken)
+    {
+        if (!string.Equals(action.Map, _mapName, StringComparison.OrdinalIgnoreCase)) return;
+        if (!_visibleActorIds.IsActorVisible(action.MobActorId)) return;
+
+        var tick = unchecked((uint)Environment.TickCount);
+        var damagePacket = IroMonsterCombatPackets.BuildNotifyAct3(
+            action.MobActorId, action.VictimAccountId, tick, action.SrcSpeed, action.DstSpeed, action.Damage, div: 1, actionType: 0);
+        await WriteAsync(damagePacket, cancellationToken);
+
+        // Self-only, action-then-HP order, HP==0 never sent - see this method's own doc comment
+        // for the exact pinned citations (pc.cpp:9682-9687, battle.cpp:7399/7437).
+        if (action.VictimAccountId == _accountId && action.HpChanged)
+        {
+            var hpPacket = IroCharacterProgressionPackets.Parameter(5, action.HpAfter); // SP_HP.
+            await WriteAsync(hpPacket, cancellationToken);
         }
     }
 
