@@ -1,14 +1,24 @@
 namespace Athena.Net.MapServer.World;
 
 // What kind of movement-relevant change happened to a MobInstance during one MonsterRuntime.
-// ProcessTick call - distinguishes "the walk just started" from "a cell was crossed mid-walk" from
-// "the walk just completed", because pinned clif_move is NOT sent for all three the same way:
-// unit_walktoxy_nextcell (unit.cpp:180-247) only passes sendMove=true from unit_walktoxy's own
-// initial call (unit.cpp:317, the WalkStarted case) - the per-cell continuation call from
-// unit_walktoxy_timer (unit.cpp:749) always passes sendMove=false, so an ordinary CellCrossed event
-// must NOT re-send the walk-entry packet. See MapClientSession.NotifyMonsterMovedAsync for how each
-// Kind maps to (or deliberately withholds) a wire packet.
-public enum MonsterMovementChangeKind { WalkStarted, CellCrossed, WalkFinished }
+// ProcessTick (or MonsterEngagementTickProcessor.ProcessAsync) call - distinguishes "the walk just
+// started" from "a cell was crossed mid-walk" from "the walk just completed" from "a combat
+// interruption stopped the walk", because pinned clif_move/clif_fixpos are NOT sent for all of
+// these the same way:
+//   - unit_walktoxy_nextcell (unit.cpp:180-247) only passes sendMove=true from unit_walktoxy's own
+//     initial call (unit.cpp:317, the WalkStarted case) - the per-cell continuation call from
+//     unit_walktoxy_timer (unit.cpp:749) always passes sendMove=false, so an ordinary CellCrossed
+//     event must NOT re-send the walk-entry packet.
+//   - An ordinary walk reaching its natural destination (WalkFinished) sends nothing at all
+//     (unit.cpp:186-192, no clif_fixpos).
+//   - A COMBAT interruption of an in-flight walk (mob_ai_sub_hard's own "target in range ->
+//     unit_stop_walking(md, USW_FIXPOS|USW_RELEASE_TARGET)", unit.cpp:2165-2166) is different:
+//     USW_FIXPOS makes pinned unit_stop_walking call clif_fixpos (unit.cpp:1732-1737) - this is the
+//     ChaseInterrupted case, and IS the one case where the capture-verified 0x0088 ZC_STOPMOVE
+//     packet (IroMonsterActorPackets.BuildStopMove) is sent, at the mob's authoritative current
+//     cell. See MapClientSession.NotifyMonsterMovedAsync for how each Kind maps to (or deliberately
+//     withholds) a wire packet.
+public enum MonsterMovementChangeKind { WalkStarted, CellCrossed, WalkFinished, ChaseInterrupted }
 
 public readonly record struct MonsterMovementChange(MobInstance Instance, MonsterMovementChangeKind Kind);
 
@@ -85,14 +95,13 @@ public sealed class MonsterRuntime(MonsterRegistry monsters, IMapCollisionProvid
     public IReadOnlyList<MonsterMovementChange> ProcessTick()
     {
         var now = timeProvider.GetUtcNow();
-        var nowTicks = now.UtcTicks;
         var changed = new List<MonsterMovementChange>();
 
         foreach (var instance in monsters.AllInstances)
         {
             if (!instance.IsAlive) continue;
 
-            if (ProcessIdleMovement(instance, nowTicks, now))
+            if (ProcessIdleMovement(instance, now))
             {
                 changed.Add(new MonsterMovementChange(instance, MonsterMovementChangeKind.WalkStarted));
                 continue; // A just-started walk already reflects its first cell; no need to also AdvanceMovement this same tick.
@@ -114,27 +123,27 @@ public sealed class MonsterRuntime(MonsterRegistry monsters, IMapCollisionProvid
     }
 
     // Returns true if a new idle walk was started this call.
-    private bool ProcessIdleMovement(MobInstance instance, long nowTicks, DateTimeOffset now)
+    private bool ProcessIdleMovement(MobInstance instance, DateTimeOffset now)
     {
         // MD_CANMOVE required, MD_NORANDOMWALK forbids it even so (mob.cpp:1687,1689) - checked
         // here (mode is Spawn.Mob data) before ever asking MobInstance whether timing is due, so a
-        // stationary mob's _nextIdleWalkTimestamp is never even initialized.
+        // stationary mob's next-idle-walk deadline is never even initialized.
         var mode = instance.Spawn.Mob.Mode;
         if (!mode.HasFlag(MobMode.CanMove) || mode.HasFlag(MobMode.NoRandomWalk)) return false;
 
         // Pinned mob_ai_sub_hard only ever reaches its mob_randomwalk call inside the "if (!tbl)"
         // branch (mob.cpp:2043-2069) - a mob with a valid combat target never falls into that
         // branch at all, so mob_randomwalk is never even considered while engaged. Checked here
-        // (not inside MobInstance.IsIdleWalkDue) so a still-engaged mob's _nextIdleWalkTimestamp is
+        // (not inside MobInstance.IsIdleWalkDue) so a still-engaged mob's next-idle-walk deadline is
         // never advanced/consulted while combat is deciding its movement instead - see
-        // MonsterCombatDomain's own doc comment for where that decision actually happens.
+        // MonsterEngagementDomain's own doc comment for where that decision actually happens.
         if (instance.HasActiveTarget) return false;
 
-        if (!instance.IsIdleWalkDue(nowTicks, _randomJitterMs)) return false;
+        if (!instance.IsIdleWalkDue(now, _randomJitterMs)) return false;
 
         if (!collisionProvider.TryGetMap(instance.Map, out var map))
         {
-            instance.RescheduleAfterFailedIdleWalk(nowTicks, _randomJitterMs);
+            instance.RescheduleAfterFailedIdleWalk(now, _randomJitterMs);
             return false;
         }
 
@@ -144,11 +153,11 @@ public sealed class MonsterRuntime(MonsterRegistry monsters, IMapCollisionProvid
         {
             // Pinned mob_ai_sub_hard's post-failure reschedule (mob.cpp:2058-2066) - see
             // MobInstance.RescheduleAfterFailedIdleWalk's own doc comment.
-            instance.RescheduleAfterFailedIdleWalk(nowTicks, _randomJitterMs);
+            instance.RescheduleAfterFailedIdleWalk(now, _randomJitterMs);
             return false;
         }
 
-        return instance.TryStartIdleWalk(path, walkSpeed, nowTicks, now, _randomJitterMs);
+        return instance.TryStartIdleWalk(path, walkSpeed, now, _randomJitterMs);
     }
 
     // Pinned mob_randomwalk's candidate search (mob.cpp:1696-1751), ported exactly - not just the

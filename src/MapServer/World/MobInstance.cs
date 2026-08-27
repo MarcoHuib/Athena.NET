@@ -36,13 +36,22 @@ public sealed class MobInstance
     private readonly Lock _gate = new();
     private uint _currentHp;
     private MobLifecycleState _state;
-    private long _deadUntilTimestamp;
+    private long _deadUntilUtcTicks;
     private MobPosition _position;
     // Idle-walk scheduling/movement state - see TryStartIdleWalk/AdvanceMovement's own doc
-    // comments. `_nextIdleWalkTimestamp` mirrors pinned mob_data.next_walktime (mob.hpp) exactly:
-    // 0 means "not yet initialized" (pinned mob_randomwalk's own `INVALID_TIMER` sentinel check,
+    // comments. `_nextIdleWalkAt` mirrors pinned mob_data.next_walktime (mob.hpp) exactly: null
+    // means "not yet initialized" (pinned mob_randomwalk's own `INVALID_TIMER` sentinel check,
     // mob.cpp:1681), matching that this instance has never been considered for an idle walk yet.
-    private long _nextIdleWalkTimestamp;
+    //
+    // DateTimeOffset (not a raw `long`) is deliberate: an earlier revision passed `DateTimeOffset.
+    // UtcTicks` (100-nanosecond ticks) into these fields while adding raw MILLISECOND constants
+    // (MinRandomWalkTimeMs=4000, mob_db AttackDelay=1872) directly to them - a real unit-mismatch
+    // bug (4000 ticks = 0.4ms, not 4000ms = 4s) that would have let a mob's idle-walk/attack timers
+    // fire on the very next 100ms world tick instead of after their real pinned delay. Using
+    // DateTimeOffset + AddMilliseconds throughout makes that class of bug impossible to reintroduce
+    // - every caller adds an explicit millisecond duration to an explicit instant, never a bare
+    // numeric field whose unit depends on which caller populated it.
+    private DateTimeOffset? _nextIdleWalkAt;
     // Reuses CharacterMovementState as the SAME per-cell walk timing/lifecycle model player
     // movement already uses (see that type's own doc comment) - mob idle movement and player
     // movement share one timing/lifecycle mechanism, only the path SOURCE (idle AI vs. player
@@ -58,11 +67,13 @@ public sealed class MobInstance
     // comment for that precedent).
     private uint? _targetAccountId;
     private MobCombatState _combatState = MobCombatState.Idle;
-    // Pinned md->attackabletime / status->adelay (mob_db AttackDelay) - the next tick at which this
-    // mob's own attack timer may fire again (unit_attack_timer_sub's own ud->attacktimer re-arm,
-    // unit.cpp:3337). 0 means "no attack in flight / delay elapsed", matching
-    // _nextIdleWalkTimestamp's own "0 = not scheduled" sentinel convention on this same type.
-    private long _nextAttackTimestamp;
+    // Pinned md->attackabletime / status->adelay (mob_db AttackDelay) - the next instant at which
+    // this mob's own attack timer may fire again (unit_attack_timer_sub's own ud->attacktimer
+    // re-arm, unit.cpp:3337). Null means "no attack in flight / delay elapsed", matching
+    // _nextIdleWalkAt's own "null = not scheduled" sentinel convention on this same type. See that
+    // field's own doc comment for why this is a DateTimeOffset, not a raw `long` tick/millisecond
+    // value.
+    private DateTimeOffset? _nextAttackAt;
 
     public MobInstance(uint actorId, MobSpawnDefinition spawn, ushort x, ushort y)
     {
@@ -81,16 +92,16 @@ public sealed class MobInstance
     // treating this as a fatal configuration error. Deliberately reuses the EXISTING Dead +
     // scheduled-respawn machinery instead of introducing a third lifecycle state or a separate
     // "pending" scheduler: the instance starts Dead with HP 0 and a respawn already due
-    // immediately (`dueTimestamp` should be the caller's current time), so the very next
+    // immediately (`dueUtcTicks` should be the caller's current time), so the very next
     // MonsterRegistry.ProcessDueRespawns sweep retries it through the normal TryRespawn path - a
     // caller cannot tell this apart from "a monster that died and is waiting to respawn" because,
     // by design, it is the same state.
-    public static MobInstance CreatePending(uint actorId, MobSpawnDefinition spawn, long dueTimestamp)
+    public static MobInstance CreatePending(uint actorId, MobSpawnDefinition spawn, long dueUtcTicks)
     {
         var instance = new MobInstance(actorId, spawn, x: 0, y: 0);
         instance._currentHp = 0;
         instance._state = MobLifecycleState.Dead;
-        instance._deadUntilTimestamp = dueTimestamp;
+        instance._deadUntilUtcTicks = dueUtcTicks;
         return instance;
     }
 
@@ -135,17 +146,18 @@ public sealed class MobInstance
     //
     // Mirrors mob_can_changetarget's own switch (mob.cpp:1229-1262) narrowed to the two states this
     // slice's mob AI can actually be in: Idle always accepts a new target (matches MSS_IDLE's
-    // `return 1` case); Rush only accepts a DIFFERENT attacker as a replacement target if
-    // `allowChangeTargetWhileChasing` is true (mob_can_changetarget's MSS_RUSH case: `return
-    // (mode&MD_CHANGETARGETCHASE)` - G_PORING's mode does not have this bit, so a caller passes
-    // false for it and a second attacker while already chasing the first is correctly ignored,
-    // matching item 6's own traced acceptance criterion). The SAME attacker re-hitting an
-    // already-locked target is always accepted (pinned mob.cpp:1939: "md->attacked_id ==
-    // md->target_id" is the "rude attacked" check, never a target change - modeled here as a no-op
-    // success, since there is nothing to change). Berserk (mob is in/entering attack range) follows
-    // the same Rush-shaped rule in this slice - MD_CHANGETARGETMELEE is likewise absent from
-    // G_PORING's mode (mob.cpp:1242).
-    public bool TryAcquireTarget(uint attackerAccountId, bool allowChangeTargetWhileChasing)
+    // `return 1` case); Rush only accepts a DIFFERENT attacker as a replacement target if the
+    // mob's own `mode` has MD_CHANGETARGETCHASE (mob_can_changetarget's MSS_RUSH case: "return
+    // (mode&MD_CHANGETARGETCHASE)") - G_PORING's real generated mode LACKS this bit (mob.cpp
+    // Ai=02's raw mask has no 0x2000), so a second attacker while G_PORING is already chasing the
+    // first is correctly ignored, matching item 6's own traced acceptance criterion, WITHOUT any
+    // mob-ID special case: this is `mode`-driven, not hardcoded per caller. Berserk (mob is
+    // in/entering attack range) follows the pinned MSS_BERSERK case instead, gated on
+    // MD_CHANGETARGETMELEE (mob.cpp:1242) - also absent from G_PORING's mode. The SAME attacker
+    // re-hitting an already-locked target is always accepted regardless of mode (pinned
+    // mob.cpp:1939: "md->attacked_id == md->target_id" is the "rude attacked" check, never a
+    // target change - modeled here as a no-op success, since there is nothing to change).
+    public bool TryAcquireTarget(uint attackerAccountId, MobMode mode)
     {
         lock (_gate)
         {
@@ -156,7 +168,10 @@ public sealed class MobInstance
                 if (_combatState == MobCombatState.Idle) _combatState = MobCombatState.Rush;
                 return true;
             }
-            if (!allowChangeTargetWhileChasing) return false;
+            var allowChangeTarget = _combatState == MobCombatState.Berserk
+                ? mode.HasFlag(MobMode.ChangeTargetMelee)
+                : mode.HasFlag(MobMode.ChangeTargetChase); // Rush (the only other state a locked target can coexist with).
+            if (!allowChangeTarget) return false;
             _targetAccountId = attackerAccountId;
             return true;
         }
@@ -170,15 +185,15 @@ public sealed class MobInstance
     // pinned cooldown rather than resuming idle behavior instantly. A no-op (returns false) when
     // there was no target to unlock, so a caller doesn't need its own "was there a target" guard
     // before calling this.
-    public bool TryUnlockTarget(long now, Func<long> jitterMs)
+    public bool TryUnlockTarget(DateTimeOffset now, Func<long> jitterMs)
     {
         lock (_gate)
         {
             if (_targetAccountId is null) return false;
             _targetAccountId = null;
             _combatState = MobCombatState.Idle;
-            _nextAttackTimestamp = 0;
-            _nextIdleWalkTimestamp = now + jitterMs() + MinRandomWalkTimeMs;
+            _nextAttackAt = null;
+            _nextIdleWalkAt = now.AddMilliseconds(jitterMs() + MinRandomWalkTimeMs);
             return true;
         }
     }
@@ -208,14 +223,14 @@ public sealed class MobInstance
     }
 
     // Pinned unit_attack_timer_sub's own ud->attacktimer re-arm (unit.cpp:3337:
-    // "add_timer(ud->attackabletime,unit_attack_timer,...)") - the next tick at which this mob may
-    // attack again. Null means no attack has been performed yet (or the delay already elapsed) -
-    // same "null/0 = not scheduled" convention as NextMovementStepDueAt.
-    public long? NextAttackTimestamp { get { lock (_gate) { return _nextAttackTimestamp == 0 ? null : _nextAttackTimestamp; } } }
+    // "add_timer(ud->attackabletime,unit_attack_timer,...)") - the next instant at which this mob
+    // may attack again. Null means no attack has been performed yet (or the delay already elapsed)
+    // - same "null = not scheduled" convention as NextMovementStepDueAt.
+    public DateTimeOffset? NextAttackAt { get { lock (_gate) return _nextAttackAt; } }
 
-    public void ScheduleNextAttack(long dueTimestamp)
+    public void ScheduleNextAttack(DateTimeOffset dueAt)
     {
-        lock (_gate) { _nextAttackTimestamp = dueTimestamp; }
+        lock (_gate) { _nextAttackAt = dueAt; }
     }
 
     // Pinned unit_walktoxy's mid-walk retarget branch (unit.cpp:884-899), reused here for monster
@@ -245,11 +260,23 @@ public sealed class MobInstance
         lock (_gate)
         {
             if (_state != MobLifecycleState.Alive) return false;
+            if (!PathStartsAtCurrentPosition(path)) return false;
             _movement.StartWalk(path, orthogonalStepMs, now);
             _position = new MobPosition(_movement.CurrentX, _movement.CurrentY);
             return true;
         }
     }
+
+    // Defensive invariant: CharacterMovementState.StartWalk trusts its caller completely and will
+    // happily "teleport" this instance to path[0] if it differs from the mob's actual current cell
+    // (there is no relocation semantic anywhere in this codebase - a walk path only ever describes
+    // where an actor already standing at path[0] is going, never where to put it). Enforced here,
+    // at MobInstance's own boundary, rather than inside CharacterMovementState, since
+    // CharacterMovementState is shared with player movement and has no concept of "this instance's
+    // authoritative current position" independent of the path it's given - MobInstance._position is
+    // the one thing that IS authoritative here. Must be called under `_gate`.
+    private bool PathStartsAtCurrentPosition(IReadOnlyList<(ushort X, ushort Y)> path)
+        => path.Count > 0 && path[0].X == _position.X && path[0].Y == _position.Y;
 
     // Pinned mob_ai_sub_hard's own "target in attack range -> unit_stop_walking" (unit.cpp:2165-
     // 2166) - called by the monster combat domain service's Attack decision so a mob that has just
@@ -281,7 +308,7 @@ public sealed class MobInstance
                 // death, matching requirement 7's own "mob dies" unlock condition.
                 _targetAccountId = null;
                 _combatState = MobCombatState.Idle;
-                _nextAttackTimestamp = 0;
+                _nextAttackAt = null;
             }
             return (before, after, killed);
         }
@@ -290,12 +317,12 @@ public sealed class MobInstance
     // Idempotent: only the first caller after death schedules a respawn (via
     // the returned bool); a second call while already dead returns false and
     // changes nothing, so a respawn cannot be scheduled twice for one death.
-    public bool TryScheduleRespawn(long dueTimestamp)
+    public bool TryScheduleRespawn(long dueUtcTicks)
     {
         lock (_gate)
         {
-            if (_state != MobLifecycleState.Dead || _deadUntilTimestamp != 0) return false;
-            _deadUntilTimestamp = dueTimestamp;
+            if (_state != MobLifecycleState.Dead || _deadUntilUtcTicks != 0) return false;
+            _deadUntilUtcTicks = dueUtcTicks;
             return true;
         }
     }
@@ -320,11 +347,11 @@ public sealed class MobInstance
     // selector call happens BEFORE the lock is taken (it only reads Spawn/collision data, never
     // this instance's mutable state) so the lock is held only for the atomic state+position
     // transition itself.
-    public bool TryRespawn(long now, Func<(bool Success, MobPosition Position)> selectPosition)
+    public bool TryRespawn(long nowUtcTicks, Func<(bool Success, MobPosition Position)> selectPosition)
     {
         lock (_gate)
         {
-            if (_state != MobLifecycleState.Dead || _deadUntilTimestamp == 0 || now < _deadUntilTimestamp) return false;
+            if (_state != MobLifecycleState.Dead || _deadUntilUtcTicks == 0 || nowUtcTicks < _deadUntilUtcTicks) return false;
         }
 
         var (success, position) = selectPosition();
@@ -337,27 +364,27 @@ public sealed class MobInstance
         // transition this method didn't itself just validate.
         lock (_gate)
         {
-            if (_state != MobLifecycleState.Dead || _deadUntilTimestamp == 0 || now < _deadUntilTimestamp) return false;
+            if (_state != MobLifecycleState.Dead || _deadUntilUtcTicks == 0 || nowUtcTicks < _deadUntilUtcTicks) return false;
             _state = MobLifecycleState.Alive;
             _currentHp = Spawn.Mob.MaxHp;
-            _deadUntilTimestamp = 0;
+            _deadUntilUtcTicks = 0;
             _position = position;
             // Reset movement state entirely on respawn: any in-flight walk from the PREVIOUS life
             // must never continue to mutate a respawned instance's position (an old scheduled
             // movement event must not move a respawned instance to where the dead instance was
-            // walking toward). `_nextIdleWalkTimestamp = 0` resets to the same "not yet
-            // initialized" state a freshly-constructed instance starts in, so idle AI treats a
-            // respawned instance exactly like a brand new spawn (matching pinned mob_spawn, which
+            // walking toward). `_nextIdleWalkAt = null` resets to the same "not yet initialized"
+            // state a freshly-constructed instance starts in, so idle AI treats a respawned
+            // instance exactly like a brand new spawn (matching pinned mob_spawn, which
             // re-initializes next_walktime via the same INVALID_TIMER path for both a genuinely new
             // spawn and a respawn - mob.cpp:1134-1143 calls mob_spawn for both).
             _movement = new CharacterMovementState(Map, position.X, position.Y);
-            _nextIdleWalkTimestamp = 0;
+            _nextIdleWalkAt = null;
             // A respawned instance is a brand new mob_spawn per pinned source's own comment above -
             // no engagement from the PREVIOUS life may survive (requirement 7's own "never leave
             // stale account IDs attached to a respawned monster").
             _targetAccountId = null;
             _combatState = MobCombatState.Idle;
-            _nextAttackTimestamp = 0;
+            _nextAttackAt = null;
             return true;
         }
     }
@@ -372,32 +399,35 @@ public sealed class MobInstance
     //
     // Returns true only when: the mob is Alive, is not currently mid-walk (pinned mob_randomwalk
     // never interrupts an in-progress walk to start another - it only runs its search when
-    // `!IsMoving`), and `now` has reached `_nextIdleWalkTimestamp`. On the VERY FIRST call for a
-    // freshly spawned/respawned instance (`_nextIdleWalkTimestamp == 0`, pinned mob.cpp:1681's
+    // `!IsMoving`), and `now` has reached `_nextIdleWalkAt`. On the VERY FIRST call for a freshly
+    // spawned/respawned instance (`_nextIdleWalkAt == null`, pinned mob.cpp:1681's
     // `next_walktime == INVALID_TIMER` case), this method does NOT authorize a walk yet - it only
-    // initializes the timestamp to `now + jitter + MIN_RANDOMWALKTIME` and returns false, exactly
+    // initializes the deadline to `now + jitter + MIN_RANDOMWALKTIME` and returns false, exactly
     // matching pinned mob_randomwalk's own "initialize next_walktime and return 1 without walking"
     // first-call behavior (mob.cpp:1680-1684; that pinned `return 1` means "the AI tick handled
     // this mob successfully", not "a walk started").
-    public bool IsIdleWalkDue(long now, Func<long> randomJitterMs)
+    public bool IsIdleWalkDue(DateTimeOffset now, Func<long> randomJitterMs)
     {
         lock (_gate)
         {
             if (_state != MobLifecycleState.Alive || _movement.IsMoving) return false;
 
-            if (_nextIdleWalkTimestamp == 0)
+            if (_nextIdleWalkAt is null)
             {
-                _nextIdleWalkTimestamp = now + randomJitterMs() + MinRandomWalkTimeMs;
+                _nextIdleWalkAt = now.AddMilliseconds(randomJitterMs() + MinRandomWalkTimeMs);
                 return false;
             }
 
-            return now >= _nextIdleWalkTimestamp;
+            return now >= _nextIdleWalkAt;
         }
     }
 
-    // MIN_RANDOMWALKTIME (mob.hpp:39) - the pinned minimum delay before an idle mob's NEXT random
-    // walk consideration, on top of which pinned mob.cpp adds `rnd()%1000` jitter both when
-    // initializing next_walktime (mob.cpp:1682) and after a walk completes (mob.cpp:1766).
+    // MIN_RANDOMWALKTIME (mob.hpp:39) - the pinned minimum delay in MILLISECONDS before an idle
+    // mob's NEXT random walk consideration, on top of which pinned mob.cpp adds `rnd()%1000`
+    // jitter (also milliseconds) both when initializing next_walktime (mob.cpp:1682) and after a
+    // walk completes (mob.cpp:1766). Always combined via DateTimeOffset.AddMilliseconds - see
+    // _nextIdleWalkAt's own doc comment for why a bare numeric addition to a tick-based field was a
+    // real, previously-shipped bug this constant's own unit must never be ambiguous about again.
     internal const long MinRandomWalkTimeMs = 4000;
 
     // Pinned mob_ai_sub_hard's own post-failure rescheduling for a mob_randomwalk call that
@@ -411,11 +441,11 @@ public sealed class MobInstance
     // idle-walk slice cares about). Called by MonsterRuntime when NO candidate destination AND real
     // path both succeeded this due-tick, so a stuck-in-a-corner or momentarily unreachable mob is
     // retried again soon rather than being stuck until its much longer post-success reschedule.
-    public void RescheduleAfterFailedIdleWalk(long now, Func<long> jitterMs)
+    public void RescheduleAfterFailedIdleWalk(DateTimeOffset now, Func<long> jitterMs)
     {
         lock (_gate)
         {
-            _nextIdleWalkTimestamp = now + jitterMs();
+            _nextIdleWalkAt = now.AddMilliseconds(jitterMs());
         }
     }
 
@@ -428,12 +458,13 @@ public sealed class MobInstance
     // exact pinned `rnd()%1000` jitter deterministically. Does nothing (returns false) if the mob
     // died or started walking via another path between IsIdleWalkDue returning true and this call -
     // re-validated here under the same lock rather than trusted from the caller's earlier check.
-    public bool TryStartIdleWalk(IReadOnlyList<(ushort X, ushort Y)> path, int orthogonalStepMs, long now, DateTimeOffset nowOffset, Func<long> jitterMs)
+    public bool TryStartIdleWalk(IReadOnlyList<(ushort X, ushort Y)> path, int orthogonalStepMs, DateTimeOffset now, Func<long> jitterMs)
     {
         lock (_gate)
         {
             if (_state != MobLifecycleState.Alive || _movement.IsMoving) return false;
-            _movement.StartWalk(path, orthogonalStepMs, nowOffset);
+            if (!PathStartsAtCurrentPosition(path)) return false;
+            _movement.StartWalk(path, orthogonalStepMs, now);
             _position = new MobPosition(_movement.CurrentX, _movement.CurrentY);
             // Pinned mob_randomwalk's own post-walk-start rescheduling (mob.cpp:1766):
             // "next_walktime = tick + rnd()%1000 + MIN_RANDOMWALKTIME + unit_get_walkpath_time" -
@@ -442,7 +473,7 @@ public sealed class MobInstance
             // (the EXACT pinned unit_get_walkpath_time sum over each step's own orthogonal/diagonal
             // duration) rather than a uniform orthogonalStepMs*(path.Count-1) approximation, which
             // undercounts any walk containing a diagonal step.
-            _nextIdleWalkTimestamp = now + jitterMs() + MinRandomWalkTimeMs + CharacterMovementState.TotalWalkPathTimeMs(path, orthogonalStepMs);
+            _nextIdleWalkAt = now.AddMilliseconds(jitterMs() + MinRandomWalkTimeMs + CharacterMovementState.TotalWalkPathTimeMs(path, orthogonalStepMs));
             return true;
         }
     }
@@ -456,6 +487,13 @@ public sealed class MobInstance
     // the newly crossed cells (possibly empty) for a caller that wants to know exactly which cells
     // were just crossed (e.g. future per-cell trigger checks) - the current slice does not use
     // this beyond updating `_position`.
+    //
+    // Correctness note: this method does NOT consume a pending combat retarget by itself - see
+    // AdvanceMovementForCombat below, which MonsterEngagementTickProcessor calls instead for any
+    // engaged mob. This overload remains exactly as-is for MonsterRuntime's own idle-walk path,
+    // which is never engaged (MonsterRuntime.ProcessIdleMovement's own HasActiveTarget guard means
+    // idle movement and combat-chase movement are mutually exclusive for a given instance at any
+    // one time) and therefore never has a pending retarget to consume in the first place.
     public IReadOnlyList<(ushort X, ushort Y)> AdvanceMovement(DateTimeOffset now)
     {
         lock (_gate)
@@ -464,6 +502,49 @@ public sealed class MobInstance
             var crossed = _movement.AdvanceTo(now);
             if (crossed.Count > 0) _position = new MobPosition(_movement.CurrentX, _movement.CurrentY);
             return crossed;
+        }
+    }
+
+    // Pinned unit_walktoxy's mid-walk retarget lifecycle (unit.cpp:884-899, applied at the cell
+    // boundary by unit_walktoxy_timer's own change_walk_target check, unit.cpp:738-744) - the
+    // monster-chase counterpart of MapClientSession.ProcessDueMovementAsync's own identical
+    // consume-then-recompute-then-install sequence for player movement (see that method's own
+    // "requirement 7" comment for why this must all happen atomically against the cell the
+    // instance ACTUALLY just reached, never a stale earlier position).
+    //
+    // `computeReplacementPath` is a plain delegate (fromX, fromY, toX, toY) -> path, NOT an
+    // IMovementPathProvider reference - MobInstance must never depend on that interface directly
+    // (matching TryRespawn's own `selectPosition` callback pattern and MonsterRuntime.
+    // ProcessIdleMovement's own "path computation is the scheduler's job" split, both cited in this
+    // type's own doc comments). The ENTIRE consume -> compute -> install sequence runs under this
+    // instance's own lock, so no caller can ever observe the instance between "pending retarget
+    // consumed" and "replacement path installed" - the two states MapClientSession's own comment
+    // warns must never be allowed to appear separated to an outside reader (a stale warp/target
+    // reference could otherwise briefly outlive its walk).
+    //
+    // Returns the newly crossed cells (same contract as AdvanceMovement), and via `retargetApplied`
+    // (true only when a pending retarget existed AND was actually applied this call) tells the
+    // caller (MonsterEngagementTickProcessor) whether to report a ChaseInterrupted-shaped "movement
+    // changed, tell observers" outcome for this tick, distinct from an ordinary CellCrossed/
+    // WalkFinished the idle-walk path already reports via MonsterRuntime.ProcessTick.
+    public (IReadOnlyList<(ushort X, ushort Y)> Crossed, bool RetargetApplied) AdvanceMovementForCombat(
+        DateTimeOffset now, Func<ushort, ushort, ushort, ushort, IReadOnlyList<(ushort X, ushort Y)>> computeReplacementPath, int orthogonalStepMs)
+    {
+        lock (_gate)
+        {
+            if (_state != MobLifecycleState.Alive) return ([], false);
+            var crossed = _movement.AdvanceTo(now);
+            if (crossed.Count > 0) _position = new MobPosition(_movement.CurrentX, _movement.CurrentY);
+
+            var pendingRetarget = _movement.ConsumePendingRetarget();
+            if (pendingRetarget is not { } retarget) return (crossed, false);
+
+            var path = computeReplacementPath(_position.X, _position.Y, retarget.X, retarget.Y);
+            if (path.Count < 2) return (crossed, false); // No real path from the reached cell - matches unit_walktobl's own silent-failure contract; the stale destination is simply dropped (pinned change_walk_target is cleared either way by ConsumePendingRetarget above).
+
+            _movement.StartWalk(path, orthogonalStepMs, now);
+            _position = new MobPosition(_movement.CurrentX, _movement.CurrentY);
+            return (crossed, true);
         }
     }
 

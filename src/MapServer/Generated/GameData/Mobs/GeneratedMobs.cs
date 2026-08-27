@@ -29,8 +29,10 @@ internal static class GeneratedMobs
         AttackRange: 1,
         WalkSpeed: 400,
         AttackDelay: 1872,
+        AttackMotion: 672,
+        DamageMotion: 480,
         BaseExp: 0,
         JobExp: 0,
-        Mode: MobMode.CanMove,
+        Mode: MobMode.CanMove | MobMode.CanAttack,
         Source: new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/re/mob_db.yml", 0));
 }

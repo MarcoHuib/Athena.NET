@@ -16,7 +16,7 @@ internal static class MobDataCompiler
         int Id, string AegisName, string Name, int Level, uint Hp,
         int Attack, int Attack2, int Defense, int MagicDefense,
         int Str, int Agi, int Vit, int Int, int Dex, int Luk,
-        int AttackRange, int WalkSpeed, int AttackDelay,
+        int AttackRange, int WalkSpeed, int AttackDelay, int AttackMotion, int DamageMotion,
         long BaseExp, long JobExp, MobModeData Mode);
 
     // Mirrors Athena.Net.MapServer.World.MobMode exactly (same bit values/names) - kept as a
@@ -29,6 +29,9 @@ internal static class MobDataCompiler
         None = 0,
         CanMove = 0x0000001,
         NoRandomWalk = 0x0000020,
+        CanAttack = 0x0000080,
+        ChangeTargetMelee = 0x0001000,
+        ChangeTargetChase = 0x0002000,
     }
 
     // Pinned e_aegis_monstertype (legacy/rathena/src/map/mob.hpp:151-182) - the COMPLETE pinned
@@ -51,6 +54,9 @@ internal static class MobDataCompiler
     // deliberately not surfaced in MobModeData yet (see that enum's own doc comment).
     private const int ModeBitCanMove = 0x0000001;
     private const int ModeBitNoRandomWalk = 0x0000020;
+    private const int ModeBitCanAttack = 0x0000080;
+    private const int ModeBitChangeTargetMelee = 0x0001000;
+    private const int ModeBitChangeTargetChase = 0x0002000;
 
     internal sealed record MobSpawnData(string Map, int MobId, int Count, int RespawnDelayMs, string SourceFile, int SourceLine, short X, short Y, short Xs, short Ys);
 
@@ -89,6 +95,17 @@ internal static class MobDataCompiler
             (int)OptionalInt(block, "AttackRange", 0),
             (int)OptionalInt(block, "WalkSpeed", 150),
             (int)OptionalInt(block, "AttackDelay", 0),
+            // AttackMotion (amotion) and DamageMotion (dmotion) are pinned mob_db.yml scalars
+            // distinct from AttackDelay (adelay) - amotion is the attacker's attack-animation
+            // timing (clif_damage's own srcSpeed for a mob attacker), dmotion is this mob's OWN
+            // hit-reaction/walk-delay timing when IT is the target (clif_damage's own dstSpeed when
+            // a player attacks this mob) - see MobBasicAttackCalculator/IroMonsterCombatPackets
+            // call sites for where each is actually used. Never conflated with AttackDelay, which
+            // controls attack CADENCE (NextAttackAt), not animation/hit-reaction timing. Same
+            // mob.cpp:4946-4963 default-constructor rationale as AttackDelay's own comment: both
+            // genuinely default to 0/unset when the pinned block omits them.
+            (int)OptionalInt(block, "AttackMotion", 0),
+            (int)OptionalInt(block, "DamageMotion", 0),
             OptionalInt(block, "BaseExp", 0),
             OptionalInt(block, "JobExp", 0),
             ReadMode(block));
@@ -127,6 +144,9 @@ internal static class MobDataCompiler
         var mode = MobModeData.None;
         if ((raw & ModeBitCanMove) != 0) mode |= MobModeData.CanMove;
         if ((raw & ModeBitNoRandomWalk) != 0) mode |= MobModeData.NoRandomWalk;
+        if ((raw & ModeBitCanAttack) != 0) mode |= MobModeData.CanAttack;
+        if ((raw & ModeBitChangeTargetMelee) != 0) mode |= MobModeData.ChangeTargetMelee;
+        if ((raw & ModeBitChangeTargetChase) != 0) mode |= MobModeData.ChangeTargetChase;
         return mode;
     }
 
@@ -138,6 +158,9 @@ internal static class MobDataCompiler
     {
         ["CanMove"] = ModeBitCanMove,
         ["NoRandomWalk"] = ModeBitNoRandomWalk,
+        ["CanAttack"] = ModeBitCanAttack,
+        ["ChangeTargetMelee"] = ModeBitChangeTargetMelee,
+        ["ChangeTargetChase"] = ModeBitChangeTargetChase,
     };
 
     // Parses the fixed rAthena spawn-declaration format:
@@ -235,6 +258,8 @@ internal static class MobDataCompiler
             .Append("        AttackRange: ").Append(mob.AttackRange).AppendLine(",")
             .Append("        WalkSpeed: ").Append(mob.WalkSpeed).AppendLine(",")
             .Append("        AttackDelay: ").Append(mob.AttackDelay).AppendLine(",")
+            .Append("        AttackMotion: ").Append(mob.AttackMotion).AppendLine(",")
+            .Append("        DamageMotion: ").Append(mob.DamageMotion).AppendLine(",")
             .Append("        BaseExp: ").Append(mob.BaseExp).AppendLine(",")
             .Append("        JobExp: ").Append(mob.JobExp).AppendLine(",")
             .Append("        Mode: ").Append(FormatMode(mob.Mode)).AppendLine(",")
@@ -282,6 +307,9 @@ internal static class MobDataCompiler
         var parts = new List<string>();
         if (mode.HasFlag(MobModeData.CanMove)) parts.Add("MobMode.CanMove");
         if (mode.HasFlag(MobModeData.NoRandomWalk)) parts.Add("MobMode.NoRandomWalk");
+        if (mode.HasFlag(MobModeData.CanAttack)) parts.Add("MobMode.CanAttack");
+        if (mode.HasFlag(MobModeData.ChangeTargetMelee)) parts.Add("MobMode.ChangeTargetMelee");
+        if (mode.HasFlag(MobModeData.ChangeTargetChase)) parts.Add("MobMode.ChangeTargetChase");
         return string.Join(" | ", parts);
     }
 

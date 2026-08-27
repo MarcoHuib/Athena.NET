@@ -37,12 +37,22 @@ public abstract record MonsterEngagementDecision
 //     -> Unlock. This slice does not model pinned's own "chase a few more cells before dropping an
 //     out-of-sight target" grace window (mob.cpp:1914-1917, mob_chase_refresh) - see Evaluate's own
 //     "deliberately not modeled" note below.
-//   - In attack range (battle_check_range, i.e. Chebyshev distance <= AttackRange) AND the mob's
-//     own attack delay has elapsed (mob.cpp:2141-2166 + unit_attack_timer_sub's own attackabletime
-//     gate, unit.cpp:3230,3290) -> Attack. In range but delay not yet elapsed -> Wait (matches
-//     unit_attack_timer_sub's own "DIFF_TICK(attackabletime,tick)>0 -> re-arm timer, do nothing
-//     yet", unit.cpp:2971-2972/3337).
+//   - In attack range (battle_check_range, i.e. Chebyshev distance <= effective range - see the
+//     walking-target-range-bonus note below) AND the mob's own attack delay has elapsed
+//     (mob.cpp:2141-2166 + unit_attack_timer_sub's own attackabletime gate, unit.cpp:3230,3290) ->
+//     Attack. In range but delay not yet elapsed -> Wait (matches unit_attack_timer_sub's own
+//     "DIFF_TICK(attackabletime,tick)>0 -> re-arm timer, do nothing yet", unit.cpp:2971-2972/3337).
 //   - Out of range -> Chase toward the target's current cell (mob.cpp:2213's unit_walktobl).
+//
+// Walking-target +1 range bonus (unit_attack_timer_sub, unit.cpp:3253-3268): "range =
+// status_get_range(src); if (unit_is_walking(target) ...) range++;" - this check runs BEFORE the
+// sd/md branch split, so it applies identically whichever side is attacking, keyed on whether the
+// TARGET (not the attacker) is currently walking. MapClientSession's existing player-attacks-mob
+// path already applies this exact rule keyed on the mob's own IsWalking
+// (`resolvedRange + (target.IsWalking ? 1 : 0)`); Evaluate below applies the identical pinned rule
+// for the reverse direction, keyed on PlayerCombatSnapshot.IsWalking - this is NOT an invented
+// "Chebyshev <= AttackRange+1" shortcut, it is the same traced unit_attack_timer_sub condition
+// that already justifies the existing player-side bonus, just evaluated for the other party.
 public static class MonsterEngagementDomain
 {
     // Pinned check_distance_bl's own Chebyshev metric (battle.cpp, used by battle_check_range for
@@ -51,11 +61,6 @@ public static class MonsterEngagementDomain
     // BL_PC attackers/skills.
     private static int ChebyshevDistance(int dx, int dy) => Math.Max(Math.Abs(dx), Math.Abs(dy));
 
-    // `now`/`nowOffset` are the SAME instant in the caller's TimeProvider, just in the two shapes
-    // MobInstance's existing timing APIs already use (long ticks for attack/idle-walk scheduling,
-    // DateTimeOffset for CharacterMovementState) - mirrors MonsterRuntime.ProcessTick's own
-    // `nowTicks`/`now` pair for the identical reason.
-    //
     // Deliberately NOT modeled in this slice (disclosed, not silently approximated - matching this
     // project's other basic-attack calculators' own convention): pinned's mob_chase_refresh grace
     // window before dropping a briefly-out-of-map-sync target, db->range3/ChaseRange-based give-up
@@ -66,7 +71,7 @@ public static class MonsterEngagementDomain
     // behavior this task fixes; a target becomes invalid here only via map mismatch or the target
     // session/character no longer resolving (disconnect, teleport, death), which is exactly this
     // task's own item 7 unlock-condition list.
-    public static MonsterEngagementDecision Evaluate(MobInstance mob, PlayerCombatSnapshot? target, long now)
+    public static MonsterEngagementDecision Evaluate(MobInstance mob, PlayerCombatSnapshot? target, DateTimeOffset now)
     {
         if (target is not { } snapshot || !snapshot.IsAlive || !string.Equals(snapshot.Map, mob.Map, StringComparison.OrdinalIgnoreCase))
             return new MonsterEngagementDecision.Unlock();
@@ -74,11 +79,11 @@ public static class MonsterEngagementDomain
         var position = mob.GetPosition();
         var dx = snapshot.X - position.X;
         var dy = snapshot.Y - position.Y;
-        var attackRange = mob.Spawn.Mob.AttackRange;
+        var effectiveRange = mob.Spawn.Mob.AttackRange + (snapshot.IsWalking ? 1 : 0);
 
-        if (ChebyshevDistance(dx, dy) <= attackRange)
+        if (ChebyshevDistance(dx, dy) <= effectiveRange)
         {
-            var nextAttack = mob.NextAttackTimestamp;
+            var nextAttack = mob.NextAttackAt;
             return nextAttack is null || now >= nextAttack ? new MonsterEngagementDecision.Attack() : new MonsterEngagementDecision.Wait();
         }
 

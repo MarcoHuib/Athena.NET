@@ -46,6 +46,24 @@ public enum MobMode
     // MD_NORANDOMWALK (mmo.hpp:249, 0x0000020) - explicitly suppresses idle random walk
     // (mob_randomwalk's own early-return guard, mob.cpp:1687) even when MD_CANMOVE is also set.
     NoRandomWalk = 0x0000020,
+    // MD_CANATTACK (mmo.hpp:251, 0x0000080) - pinned mob_ai_sub_hard's own target-acquisition gate
+    // ("if (md->attacked_id && mode&MD_CANATTACK)", mob.cpp:1937): a mob without this bit never
+    // promotes an attacker into a combat target at all, regardless of MD_AGGRESSIVE. Consulted by
+    // MonsterCombatCoordinator.Attack before calling MobInstance.TryAcquireTarget - see that call
+    // site's own doc comment.
+    CanAttack = 0x0000080,
+    // MD_CHANGETARGETMELEE (mmo.hpp:256, 0x0001000) - pinned mob_can_changetarget's own MSS_BERSERK
+    // case (mob.cpp:1242): whether a mob already attacking one target in melee range may switch to
+    // a DIFFERENT attacker. Consulted by MobInstance.TryAcquireTarget when MobCombatState is
+    // Berserk.
+    ChangeTargetMelee = 0x0001000,
+    // MD_CHANGETARGETCHASE (mmo.hpp:257, 0x0002000) - pinned mob_can_changetarget's own MSS_RUSH
+    // case (mob.cpp:1252): whether a mob already chasing one target may switch to a DIFFERENT
+    // attacker mid-chase. Consulted by MobInstance.TryAcquireTarget when MobCombatState is Rush -
+    // this is the bit G_PORING's real generated mode LACKS, which is why item 6's own acceptance
+    // criterion (a second attacker cannot steal an already-chasing G_PORING's target) holds without
+    // any mob-ID special case.
+    ChangeTargetChase = 0x0002000,
 }
 
 // Immutable, source-backed monster data (pinned rAthena db/re/mob_db.yml).
@@ -65,11 +83,19 @@ public enum MobMode
 // effective mode is almost always dominated by its Ai preset, with Modes: only overriding specific
 // bits (e.g. G_PORING/2401 has Ai=02=0x83=MD_CANMOVE|MD_LOOTER|MD_CANATTACK and a Modes: block
 // that only sets FixedItemDrop=true - a bit this project's MobMode does not yet model).
+// AttackMotion (amotion) and DamageMotion (dmotion) are pinned mob_db.yml scalars distinct from
+// AttackDelay (adelay): AttackDelay controls attack CADENCE (this project's MobInstance.
+// NextAttackAt scheduling), never animation/hit-reaction timing. AttackMotion is THIS mob's own
+// attack-animation timing - used as clif_damage's srcSpeed when this mob is the ATTACKER
+// (mob->player combat). DamageMotion is THIS mob's own hit-reaction/walk-delay timing - used as
+// clif_damage's dstSpeed when this mob is the TARGET (player->mob combat). The two directions must
+// never be conflated: a mob's own DamageMotion is never a valid dstSpeed when THAT SAME mob is the
+// attacker (see MobBasicAttackCalculator/IroMonsterCombatPackets call sites).
 public sealed record MobDefinition(
     int Id, string AegisName, string Name, int Level, uint MaxHp,
     int Attack, int Attack2, int Defense, int MagicDefense,
     int Str, int Agi, int Vit, int Int, int Dex, int Luk,
-    int AttackRange, int WalkSpeed, int AttackDelay,
+    int AttackRange, int WalkSpeed, int AttackDelay, int AttackMotion, int DamageMotion,
     long BaseExp, long JobExp, MobMode Mode,
     WorldSourceInfo Source);
 

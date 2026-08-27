@@ -21,7 +21,7 @@ public static class MapServerApp
         using var telemetry = MapTelemetry.Start();
         var configStore = new MapConfigStore(mergedConfig, options.ConfigPath);
 
-        MapLogger.Status($"Map server starting (PACKETVER {PacketConstants.PacketVer})");
+        MapLogger.Status($"Map server starting (PACKETVER {PacketConstants.PacketVer}, build={BuildRevision.Current})");
 
         using var cts = new CancellationTokenSource();
         Console.CancelKeyPress += (_, e) =>

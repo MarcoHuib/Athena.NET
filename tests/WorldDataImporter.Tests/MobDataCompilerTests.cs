@@ -97,11 +97,13 @@ public sealed class MobDataCompilerTests
     // that preset rather than only ever reading an explicit Modes: override - a mob whose Modes:
     // block never mentions CanMove at all must still correctly report MobMode.CanMove.
     [Fact]
-    public void ReadMobDefinition_GPoring2401_ModeIsCanMove_DerivedFromAiPreset_NotFromModesBlock()
+    public void ReadMobDefinition_GPoring2401_ModeIsCanMoveAndCanAttack_DerivedFromAiPreset_NotFromModesBlock()
     {
         var mob = MobDataCompiler.ReadMobDefinition(MobDbFixture, 2401);
 
-        Assert.Equal(MobDataCompiler.MobModeData.CanMove, mob.Mode);
+        // Pinned Ai=02 resolves to MONSTER_TYPE_02=0x83=MD_CANMOVE|MD_LOOTER|MD_CANATTACK
+        // (mob.hpp:153) - MD_LOOTER is not modeled by MobModeData, so only CanMove|CanAttack survive.
+        Assert.Equal(MobDataCompiler.MobModeData.CanMove | MobDataCompiler.MobModeData.CanAttack, mob.Mode);
     }
 
     [Fact]
@@ -155,7 +157,10 @@ public sealed class MobDataCompilerTests
 
         var mob = MobDataCompiler.ReadMobDefinition(fixtureWithExplicitNoRandomWalk, 9997);
 
-        Assert.Equal(MobDataCompiler.MobModeData.CanMove | MobDataCompiler.MobModeData.NoRandomWalk, mob.Mode);
+        // Ai=02 also resolves MD_CANATTACK (0x83's own third bit) - this test's own point is that
+        // NoRandomWalk was correctly OR'd on top of the FULL Ai=02 preset, not that CanAttack was
+        // somehow suppressed.
+        Assert.Equal(MobDataCompiler.MobModeData.CanMove | MobDataCompiler.MobModeData.CanAttack | MobDataCompiler.MobModeData.NoRandomWalk, mob.Mode);
     }
 
     [Fact]
@@ -172,11 +177,81 @@ public sealed class MobDataCompilerTests
         var mob = MobDataCompiler.ReadMobDefinition(MobDbFixture, 2401);
         var generated = MobDataCompiler.GenerateMobDefinition(mob, "abc123", "AcademyMobs", "GPoring", "db/re/mob_db.yml", 42);
 
-        Assert.Contains("Mode: MobMode.CanMove,", generated);
+        Assert.Contains("Mode: MobMode.CanMove | MobMode.CanAttack,", generated);
         // The generated source must never special-case this mob's numeric Id - the Mode value is
         // computed once from pinned Ai/Modes: data and emitted as a plain expression.
         Assert.DoesNotContain("2401 ==", generated);
         Assert.DoesNotContain("== 2401", generated);
+    }
+
+    // ===== AttackMotion / DamageMotion (distinct from AttackDelay - see MobDefinition's own doc
+    // comment for why these three timings must never be conflated) =====
+
+    [Fact]
+    public void ReadMobDefinition_GPoring2401_AttackMotionMatchesPinnedValue()
+    {
+        var mob = MobDataCompiler.ReadMobDefinition(MobDbFixture, 2401);
+
+        Assert.Equal(672, mob.AttackMotion);
+    }
+
+    [Fact]
+    public void ReadMobDefinition_GPoring2401_DamageMotionMatchesPinnedValue()
+    {
+        var mob = MobDataCompiler.ReadMobDefinition(MobDbFixture, 2401);
+
+        Assert.Equal(480, mob.DamageMotion);
+    }
+
+    // AttackMotion/DamageMotion must never be confused with AttackDelay, even though all three are
+    // plain millisecond integers on the same mob_db row - G_PORING's own pinned values are all
+    // DIFFERENT (1872/672/480), so any accidental field mix-up in the compiler would be caught here.
+    [Fact]
+    public void ReadMobDefinition_GPoring2401_AttackDelayAttackMotionDamageMotion_AreAllDistinctValues()
+    {
+        var mob = MobDataCompiler.ReadMobDefinition(MobDbFixture, 2401);
+
+        Assert.Equal(1872, mob.AttackDelay);
+        Assert.Equal(672, mob.AttackMotion);
+        Assert.Equal(480, mob.DamageMotion);
+        Assert.NotEqual(mob.AttackDelay, mob.AttackMotion);
+        Assert.NotEqual(mob.AttackMotion, mob.DamageMotion);
+        Assert.NotEqual(mob.AttackDelay, mob.DamageMotion);
+    }
+
+    [Fact]
+    public void ReadMobDefinition_OrdinaryPoring1002_HasDifferentAttackMotionAndDamageMotionThanGPoring()
+    {
+        var ordinary = MobDataCompiler.ReadMobDefinition(MobDbFixture, 1002);
+        var gPoring = MobDataCompiler.ReadMobDefinition(MobDbFixture, 2401);
+
+        Assert.Equal(1000, ordinary.AttackMotion);
+        Assert.Equal(480, ordinary.DamageMotion); // Same DamageMotion as G_PORING by coincidence in this fixture...
+        Assert.NotEqual(ordinary.AttackMotion, gPoring.AttackMotion); // ...but AttackMotion genuinely differs, proving per-mob resolution.
+    }
+
+    [Fact]
+    public void ReadMobDefinition_MissingAttackMotionAndDamageMotion_DefaultToZero()
+    {
+        // Mob Id 2402 in the fixture has neither field - pinned mob.cpp's own default-constructor
+        // rationale (mob.cpp:4946-4963) applies identically to these two fields as it already does
+        // to AttackDelay: genuinely 0/unset when the pinned block omits them, never inherited from
+        // another mob or silently approximated.
+        var mob = MobDataCompiler.ReadMobDefinition(MobDbFixture, 2402);
+
+        Assert.Equal(0, mob.AttackMotion);
+        Assert.Equal(0, mob.DamageMotion);
+    }
+
+    [Fact]
+    public void GenerateMobDefinition_EmitsAttackMotionAndDamageMotion_AsSeparateFieldsFromAttackDelay()
+    {
+        var mob = MobDataCompiler.ReadMobDefinition(MobDbFixture, 2401);
+        var generated = MobDataCompiler.GenerateMobDefinition(mob, "abc123", "AcademyMobs", "GPoring", "db/re/mob_db.yml", 42);
+
+        Assert.Contains("AttackDelay: 1872,", generated);
+        Assert.Contains("AttackMotion: 672,", generated);
+        Assert.Contains("DamageMotion: 480,", generated);
     }
 
     [Fact]

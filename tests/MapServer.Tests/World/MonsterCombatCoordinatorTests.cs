@@ -12,8 +12,8 @@ public sealed class MonsterCombatCoordinatorTests
         Id: 2401, AegisName: "G_PORING", Name: "Poring", Level: 1, MaxHp: maxHp,
         Attack: 1, Attack2: 1, Defense: 2, MagicDefense: 5,
         Str: 6, Agi: 1, Vit: 1, Int: 0, Dex: 6, Luk: 5,
-        AttackRange: 1, WalkSpeed: 400, AttackDelay: 1872,
-        BaseExp: 0, JobExp: 0, Mode: MobMode.CanMove,
+        AttackRange: 1, WalkSpeed: 400, AttackDelay: 1872, AttackMotion: 672, DamageMotion: 480,
+        BaseExp: 0, JobExp: 0, Mode: MobMode.CanMove | MobMode.CanAttack,
         Source: new("rAthena", "abc", "db/re/mob_db.yml", 1));
 
     private static EffectiveCharacterStats StrongAttacker() => new(50, 9, 9, 9, 20, 9, 0, 0);
@@ -186,5 +186,65 @@ public sealed class MonsterCombatCoordinatorTests
         coordinator.Attack(instance, attackerAccountId: 500, StrongAttacker(), 1, null, ActiveOnly(Quest21008));
 
         Assert.False(instance.HasActiveTarget);
+    }
+
+    // ===== Section 15: quest-state resolution is LAZY, only on a killing hit =====
+
+    [Fact]
+    public async Task AttackAsync_NonLethalHit_NeverInvokesTheQuestStateResolver()
+    {
+        var (coordinator, instance) = MakeScenario(maxHp: 9999);
+        var resolverCallCount = 0;
+        Task<Func<uint, CharacterQuestStatus>> Resolver()
+        {
+            resolverCallCount++;
+            return Task.FromResult(ActiveOnly(Quest21008));
+        }
+
+        var outcome = await coordinator.AttackAsync(instance, attackerAccountId: 500, StrongAttacker(), 1, null, Resolver);
+
+        Assert.False(outcome.KilledByThisHit);
+        Assert.Equal(0, resolverCallCount);
+    }
+
+    [Fact]
+    public async Task AttackAsync_LethalHit_InvokesTheQuestStateResolverExactlyOnce()
+    {
+        var (coordinator, instance) = MakeScenario(maxHp: 1);
+        var resolverCallCount = 0;
+        Task<Func<uint, CharacterQuestStatus>> Resolver()
+        {
+            resolverCallCount++;
+            return Task.FromResult(ActiveOnly(Quest21008));
+        }
+
+        var outcome = await coordinator.AttackAsync(instance, attackerAccountId: 500, StrongAttacker(), 1, null, Resolver);
+
+        Assert.True(outcome.KilledByThisHit);
+        Assert.Single(outcome.QuestDrops);
+        Assert.Equal(1, resolverCallCount);
+    }
+
+    // For a multi-hit kill (three ordinary hits, the third lethal), only that THIRD hit may ever
+    // invoke the resolver - reproducing the exact live-log pattern (hit 1 -> roundtrip, hit 2 ->
+    // roundtrip, hit 3 -> kill) this optimization fixes.
+    [Fact]
+    public async Task AttackAsync_MultiHitKill_ResolverInvokedOnlyOnTheFinalLethalHit()
+    {
+        var (coordinator, instance) = MakeScenario(maxHp: 3); // Three 1-damage hits to kill.
+        var weakAttacker = new EffectiveCharacterStats(1, 1, 1, 1, 1, 1, 0, 0);
+        var resolverCallCount = 0;
+        Task<Func<uint, CharacterQuestStatus>> Resolver()
+        {
+            resolverCallCount++;
+            return Task.FromResult(ActiveOnly(Quest21008));
+        }
+
+        MonsterAttackOutcome outcome = default;
+        for (var i = 0; i < 20 && instance.IsAlive; i++)
+            outcome = await coordinator.AttackAsync(instance, attackerAccountId: 500, StrongAttacker(), 1, null, Resolver);
+
+        Assert.True(outcome.KilledByThisHit);
+        Assert.Equal(1, resolverCallCount);
     }
 }
