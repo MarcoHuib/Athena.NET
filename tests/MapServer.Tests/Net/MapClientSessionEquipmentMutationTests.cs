@@ -86,8 +86,11 @@ public sealed class MapClientSessionEquipmentMutationTests
         var run = session.RunAsync(CancellationToken.None);
         await session.CompleteIroAuthenticationAsync(new(AccountId, CharId, 1, 2, 0, 0, false, "iz_int01", 18, 26, 0, 0, 0));
 
-        // Consume the fixed 4-packet iRO bootstrap (0x0B18/0x0283/0x0ADE/0x02EB).
+        // Consume the fixed 4-packet iRO bootstrap (0x0B18/0x0283/0x0ADE/0x02EB) plus the
+        // variable-length 0x0B32 skill list that now always follows it.
         await ReadExact(stream, 4 + 6 + 6 + 13);
+        var skillListHeader = await ReadExact(stream, 4);
+        await ReadExact(stream, BinaryPrimitives.ReadUInt16LittleEndian(skillListHeader.AsSpan(2)) - 4);
 
         return (client, stream, session, run, inventoryPersistence);
     }

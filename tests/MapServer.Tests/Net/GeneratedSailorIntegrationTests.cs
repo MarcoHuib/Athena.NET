@@ -187,6 +187,8 @@ public sealed class GeneratedSailorIntegrationTests
             await session.CompleteIroAuthenticationAsync(new(AccountId, CharId, 1, 2, 0, 0, false, "int_land03", 58, 69, 5, 0, 0));
             var stream = client.GetStream();
             await ReadExact(stream, 29); // authenticated iRO bootstrap
+            var skillListHeader = await ReadExact(stream, 4); // 0x0B32 header
+            await ReadExact(stream, BinaryPrimitives.ReadUInt16LittleEndian(skillListHeader.AsSpan(2)) - 4); // 0x0B32 body
             return new(listener, client, session, run, stream, actor.ActorId, questPersistence, inventoryPersistence, inventoryListPersistence, recordingInventoryPersistence);
         }
 

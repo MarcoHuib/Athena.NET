@@ -36,6 +36,7 @@ public sealed class GeneratedCaptainCaroccIntegrationTests
         // CharacterGameplayState loaded (heal/getexp), which only CompleteIroAuthenticationAsync does.
         await session.CompleteIroAuthenticationAsync(new(7, 9, 1, 2, 0, 0, false, "int_land03", 78, 103, 0, 0, 0));
         var bootstrap = new byte[29]; await stream.ReadExactlyAsync(bootstrap);
+        await ReadDynamic(stream); // 0x0B32 skill list
 
         await stream.WriteAsync(new byte[] { 0x7d, 0x00, 0xaa });
         var selfWeaponLook = await ReadExact(stream, 15); // 0x01D7, sent before the spawn broadcast (clif_parse_LoadEndAck ordering)
@@ -229,6 +230,7 @@ public sealed class GeneratedCaptainCaroccIntegrationTests
         var run = session.RunAsync(CancellationToken.None);
         await session.CompleteIroAuthenticationAsync(new(7, 9, 1, 2, 0, 0, false, "int_land03", 78, 103, 0, 0, 0));
         await ReadExact(stream, 29); // bootstrap
+        await ReadDynamic(stream); // 0x0B32 skill list
 
         await stream.WriteAsync(new byte[] { 0x7d, 0x00, 0xaa });
         await ReadExact(stream, 15); // 0x01D7

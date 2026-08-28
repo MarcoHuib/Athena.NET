@@ -192,6 +192,7 @@ public sealed class GeneratedLuminIntegrationTests
             await session.CompleteIroAuthenticationAsync(new(7, 9, 1, 2, 0, 0, false, "int_land03", 73, 100, 3, 0, 0, AuthoritativeCharacterName));
             var stream = client.GetStream();
             await ReadExact(stream, 29); // authenticated iRO bootstrap
+            await ReadDynamic(stream); // 0x0B32 skill list
             return new(listener, client, session, run, stream, actor.ActorId);
         }
 

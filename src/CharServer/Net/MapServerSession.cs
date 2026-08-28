@@ -24,6 +24,8 @@ public sealed class MapServerSession : IDisposable, ISession
         [PacketConstants.MapInventoryListGetRequest] = MapInventoryListProtocol.GetRequestLength,
         [PacketConstants.MapInventoryEquipUpdateRequest] = MapInventoryEquipUpdateProtocol.RequestLength,
         [PacketConstants.MapInventoryConsumeRequest] = MapInventoryConsumeProtocol.RequestLength,
+        [PacketConstants.MapSkillListGetRequest] = MapSkillListProtocol.GetRequestLength,
+        [PacketConstants.MapSkillLearnRequest] = MapSkillLearnProtocol.RequestLength,
     };
 
     private readonly TcpClient _client;
@@ -128,6 +130,12 @@ public sealed class MapServerSession : IDisposable, ISession
                 break;
             case PacketConstants.MapInventoryConsumeRequest:
                 await HandleInventoryConsumeAsync(packet, cancellationToken);
+                break;
+            case PacketConstants.MapSkillListGetRequest:
+                await HandleSkillListGetAsync(packet, cancellationToken);
+                break;
+            case PacketConstants.MapSkillLearnRequest:
+                await HandleSkillLearnUpdateAsync(packet, cancellationToken);
                 break;
             default:
                 CharLogger.Warning($"Unknown map server packet 0x{packetType:X4}, disconnecting.");
@@ -574,6 +582,152 @@ public sealed class MapServerSession : IDisposable, ISession
             }
         }
         await WriteAsync(MapInventoryConsumeProtocol.BuildResponse(success, charId, durableId, newAmount, rowDeleted), cancellationToken);
+    }
+
+    private async Task HandleSkillListGetAsync(byte[] packet, CancellationToken cancellationToken)
+    {
+        if (!MapSkillListProtocol.TryParseGet(packet, out var accountId, out var charId)) return;
+        List<CharacterSkillRowDto>? rows = null; byte result = 1;
+        if (IsGameplayStateRequestAuthorized(_authenticated, _ownedCharacters, accountId, charId))
+        {
+            try
+            {
+                await using var db = _dbFactory();
+                if (db is not null)
+                {
+                    rows = await db.Skills.AsNoTracking()
+                        .Where(s => s.CharId == charId)
+                        .Select(s => new CharacterSkillRowDto(s.SkillId, s.SkillLevel, s.Flag))
+                        .ToListAsync(cancellationToken);
+                    result = 0;
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                CharLogger.Warning(
+                    $"Character skill read rejected reason=database-error charId={charId} " +
+                    $"error={ex.GetType().Name}.");
+            }
+        }
+        await WriteAsync(MapSkillListProtocol.BuildResponse(result, charId, rows), cancellationToken);
+    }
+
+    // Mirrors HandleGameplayStateUpdateAsync's exact transaction shape, extended to a third table
+    // (CharSkill). MapServer is the gameplay-rule authority (tree membership, normal-learnability,
+    // BaseLevel/JobLevel, prerequisites, MaxLevel - all already validated before this request was
+    // sent, see CharacterSkillService.ValidateUpgrade); CharServer is the persistence/concurrency
+    // authority - it re-validates only what it can check against its own fresh DB state:
+    // GameplayStateVersion, SkillPoint > 0, and the row's ACTUAL persisted level matching the
+    // caller's expected current level. No redundant generated-domain policy (e.g. MaxLevel) is
+    // carried through this internal protocol - see ai/map-server.md.
+    private async Task HandleSkillLearnUpdateAsync(byte[] packet, CancellationToken cancellationToken)
+    {
+        if (!MapSkillLearnProtocol.TryParseRequest(packet, out var accountId, out var expectedGameplayState, out var skillId, out var expectedCurrentLevel)) return;
+        CharacterGameplayStateDto? newState = null; byte newSkillLevel = 0; byte result = 1;
+        if (IsGameplayStateRequestAuthorized(_authenticated, _ownedCharacters, accountId, expectedGameplayState.CharacterId))
+        {
+            try
+            {
+                await using var db = _dbFactory();
+                if (db is not null)
+                {
+                    var strategy = db.Database.CreateExecutionStrategy();
+                    await strategy.ExecuteAsync(async () =>
+                    {
+                        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+                        var character = await db.Characters.SingleOrDefaultAsync(
+                            c => c.AccountId == accountId && c.CharId == expectedGameplayState.CharacterId && c.DeleteDate == 0,
+                            cancellationToken);
+                        if (character is null)
+                        {
+                            result = 2;
+                            await transaction.RollbackAsync(cancellationToken);
+                            return;
+                        }
+                        var skillRow = await db.Skills.SingleOrDefaultAsync(
+                            s => s.CharId == expectedGameplayState.CharacterId && s.SkillId == skillId,
+                            cancellationToken);
+                        if (!TryApplySkillLearn(character, skillRow, expectedGameplayState, expectedCurrentLevel, out var appliedNewLevel, out var isNewRow))
+                        {
+                            result = 2;
+                            await transaction.RollbackAsync(cancellationToken);
+                            return;
+                        }
+                        if (isNewRow)
+                        {
+                            db.Skills.Add(new Athena.Net.CharServer.Db.Entities.CharSkill
+                            {
+                                CharId = expectedGameplayState.CharacterId,
+                                SkillId = skillId,
+                                SkillLevel = appliedNewLevel,
+                                Flag = 0, // SKILL_FLAG_PERMANENT (mmo.hpp) - the only flag this PR's ordinary point-spend path ever produces.
+                            });
+                        }
+
+                        await db.SaveChangesAsync(cancellationToken);
+                        await transaction.CommitAsync(cancellationToken);
+                        newState = CharacterGameplayStateDto.From(character);
+                        newSkillLevel = appliedNewLevel;
+                        result = 0;
+                    });
+                }
+            }
+            catch (DbUpdateConcurrencyException)
+            {
+                result = 2;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                CharLogger.Warning(
+                    $"Character skill learn rejected reason=database-error charId={expectedGameplayState.CharacterId} " +
+                    $"skillId={skillId} error={ex.GetType().Name}.");
+            }
+        }
+        if (result == 0)
+        {
+            CharLogger.Info(
+                $"Skill learn succeeded charId={expectedGameplayState.CharacterId} jobClass={expectedGameplayState.JobClass} " +
+                $"skillId={skillId} oldLevel={expectedCurrentLevel} newLevel={newSkillLevel} " +
+                $"remainingSkillPoints={newState?.SkillPoints}.");
+        }
+        await WriteAsync(MapSkillLearnProtocol.BuildResponse(result, expectedGameplayState.CharacterId, newState, newSkillLevel), cancellationToken);
+    }
+
+    // Pure/testable: version-checks character.GameplayStateVersion against expected.Version,
+    // checks character.SkillPoint > 0, and checks the persisted skill row's ACTUAL current level
+    // (0 if skillRow is null) equals expectedCurrentLevel - rejecting (returning false, mutating
+    // NEITHER character NOR skillRow) if any check fails. On success, decrements SkillPoint,
+    // bumps GameplayStateVersion, and reports the new level via the out parameter; the caller
+    // inserts a new CharSkill row (isNewRow=true) or the caller's already-tracked skillRow is
+    // mutated in place (isNewRow=false, SkillLevel set directly here) - insertion itself must
+    // happen in the caller because a not-yet-persisted new entity has no identity for this method
+    // to mutate.
+    internal static bool TryApplySkillLearn(
+        Athena.Net.CharServer.Db.Entities.CharCharacter character,
+        Athena.Net.CharServer.Db.Entities.CharSkill? skillRow,
+        CharacterGameplayStateDto expected,
+        byte expectedCurrentLevel,
+        out byte newLevel,
+        out bool isNewRow)
+    {
+        newLevel = 0; isNewRow = false;
+        if (character.CharId != expected.CharacterId || character.GameplayStateVersion != expected.Version) return false;
+        if (character.SkillPoint == 0) return false;
+        var actualCurrentLevel = skillRow?.SkillLevel ?? 0;
+        if (actualCurrentLevel != expectedCurrentLevel) return false;
+        // Structural overflow guard: a byte level can never legitimately reach byte.MaxValue (no
+        // generated skill's MaxLevel is anywhere close - see ai/world-data.md), but this rejects
+        // outright rather than letting `+1` silently wrap 255 -> 0 while still consuming a point.
+        // This is internal hardening only, not a gameplay MaxLevel policy - CharServer has no
+        // access to generated tree data to enforce that (see ai/map-server.md's authority split).
+        if (actualCurrentLevel == byte.MaxValue) return false;
+
+        newLevel = (byte)(actualCurrentLevel + 1);
+        isNewRow = skillRow is null;
+        if (skillRow is not null) skillRow.SkillLevel = newLevel;
+        character.SkillPoint--;
+        character.GameplayStateVersion++;
+        return true;
     }
 
     private async Task HandleGameplayStateUpdateAsync(byte[] packet, CancellationToken cancellationToken)

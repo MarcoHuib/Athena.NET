@@ -35,6 +35,17 @@ public static class PacketConstants
     // "find or create a stack of this item".
     public const short MapInventoryConsumeRequest = 0x2b37;
     public const short MapInventoryConsumeResponse = 0x2b38;
+    // Reads every persisted CharSkill row for the character - same "one collection read, never
+    // one-at-a-time" shape as MapInventoryListGetRequest.
+    public const short MapSkillListGetRequest = 0x2b39;
+    public const short MapSkillListGetResponse = 0x2b3a;
+    // One composite skill-point-spend mutation: SkillPoints, GameplayStateVersion, and CharSkill
+    // level all commit atomically in one CharServer transaction. Does NOT carry a MapServer-
+    // computed MaxLevel - CharServer only re-validates version/points/expected-current-level
+    // against its own fresh DB state; MapServer is the sole authority for tree/MaxLevel rules
+    // (see CharacterSkillService.ValidateUpgrade).
+    public const short MapSkillLearnRequest = 0x2b3b;
+    public const short MapSkillLearnResponse = 0x2b3c;
 
     public const short CzEnter = 0x72;
     public const short CzEnter2 = 0x436;
@@ -86,6 +97,9 @@ public static class PacketConstants
     public const int ZcUseItemAckLength = 15;
 
     public const short ZcAcceptEnter = 0x2eb;
+    // ZC_SKILLINFO_LIST3 - verified stock-iRO capture (ai/iro-2026-wire.md): 4-byte header plus
+    // one 15-byte SKILLDATA entry per visible skill. See IroSkillInfoListPackets.
+    public const short ZcSkillInfoList = 0x0b32;
     public const short ZcNotifyPlayerMove = 0x0087;
     public const short ZcNpcAckMapMove = 0x0091;
     public const short ZcNotifyStandEntry = 0x09ff;

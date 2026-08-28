@@ -9,7 +9,7 @@ using Athena.Net.MapServer.World;
 
 namespace Athena.Net.MapServer.Net;
 
-public sealed class CharServerConnector : ICharacterPositionPersistence, ICharacterQuestPersistence, ICharacterGameplayStatePersistence, ICharacterInventoryPersistence, ICharacterInventoryListPersistence
+public sealed class CharServerConnector : ICharacterPositionPersistence, ICharacterQuestPersistence, ICharacterGameplayStatePersistence, ICharacterInventoryPersistence, ICharacterInventoryListPersistence, ICharacterSkillPersistence
 {
     private static readonly Dictionary<short, int> PacketLengths = new()
     {
@@ -22,7 +22,9 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
         [PacketConstants.MapInventoryAddResponse] = MapInventoryAddProtocol.ResponseLength,
         [PacketConstants.MapInventoryEquipUpdateResponse] = MapInventoryEquipUpdateProtocol.ResponseLength,
         [PacketConstants.MapInventoryConsumeResponse] = MapInventoryConsumeProtocol.ResponseLength,
-        // MapInventoryListGetResponse is variable-length - see VariableLengthMinLength below.
+        [PacketConstants.MapSkillLearnResponse] = MapSkillLearnProtocol.ResponseLength,
+        // MapInventoryListGetResponse and MapSkillListGetResponse are variable-length - see
+        // VariableLengthMinLength below.
     };
 
     private readonly MapConfigStore _configStore;
@@ -36,6 +38,8 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
     private readonly ConcurrentDictionary<(uint CharId, uint DurableId), TaskCompletionSource<InventoryConsumePersistenceResult>> _pendingInventoryConsumes = new();
     private readonly ConcurrentDictionary<uint, TaskCompletionSource<CharacterInventoryReadResult>> _pendingInventoryReads = new();
     private readonly ConcurrentDictionary<(uint CharId, uint DurableId), TaskCompletionSource<bool>> _pendingEquipUpdates = new();
+    private readonly ConcurrentDictionary<uint, TaskCompletionSource<CharacterSkillReadResult>> _pendingSkillReads = new();
+    private readonly ConcurrentDictionary<uint, (TaskCompletionSource<CharacterSkillLearnResult?> Pending, ushort SkillId)> _pendingSkillLearns = new();
     private CharServerConnectionState? _connection;
 
     public CharServerConnector(MapConfigStore configStore)
@@ -145,6 +149,26 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
         using var registration = cancellationToken.Register(() => pending.TrySetCanceled(cancellationToken));
         try { await connection.WriteAsync(MapInventoryListProtocol.BuildGetRequest(accountId, characterId), cancellationToken); return await pending.Task; }
         finally { _pendingInventoryReads.TryRemove(characterId, out _); }
+    }
+
+    public async Task<CharacterSkillReadResult> GetSkillsAsync(uint accountId, uint characterId, CancellationToken cancellationToken)
+    {
+        var connection = _connection; if (connection is null) return CharacterSkillReadResult.Failed();
+        var pending = new TaskCompletionSource<CharacterSkillReadResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (!_pendingSkillReads.TryAdd(characterId, pending)) return CharacterSkillReadResult.Failed();
+        using var registration = cancellationToken.Register(() => pending.TrySetCanceled(cancellationToken));
+        try { await connection.WriteAsync(MapSkillListProtocol.BuildGetRequest(accountId, characterId), cancellationToken); return await pending.Task; }
+        finally { _pendingSkillReads.TryRemove(characterId, out _); }
+    }
+
+    public async Task<CharacterSkillLearnResult?> LearnSkillAsync(uint accountId, CharacterGameplayState expectedGameplayState, ushort skillId, byte expectedCurrentLevel, CancellationToken cancellationToken)
+    {
+        var connection = _connection; if (connection is null) return null;
+        var pending = new TaskCompletionSource<CharacterSkillLearnResult?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (!_pendingSkillLearns.TryAdd(expectedGameplayState.CharacterId, (pending, skillId))) return null;
+        using var registration = cancellationToken.Register(() => pending.TrySetCanceled(cancellationToken));
+        try { await connection.WriteAsync(MapSkillLearnProtocol.BuildRequest(accountId, expectedGameplayState, skillId, expectedCurrentLevel), cancellationToken); return await pending.Task; }
+        finally { _pendingSkillLearns.TryRemove(expectedGameplayState.CharacterId, out _); }
     }
 
     public async Task<bool> SetItemEquipAsync(uint accountId, uint characterId, uint durableId, uint equip, CancellationToken cancellationToken)
@@ -276,6 +300,8 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
             FailPendingInventoryReads();
             FailPendingEquipUpdates();
             FailPendingInventoryConsumes();
+            FailPendingSkillReads();
+            FailPendingSkillLearns();
 
             MapLogger.Warning("Char server connection closed. Reconnecting.");
             return false;
@@ -353,6 +379,10 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
                 return HandleInventoryEquipUpdateResponse(packet);
             case PacketConstants.MapInventoryConsumeResponse:
                 return HandleInventoryConsumeResponse(packet);
+            case PacketConstants.MapSkillListGetResponse:
+                return HandleSkillListGetResponse(packet);
+            case PacketConstants.MapSkillLearnResponse:
+                return HandleSkillLearnResponse(packet);
             default:
                 MapLogger.Warning($"Unknown char server packet 0x{packetType:X4}, disconnecting.");
                 return false;
@@ -470,6 +500,26 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
             pending.TrySetResult(new InventoryConsumePersistenceResult(success, newAmount, rowDeleted));
         if (success) MapLogger.Info($"Inventory-consume succeeded charId={charId} durableId={durableId} newAmount={newAmount} rowDeleted={rowDeleted}.");
         else MapLogger.Warning($"Inventory-consume failed charId={charId} durableId={durableId}.");
+        return true;
+    }
+
+    private bool HandleSkillListGetResponse(byte[] packet)
+    {
+        if (!MapSkillListProtocol.TryParseResponse(packet, out _, out var charId, out var skills)) return false;
+        if (_pendingSkillReads.TryRemove(charId, out var pending)) pending.TrySetResult(skills);
+        return true;
+    }
+
+    // The response echoes charId but not the requested skillId (see MapSkillLearnProtocol's own
+    // doc comment) - the pending-request table tracks skillId alongside the TaskCompletionSource
+    // so TryParseResponse can attach it to a successful CharacterSkillLearnResult.
+    private bool HandleSkillLearnResponse(byte[] packet)
+    {
+        if (packet.Length < MapSkillLearnProtocol.ResponseHeaderLength) return false;
+        var charId = BinaryPrimitives.ReadUInt32LittleEndian(packet.AsSpan(3));
+        if (!_pendingSkillLearns.TryRemove(charId, out var pendingEntry)) return true;
+        if (!MapSkillLearnProtocol.TryParseResponse(packet, out _, out _, out var learnResult, pendingEntry.SkillId)) { pendingEntry.Pending.TrySetResult(null); return false; }
+        pendingEntry.Pending.TrySetResult(learnResult);
         return true;
     }
 
@@ -597,6 +647,18 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
         _pendingInventoryConsumes.Clear();
     }
 
+    private void FailPendingSkillReads()
+    {
+        foreach (var pending in _pendingSkillReads.Values) pending.TrySetResult(CharacterSkillReadResult.Failed());
+        _pendingSkillReads.Clear();
+    }
+
+    private void FailPendingSkillLearns()
+    {
+        foreach (var entry in _pendingSkillLearns.Values) entry.Pending.TrySetResult(null);
+        _pendingSkillLearns.Clear();
+    }
+
     // Opcodes framed as [opcode.W][length.W][payload], where `length` is the TOTAL packet
     // length (matching pinned rAthena's own variable-length packet convention) - i.e. payload
     // is (length - 4) bytes. Contrast with PacketLengths, whose opcodes have a single fixed
@@ -608,6 +670,7 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
     {
         [PacketConstants.MapAuthOk] = 4,
         [PacketConstants.MapInventoryListGetResponse] = MapInventoryListProtocol.ResponseHeaderLength,
+        [PacketConstants.MapSkillListGetResponse] = MapSkillListProtocol.ResponseHeaderLength,
     };
 
     // The length field is a uint16 (BinaryPrimitives.ReadUInt16LittleEndian below), so its own

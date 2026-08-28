@@ -252,6 +252,7 @@ public sealed class MapClientSessionStatusExpirationTests
             await session.CompleteIroAuthenticationAsync(new(accountId, 9, 1, 2, 0, 0, false, "iz_int01", 18, 26, 0, 0, 0));
             var bootstrap = new byte[29];
             await client.GetStream().ReadExactlyAsync(bootstrap);
+            var skillListHeader = new byte[4]; await client.GetStream().ReadExactlyAsync(skillListHeader); var skillListBody = new byte[BinaryPrimitives.ReadUInt16LittleEndian(skillListHeader.AsSpan(2)) - 4]; await client.GetStream().ReadExactlyAsync(skillListBody);
 
             return new Harness
             {

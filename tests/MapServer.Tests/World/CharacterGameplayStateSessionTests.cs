@@ -1,3 +1,4 @@
+using Athena.Net.MapServer.Generated.Skills;
 using Athena.Net.MapServer.Net;
 using Athena.Net.MapServer.World;
 
@@ -5,6 +6,93 @@ namespace Athena.Net.MapServer.Tests.World;
 
 public sealed class CharacterGameplayStateSessionTests
 {
+    // Fixture tree matching CharacterSkillServiceTests' own fixture shape - a single ungated skill,
+    // isolated from any real generated job so these session/lock tests don't depend on job data.
+    private static readonly GeneratedSkillTreeEntry LearnableEntry = new(SkillId: 1, MaxLevel: 9, BaseLevel: 0, JobLevel: 0, Prerequisites: [], ExcludeFromInheritance: false);
+    private static readonly GeneratedSkillTreeDefinition LearnableTree = new(JobClass: 0, InheritedFrom: [], DeclaredSkills: [LearnableEntry], EffectiveSkills: [LearnableEntry]);
+
+    [Fact]
+    public async Task LearnSkillAsync_SuccessfulMutation_ReplacesBothStateAndSkillsTogether()
+    {
+        var store = new MemorySkillStore(State() with { SkillPoints = 1 });
+        var session = new CharacterGameplayStateSession(7, store.State, store, CharacterSkillSnapshot.Empty, store);
+
+        var result = await session.LearnSkillAsync(LearnableTree, requestedSkillId: 1, default);
+
+        Assert.NotNull(result);
+        Assert.Equal(0U, session.State.SkillPoints);
+        Assert.Equal(1UL, session.State.Version);
+        Assert.Equal((byte)1, session.Skills.CurrentLevel(1));
+    }
+
+    [Fact]
+    public async Task LearnSkillAsync_ValidationRejection_NoIOAttempted_StateUnchanged()
+    {
+        var store = new MemorySkillStore(State() with { SkillPoints = 0 }); // no points -> ValidateUpgrade rejects before any persistence call
+        var session = new CharacterGameplayStateSession(7, store.State, store, CharacterSkillSnapshot.Empty, store);
+
+        var result = await session.LearnSkillAsync(LearnableTree, requestedSkillId: 1, default);
+
+        Assert.Null(result);
+        Assert.Equal(0U, session.State.SkillPoints);
+        Assert.Equal(0UL, session.State.Version);
+        Assert.Equal((byte)0, session.Skills.CurrentLevel(1));
+        Assert.Equal(0, store.LearnCallCount);
+    }
+
+    [Fact]
+    public async Task LearnSkillAsync_FailedPersistence_LeavesBothStateAndSkillsUnchanged()
+    {
+        var store = new MemorySkillStore(State() with { SkillPoints = 1 }) { FailLearns = true };
+        var session = new CharacterGameplayStateSession(7, store.State, store, CharacterSkillSnapshot.Empty, store);
+
+        var result = await session.LearnSkillAsync(LearnableTree, requestedSkillId: 1, default);
+
+        Assert.Null(result);
+        Assert.Equal(1U, session.State.SkillPoints);
+        Assert.Equal(0UL, session.State.Version);
+        Assert.Equal((byte)0, session.Skills.CurrentLevel(1));
+    }
+
+    [Fact]
+    public async Task LearnSkillAsync_ReconnectReload_RestoresBothSkillPointsAndSkillLevel()
+    {
+        var store = new MemorySkillStore(State() with { SkillPoints = 1 });
+        var first = new CharacterGameplayStateSession(7, store.State, store, CharacterSkillSnapshot.Empty, store);
+        await first.LearnSkillAsync(LearnableTree, requestedSkillId: 1, default);
+
+        var reloadedState = await store.GetAsync(7, 9, default);
+        var reloadedSkills = await store.GetSkillsAsync(7, 9, default);
+        var second = new CharacterGameplayStateSession(7, reloadedState!, store, reloadedSkills.Snapshot!, store);
+
+        Assert.Equal(first.State, second.State);
+        Assert.Equal(first.Skills.Learned, second.Skills.Learned);
+        Assert.Equal((byte)1, second.Skills.CurrentLevel(1));
+    }
+
+    // Replay/concurrency scenario (task's own exact numbers): starting Version=10, SkillPoints=1,
+    // SkillLevel=0; two concurrent LearnSkillAsync calls against the same skill both starting from
+    // the same session - only one may succeed. The session's own SemaphoreSlim(1,1) (the SAME lock
+    // MutateAsync uses) serializes the two calls: whichever runs second observes the first's
+    // already-updated State/Skills (SkillPoints=0) and is correctly rejected by ValidateUpgrade
+    // (NoSkillPoints) rather than racing CharServer or double-spending the point.
+    [Fact]
+    public async Task LearnSkillAsync_TwoConcurrentCallsAgainstSameSession_OnlyOneSucceeds()
+    {
+        var store = new MemorySkillStore(State() with { Version = 10, SkillPoints = 1 });
+        var session = new CharacterGameplayStateSession(7, store.State, store, CharacterSkillSnapshot.Empty, store);
+
+        var first = session.LearnSkillAsync(LearnableTree, requestedSkillId: 1, default);
+        var second = session.LearnSkillAsync(LearnableTree, requestedSkillId: 1, default);
+        var results = await Task.WhenAll(first, second);
+
+        Assert.Single(results, r => r is not null);
+        Assert.Single(results, r => r is null);
+        Assert.Equal(11UL, session.State.Version);
+        Assert.Equal(0U, session.State.SkillPoints);
+        Assert.Equal((byte)1, session.Skills.CurrentLevel(1));
+    }
+
     [Fact]
     public async Task SuccessfulMutationCommitsReturnedAuthoritativeState()
     {
@@ -36,5 +124,45 @@ public sealed class CharacterGameplayStateSessionTests
         public Task<CharacterGameplayState?> GetAsync(uint accountId,uint characterId,CancellationToken ct)=>Task.FromResult<CharacterGameplayState?>(accountId==7&&characterId==_state.CharacterId?_state:null);
         public Task<CharacterGameplayState?> UpdateAsync(uint accountId,CharacterGameplayState expected,CharacterGameplayState updated,CancellationToken ct)
         { if(FailUpdates||accountId!=7||expected.Version!=_state.Version)return Task.FromResult<CharacterGameplayState?>(null); _state=updated with{Version=expected.Version+1}; return Task.FromResult<CharacterGameplayState?>(_state); }
+    }
+
+    // Combined ICharacterGameplayStatePersistence + ICharacterSkillPersistence fixture, mirroring
+    // MemoryStore's exact version-check semantics but ALSO tracking a single learned skill's level
+    // - the minimal in-memory stand-in for CharServer's own atomic composite mutation
+    // (TryApplySkillLearn), used to exercise CharacterGameplayStateSession.LearnSkillAsync's own
+    // orchestration/locking without a real DB round-trip.
+    private sealed class MemorySkillStore(CharacterGameplayState state) : ICharacterGameplayStatePersistence, ICharacterSkillPersistence
+    {
+        private CharacterGameplayState _state = state;
+        private byte _skillLevel;
+        public bool FailLearns { get; set; }
+        public int LearnCallCount { get; private set; }
+        public CharacterGameplayState State => _state;
+
+        public Task<CharacterGameplayState?> GetAsync(uint accountId, uint characterId, CancellationToken ct)
+            => Task.FromResult<CharacterGameplayState?>(accountId == 7 && characterId == _state.CharacterId ? _state : null);
+
+        public Task<CharacterGameplayState?> UpdateAsync(uint accountId, CharacterGameplayState expected, CharacterGameplayState updated, CancellationToken ct)
+        {
+            if (accountId != 7 || expected.Version != _state.Version) return Task.FromResult<CharacterGameplayState?>(null);
+            _state = updated with { Version = expected.Version + 1 };
+            return Task.FromResult<CharacterGameplayState?>(_state);
+        }
+
+        public Task<CharacterSkillReadResult> GetSkillsAsync(uint accountId, uint characterId, CancellationToken ct)
+        {
+            var rows = _skillLevel == 0 ? [] : new List<(ushort SkillId, byte Level, CharSkillFlag Flag)> { (1, _skillLevel, CharSkillFlag.Permanent) };
+            return Task.FromResult(CharacterSkillReadResult.Success(CharacterSkillSnapshot.FromLogin(rows)));
+        }
+
+        public Task<CharacterSkillLearnResult?> LearnSkillAsync(uint accountId, CharacterGameplayState expectedGameplayState, ushort skillId, byte expectedCurrentLevel, CancellationToken ct)
+        {
+            LearnCallCount++;
+            if (FailLearns || accountId != 7 || expectedGameplayState.Version != _state.Version || _skillLevel != expectedCurrentLevel || _state.SkillPoints == 0)
+                return Task.FromResult<CharacterSkillLearnResult?>(null);
+            _skillLevel = (byte)(expectedCurrentLevel + 1);
+            _state = _state with { Version = _state.Version + 1, SkillPoints = _state.SkillPoints - 1 };
+            return Task.FromResult<CharacterSkillLearnResult?>(new CharacterSkillLearnResult(_state, skillId, _skillLevel));
+        }
     }
 }

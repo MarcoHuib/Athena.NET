@@ -119,6 +119,7 @@ public sealed class MapClientSessionMonsterMovementTests
         // packets follow here since no inventory list persistence override was supplied for this
         // narrowly-scoped movement-notification test.
         await ReadExact(stream, 4 + 6 + 6 + 13);
+        await ReadDynamic(stream); // 0x0B32 skill list
 
         return (client, stream, session, run, target);
     }
@@ -411,6 +412,7 @@ public sealed class MapClientSessionMonsterMovementTests
         var run = session.RunAsync(CancellationToken.None);
         await session.CompleteIroAuthenticationAsync(new(AccountId, CharId, 1, 2, 0, 0, false, "int_land03", 75, 51, 0, 0, 0));
         await ReadExact(stream, 4 + 6 + 6 + 13);
+        await ReadDynamic(stream); // 0x0B32 skill list
         await MakeVisibleAsync(stream, target);
 
         var attackPacket = new byte[8];
