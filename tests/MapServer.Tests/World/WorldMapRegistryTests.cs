@@ -10,22 +10,25 @@ public sealed class WorldMapRegistryTests
     {
         var registry = WorldMapRegistry.Tutorial;
         Assert.Equal(10, registry.StaticWarpCount);
-        // 30 = the full 5-map tutorial family (base iz_int/int_land + 01..04), not just the 01..04
+        // 35 = the full 5-map tutorial family (base iz_int/int_land + 01..04), not just the 01..04
         // instanced variants: 2 Wounded Swordsman states x 5 maps (iz_int/01/02/03/04) + Captain
-        // Carocc x 5 (int_land/01/02/03/04) + Lumin x 5 + #ship_out x 5 (iz_int/01/02/03/04) +
-        // #intro_to_izlude x 5 (int_land/01/02/03/04) = 10+5+5+5+5 = 30. Every generic/base
-        // placement (iz_int/int_land, not just the *0N instanced duplicates) must be present here -
-        // see WorldMapRegistryFamilyTests for the per-suffix breakdown this count summarizes.
-        Assert.Equal(30, registry.EntityCount);
+        // Carocc x 5 (int_land/01/02/03/04) + Lumin x 5 + Sailor x 5 (int_land/01/02/03/04) +
+        // #ship_out x 5 (iz_int/01/02/03/04) + #intro_to_izlude x 5 (int_land/01/02/03/04) =
+        // 10+5+5+5+5+5 = 35. Every generic/base placement (iz_int/int_land, not just the *0N
+        // instanced duplicates) must be present here - see WorldMapRegistryFamilyTests for the
+        // per-suffix breakdown this count summarizes.
+        Assert.Equal(35, registry.EntityCount);
         Assert.Equal(0, registry.DynamicWarpActorCount);
         Assert.Contains("npc:int_land03:captain carocc#intro_npc03_03", registry.EntitiesById.Keys);
         Assert.Contains("npc:int_land03:lumin#new_ship03", registry.EntitiesById.Keys);
+        Assert.Contains("npc:int_land03:sailor#intro_npc04_03", registry.EntitiesById.Keys);
         Assert.Contains("npc:iz_int03:wounded swordsman#intro_npc01_iz_int03", registry.EntitiesById.Keys);
         Assert.Contains("npc:iz_int03:wounded swordsman#intro_npc02_iz_int03", registry.EntitiesById.Keys);
         Assert.Contains("warp:iz_int01:ship_out01", registry.EntitiesById.Keys);
         // Generic/base placements (the regression this task fixes) must also be present.
         Assert.Contains("npc:int_land:captain carocc#intro_npc03", registry.EntitiesById.Keys);
         Assert.Contains("npc:int_land:lumin#new_ship", registry.EntitiesById.Keys);
+        Assert.Contains("npc:int_land:sailor#intro_npc04", registry.EntitiesById.Keys);
         Assert.Contains("npc:iz_int:wounded swordsman#intro_npc01_iz_int", registry.EntitiesById.Keys);
         Assert.Contains("npc:iz_int:wounded swordsman#intro_npc02_iz_int", registry.EntitiesById.Keys);
         Assert.Contains("warp:iz_int:ship_out", registry.EntitiesById.Keys);

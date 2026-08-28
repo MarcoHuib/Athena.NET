@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using Athena.Net.MapServer.Generated.GameData.Items;
 using Athena.Net.MapServer.Net;
 using Athena.Net.MapServer.World;
 
@@ -112,5 +113,44 @@ public sealed class IroInventoryListPacketsTests
         Assert.Equal((ushort)2, BinaryPrimitives.ReadUInt16LittleEndian(first));
         Assert.Equal((ushort)3, BinaryPrimitives.ReadUInt16LittleEndian(second));
         Assert.Equal(2301u, BinaryPrimitives.ReadUInt32LittleEndian(second[2..]));
+    }
+
+    // Live stock-iRO finding: DelayConsumeItemDefinition (pinned rAthena item_db Type,
+    // IT_DELAYCONSUME=11, mmo.hpp:234) must NOT wire-serialize as 11 for the current unmodified
+    // client - a live test sending item 611 with type 11 placed it under the client's Gear tab
+    // instead of Items, and the official Full-izlude capture's own 0x0B41 grant of N_Magnifier
+    // (12325) independently uses type=2 (IT_USABLE). This is a client-facing wire-projection
+    // divergence only: GeneratedItems.Magnifier/NoviceMagnifier remain DelayConsumeItemDefinition
+    // (pinned rAthena's authoritative server-side domain type is unchanged by this test/fix).
+    [Fact]
+    public void ItemType_DelayConsumeItemDefinition_ProjectsAsCurrentIroUsableType()
+    {
+        Assert.Equal(2, IroInventoryListPackets.ItemType(GeneratedItems.Magnifier));
+    }
+
+    [Fact]
+    public void ItemType_NoviceMagnifier12325_ProjectsAsUsableType_MatchingOfficialCapture()
+    {
+        Assert.Equal(2, IroInventoryListPackets.ItemType(GeneratedItems.NoviceMagnifier));
+    }
+
+    [Fact]
+    public void GeneratedItems_Magnifier611AndNoviceMagnifier12325_RemainDelayConsumeItemDefinition()
+    {
+        Assert.IsType<DelayConsumeItemDefinition>(GeneratedItems.Magnifier);
+        Assert.IsType<DelayConsumeItemDefinition>(GeneratedItems.NoviceMagnifier);
+        Assert.Equal(611, GeneratedItems.Magnifier.Id);
+        Assert.Equal(12325, GeneratedItems.NoviceMagnifier.Id);
+    }
+
+    [Fact]
+    public void BuildItemListNormal_DelayConsumeItem_Type2AtCorrectOffset()
+    {
+        var item = new CharacterInventoryItem(DurableId: 1, SlotIndex: 0, 611, 5, 0, true, 0, 0, 0);
+        var packet = IroInventoryListPackets.BuildItemListNormal([(6, item, GeneratedItems.Magnifier)]);
+
+        var entry = packet.AsSpan(5);
+        Assert.Equal(611u, BinaryPrimitives.ReadUInt32LittleEndian(entry[2..]));
+        Assert.Equal(2, entry[6]); // IT_USABLE, not pinned IT_DELAYCONSUME=11 - see ItemType's own doc comment
     }
 }

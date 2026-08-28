@@ -155,6 +155,19 @@ internal static class IroInventoryListPackets
     // Internal (not private): shared with any other packet builder that must report a real
     // item's pinned item_type byte (e.g. IroMonsterCombatPackets.BuildItemPickupAck callers) -
     // one mapping, never duplicated into a second switch that could silently diverge from this one.
+    //
+    // DelayConsumeItemDefinition intentionally does NOT wire-serialize as pinned rAthena's own
+    // IT_DELAYCONSUME=11: this is a client-facing WIRE PROJECTION divergence, not a server-side
+    // domain change - the generated item definitions (GeneratedItems.Magnifier=611,
+    // NoviceMagnifier=12325) remain DelayConsumeItemDefinition, pinned rAthena's authoritative
+    // server-side item_db Type. Live testing against the current unmodified stock iRO client
+    // proved type=11 places the item under the client's Gear tab instead of Items; the official
+    // Full-izlude capture's own 0x0B41 grant of N_Magnifier (12325) independently uses type=2
+    // (IT_USABLE), not 11. Per this project's evidence-priority rule (ai/iro-2026-wire.md: a
+    // verified current-client wire behavior overrides a generic pinned-source mapping), every
+    // DelayConsumeItemDefinition projects as the client-facing IT_USABLE byte through this one
+    // shared mapping, so both 0x0B41 (BuildItemPickupAck) and 0x0B09 (BuildItemListNormal) stay
+    // automatically in sync without a second, divergence-prone switch.
     internal static byte ItemType(ItemDefinition definition) => definition switch
     {
         HealingItemDefinition => 0,      // IT_HEALING (mmo.hpp:224)
@@ -162,7 +175,7 @@ internal static class IroInventoryListPackets
         ArmorItemDefinition => 4,        // IT_ARMOR (mmo.hpp:227)
         UsableItemDefinition => 2,       // IT_USABLE (mmo.hpp:225)
         EtcItemDefinition => 3,          // IT_ETC (mmo.hpp:226)
-        DelayConsumeItemDefinition => 11, // IT_DELAYCONSUME (mmo.hpp:234)
+        DelayConsumeItemDefinition => 2, // current-iRO client-facing IT_USABLE (see doc comment above) - pinned server-side type remains IT_DELAYCONSUME=11 (mmo.hpp:234), unchanged in GeneratedItems
         _ => throw new NotSupportedException($"{definition.GetType().Name} has no modeled itemtype() mapping."),
     };
 }

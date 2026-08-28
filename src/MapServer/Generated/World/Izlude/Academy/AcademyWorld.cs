@@ -26,6 +26,14 @@ internal static class AcademyWorld
             new("npc:int_land04:lumin#new_ship04", AcademyNpcs.Lumin.DefinitionId, "Lumin#new_ship04", "int_land04", 73, 100, 3, 639, 0, 0, 0),
             new("npc:int_land:lumin#new_ship", AcademyNpcs.Lumin.DefinitionId, "Lumin#new_ship", "int_land", 73, 100, 3, 639, 0, 0, 0),
         ]);
+        world.AddNpc(AcademyNpcs.Sailor,
+        [
+            new("npc:int_land01:sailor#intro_npc04_01", AcademyNpcs.Sailor.DefinitionId, "Sailor#intro_npc04_01", "int_land01", 58, 69, 5, 100, 0, 0, 0),
+            new("npc:int_land02:sailor#intro_npc04_02", AcademyNpcs.Sailor.DefinitionId, "Sailor#intro_npc04_02", "int_land02", 58, 69, 5, 100, 0, 0, 0),
+            new("npc:int_land03:sailor#intro_npc04_03", AcademyNpcs.Sailor.DefinitionId, "Sailor#intro_npc04_03", "int_land03", 58, 69, 5, 100, 0, 0, 0),
+            new("npc:int_land04:sailor#intro_npc04_04", AcademyNpcs.Sailor.DefinitionId, "Sailor#intro_npc04_04", "int_land04", 58, 69, 5, 100, 0, 0, 0),
+            new("npc:int_land:sailor#intro_npc04", AcademyNpcs.Sailor.DefinitionId, "Sailor#intro_npc04", "int_land", 58, 69, 5, 100, 0, 0, 0),
+        ]);
         world.AddNpc(AcademyNpcs.WoundedSwordsmanIntroNpc01IzInt,
         [
             new("npc:iz_int01:wounded swordsman#intro_npc01_iz_int01", AcademyNpcs.WoundedSwordsmanIntroNpc01IzInt.DefinitionId, "Wounded Swordsman#intro_npc01_iz_int01", "iz_int01", 56, 32, 3, 687, 5, 5, 0),

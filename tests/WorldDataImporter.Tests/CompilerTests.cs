@@ -116,6 +116,80 @@ public sealed class CompilerTests
     }
 
     [Fact]
+    public void CountItem_LowersAsGenericExpressionForAnyItemId()
+    {
+        // Arbitrary item ID (not Sailor's 6008) to prove genericity, mirroring the isbegin_quest
+        // pattern this test suite already uses for generic quest-state expressions.
+        const string source = "OnClick: if (countitem(1234) < 3) { mes \"few\"; } else mes \"plenty\";";
+        var syntax = new RathenaParser(source, "fixture.txt").ParseCompilationUnit();
+        var lowered = RathenaScriptLowerer.LowerEvent(syntax, "OnClick");
+        Assert.True(lowered.Success, string.Join('\n', lowered.Diagnostics.Select(d => d.Message)));
+
+        var metadata = new GeneratedNpcMetadata("Athena.Generated", "CountItemScript", "npc:test:countitem", "Npc", "CountItem", "test", 1, 2, 0, 45, 0, 0, "OnClick", null, "fixture.txt", 1, 1, "commit");
+        var generated = NpcScriptEmitter.Emit(lowered.Script!, metadata);
+
+        Assert.Contains("await context.CountItemAsync(1234, cancellationToken) < 3", generated);
+    }
+
+    [Fact]
+    public void DelItem_LowersAsGenericCommandForAnyItemIdAndAmount()
+    {
+        var syntax = new RathenaParser("OnClick: delitem 7777,3;", "fixture.txt").ParseCompilationUnit();
+        var lowered = RathenaScriptLowerer.LowerEvent(syntax, "OnClick");
+        Assert.True(lowered.Success, string.Join('\n', lowered.Diagnostics.Select(d => d.Message)));
+        Assert.Equal("delitem", Assert.IsType<LoweredCommand>(lowered.Script!.Statements.Single()).Name);
+
+        var metadata = new GeneratedNpcMetadata("Athena.Generated", "DelItemScript", "npc:test:delitem", "Npc", "DelItem", "test", 1, 2, 0, 45, 0, 0, "OnClick", null, "fixture.txt", 1, 1, "commit");
+        var generated = NpcScriptEmitter.Emit(lowered.Script, metadata);
+
+        Assert.Contains("await context.DeleteItemAsync(7777, 3, cancellationToken);", generated);
+    }
+
+    [Fact]
+    public void GetItem_LowersAsGenericCommandForAnyItemIdAndAmount()
+    {
+        var syntax = new RathenaParser("OnClick: getitem 9999,2;", "fixture.txt").ParseCompilationUnit();
+        var lowered = RathenaScriptLowerer.LowerEvent(syntax, "OnClick");
+        Assert.True(lowered.Success, string.Join('\n', lowered.Diagnostics.Select(d => d.Message)));
+        Assert.Equal("getitem", Assert.IsType<LoweredCommand>(lowered.Script!.Statements.Single()).Name);
+
+        var metadata = new GeneratedNpcMetadata("Athena.Generated", "GetItemScript", "npc:test:getitem", "Npc", "GetItem", "test", 1, 2, 0, 45, 0, 0, "OnClick", null, "fixture.txt", 1, 1, "commit");
+        var generated = NpcScriptEmitter.Emit(lowered.Script, metadata);
+
+        Assert.Contains("await context.GetItemAsync(9999, 2, cancellationToken);", generated);
+    }
+
+    [Theory]
+    [InlineData("countitem();")]
+    [InlineData("countitem(1,2);")]
+    public void CountItem_InvalidArity_FailsAtCompileTime(string call)
+    {
+        var syntax = new RathenaParser($"OnClick: mes {call}", "fixture.txt").ParseCompilationUnit();
+        var analysis = SemanticAnalyzer.Analyze(syntax);
+        Assert.Contains(analysis.Diagnostics, d => d.Code == "RAT3002" && d.Message.Contains("countitem"));
+    }
+
+    [Theory]
+    [InlineData("delitem 1;")]
+    [InlineData("delitem 1,2,3;")]
+    public void DelItem_InvalidArity_FailsAtCompileTime(string statement)
+    {
+        var syntax = new RathenaParser($"OnClick: {statement}", "fixture.txt").ParseCompilationUnit();
+        var analysis = SemanticAnalyzer.Analyze(syntax);
+        Assert.Contains(analysis.Diagnostics, d => d.Code == "RAT3002" && d.Message.Contains("delitem"));
+    }
+
+    [Theory]
+    [InlineData("getitem 1;")]
+    [InlineData("getitem 1,2,3;")]
+    public void GetItem_InvalidArity_FailsAtCompileTime(string statement)
+    {
+        var syntax = new RathenaParser($"OnClick: {statement}", "fixture.txt").ParseCompilationUnit();
+        var analysis = SemanticAnalyzer.Analyze(syntax);
+        Assert.Contains(analysis.Diagnostics, d => d.Code == "RAT3002" && d.Message.Contains("getitem"));
+    }
+
+    [Fact]
     public void StrCharInfoName_LowersAsDistinctCharacterInfoAndEmitsInsideConcatenation()
     {
         var syntax = new RathenaParser("OnClick: mes \"[\" + strcharinfo(0) + \"]\"; mes \"I am \" + strcharinfo(0) + \"!\";", "fixture.txt").ParseCompilationUnit();
@@ -194,7 +268,7 @@ public sealed class CompilerTests
                 "--source-root", Path.Combine(repository, "legacy/rathena/npc/re/jobs/novice"),
                 "--source-root", Path.Combine(repository, "legacy/rathena/npc/re/warps/cities"),
                 "--name", "Wounded Swordsman#intro_npc02_iz_int", "--name", "Wounded Swordsman#intro_npc01_iz_int",
-                "--name", "Captain Carocc#intro_npc03", "--name", "Lumin#new_ship",
+                "--name", "Captain Carocc#intro_npc03", "--name", "Lumin#new_ship", "--name", "Sailor#intro_npc04",
                 "--warp-name", "#ship_out", "--warp-name", "#intro_to_izlude",
                 "--namespace", "Athena.Net.MapServer.Generated.World.Izlude.Academy",
                 "--rathena-commit", "e985006171d2eb320ee512a653f4c83aea3d81b6",
@@ -241,12 +315,22 @@ public sealed class CompilerTests
             Assert.Contains("context.StrCharInfo(0)", luminScript);
             Assert.Contains("await context.SetNpcCloakAsync(null, true, cancellationToken);", luminScript);
 
+            var sailorScript = scriptFiles.Select(File.ReadAllText).Single(source => source.Contains("SailorOnClickScript"));
+            Assert.Contains("await context.CountItemAsync(6008, cancellationToken) < 2", sailorScript);
+            Assert.Contains("await context.DeleteItemAsync(6008, 2, cancellationToken);", sailorScript);
+            Assert.Contains("await context.GetItemAsync(611, 5, cancellationToken);", sailorScript);
+            Assert.Contains("await context.GrantExperienceAsync(100, 100, cancellationToken);", sailorScript);
+            Assert.Contains("new QuestId(21008)", sailorScript);
+            Assert.DoesNotContain("questinfo", sailorScript);
+
             var academyNpcs = await File.ReadAllTextAsync(Path.Combine(academyDir, "AcademyNpcs.cs"));
             Assert.Contains("\"Wounded Swordsman#intro_npc02_iz_int\"", academyNpcs);
             Assert.Contains("CaptainCarocc = new(", academyNpcs);
             Assert.Contains("static () => new Athena.Net.MapServer.Generated.World.Izlude.Academy.Scripts.CaptainCaroccOnClickScript()", academyNpcs);
             Assert.Contains("Lumin = new(", academyNpcs);
             Assert.Contains("static () => new Athena.Net.MapServer.Generated.World.Izlude.Academy.Scripts.LuminOnClickScript()", academyNpcs);
+            Assert.Contains("Sailor = new(", academyNpcs);
+            Assert.Contains("static () => new Athena.Net.MapServer.Generated.World.Izlude.Academy.Scripts.SailorOnClickScript()", academyNpcs);
 
             var academyWarpTriggers = await File.ReadAllTextAsync(Path.Combine(academyDir, "AcademyWarpTriggers.cs"));
             Assert.Contains("\"#ship_out\"", academyWarpTriggers);
@@ -255,6 +339,11 @@ public sealed class CompilerTests
             var academyWorld = await File.ReadAllTextAsync(Path.Combine(academyDir, "AcademyWorld.cs"));
             Assert.Equal(4, System.Text.RegularExpressions.Regex.Matches(academyWorld, "warp:iz_int0.:ship_out0.").Count);
             Assert.Contains("warp:int_land04:intro_to_izlude_d", academyWorld);
+            // Every base+duplicate placement (int_land plus int_land01..04) must be present -
+            // matching the same "no --exclude-placement for a duplicate() family's generic
+            // template row" convention already proven for Captain Carocc/Lumin above.
+            Assert.Equal(5, System.Text.RegularExpressions.Regex.Matches(academyWorld, "npc:int_land0?.?:sailor#intro_npc04").Count);
+            Assert.Contains("\"npc:int_land:sailor#intro_npc04\"", academyWorld);
         }
         finally { Directory.Delete(first, true); Directory.Delete(second, true); }
     }

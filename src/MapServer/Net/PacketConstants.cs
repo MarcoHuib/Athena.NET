@@ -127,6 +127,23 @@ public static class PacketConstants
     public const short ZcItemPickupAck = 0x0b41;
     public const int ZcItemPickupAckLength = 70;
     public const byte ZcItemPickupResultSuccess = 0;
+    // Verified sailor-packet-export.txt, frame 7291, TCP-payload offset 0x0049 (right after
+    // Sailor's "...right now!\0" dialogue text): exact 8-byte match `fa 07 00 00 04 00 02 00` to
+    // pinned PACKET_ZC_DELETE_ITEM_FROM_BODY / ZC_DELETE_ITEM_FROM_BODY (clif_delitem,
+    // clif.cpp:2917): packetType.W deleteReason.W index.W amount.W. The captured
+    // index=4/amount=2 are this specific session's values (item 6008 x2, delitem's own
+    // client_index() transform), never hardcoded into production code - see
+    // IroMonsterCombatPackets.BuildDeleteItemFromBody.
+    public const short ZcDeleteItemFromBody = 0x07fa;
+    public const int ZcDeleteItemFromBodyLength = 8;
+    // pc.cpp pc_delitem's `reason` parameter is passed straight through to clif_delitem.
+    // script.cpp's buildin_delitem_search (the implementation backing the script `delitem`
+    // command) always calls pc_delitem(..., reason=0, ...) unconditionally - this is the
+    // generically-correct reason for the delitem SCRIPT COMMAND specifically (other pc_delitem
+    // call sites, e.g. refine failure/overweight drop, pass different reason constants for their
+    // own distinct causes). The capture's reason=0 for this Sailor delitem is corroborating
+    // evidence of this pinned-source fact, not itself the source of the constant.
+    public const ushort ZcDeleteItemFromBodyReasonScriptDelitem = 0;
     // PINNED-SOURCE-BACKED, NOT capture-verified (no stock-iRO capture of this packet has been
     // independently obtained yet - see IroCombatDistancePackets.BuildAttackFailureForDistance's
     // own doc comment). Struct PACKET_ZC_ATTACK_FAILURE_FOR_DISTANCE (packets_struct.hpp:5419-

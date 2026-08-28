@@ -16,6 +16,10 @@ internal static class AcademyNpcs
         "npcdef:legacy/rathena/npc/re/jobs/novice/academy.txt:lumin#new_ship", "Lumin#new_ship",
         [new("OnClick", static () => new Athena.Net.MapServer.Generated.World.Izlude.Academy.Scripts.LuminOnClickScript())],
         new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/jobs/novice/academy.txt", 245));
+    internal static readonly NpcDefinition Sailor = new(
+        "npcdef:legacy/rathena/npc/re/jobs/novice/academy.txt:sailor#intro_npc04", "Sailor#intro_npc04",
+        [new("OnClick", static () => new Athena.Net.MapServer.Generated.World.Izlude.Academy.Scripts.SailorOnClickScript())],
+        new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/jobs/novice/academy.txt", 334));
     internal static readonly NpcDefinition WoundedSwordsmanIntroNpc01IzInt = new(
         "npcdef:legacy/rathena/npc/re/jobs/novice/academy.txt:wounded swordsman#intro_npc01_iz_int", "Wounded Swordsman#intro_npc01_iz_int",
         [new("OnClick", static () => new Athena.Net.MapServer.Generated.World.Izlude.Academy.Scripts.WoundedSwordsmanIntroNpc01IzIntOnClickScript())],

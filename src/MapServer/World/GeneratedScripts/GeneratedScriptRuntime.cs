@@ -10,6 +10,20 @@ public interface INpcScript
     Task ExecuteAsync(ScriptContext context, CancellationToken cancellationToken);
 }
 
+// Thrown by ScriptContext's own wrapper methods (never by generated script code, and never by
+// INpcScriptHost implementations directly) when a host mutation command that CAN fail - e.g. a
+// delitem/getitem CharServer persistence failure - reports failure, so a generated script's
+// remaining statement sequence stops instead of silently continuing into further rewards/dialogue
+// after a failed authoritative mutation (AGENTS.md's "do not report success to the client before
+// required persistence succeeds"). Caught generically at the one script-dispatch call site
+// (MapClientSession.ExecuteGeneratedScriptAsync) alongside every other unexpected script
+// exception; this is not itself a bug/crash condition, so it is logged distinctly there. Never
+// triggers a rollback of already-applied earlier statements in the same script (this project's
+// documented "no distributed idempotency" stance - see ai/world-data.md's "Inventory persistence
+// guarantees" section) and is not a general script-failure framework - only commands that
+// genuinely have a fallible authoritative persistence step throw it.
+public sealed class ScriptMutationFailedException(string message) : Exception(message);
+
 public interface INpcScriptHost
 {
     Task MesAsync(uint actorId, string text, CancellationToken cancellationToken);
@@ -32,6 +46,9 @@ public interface INpcScriptHost
     Task SkillEffectAsync(int skillId, int level, CancellationToken cancellationToken);
     Task StartStatusAsync(int statusId, int durationMilliseconds, int val1, CancellationToken cancellationToken);
     string GetActiveCharacterName();
+    Task<uint> CountItemAsync(int itemId, CancellationToken cancellationToken);
+    Task<bool> DeleteItemAsync(int itemId, uint amount, CancellationToken cancellationToken);
+    Task<bool> GetItemAsync(int itemId, uint amount, CancellationToken cancellationToken);
 }
 
 // Pinned rAthena numeric constants referenced by generated script identifiers
@@ -87,6 +104,26 @@ public sealed class ScriptContext
     public Task SpecialEffectAsync(int effectId, CancellationToken cancellationToken) => _host.SpecialEffectAsync(effectId, cancellationToken);
     public Task SkillEffectAsync(int skillId, int level, CancellationToken cancellationToken) => _host.SkillEffectAsync(skillId, level, cancellationToken);
     public Task StartStatusAsync(int statusId, int durationMilliseconds, int val1, CancellationToken cancellationToken) => _host.StartStatusAsync(statusId, durationMilliseconds, val1, cancellationToken);
+    public Task<uint> CountItemAsync(int itemId, CancellationToken cancellationToken) => _host.CountItemAsync(itemId, cancellationToken);
+
+    // Both delitem/getitem host methods have a genuinely fallible authoritative persistence step
+    // (CharServer consume/add). This is the one seam between generated code and INpcScriptHost, so
+    // it is also the one place a `false` result is translated into a thrown
+    // ScriptMutationFailedException - the generated script itself stays a bare sequential `await`
+    // call (see SailorOnClickScript.cs), matching every other generated statement, while still
+    // stopping the remaining sequence on failure via normal exception propagation up through
+    // INpcScript.ExecuteAsync to MapClientSession.ExecuteGeneratedScriptAsync's existing catch.
+    public async Task DeleteItemAsync(int itemId, uint amount, CancellationToken cancellationToken)
+    {
+        if (!await _host.DeleteItemAsync(itemId, amount, cancellationToken))
+            throw new ScriptMutationFailedException($"delitem {itemId},{amount} failed.");
+    }
+
+    public async Task GetItemAsync(int itemId, uint amount, CancellationToken cancellationToken)
+    {
+        if (!await _host.GetItemAsync(itemId, amount, cancellationToken))
+            throw new ScriptMutationFailedException($"getitem {itemId},{amount} failed.");
+    }
 
     public string StrNpcInfo(int type) => type switch
     {

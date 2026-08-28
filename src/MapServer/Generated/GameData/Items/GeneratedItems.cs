@@ -122,6 +122,20 @@ internal static class GeneratedItems
         Source: new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/re/item_db_usable.yml", 0),
         Grants: [new ItemGrantDefinition(11518, 15), new ItemGrantDefinition(11614, 40), new ItemGrantDefinition(12325, 15), new ItemGrantDefinition(22542, 1), new ItemGrantDefinition(23486, 1)]);
 
+    // Generated via `compile-item --item-id 611 --item-db-file db/re/item_db_usable.yml`.
+    // Sailor#intro_npc04's pinned `getitem 611,5` reward (academy.txt:334-379). Type:
+    // DelayConsume, Script `itemskill "MC_IDENTIFY",1` - the pinned delay-consume/itemskill
+    // identify effect is explicitly NOT implemented in this slice (same shallow-extension
+    // rationale as NoviceMagnifier below, a DIFFERENT item id - 12325, not 611; the two must
+    // never be confused or substituted for one another).
+    internal static readonly DelayConsumeItemDefinition Magnifier = new(
+        Id: 611,
+        AegisName: "Spectacles",
+        Name: "Magnifier",
+        Stackable: true,
+        ClientViewId: 611,
+        Source: new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/re/item_db_usable.yml", 0));
+
     // Hand-composed lookup (not compiler output) over the generated items above, mirroring
     // how AcademyMobSpawnRegistration.cs composes AcademyMobSpawns.GPoringSpawns outside the
     // NpcWorldEmitter's own deterministic-reproducibility guarantee. Extend by adding entries
@@ -137,5 +151,6 @@ internal static class GeneratedItems
         [NoviceMagnifier.Id] = NoviceMagnifier,
         [CenterPotionB.Id] = CenterPotionB,
         [FirstaidBox10.Id] = FirstaidBox10,
+        [Magnifier.Id] = Magnifier,
     };
 }

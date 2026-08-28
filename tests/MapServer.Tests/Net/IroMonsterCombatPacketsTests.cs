@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using Athena.Net.MapServer.Generated.GameData.Items;
 using Athena.Net.MapServer.Net;
 
 namespace Athena.Net.MapServer.Tests.Net;
@@ -62,5 +63,21 @@ public sealed class IroMonsterCombatPacketsTests
         Assert.Equal(0, packet[11]); // IsDamaged
         Assert.Equal(3, packet[32]); // type = Etc
         Assert.Equal(0, packet[33]); // result = success
+    }
+
+    // Live stock-iRO finding (see IroInventoryListPacketsTests's own doc comment for the full
+    // trace): a getitem 611,5 grant's 0x0B41 must carry the current-iRO client-facing IT_USABLE
+    // type (2), not pinned rAthena's server-side IT_DELAYCONSUME (11), or the current unmodified
+    // client places the item under Gear instead of Items. GeneratedItems.Magnifier's own domain
+    // type is unchanged (still DelayConsumeItemDefinition); only the wire byte, resolved through
+    // the shared IroInventoryListPackets.ItemType projection, changes for this packet.
+    [Fact]
+    public void BuildItemPickupAck_Magnifier611_UsesCurrentIroUsableType()
+    {
+        var packet = IroMonsterCombatPackets.BuildItemPickupAck(
+            clientIndex: 2, count: 5, itemId: 611, itemType: IroInventoryListPackets.ItemType(GeneratedItems.Magnifier));
+
+        Assert.Equal(611u, BinaryPrimitives.ReadUInt32LittleEndian(packet.AsSpan(6)));
+        Assert.Equal(2, packet[32]); // IT_USABLE, not IT_DELAYCONSUME=11
     }
 }

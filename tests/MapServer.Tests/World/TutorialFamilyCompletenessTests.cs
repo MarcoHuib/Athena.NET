@@ -42,6 +42,8 @@ public sealed class TutorialFamilyCompletenessTests
                 missing.Add($"NPC(CaptainCarocc) missing for '{intLand}'");
             if (!registry.EntitiesById.ContainsKey($"npc:{intLand}:lumin#new_ship{suffix}"))
                 missing.Add($"NPC(Lumin) missing for '{intLand}'");
+            if (!registry.EntitiesById.ContainsKey($"npc:{intLand}:sailor#intro_npc04{(suffix.Length > 0 ? "_" + suffix : "")}"))
+                missing.Add($"NPC(Sailor) missing for '{intLand}'");
             if (!registry.EntitiesById.ContainsKey($"warp:{intLand}:intro_to_izlude{introToIzludeSuffix}"))
                 missing.Add($"Warp(#intro_to_izlude) missing for '{intLand}'");
             if (!registry.GetNavigationAt(izInt, 18, 26).Any())
@@ -70,6 +72,7 @@ public sealed class TutorialFamilyCompletenessTests
         var shipOutCount = IzIntSuffixes.Count(suffix => registry.EntitiesById.ContainsKey($"warp:iz_int{suffix}:ship_out{suffix}"));
         var captainCaroccCount = IzIntSuffixes.Count(suffix => registry.EntitiesById.ContainsKey($"npc:int_land{suffix}:captain carocc#intro_npc03{(suffix.Length > 0 ? "_" + suffix : "")}"));
         var luminCount = IzIntSuffixes.Count(suffix => registry.EntitiesById.ContainsKey($"npc:int_land{suffix}:lumin#new_ship{suffix}"));
+        var sailorCount = IzIntSuffixes.Count(suffix => registry.EntitiesById.ContainsKey($"npc:int_land{suffix}:sailor#intro_npc04{(suffix.Length > 0 ? "_" + suffix : "")}"));
         var introToIzludeCount = IzIntSuffixes.Count(suffix =>
         {
             var introToIzludeSuffix = suffix switch { "" => "", "01" => "_a", "02" => "_b", "03" => "_c", "04" => "_d", _ => throw new ArgumentOutOfRangeException(nameof(suffix)) };
@@ -83,6 +86,7 @@ public sealed class TutorialFamilyCompletenessTests
         Assert.Equal(5, shipOutCount);
         Assert.Equal(5, captainCaroccCount);
         Assert.Equal(5, luminCount);
+        Assert.Equal(5, sailorCount);
         Assert.Equal(5, introToIzludeCount);
         Assert.Equal(5, navigationCount);
         Assert.Equal(5, mobSpawnCount);

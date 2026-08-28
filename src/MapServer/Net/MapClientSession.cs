@@ -2120,6 +2120,18 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested || _sessionCancellation.IsCancellationRequested)
         {
         }
+        catch (ScriptMutationFailedException exception)
+        {
+            // A fallible generated-script mutation (delitem/getitem) reported an authoritative
+            // persistence failure. The remaining statement sequence never ran (no further
+            // reward/completequest/success dialogue), matching AGENTS.md's "do not report success
+            // before required persistence succeeds". Already-applied earlier statements in this
+            // same script are NOT rolled back (no distributed idempotency - ai/world-data.md).
+            // Minimal client-side interaction close, matching the generic catch below's own
+            // precedent for a mid-flow script abort.
+            MapLogger.Warning($"[iRO MAP DEBUG] Generated script mutation failed entity='{context.EntityId}': {exception.Message}");
+            await WriteAsync(IroNpcDialoguePackets.BuildClose(context.ActorId), CancellationToken.None);
+        }
         catch (Exception exception)
         {
             MapLogger.Warning($"Generated script aborted entity='{context.EntityId}' error={exception.GetType().Name}: {exception.Message}");
@@ -2319,6 +2331,133 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
             await WriteAsync(IroStatusEffectPackets.BuildStatusChange3(actorId, IroStatusEffectPackets.EfstIncAgi, true, durationMilliseconds, durationMilliseconds, status.Val1), cancellationToken);
             await WriteAsync(IroStatusEffectPackets.BuildCoupleStatus(IroStatusEffectPackets.SpAgi, (_gameplayState?.State.Agility ?? 0), status.Val2), cancellationToken);
         }
+    }
+
+    // Pinned countitem(itemId) (script.cpp BUILDIN_FUNC(countitem)) sums the character's
+    // authoritative quantity of a given item id across every matching stack - never a single-row
+    // assumption (a stackable item can legitimately be split across more than one CharInventory
+    // row). This reads directly from the session's already-authoritative in-memory
+    // CharacterInventorySnapshot (_inventory) rather than a fresh CharServer round-trip: the
+    // snapshot is kept in lockstep with every confirmed persistence mutation (see the class-level
+    // remarks on _inventory), so it is already the authoritative live count for this session.
+    Task<uint> INpcScriptHost.CountItemAsync(int itemId, CancellationToken cancellationToken) =>
+        Task.FromResult(_inventory is { } inventory
+            ? (uint)inventory.Items.Where(item => item.ItemId == itemId).Sum(item => (long)item.Amount)
+            : 0u);
+
+    // Pinned delitem itemId,amount (pc.cpp pc_delitem, script.cpp BUILDIN_FUNC(delitem)) is
+    // ITEM-ID based, unlike CharacterInventorySession.ConsumeItemAsync which is DURABLE-ROW
+    // based (see that method's own doc comment) - this host method is exactly the itemId ->
+    // durableId(s) resolution layer pinned pc_delitem performs internally by scanning its own
+    // inventory array for every matching row.
+    //
+    // Sufficiency is checked BEFORE any persistence call (matches CountItemAsync's own summation
+    // exactly, so a caller that just checked countitem(itemId) >= amount can never observe this
+    // method disagree) - a partial consumption across some-but-not-all rows must never be allowed
+    // to proceed once the upfront total already proved insufficient. Rows are then consumed in
+    // stable ascending-DurableId order (CharacterInventorySnapshot's own row-identity ordering,
+    // matching pinned pc_delitem's own array-scan-in-order behavior) until `amount` is satisfied,
+    // each via the existing single-row ConsumeItemAsync/_inventory update pattern already used at
+    // this class's other consume call sites (HandleIroUseItemRequestAsync above).
+    //
+    // No fake success: if every row succeeds, this returns true and _inventory/_equipment already
+    // reflect every consumed row. If a persistence call fails PART-WAY through (a genuine mid-loop
+    // persistence failure after some rows already succeeded), the already-consumed rows' state is
+    // NOT rolled back (matching this project's already-documented "no distributed idempotency"
+    // limitation for inventory persistence - ai/world-data.md's "Inventory persistence guarantees"
+    // section), but this method still returns false rather than reporting a false success, and logs
+    // the partial-failure condition loudly so it is never silently swallowed.
+    async Task<bool> INpcScriptHost.DeleteItemAsync(int itemId, uint amount, CancellationToken cancellationToken)
+    {
+        if (_inventory is not { } inventory) return false;
+
+        var matchingRows = inventory.Items.Where(item => item.ItemId == itemId).OrderBy(item => item.DurableId).ToArray();
+        var available = (uint)matchingRows.Sum(item => (long)item.Amount);
+        if (available < amount)
+        {
+            MapLogger.Warning($"[iRO MAP DEBUG] delitem rejected: itemId={itemId} requested={amount} available={available}.");
+            return false;
+        }
+
+        var inventorySession = new CharacterInventorySession(_accountId, _charId, _inventoryPersistence);
+        var remaining = amount;
+        foreach (var row in matchingRows)
+        {
+            if (remaining == 0) break;
+            var consumeAmount = Math.Min(remaining, row.Amount);
+
+            var consumeResult = await inventorySession.ConsumeItemAsync(row.DurableId, consumeAmount, cancellationToken);
+            if (!consumeResult.Success)
+            {
+                MapLogger.Warning($"[iRO MAP DEBUG] delitem persistence failed mid-loop for itemId={itemId} durableId={row.DurableId}; {amount - remaining} of {amount} already consumed and NOT rolled back.");
+                return false;
+            }
+
+            _inventory = consumeResult.RowDeleted
+                ? _inventory.WithoutDurableId(row.DurableId)
+                : _inventory.WithUpdatedItem(row.DurableId, row.ItemId, consumeResult.NewAmount, row.Equip, row.Identified, row.Refine, row.Favorite, row.Bound);
+            _equipment = CharacterEquipmentSnapshot.FromInventory(_inventory);
+            remaining -= consumeAmount;
+
+            // ZC_DELETE_ITEM_FROM_BODY (0x07FA) - sent per-row, immediately after that row's own
+            // authoritative persistence/snapshot update, using THAT row's own client-facing slot
+            // (SlotIndex + 2, same transform GetItemAsync uses a few lines below for 0x0B41) and
+            // THAT row's own consumed amount, never the total requested amount. See
+            // sailor-packet-export.txt frame 7291 / IroMonsterCombatPackets.BuildDeleteItemFromBody.
+            var deleteClientIndex = (ushort)(row.SlotIndex + 2);
+            var deletePacket = IroMonsterCombatPackets.BuildDeleteItemFromBody((ushort)deleteClientIndex, (ushort)consumeAmount, PacketConstants.ZcDeleteItemFromBodyReasonScriptDelitem);
+            MapLogger.Info($"[iRO MAP DEBUG] Sending 0x07FA for delitem itemId={itemId} durableId={row.DurableId} amount={consumeAmount} clientIndex={deleteClientIndex}");
+            await WriteAsync(deletePacket, cancellationToken);
+        }
+
+        MapLogger.Info($"[iRO MAP DEBUG] delitem consumed itemId={itemId} amount={amount}.");
+        return true;
+    }
+
+    // Pinned getitem itemId,amount (script.cpp BUILDIN_FUNC(getitem)) - a normal authoritative
+    // inventory add through the SAME CharacterInventorySession/runtime-snapshot-update/0x0B41
+    // pickup-ack path the quest-drop reward loop and item-use container grants already use (see
+    // their own doc comments for the ordering rationale: persist -> update runtime snapshot ->
+    // notify client). Resolves itemId generically via GeneratedItems.ById, matching every other
+    // generated-script item lookup in this class - never a hardcoded item id here. An itemId
+    // absent from the generated registry is a data/generation gap, logged and skipped rather than
+    // guessed at, matching the existing quest-drop/item-use-grant convention exactly.
+    //
+    // Returns false (never throws itself) for every "the reward was not actually granted/the
+    // client was not notified" outcome - unregistered itemId, missing runtime inventory snapshot,
+    // or a genuine CharServer persistence failure alike - so ScriptContext's wrapper (the one seam
+    // that decides generic generated-script mutation-failure semantics) can uniformly stop the
+    // remaining generated statement sequence (no completequest after a failed reward) regardless
+    // of which of these caused the failure.
+    async Task<bool> INpcScriptHost.GetItemAsync(int itemId, uint amount, CancellationToken cancellationToken)
+    {
+        if (!GeneratedItems.ById.TryGetValue(itemId, out var itemDefinition))
+        {
+            MapLogger.Warning($"[iRO MAP DEBUG] getitem references unregistered itemId={itemId}; skipping.");
+            return false;
+        }
+
+        if (_inventory is not { } inventory) return false;
+
+        var inventorySession = new CharacterInventorySession(_accountId, _charId, _inventoryPersistence);
+        var addResult = await inventorySession.AddItemAsync(itemDefinition, amount, cancellationToken);
+        if (!addResult.Success || addResult.Item is not { } addedRow)
+        {
+            MapLogger.Warning($"[iRO MAP DEBUG] getitem persistence failed for itemId={itemId}; not notifying client.");
+            return false;
+        }
+
+        _inventory = addResult.IsNewRow
+            ? inventory.WithNewItem(addResult.DurableId, addedRow.ItemId, addedRow.Amount, addedRow.Equip, addedRow.Identified, addedRow.Refine, addedRow.Favorite, addedRow.Bound)
+            : inventory.WithUpdatedItem(addResult.DurableId, addedRow.ItemId, addedRow.Amount, addedRow.Equip, addedRow.Identified, addedRow.Refine, addedRow.Favorite, addedRow.Bound);
+        _equipment = CharacterEquipmentSnapshot.FromInventory(_inventory);
+
+        var slotIndex = _inventory.Items.Single(i => i.DurableId == addResult.DurableId).SlotIndex;
+        var clientIndex = (ushort)(slotIndex + 2);
+        var pickupPacket = IroMonsterCombatPackets.BuildItemPickupAck(clientIndex, (ushort)amount, itemDefinition.ClientViewId, IroInventoryListPackets.ItemType(itemDefinition));
+        MapLogger.Info($"[iRO MAP DEBUG] Sending 0x0B41 for getitem itemId={itemId} count={amount} clientIndex={clientIndex}");
+        await WriteAsync(pickupPacket, cancellationToken);
+        return true;
     }
 
     private static TaskCompletionSource NewSignal() => new(TaskCreationOptions.RunContinuationsAsynchronously);
