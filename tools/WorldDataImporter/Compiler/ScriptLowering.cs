@@ -27,11 +27,11 @@ internal static class RathenaScriptLowerer
 {
     private static readonly HashSet<string> Commands = new(StringComparer.OrdinalIgnoreCase)
     {
-        "mes", "next", "select", "close", "close2", "setquest", "completequest", "warp", "savepoint", "cutin", "npctalk", "cloakonnpcself", "cloakoffnpcself", "navigateto", "specialeffect2", "heal", "skilleffect", "sc_start", "getexp", "end"
+        "mes", "next", "select", "close", "close2", "setquest", "completequest", "warp", "savepoint", "cutin", "npctalk", "cloakonnpcself", "cloakoffnpcself", "navigateto", "specialeffect2", "heal", "skilleffect", "sc_start", "getexp", "end", "delitem", "getitem"
     };
     private static readonly HashSet<string> Functions = new(StringComparer.OrdinalIgnoreCase)
     {
-        "select", "isbegin_quest", "strnpcinfo", "strcharinfo", "replacestr"
+        "select", "isbegin_quest", "strnpcinfo", "strcharinfo", "replacestr", "countitem"
     };
 
     public static ScriptLoweringResult LowerEvent(CompilationUnitSyntax syntax, string eventName)

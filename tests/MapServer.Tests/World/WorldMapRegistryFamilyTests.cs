@@ -103,6 +103,20 @@ public sealed class WorldMapRegistryFamilyTests
 
     [Theory]
     [MemberData(nameof(Suffixes))]
+    public void Sailor_ExistsOnTheCorrespondingIntLandMap(string suffix)
+    {
+        var intLand = "int_land" + suffix;
+        var entityId = $"npc:{intLand}:sailor#intro_npc04{(suffix.Length > 0 ? "_" + suffix : "")}";
+
+        Assert.True(WorldMapRegistry.Tutorial.EntitiesById.TryGetValue(entityId, out var entity), $"Missing entity '{entityId}'");
+        Assert.Equal(intLand, entity.Actor!.Map);
+        Assert.Equal((ushort)58, entity.Actor.X);
+        Assert.Equal((ushort)69, entity.Actor.Y);
+        Assert.Equal((ushort)100, entity.Actor.Class); // 4W_SAILOR
+    }
+
+    [Theory]
+    [MemberData(nameof(Suffixes))]
     public void IntroToIzlude_ExistsOnTheCorrespondingIntLandMap(string suffix)
     {
         var intLand = "int_land" + suffix;

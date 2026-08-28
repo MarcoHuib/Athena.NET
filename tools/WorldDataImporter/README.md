@@ -93,6 +93,7 @@ dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- compile
   --name 'Wounded Swordsman#intro_npc01_iz_int' \
   --name 'Captain Carocc#intro_npc03' \
   --name 'Lumin#new_ship' \
+  --name 'Sailor#intro_npc04' \
   --warp-name '#ship_out' \
   --warp-name '#intro_to_izlude' \
   --namespace Athena.Net.MapServer.Generated.World.Izlude.Academy \

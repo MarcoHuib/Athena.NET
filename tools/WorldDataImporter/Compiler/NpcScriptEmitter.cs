@@ -180,6 +180,8 @@ internal static class NpcScriptEmitter
             case "skilleffect": output.Append(indent).Append("await context.SkillEffectAsync("); EmitExpression(output, command.Arguments[0]); output.Append(", "); EmitExpression(output, command.Arguments[1]); output.AppendLine(", cancellationToken);"); break;
             case "sc_start": output.Append(indent).Append("await context.StartStatusAsync("); EmitArguments(output, command.Arguments); output.AppendLine(", cancellationToken);"); break;
             case "getexp": output.Append(indent).Append("await context.GrantExperienceAsync("); EmitArguments(output, command.Arguments); output.AppendLine(", cancellationToken);"); break;
+            case "delitem": output.Append(indent).Append("await context.DeleteItemAsync("); EmitArguments(output, command.Arguments); output.AppendLine(", cancellationToken);"); break;
+            case "getitem": output.Append(indent).Append("await context.GetItemAsync("); EmitArguments(output, command.Arguments); output.AppendLine(", cancellationToken);"); break;
             case "end": output.Append(indent).AppendLine("return;"); break;
             case "select": output.Append(indent).Append("await context.SelectAsync(["); EmitArguments(output, command.Arguments); output.AppendLine("], cancellationToken);"); break;
         }
@@ -224,6 +226,7 @@ internal static class NpcScriptEmitter
             case "strnpcinfo": output.Append("context.StrNpcInfo("); EmitArguments(output, call.Arguments); output.Append(')'); break;
             case "replacestr": output.Append("ScriptContext.ReplaceString("); EmitArguments(output, call.Arguments); output.Append(')'); break;
             case "isbegin_quest": output.Append("(int)await context.GetQuestStateAsync(new QuestId("); EmitExpression(output, call.Arguments[0]); output.Append("), cancellationToken)"); break;
+            case "countitem": output.Append("await context.CountItemAsync("); EmitExpression(output, call.Arguments[0]); output.Append(", cancellationToken)"); break;
         }
     }
     private static void EmitArguments(StringBuilder output, IReadOnlyList<LoweredScriptExpression> arguments) { for (var index = 0; index < arguments.Count; index++) { if (index > 0) output.Append(", "); EmitExpression(output, arguments[index]); } }

@@ -32,6 +32,9 @@ public interface INpcScriptHost
     Task SkillEffectAsync(int skillId, int level, CancellationToken cancellationToken);
     Task StartStatusAsync(int statusId, int durationMilliseconds, int val1, CancellationToken cancellationToken);
     string GetActiveCharacterName();
+    Task<uint> CountItemAsync(int itemId, CancellationToken cancellationToken);
+    Task<bool> DeleteItemAsync(int itemId, uint amount, CancellationToken cancellationToken);
+    Task GetItemAsync(int itemId, uint amount, CancellationToken cancellationToken);
 }
 
 // Pinned rAthena numeric constants referenced by generated script identifiers
@@ -87,6 +90,9 @@ public sealed class ScriptContext
     public Task SpecialEffectAsync(int effectId, CancellationToken cancellationToken) => _host.SpecialEffectAsync(effectId, cancellationToken);
     public Task SkillEffectAsync(int skillId, int level, CancellationToken cancellationToken) => _host.SkillEffectAsync(skillId, level, cancellationToken);
     public Task StartStatusAsync(int statusId, int durationMilliseconds, int val1, CancellationToken cancellationToken) => _host.StartStatusAsync(statusId, durationMilliseconds, val1, cancellationToken);
+    public Task<uint> CountItemAsync(int itemId, CancellationToken cancellationToken) => _host.CountItemAsync(itemId, cancellationToken);
+    public Task<bool> DeleteItemAsync(int itemId, uint amount, CancellationToken cancellationToken) => _host.DeleteItemAsync(itemId, amount, cancellationToken);
+    public Task GetItemAsync(int itemId, uint amount, CancellationToken cancellationToken) => _host.GetItemAsync(itemId, amount, cancellationToken);
 
     public string StrNpcInfo(int type) => type switch
     {
