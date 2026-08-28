@@ -410,92 +410,91 @@ public sealed class CompilerTests
     }
 
     [Fact]
-    public async Task NoviceProgression_IsDeterministicAndMatchesCompiledSource()
+    public async Task CharacterData_IsDeterministicHasExactFileSetAndMatchesCheckedInOutput()
     {
         var repository = FindRepositoryRoot();
-        var firstDir = Path.Combine(Path.GetTempPath(), $"novice-progression-{Guid.NewGuid():N}");
-        var secondDir = Path.Combine(Path.GetTempPath(), $"novice-progression-{Guid.NewGuid():N}");
+        var firstDir = Path.Combine(Path.GetTempPath(), $"character-data-{Guid.NewGuid():N}");
+        var secondDir = Path.Combine(Path.GetTempPath(), $"character-data-{Guid.NewGuid():N}");
         try
         {
-            string[] Arguments(string output) => ["compile-progression", "--rathena-root", Path.Combine(repository, "legacy/rathena"), "--rathena-commit", "e985006171d2eb320ee512a653f4c83aea3d81b6", "--output", output];
+            string[] Arguments(string output) => ["compile-character-data", "--rathena-root", Path.Combine(repository, "legacy/rathena"), "--rathena-commit", "e985006171d2eb320ee512a653f4c83aea3d81b6", "--output", output];
             Assert.Equal(0, await WorldDataImporterCli.RunAsync(Arguments(firstDir)));
             Assert.Equal(0, await WorldDataImporterCli.RunAsync(Arguments(secondDir)));
-
-            const string dataFile = "GeneratedNoviceProgression.cs";
-            const string registryFile = "GeneratedProgressionRegistry.cs";
-            Assert.Equal(
-                await File.ReadAllBytesAsync(Path.Combine(firstDir, dataFile)),
-                await File.ReadAllBytesAsync(Path.Combine(secondDir, dataFile)));
-            Assert.Equal(
-                await File.ReadAllBytesAsync(Path.Combine(firstDir, registryFile)),
-                await File.ReadAllBytesAsync(Path.Combine(secondDir, registryFile)));
-
-            var progressionDir = Path.Combine(repository, "src/MapServer/Generated/Progression");
-            Assert.Equal(
-                await File.ReadAllBytesAsync(Path.Combine(progressionDir, dataFile)),
-                await File.ReadAllBytesAsync(Path.Combine(firstDir, dataFile)));
-            Assert.Equal(
-                await File.ReadAllBytesAsync(Path.Combine(progressionDir, registryFile)),
-                await File.ReadAllBytesAsync(Path.Combine(firstDir, registryFile)));
+            static string[] Files(string root) => Directory.EnumerateFiles(root, "*.cs", SearchOption.AllDirectories).Select(path => Path.GetRelativePath(root, path).Replace('\\', '/')).Order(StringComparer.Ordinal).ToArray();
+            var expected = new[] { "Jobs/GeneratedJobRegistry.cs", "Progression/GeneratedProgressionData.cs", "Progression/GeneratedProgressionRegistry.cs", "Skills/GeneratedSkillRegistry.cs", "Skills/GeneratedSkillTreeRegistry.cs", "Skills/GeneratedSkillTrees.cs" };
+            Assert.Equal(expected, Files(firstDir)); Assert.Equal(expected, Files(secondDir));
+            var checkedIn = Path.Combine(repository, "src/MapServer/Generated");
+            foreach (var relative in expected)
+            {
+                Assert.Equal(await File.ReadAllBytesAsync(Path.Combine(firstDir, relative)), await File.ReadAllBytesAsync(Path.Combine(secondDir, relative)));
+                Assert.Equal(await File.ReadAllBytesAsync(Path.Combine(checkedIn, relative)), await File.ReadAllBytesAsync(Path.Combine(firstDir, relative)));
+            }
         }
         finally { Directory.Delete(firstDir, recursive: true); Directory.Delete(secondDir, recursive: true); }
     }
 
     [Fact]
-    public void ProgressionCompiler_EmitsSplitDataAndRegistryWithExactValuesAndProvenance()
+    public void CharacterDataCompiler_CompilesRealPinnedCoverageAndNoviceFacts()
     {
         var repository = FindRepositoryRoot();
         var root = Path.Combine(repository, "legacy/rathena");
-        var generated = ProgressionDataCompiler.Generate(
-            File.ReadAllText(Path.Combine(root, "db/re/job_exp.yml")),
-            File.ReadAllText(Path.Combine(root, "db/re/job_basepoints.yml")),
-            File.ReadAllText(Path.Combine(root, "db/re/job_stats.yml")),
-            File.ReadAllText(Path.Combine(root, "db/re/statpoint.yml")),
-            "e985006171d2eb320ee512a653f4c83aea3d81b6");
-
-        Assert.Equal("GeneratedNoviceProgression.cs", generated.DataFileName);
-        Assert.Equal("GeneratedProgressionRegistry.cs", generated.RegistryFileName);
-
-        // The data file holds the actual arrays; the registry file only looks them up.
-        Assert.Contains("GeneratedNoviceProgression", generated.DataSource);
-        Assert.Contains("BaseExperienceToNext: new ulong[] { 0, 548, 894, 1486", generated.DataSource);
-        Assert.Contains("JobExperienceToNext: new ulong[] { 0, 10, 18, 28", generated.DataSource);
-        Assert.Contains("BaseHp: new uint[] { 0, 40, 45, 50", generated.DataSource);
-        Assert.Contains("BaseSp: new uint[] { 0, 11, 12, 13", generated.DataSource);
-        Assert.Contains("CumulativeStatPoints: new uint[] { 0, 48, 51, 54", generated.DataSource);
-        Assert.Contains("JobVitalityBonus: new uint[] { 0, 0, 0, 0, 0, 0, 1", generated.DataSource);
-        Assert.Contains("rAthena commit: e985006171d2eb320ee512a653f4c83aea3d81b6", generated.DataSource);
-
-        Assert.Contains("GeneratedProgressionRegistry", generated.RegistrySource);
-        Assert.Contains("GeneratedNoviceProgression.Definition", generated.RegistrySource);
-        Assert.DoesNotContain("BaseExperienceToNext", generated.RegistrySource);
+        var generated = CompileCharacterData(root);
+        Assert.Equal(new CharacterDataCounts(194, 175, 147, 67, 1635, 175, 175), generated.Counts);
+        var progression = generated.Artifacts.Single(item => item.RelativePath == "Progression/GeneratedProgressionData.cs").Source;
+        Assert.Contains("Job_0000 = new(0, 99, 10, [0, 548, 894, 1486", progression);
+        Assert.Contains("[0, 10, 18, 28", progression);
+        Assert.Contains("[0, 40, 45, 50", progression);
+        Assert.Contains("rAthena commit: e985006171d2eb320ee512a653f4c83aea3d81b6", progression);
     }
 
     [Fact]
-    public void ProgressionCompiler_MissingRequiredSectionFailsLoudly()
+    public void CharacterDataCompiler_UnknownSkillFailsWithContext()
     {
         var repository = FindRepositoryRoot();
         var root = Path.Combine(repository, "legacy/rathena");
-        Assert.ThrowsAny<Exception>(() => ProgressionDataCompiler.Generate(
-            File.ReadAllText(Path.Combine(root, "db/re/job_exp.yml")).Replace("    BaseExp:", "    MissingBaseExp:", StringComparison.Ordinal),
-            File.ReadAllText(Path.Combine(root, "db/re/job_basepoints.yml")),
-            File.ReadAllText(Path.Combine(root, "db/re/job_stats.yml")),
-            File.ReadAllText(Path.Combine(root, "db/re/statpoint.yml")),
-            "commit"));
+        var sources = ReadCharacterData(root) with { SkillTree = File.ReadAllText(Path.Combine(root, "db/re/skill_tree.yml")).Replace("NV_BASIC", "NV_NOT_REAL", StringComparison.Ordinal) };
+        var error = Assert.Throws<ArgumentException>(() => CharacterDataCompiler.Compile(sources, "commit"));
+        Assert.Contains("NV_NOT_REAL", error.Message); Assert.Contains("Novice", error.Message);
     }
 
     [Fact]
-    public void ProgressionCompiler_AmbiguousJobSectionsFailLoudly()
+    public void CharacterDataCompiler_UnknownInheritedJobFailsWithContext()
     {
         var repository = FindRepositoryRoot();
         var root = Path.Combine(repository, "legacy/rathena");
-        var jobExperience = File.ReadAllText(Path.Combine(root, "db/re/job_exp.yml"));
-        Assert.Throws<InvalidOperationException>(() => ProgressionDataCompiler.Generate(
-            jobExperience + jobExperience,
-            File.ReadAllText(Path.Combine(root, "db/re/job_basepoints.yml")),
-            File.ReadAllText(Path.Combine(root, "db/re/job_stats.yml")),
-            File.ReadAllText(Path.Combine(root, "db/re/statpoint.yml")),
-            "commit"));
+        var sources = ReadCharacterData(root) with { SkillTree = File.ReadAllText(Path.Combine(root, "db/re/skill_tree.yml")).Replace("      Novice: true", "      Missing_Job: true", StringComparison.Ordinal) };
+        var error = Assert.Throws<ArgumentException>(() => CharacterDataCompiler.Compile(sources, "commit"));
+        Assert.Contains("inherits unknown job 'Missing_Job'", error.Message);
+    }
+
+    [Fact]
+    public void CharacterDataCompiler_DuplicateSkillIdFailsLoudly()
+    {
+        var root = Path.Combine(FindRepositoryRoot(), "legacy/rathena");
+        var sources = ReadCharacterData(root) with { SkillDatabase = ReplaceFirst(File.ReadAllText(Path.Combine(root, "db/re/skill_db.yml")), "  - Id: 2\n", "  - Id: 1\n") };
+        Assert.Contains("duplicate skill ID 1", Assert.Throws<ArgumentException>(() => CharacterDataCompiler.Compile(sources, "commit")).Message);
+    }
+
+    [Fact]
+    public void CharacterDataCompiler_InheritanceCycleFailsWithJobsInDiagnostic()
+    {
+        var root = Path.Combine(FindRepositoryRoot(), "legacy/rathena");
+        var sources = ReadCharacterData(root) with { SkillTree = ReplaceFirst(File.ReadAllText(Path.Combine(root, "db/re/skill_tree.yml")), "  - Job: Swordman\n    Inherit:\n      Novice: true", "  - Job: Swordman\n    Inherit:\n      Knight: true") };
+        var message = Assert.Throws<ArgumentException>(() => CharacterDataCompiler.Compile(sources, "commit")).Message;
+        Assert.Contains("inheritance cycle", message); Assert.Contains("Swordman", message); Assert.Contains("Knight", message);
+    }
+
+    private static CharacterDataCompilation CompileCharacterData(string root) => CharacterDataCompiler.Compile(ReadCharacterData(root), "e985006171d2eb320ee512a653f4c83aea3d81b6");
+    private static CharacterDataSources ReadCharacterData(string root) => new(
+        File.ReadAllText(Path.Combine(root, "src/common/mmo.hpp")), File.ReadAllText(Path.Combine(root, "src/map/script_constants.hpp")),
+        File.ReadAllText(Path.Combine(root, "db/re/job_exp.yml")), File.ReadAllText(Path.Combine(root, "db/re/job_basepoints.yml")),
+        File.ReadAllText(Path.Combine(root, "db/re/job_stats.yml")), File.ReadAllText(Path.Combine(root, "db/re/statpoint.yml")),
+        File.ReadAllText(Path.Combine(root, "db/re/skill_db.yml")), File.ReadAllText(Path.Combine(root, "db/re/skill_tree.yml")));
+    private static string ReplaceFirst(string source, string oldValue, string newValue)
+    {
+        var index = source.IndexOf(oldValue, StringComparison.Ordinal);
+        if (index < 0) throw new InvalidOperationException($"Fixture text '{oldValue}' was not found.");
+        return source[..index] + newValue + source[(index + oldValue.Length)..];
     }
 
     private static string FindRepositoryRoot()

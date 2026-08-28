@@ -23,6 +23,7 @@ internal static class WorldDataImporterCli
                 "compile-npc-world" => await CompileNpcWorldAsync(args[1..]),
                 "compile-actors" => await CompileActorsAsync(args[1..]),
                 "compile-navigation" => await CompileNavigationAsync(args[1..]),
+                "compile-character-data" => await CompileCharacterDataAsync(args[1..]),
                 "compile-progression" => await CompileProgressionAsync(args[1..]),
                 "compile-mob-spawn" => await CompileMobSpawnAsync(args[1..]),
                 "compile-quest-drop" => await CompileQuestDropAsync(args[1..]),
@@ -267,25 +268,69 @@ internal static class WorldDataImporterCli
     private static async Task<int> CompileProgressionAsync(string[] args)
     {
         var options = CliOptions.Parse(args);
-        var root = Path.GetFullPath(options.Required("rathena-root"));
-        var generated = ProgressionDataCompiler.Generate(
-            await File.ReadAllTextAsync(Path.Combine(root, "db/re/job_exp.yml")),
-            await File.ReadAllTextAsync(Path.Combine(root, "db/re/job_basepoints.yml")),
-            await File.ReadAllTextAsync(Path.Combine(root, "db/re/job_stats.yml")),
-            await File.ReadAllTextAsync(Path.Combine(root, "db/re/statpoint.yml")),
-            options.Required("rathena-commit"));
-        // --output names a directory: the compiler emits both the per-class data
-        // file and the small registry lookup file into it (see
-        // ProgressionDataCompiler.ProgressionOutput).
-        var outputDir = Path.GetFullPath(options.Required("output"));
-        Directory.CreateDirectory(outputDir);
-        var utf8NoBom = new System.Text.UTF8Encoding(false);
-        var dataPath = Path.Combine(outputDir, generated.DataFileName);
-        var registryPath = Path.Combine(outputDir, generated.RegistryFileName);
-        await File.WriteAllTextAsync(dataPath, generated.DataSource, utf8NoBom);
-        await File.WriteAllTextAsync(registryPath, generated.RegistrySource, utf8NoBom);
-        Console.WriteLine($"Generated pinned progression data into {dataPath} and registry into {registryPath}.");
+        var compilation = await CompileCharacterDataModelAsync(options);
+        var output = Path.GetFullPath(options.Required("output"));
+        var staging = Path.Combine(Path.GetTempPath(), $"athena-progression-{Guid.NewGuid():N}");
+        try
+        {
+            Directory.CreateDirectory(staging);
+            foreach (var artifact in compilation.Artifacts.Where(item => item.RelativePath.StartsWith("Progression/", StringComparison.Ordinal)))
+                await File.WriteAllTextAsync(Path.Combine(staging, Path.GetFileName(artifact.RelativePath)), artifact.Source, new System.Text.UTF8Encoding(false));
+            if (Directory.Exists(output)) Directory.Delete(output, recursive: true);
+            Directory.Move(staging, output);
+        }
+        finally { if (Directory.Exists(staging)) Directory.Delete(staging, recursive: true); }
+        Console.WriteLine($"Regenerated {compilation.Counts.JobIdsWithProgression} progression mappings. Use compile-character-data for jobs and skills too.");
         return 0;
+    }
+
+    private static async Task<int> CompileCharacterDataAsync(string[] args)
+    {
+        var options = CliOptions.Parse(args);
+        var compilation = await CompileCharacterDataModelAsync(options);
+        var commit = options.Required("rathena-commit");
+        var output = Path.GetFullPath(options.Required("output"));
+        var staging = Path.Combine(Path.GetTempPath(), $"athena-character-data-{Guid.NewGuid():N}");
+        try
+        {
+            var encoding = new System.Text.UTF8Encoding(false);
+            foreach (var artifact in compilation.Artifacts)
+            {
+                var path = Path.Combine(staging, artifact.RelativePath); Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+                await File.WriteAllTextAsync(path, artifact.Source.Replace("\r\n", "\n", StringComparison.Ordinal), encoding);
+            }
+            Directory.CreateDirectory(output);
+            foreach (var owned in new[] { "Jobs", "Progression", "Skills" })
+            {
+                var destination = Path.Combine(output, owned); if (Directory.Exists(destination)) Directory.Delete(destination, recursive: true);
+                Directory.Move(Path.Combine(staging, owned), destination);
+            }
+        }
+        finally { if (Directory.Exists(staging)) Directory.Delete(staging, recursive: true); }
+
+        var counts = compilation.Counts;
+        Console.WriteLine($"Compiled character data from pinned rAthena {commit}.");
+        Console.WriteLine($"Jobs discovered: {counts.NumericJobIdentitiesDiscovered}; generated jobs: {counts.GeneratedJobDefinitions}; job mappings with progression: {counts.JobIdsWithProgression}; unique progression data sets: {counts.UniqueProgressionDefinitions}.");
+        Console.WriteLine($"Canonical skills: {counts.CanonicalSkills}; direct skill trees: {counts.DirectSkillTrees}; effective skill trees: {counts.EffectiveSkillTrees}; generated files: {compilation.Artifacts.Count}; intentionally excluded jobs: {compilation.Exclusions.Count}.");
+        foreach (var exclusion in compilation.Exclusions) Console.WriteLine($"  Excluded {exclusion}");
+        return 0;
+    }
+
+    private static async Task<CharacterDataCompilation> CompileCharacterDataModelAsync(CliOptions options)
+    {
+        var root = Path.GetFullPath(options.Required("rathena-root"));
+        var commit = options.Required("rathena-commit");
+        var required = new[]
+        {
+            "src/common/mmo.hpp", "src/map/script_constants.hpp", "db/re/job_exp.yml", "db/re/job_basepoints.yml",
+            "db/re/job_stats.yml", "db/re/statpoint.yml", "db/re/skill_db.yml", "db/re/skill_tree.yml",
+        };
+        foreach (var relative in required) if (!File.Exists(Path.Combine(root, relative))) throw new ArgumentException($"Required pinned source file is missing: {relative}.");
+        return CharacterDataCompiler.Compile(new(
+            await File.ReadAllTextAsync(Path.Combine(root, required[0])), await File.ReadAllTextAsync(Path.Combine(root, required[1])),
+            await File.ReadAllTextAsync(Path.Combine(root, required[2])), await File.ReadAllTextAsync(Path.Combine(root, required[3])),
+            await File.ReadAllTextAsync(Path.Combine(root, required[4])), await File.ReadAllTextAsync(Path.Combine(root, required[5])),
+            await File.ReadAllTextAsync(Path.Combine(root, required[6])), await File.ReadAllTextAsync(Path.Combine(root, required[7]))), commit);
     }
 
     private static async Task<int> CompileMobSpawnAsync(string[] args)
@@ -423,7 +468,8 @@ internal static class WorldDataImporterCli
         Console.Error.WriteLine("WorldDataImporter compile-script --source-root <folder> --rathena-commit <sha> --output <Npc.cs> --source-file <path> --map <map> --name <name> --kind <npc|warp> [--trigger OnClick|OnTouch]");
         Console.Error.WriteLine("WorldDataImporter compile-actors --source-root <folder> --rathena-commit <sha> --output <Actors.cs> --source-file <path> --map <map> --name <name> [--name <name>]");
         Console.Error.WriteLine("WorldDataImporter compile-navigation --source-root <folder> --output <Navigation.cs> --name <name> [--name <name>] [--namespace <ns>]");
-        Console.Error.WriteLine("WorldDataImporter compile-progression --rathena-root <folder> --rathena-commit <sha> --output <Generated/Progression directory>");
+        Console.Error.WriteLine("WorldDataImporter compile-character-data --rathena-root <folder> --rathena-commit <sha> --output <MapServer/Generated directory>");
+        Console.Error.WriteLine("WorldDataImporter compile-progression --rathena-root <folder> --rathena-commit <sha> --output <MapServer/Generated/Progression directory> (compatibility alias)");
         Console.Error.WriteLine("WorldDataImporter compile-mob-spawn --rathena-root <folder> --rathena-commit <sha> --mob-id <id> --name <spawn-name> --spawn-file <path> [--exclude-map <map>] --class-name <n> --constant-name <n> --spawn-class-name <n> --spawn-array-name <n> --output-definition <Mob.cs> --output-spawns <MobSpawns.cs>");
         Console.Error.WriteLine("WorldDataImporter compile-quest-drop --rathena-root <folder> --rathena-commit <sha> --quest-id <id> --output <QuestDrops.cs>");
         Console.Error.WriteLine("WorldDataImporter compile-item --rathena-root <folder> --rathena-commit <sha> --item-id <id> [--item-db-file <path>] --class-name <n> --constant-name <n> --output <Item.cs>");

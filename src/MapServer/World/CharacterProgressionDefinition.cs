@@ -11,5 +11,9 @@ public sealed record CharacterProgressionDefinition(
     IReadOnlyList<uint> BaseHp,
     IReadOnlyList<uint> BaseSp,
     IReadOnlyList<uint> CumulativeStatPoints,
+    IReadOnlyList<uint> JobStrengthBonus,
+    IReadOnlyList<uint> JobAgilityBonus,
     IReadOnlyList<uint> JobVitalityBonus,
-    IReadOnlyList<uint> JobIntelligenceBonus);
+    IReadOnlyList<uint> JobIntelligenceBonus,
+    IReadOnlyList<uint> JobDexterityBonus,
+    IReadOnlyList<uint> JobLuckBonus);

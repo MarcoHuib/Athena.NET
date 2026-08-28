@@ -171,21 +171,23 @@ HP/SP and MaxHP/MaxSP already existed as relational `char` fields and remain sto
 Unsupported jobs fail through the generated progression lookup; they do not receive
 invented recalculation formulas.
 
-## Generated progression registry and rate policy
+## Generated character-data registries and rate policy
 
-`compile-progression` reads pinned renewal `job_exp.yml`, `job_basepoints.yml`,
-`job_stats.yml`, and `statpoint.yml` and emits two deterministic generated files
-into its `--output` directory: `GeneratedNoviceProgression.cs` (the actual
-per-class `CharacterProgressionDefinition` data - Base/Job EXP thresholds,
-HP/SP, stat-point, and job-bonus tables) and `GeneratedProgressionRegistry.cs`
-(a small `jobClass -> definition` lookup only, with no data arrays of its own).
-It currently contains job class 0 (Novice), base levels 1-99 and job levels
-1-10. EXP entries are per-current-level costs, not cumulative totals. Runtime
-(`CharacterProgressionService`) consumes only
-`GeneratedProgressionRegistry.Get(jobClass)` and has no knowledge of job names
-like Novice/Swordman/Mage; adding another job's
-`Generated<JobClass>Progression.cs` file plus one more registry entry requires
-no change to progression logic.
+`compile-character-data` consumes pinned `mmo.hpp`/`script_constants.hpp` for
+numeric job identity, Renewal `job_exp.yml`, `job_basepoints.yml`,
+`job_stats.yml`, and `statpoint.yml` for progression, and Renewal
+`skill_db.yml`/`skill_tree.yml` for canonical skills and trees. Its pipeline is
+parse -> resolve -> validate -> compute effective inheritance -> emit.
+
+The reflection-free runtime boundaries are `GeneratedJobRegistry`,
+`GeneratedProgressionRegistry`, `GeneratedSkillRegistry`, and
+`GeneratedSkillTreeRegistry`; MapServer never reads YAML. Current coverage is
+194 exported numeric identities, 175 generated jobs, 147 progression mappings
+backed by 67 unique value sets, 1,635 skills, and 175 direct/effective trees.
+The 19 excluded constants have neither complete progression nor a Renewal tree:
+Wedding, Xmas, Summer, Hanbok, Oktoberfest, Summer2, and IDs 4332-4344's
+`*_2nd` alternate/marker constants. Unknown IDs fail explicitly. EXP entries
+remain per-current-level costs, not cumulative totals.
 
 `CharacterProgressionService` applies Base and Job EXP independently, awards the
 difference between cumulative stat-point rows, and awards one skill point per Job
@@ -195,10 +197,13 @@ and caps overcarry to the crossed requirement minus one. One complete resulting
 snapshot is persisted through the versioned CharServer transaction before MapServer
 publishes it or sends packets. A failed/stale write sends no success updates.
 
-Base-level recalculation uses the pinned Novice HP/SP base tables, persistent VIT/INT,
-and generated Novice job bonuses. A base level fully restores recalculated HP/SP as
+Base-level recalculation uses the selected job's pinned HP/SP tables, persistent VIT/INT,
+and generated cumulative bonuses. A base level fully restores recalculated HP/SP as
 in `pc_checkbaselevelup`; job-only recalculation preserves current HP/SP within the
-new maxima. Equipment/status modifiers remain outside this Novice-only slice.
+new maxima. All six classic bonus dimensions are generated, while current runtime
+uses VIT/INT for HP/SP. Advanced tables preserve pinned zero-filled rows below their
+legal change level; no values are invented. Skill spending, `CharSkill` mutation,
+`0x0B32`, skill execution, and job changing remain unimplemented.
 
 `GameplayRateOptions` is loaded once and passed unchanged through `MapServerWorld`.
 ATHENA.NET SERVER POLICY: it separates always-present global rates
@@ -271,17 +276,14 @@ Generate the current Academy NPC definitions/placements/behaviors: see the
 Compiler audit/capability reports may still scan the complete pinned NPC tree;
 their breadth does not imply runtime support.
 
-Regenerate progression from the current pinned SHA (never edit generated output):
+Regenerate complete character data from the current pinned SHA (never edit generated output):
 
 ```bash
 dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- \
-  compile-progression --rathena-root legacy/rathena \
+  compile-character-data --rathena-root legacy/rathena \
   --rathena-commit e985006171d2eb320ee512a653f4c83aea3d81b6 \
-  --output src/MapServer/Generated/Progression
+  --output src/MapServer/Generated
 ```
-
-`--output` names a directory; the compiler writes both
-`GeneratedNoviceProgression.cs` and `GeneratedProgressionRegistry.cs` into it.
 
 ## Still missing
 
