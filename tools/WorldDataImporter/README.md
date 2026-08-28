@@ -238,29 +238,39 @@ dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- audit \
 
 The audit only produces counts and classifications; it does not convert content.
 
-## Progression registry
+## Generated character data
 
 ```bash
-dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- compile-progression \
+dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- compile-character-data \
   --rathena-root legacy/rathena \
   --rathena-commit e985006171d2eb320ee512a653f4c83aea3d81b6 \
-  --output src/MapServer/Generated/Progression
+  --output src/MapServer/Generated
 ```
 
-`--output` names a directory. The compiler writes two files into it:
+The command requires pinned `mmo.hpp`, `script_constants.hpp`, Renewal
+`job_exp.yml`, `job_basepoints.yml`, `job_stats.yml`, `statpoint.yml`,
+`skill_db.yml`, and `skill_tree.yml`. It parses, resolves, validates, computes
+effective trees, then replaces only the owned `Generated/Jobs`,
+`Generated/Progression`, and `Generated/Skills` directories. Generation is
+staged before replacement and rejects missing files or unresolved relationships.
 
-- `GeneratedNoviceProgression.cs` - the actual generated per-class
-  `CharacterProgressionDefinition` data (Base/Job EXP thresholds, HP/SP,
-  stat-point, and job-bonus tables) for the supported renewal Novice job.
-- `GeneratedProgressionRegistry.cs` - a small `jobClass -> definition` lookup
-  only; it contains no data arrays of its own.
-
-Runtime (`CharacterProgressionService`) consumes only the job-keyed
-`GeneratedProgressionRegistry.Get(jobClass)` boundary and has no knowledge of
-job names, so adding another generated `Generated<JobClass>Progression.cs` file
-and one more registry entry does not change progression logic. The pinned YAML
-and explicit current commit remain the source/provenance of truth; never
-hand-edit either generated output file.
+The six checked-in files provide job/skill identity (a generated `JobClass` enum
+plus `JobClassNames`, not a dictionary of records), progression, and direct plus
+effective skill-tree registries. Runtime consumes generated C# only. Current
+coverage is 194 exported numeric identities, 175 generated jobs, 175 progression
+mappings (89 unique value sets), 1,635 skills, and 175 direct/effective trees -
+every generated job now has complete progression data, since HP/SP resolve
+through pinned `JobDatabase::calc_basehp`/`calc_basesp` for any base level a
+job's `db/re/job_basepoints.yml` table doesn't cover explicitly (see
+`ai/world-data.md`'s "Generated character-data registries and rate policy"
+section for the full formula and mapid-category adjustments). `JobClass`
+member names are readable PascalCase identifiers (`Rune_Knight` ->
+`RuneKnight`) computed and collision-checked at compile time;
+`JobClassNames.GetRathenaName(JobClass)` recovers the canonical pinned source
+name verbatim. Skill spending, `CharSkill` mutation, `0x0B32`, skill execution,
+and job changing remain out of scope. `compile-progression` remains available
+when only the owned progression directory needs regeneration; the command
+above is the canonical complete sequence.
 
 ## Verification
 

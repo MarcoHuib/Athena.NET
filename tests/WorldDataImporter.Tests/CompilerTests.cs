@@ -410,92 +410,174 @@ public sealed class CompilerTests
     }
 
     [Fact]
-    public async Task NoviceProgression_IsDeterministicAndMatchesCompiledSource()
+    public async Task CharacterData_IsDeterministicHasExactFileSetAndMatchesCheckedInOutput()
     {
         var repository = FindRepositoryRoot();
-        var firstDir = Path.Combine(Path.GetTempPath(), $"novice-progression-{Guid.NewGuid():N}");
-        var secondDir = Path.Combine(Path.GetTempPath(), $"novice-progression-{Guid.NewGuid():N}");
+        var firstDir = Path.Combine(Path.GetTempPath(), $"character-data-{Guid.NewGuid():N}");
+        var secondDir = Path.Combine(Path.GetTempPath(), $"character-data-{Guid.NewGuid():N}");
         try
         {
-            string[] Arguments(string output) => ["compile-progression", "--rathena-root", Path.Combine(repository, "legacy/rathena"), "--rathena-commit", "e985006171d2eb320ee512a653f4c83aea3d81b6", "--output", output];
+            string[] Arguments(string output) => ["compile-character-data", "--rathena-root", Path.Combine(repository, "legacy/rathena"), "--rathena-commit", "e985006171d2eb320ee512a653f4c83aea3d81b6", "--output", output];
             Assert.Equal(0, await WorldDataImporterCli.RunAsync(Arguments(firstDir)));
             Assert.Equal(0, await WorldDataImporterCli.RunAsync(Arguments(secondDir)));
-
-            const string dataFile = "GeneratedNoviceProgression.cs";
-            const string registryFile = "GeneratedProgressionRegistry.cs";
-            Assert.Equal(
-                await File.ReadAllBytesAsync(Path.Combine(firstDir, dataFile)),
-                await File.ReadAllBytesAsync(Path.Combine(secondDir, dataFile)));
-            Assert.Equal(
-                await File.ReadAllBytesAsync(Path.Combine(firstDir, registryFile)),
-                await File.ReadAllBytesAsync(Path.Combine(secondDir, registryFile)));
-
-            var progressionDir = Path.Combine(repository, "src/MapServer/Generated/Progression");
-            Assert.Equal(
-                await File.ReadAllBytesAsync(Path.Combine(progressionDir, dataFile)),
-                await File.ReadAllBytesAsync(Path.Combine(firstDir, dataFile)));
-            Assert.Equal(
-                await File.ReadAllBytesAsync(Path.Combine(progressionDir, registryFile)),
-                await File.ReadAllBytesAsync(Path.Combine(firstDir, registryFile)));
+            static string[] Files(string root) => Directory.EnumerateFiles(root, "*.cs", SearchOption.AllDirectories).Select(path => Path.GetRelativePath(root, path).Replace('\\', '/')).Order(StringComparer.Ordinal).ToArray();
+            var expected = new[] { "Jobs/GeneratedJobRegistry.cs", "Progression/GeneratedProgressionData.cs", "Progression/GeneratedProgressionRegistry.cs", "Skills/GeneratedSkillRegistry.cs", "Skills/GeneratedSkillTreeRegistry.cs", "Skills/GeneratedSkillTrees.cs" };
+            Assert.Equal(expected, Files(firstDir)); Assert.Equal(expected, Files(secondDir));
+            var checkedIn = Path.Combine(repository, "src/MapServer/Generated");
+            foreach (var relative in expected)
+            {
+                Assert.Equal(await File.ReadAllBytesAsync(Path.Combine(firstDir, relative)), await File.ReadAllBytesAsync(Path.Combine(secondDir, relative)));
+                Assert.Equal(await File.ReadAllBytesAsync(Path.Combine(checkedIn, relative)), await File.ReadAllBytesAsync(Path.Combine(firstDir, relative)));
+            }
         }
         finally { Directory.Delete(firstDir, recursive: true); Directory.Delete(secondDir, recursive: true); }
     }
 
     [Fact]
-    public void ProgressionCompiler_EmitsSplitDataAndRegistryWithExactValuesAndProvenance()
+    public void CharacterDataCompiler_CompilesRealPinnedCoverageAndNoviceFacts()
     {
         var repository = FindRepositoryRoot();
         var root = Path.Combine(repository, "legacy/rathena");
-        var generated = ProgressionDataCompiler.Generate(
-            File.ReadAllText(Path.Combine(root, "db/re/job_exp.yml")),
-            File.ReadAllText(Path.Combine(root, "db/re/job_basepoints.yml")),
-            File.ReadAllText(Path.Combine(root, "db/re/job_stats.yml")),
-            File.ReadAllText(Path.Combine(root, "db/re/statpoint.yml")),
-            "e985006171d2eb320ee512a653f4c83aea3d81b6");
+        var generated = CompileCharacterData(root);
+        // job_basepoints.yml's 24 fourth-job classes (Dragon_Knight, Meister, Windhawk, etc.,
+        // Jobs-block starting at line 19264) declare only BaseAp - no BaseHp/BaseSp rows.
+        // Pinned JobDatabase::loadingFinished (src/map/pc.cpp) resolves every base level
+        // whose base_hp[j]/base_sp[j] was never set through calc_basehp/calc_basesp instead
+        // of leaving it absent; all 175 generated jobs now get complete progression data
+        // (previously only 147 did, because the compiler required non-null BaseHp/BaseSp
+        // tables instead of falling back to the formula). Unique value sets rose from 67 to
+        // 89 because these newly-resolved HP/SP curves are genuinely distinct per job.
+        Assert.Equal(new CharacterDataCounts(194, 175, 175, 89, 1635, 175, 175), generated.Counts);
+        var progression = generated.Artifacts.Single(item => item.RelativePath == "Progression/GeneratedProgressionData.cs").Source;
+        Assert.Contains("Novice = new(JobClass.Novice, 99, 10, [0, 548, 894, 1486", progression);
+        Assert.Contains("[0, 10, 18, 28", progression);
+        Assert.Contains("[0, 40, 45, 50", progression);
+        Assert.Contains("rAthena commit: e985006171d2eb320ee512a653f4c83aea3d81b6", progression);
 
-        Assert.Equal("GeneratedNoviceProgression.cs", generated.DataFileName);
-        Assert.Equal("GeneratedProgressionRegistry.cs", generated.RegistryFileName);
-
-        // The data file holds the actual arrays; the registry file only looks them up.
-        Assert.Contains("GeneratedNoviceProgression", generated.DataSource);
-        Assert.Contains("BaseExperienceToNext: new ulong[] { 0, 548, 894, 1486", generated.DataSource);
-        Assert.Contains("JobExperienceToNext: new ulong[] { 0, 10, 18, 28", generated.DataSource);
-        Assert.Contains("BaseHp: new uint[] { 0, 40, 45, 50", generated.DataSource);
-        Assert.Contains("BaseSp: new uint[] { 0, 11, 12, 13", generated.DataSource);
-        Assert.Contains("CumulativeStatPoints: new uint[] { 0, 48, 51, 54", generated.DataSource);
-        Assert.Contains("JobVitalityBonus: new uint[] { 0, 0, 0, 0, 0, 0, 1", generated.DataSource);
-        Assert.Contains("rAthena commit: e985006171d2eb320ee512a653f4c83aea3d81b6", generated.DataSource);
-
-        Assert.Contains("GeneratedProgressionRegistry", generated.RegistrySource);
-        Assert.Contains("GeneratedNoviceProgression.Definition", generated.RegistrySource);
-        Assert.DoesNotContain("BaseExperienceToNext", generated.RegistrySource);
+        // Dragon_Knight (4252) regression anchor for the HP/SP formula fix: its job_stats.yml
+        // block declares HpFactor 68, HpIncrease 5828, SpFactor 7, SpIncrease 14 with no
+        // Ninja/Gunslinger/Summoner/Super Novice mapid adjustment, giving calc_basehp/
+        // calc_basesp(1) = 93/10, (2) = 152/10, (3) = 212/10 exactly.
+        Assert.Contains("DragonKnight = new(JobClass.DragonKnight, ", progression);
+        var dragonKnightLine = progression.Split('\n').Single(line => line.Contains("DragonKnight = new(JobClass.DragonKnight, ", StringComparison.Ordinal));
+        Assert.Contains("[0, 93, 152, 212, ", dragonKnightLine);
     }
 
     [Fact]
-    public void ProgressionCompiler_MissingRequiredSectionFailsLoudly()
+    public void CharacterDataCompiler_ResolvesMissingBaseHpSpThroughPinnedFormulaFallback()
     {
-        var repository = FindRepositoryRoot();
-        var root = Path.Combine(repository, "legacy/rathena");
-        Assert.ThrowsAny<Exception>(() => ProgressionDataCompiler.Generate(
-            File.ReadAllText(Path.Combine(root, "db/re/job_exp.yml")).Replace("    BaseExp:", "    MissingBaseExp:", StringComparison.Ordinal),
-            File.ReadAllText(Path.Combine(root, "db/re/job_basepoints.yml")),
-            File.ReadAllText(Path.Combine(root, "db/re/job_stats.yml")),
-            File.ReadAllText(Path.Combine(root, "db/re/statpoint.yml")),
-            "commit"));
+        // Synthetic fixture: Swordman's job_basepoints.yml block declares BaseHp/BaseSp only
+        // for levels 1-2 (a sparse table, mirroring how the 24 real fourth-job classes in
+        // db/re/job_basepoints.yml declare none at all), and its job_stats.yml block sets
+        // explicit HpFactor/HpIncrease/SpFactor/SpIncrease. Every level the table omits must
+        // resolve through JobDatabase::calc_basehp/calc_basesp (src/map/pc.cpp), not error
+        // out and not silently stay zero.
+        var root = Path.Combine(FindRepositoryRoot(), "legacy/rathena");
+        var sources = ReadCharacterData(root);
+        // Strip every real "Swordman: true" membership line first so only the synthetic
+        // block below governs Swordman - the real job_basepoints.yml/job_stats.yml both
+        // declare additional Swordman blocks later in the file that would otherwise overlay
+        // (last-row-wins) on top of this fixture's rows.
+        var isolatedBasePoints = sources.JobBasePoints.Replace("      Swordman: true\n", "", StringComparison.Ordinal);
+        var isolatedStats = sources.JobStats.Replace("      Swordman: true\n", "", StringComparison.Ordinal);
+        var sparseBasePoints = ReplaceFirst(isolatedBasePoints,
+            "  - Jobs:\n      Novice: true",
+            "  - Jobs:\n      Swordman: true\n    BaseHp:\n      - Level: 1\n        Hp: 999\n    BaseSp:\n      - Level: 1\n        Sp: 999\n  - Jobs:\n      Novice: true");
+        var explicitFactors = ReplaceFirst(isolatedStats,
+            "  - Jobs:\n      Novice: true",
+            "  - Jobs:\n      Swordman: true\n    HpFactor: 100\n    HpIncrease: 200\n    SpFactor: 10\n    SpIncrease: 50\n  - Jobs:\n      Novice: true");
+        var generated = CharacterDataCompiler.Compile(sources with { JobBasePoints = sparseBasePoints, JobStats = explicitFactors }, "commit");
+        var progression = generated.Artifacts.Single(item => item.RelativePath == "Progression/GeneratedProgressionData.cs").Source;
+        var swordmanLine = progression.Split('\n').Single(line => line.Contains("Swordman = new(JobClass.Swordman, ", StringComparison.Ordinal));
+
+        // Level 1 keeps the explicit table row (999) - table always wins over formula.
+        // Level 2 has no table row, so it must resolve via calc_basehp/calc_basesp:
+        //   base_hp = 35 + floor(2*200/100) + floor(100/100*2+0.5) = 35+4+2 = 41
+        //   base_sp = 10 + floor(2*50/100) + floor(10/100*2+0.5)   = 10+1+0 = 11
+        Assert.Contains("[0, 999, 41,", swordmanLine);
+        Assert.Contains("[0, 999, 11,", swordmanLine);
     }
 
     [Fact]
-    public void ProgressionCompiler_AmbiguousJobSectionsFailLoudly()
+    public void CharacterDataCompiler_JobStatsFactorsOnlyResetToDefaultOnFirstBlockForJob()
+    {
+        // Pinned JobDatabase::parseBodyNode's "exists" flag (src/map/pc.cpp): a job_id's
+        // hp_factor/hp_increase/sp_factor/sp_increase only reset to the rAthena defaults
+        // (0/500/0/100) the FIRST time that job_id is seen across job_stats.yml's repeated
+        // Jobs blocks. A LATER block that omits a field must leave the earlier explicit value
+        // untouched, not silently reset it. This fixture gives Swordman an explicit HpFactor
+        // in its first block, then a second block (shared with Novice) that sets only
+        // SpFactor - HpFactor set earlier must survive into the second block untouched.
+        var root = Path.Combine(FindRepositoryRoot(), "legacy/rathena");
+        var sources = ReadCharacterData(root);
+        var isolatedBasePoints = sources.JobBasePoints.Replace("      Swordman: true\n", "", StringComparison.Ordinal);
+        var isolatedStats = sources.JobStats.Replace("      Swordman: true\n", "", StringComparison.Ordinal);
+        var sparseBasePoints = ReplaceFirst(isolatedBasePoints,
+            "  - Jobs:\n      Novice: true",
+            "  - Jobs:\n      Swordman: true\n    BaseHp:\n      - Level: 1\n        Hp: 1\n    BaseSp:\n      - Level: 1\n        Sp: 1\n  - Jobs:\n      Novice: true");
+        var twoBlockFactors = ReplaceFirst(isolatedStats,
+            "  - Jobs:\n      Novice: true",
+            "  - Jobs:\n      Swordman: true\n    HpFactor: 300\n  - Jobs:\n      Swordman: true\n    SpFactor: 20\n  - Jobs:\n      Novice: true");
+        var generated = CharacterDataCompiler.Compile(sources with { JobBasePoints = sparseBasePoints, JobStats = twoBlockFactors }, "commit");
+        var progression = generated.Artifacts.Single(item => item.RelativePath == "Progression/GeneratedProgressionData.cs").Source;
+        var swordmanLine = progression.Split('\n').Single(line => line.Contains("Swordman = new(JobClass.Swordman, ", StringComparison.Ordinal));
+
+        // Level 2 (no table row): base_hp = 35 + floor(2*500/100) + floor(300/100*2+0.5) = 35+10+6 = 51
+        // (HpIncrease keeps its untouched default of 500; HpFactor 300 survives from block 1).
+        // base_sp = 10 + floor(2*100/100) + floor(20/100*2+0.5) = 10+2+0 = 12
+        // (SpIncrease keeps its untouched default of 100; SpFactor 20 set in block 2).
+        Assert.Contains("[0, 1, 51,", swordmanLine);
+        Assert.Contains("[0, 1, 12,", swordmanLine);
+    }
+
+    [Fact]
+    public void CharacterDataCompiler_UnknownSkillFailsWithContext()
     {
         var repository = FindRepositoryRoot();
         var root = Path.Combine(repository, "legacy/rathena");
-        var jobExperience = File.ReadAllText(Path.Combine(root, "db/re/job_exp.yml"));
-        Assert.Throws<InvalidOperationException>(() => ProgressionDataCompiler.Generate(
-            jobExperience + jobExperience,
-            File.ReadAllText(Path.Combine(root, "db/re/job_basepoints.yml")),
-            File.ReadAllText(Path.Combine(root, "db/re/job_stats.yml")),
-            File.ReadAllText(Path.Combine(root, "db/re/statpoint.yml")),
-            "commit"));
+        var sources = ReadCharacterData(root) with { SkillTree = File.ReadAllText(Path.Combine(root, "db/re/skill_tree.yml")).Replace("NV_BASIC", "NV_NOT_REAL", StringComparison.Ordinal) };
+        var error = Assert.Throws<ArgumentException>(() => CharacterDataCompiler.Compile(sources, "commit"));
+        Assert.Contains("NV_NOT_REAL", error.Message); Assert.Contains("Novice", error.Message);
+    }
+
+    [Fact]
+    public void CharacterDataCompiler_UnknownInheritedJobFailsWithContext()
+    {
+        var repository = FindRepositoryRoot();
+        var root = Path.Combine(repository, "legacy/rathena");
+        var sources = ReadCharacterData(root) with { SkillTree = File.ReadAllText(Path.Combine(root, "db/re/skill_tree.yml")).Replace("      Novice: true", "      Missing_Job: true", StringComparison.Ordinal) };
+        var error = Assert.Throws<ArgumentException>(() => CharacterDataCompiler.Compile(sources, "commit"));
+        Assert.Contains("inherits unknown job 'Missing_Job'", error.Message);
+    }
+
+    [Fact]
+    public void CharacterDataCompiler_DuplicateSkillIdFailsLoudly()
+    {
+        var root = Path.Combine(FindRepositoryRoot(), "legacy/rathena");
+        var sources = ReadCharacterData(root) with { SkillDatabase = ReplaceFirst(File.ReadAllText(Path.Combine(root, "db/re/skill_db.yml")), "  - Id: 2\n", "  - Id: 1\n") };
+        Assert.Contains("duplicate skill ID 1", Assert.Throws<ArgumentException>(() => CharacterDataCompiler.Compile(sources, "commit")).Message);
+    }
+
+    [Fact]
+    public void CharacterDataCompiler_InheritanceCycleFailsWithJobsInDiagnostic()
+    {
+        var root = Path.Combine(FindRepositoryRoot(), "legacy/rathena");
+        var sources = ReadCharacterData(root) with { SkillTree = ReplaceFirst(File.ReadAllText(Path.Combine(root, "db/re/skill_tree.yml")), "  - Job: Swordman\n    Inherit:\n      Novice: true", "  - Job: Swordman\n    Inherit:\n      Knight: true") };
+        var message = Assert.Throws<ArgumentException>(() => CharacterDataCompiler.Compile(sources, "commit")).Message;
+        Assert.Contains("inheritance cycle", message); Assert.Contains("Swordman", message); Assert.Contains("Knight", message);
+    }
+
+    private static CharacterDataCompilation CompileCharacterData(string root) => CharacterDataCompiler.Compile(ReadCharacterData(root), "e985006171d2eb320ee512a653f4c83aea3d81b6");
+    private static CharacterDataSources ReadCharacterData(string root) => new(
+        File.ReadAllText(Path.Combine(root, "src/common/mmo.hpp")), File.ReadAllText(Path.Combine(root, "src/map/script_constants.hpp")),
+        File.ReadAllText(Path.Combine(root, "db/re/job_exp.yml")), File.ReadAllText(Path.Combine(root, "db/re/job_basepoints.yml")),
+        File.ReadAllText(Path.Combine(root, "db/re/job_stats.yml")), File.ReadAllText(Path.Combine(root, "db/re/statpoint.yml")),
+        File.ReadAllText(Path.Combine(root, "db/re/skill_db.yml")), File.ReadAllText(Path.Combine(root, "db/re/skill_tree.yml")));
+    private static string ReplaceFirst(string source, string oldValue, string newValue)
+    {
+        var index = source.IndexOf(oldValue, StringComparison.Ordinal);
+        if (index < 0) throw new InvalidOperationException($"Fixture text '{oldValue}' was not found.");
+        return source[..index] + newValue + source[(index + oldValue.Length)..];
     }
 
     private static string FindRepositoryRoot()

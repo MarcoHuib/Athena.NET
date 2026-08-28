@@ -33,8 +33,14 @@ rAthena `duplicate(...)` declarations therefore do not need five copies of the s
 
 ```text
 Generated/
+├── Jobs/
+│   └── generated numeric job identity registry
+│
 ├── Progression/
 │   └── generated level / EXP / progression data
+│
+├── Skills/
+│   └── generated canonical skills and direct/effective job trees
 │
 └── World/
     └── <area>/

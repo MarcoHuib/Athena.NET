@@ -171,21 +171,116 @@ HP/SP and MaxHP/MaxSP already existed as relational `char` fields and remain sto
 Unsupported jobs fail through the generated progression lookup; they do not receive
 invented recalculation formulas.
 
-## Generated progression registry and rate policy
+## Generated character-data registries and rate policy
 
-`compile-progression` reads pinned renewal `job_exp.yml`, `job_basepoints.yml`,
-`job_stats.yml`, and `statpoint.yml` and emits two deterministic generated files
-into its `--output` directory: `GeneratedNoviceProgression.cs` (the actual
-per-class `CharacterProgressionDefinition` data - Base/Job EXP thresholds,
-HP/SP, stat-point, and job-bonus tables) and `GeneratedProgressionRegistry.cs`
-(a small `jobClass -> definition` lookup only, with no data arrays of its own).
-It currently contains job class 0 (Novice), base levels 1-99 and job levels
-1-10. EXP entries are per-current-level costs, not cumulative totals. Runtime
-(`CharacterProgressionService`) consumes only
-`GeneratedProgressionRegistry.Get(jobClass)` and has no knowledge of job names
-like Novice/Swordman/Mage; adding another job's
-`Generated<JobClass>Progression.cs` file plus one more registry entry requires
-no change to progression logic.
+`compile-character-data` consumes pinned `mmo.hpp`/`script_constants.hpp` for
+numeric job identity, Renewal `job_exp.yml`, `job_basepoints.yml`,
+`job_stats.yml`, and `statpoint.yml` for progression, and Renewal
+`skill_db.yml`/`skill_tree.yml` for canonical skills and trees. Its pipeline is
+parse -> resolve -> validate -> compute effective inheritance -> emit.
+
+The reflection-free runtime boundaries are a generated `JobClass` enum plus
+`JobClassNames`, `GeneratedProgressionRegistry`, `GeneratedSkillRegistry`, and
+`GeneratedSkillTreeRegistry`; MapServer never reads YAML. `JobClass`'s numeric
+values are the exact pinned rAthena/client job-class IDs; its member names are
+readable PascalCase identifiers with underscores stripped (`Rune_Knight` ->
+`RuneKnight`, `Baby_Rune_Knight2` -> `BabyRuneKnight2`) computed once at
+compile time and checked for collisions - two source job names that would
+sanitize to the same identifier fail generation loudly rather than silently
+merge. `JobClassNames.GetRathenaName(JobClass)` recovers the canonical pinned
+source name (e.g. `"Rune_Knight"`) verbatim; it is never re-derived by
+guessing from the enum member name. `CharacterProgressionDefinition.JobClass`
+is the `JobClass` enum (a domain-model boundary); wire/persistence DTOs
+(`CharacterGameplayState`, `CharacterGameplayStateDto`) are unaffected and
+keep their existing `ushort` job class field - conversion happens only where
+generated code resolves a registry entry (`GeneratedProgressionRegistry.Get(ushort)`
+and `GeneratedSkillTreeRegistry.Get(ushort)` cast to `JobClass` and reuse the
+strongly-typed overload). Current coverage is 194 exported numeric
+identities, 175 generated jobs, **175** job mappings with progression (backed
+by 89 unique value sets), 1,635 skills, and 175 direct/effective trees. The 19
+excluded constants have neither complete progression nor a Renewal tree:
+Wedding, Xmas, Summer, Hanbok, Oktoberfest, Summer2, and IDs 4332-4344's
+`*_2nd` alternate/marker constants. Unknown IDs fail explicitly. EXP entries
+remain per-current-level costs, not cumulative totals.
+
+**HP/SP resolve through the pinned formula, not just table rows.** Earlier
+generation required every job to have an explicit `BaseHp`/`BaseSp` row for
+every base level, which silently excluded 24 fourth-job classes (Dragon_Knight,
+Meister, Windhawk, Cardinal, and 20 others - `db/re/job_basepoints.yml`'s
+Jobs-block starting at line 19264) whose block declares only `BaseAp:`, no
+`BaseHp:`/`BaseSp:` at all - this was a compiler bug, not a legitimate data
+gap. Pinned `JobDatabase::loadingFinished` (`src/map/pc.cpp`) resolves HP/SP
+per base level as: an explicit table row if the pinned data set one for that
+level, otherwise `calc_basehp`/`calc_basesp` - a formula over that job's
+`HpFactor`/`HpIncrease`/`SpFactor`/`SpIncrease` (from `db/re/job_stats.yml`):
+`base_hp = 35 + floor(level*hp_increase/100) + sum_{i=2..level} floor(hp_factor/100*i + 0.5)`,
+`base_sp = 10 + floor(level*sp_increase/100) + sum_{i=2..level} floor(sp_factor/100*i + 0.5)`,
+each summed level-by-level (not a closed form), matched exactly by the
+compiler's `CalcBaseHp`/`CalcBaseSp`. `HpFactor`/`HpIncrease`/`SpFactor`/
+`SpIncrease` follow pinned `JobDatabase::parseBodyNode`'s "exists" flag
+semantics exactly: a job_id's factors reset to the rAthena defaults
+(`hp_factor=0, hp_increase=500, sp_factor=0, sp_increase=100`) only the FIRST
+time that job_id is seen across job_stats.yml's repeated `Jobs` blocks; a
+later block that omits a field leaves the earlier explicit value untouched
+rather than resetting it - this is the same overlay-with-memory pattern the
+existing job_exp.yml/job_basepoints.yml compiler code already used for
+repeated level rows, applied here to per-job scalar factors instead. Two
+mapid-category adjustments from pinned `calc_basehp`/`calc_basesp` are
+implemented (resolved by canonical job name through the same alias table
+job_stats.yml/job_basepoints.yml use, not a hand-copied numeric ID list):
+Summoner/Baby_Summoner get +50% HP and SP; Super_Novice/Super_Baby/
+Super_Novice_E/Super_Baby_E get a flat +2000 HP bonus at base level 99 and
+again at 150. The Ninja/Gunslinger pre-Renewal HP adjustment is genuinely
+absent from pinned Renewal builds (`#ifndef RENEWAL` guards it in source, and
+this project only ever loads `db/re/*` Renewal data) and is correctly
+unimplemented; the Ninja/Gunslinger SP adjustment carries no such guard but is
+deliberately unimplemented here because Ninja/Baby_Ninja and Gunslinger/
+Baby_Gunslinger each declare a fully dense `BaseSp` row for every level
+through their max base level in `db/re/job_basepoints.yml` (verified: 99 and
+200 explicit `Level:` rows respectively), so `calc_basesp` is never reached
+for them by pinned `loadingFinished`'s `if (base_sp[j]==0)` gate - if a future
+pinned revision ever leaves one of their base levels' `BaseSp` row unset, this
+becomes load-bearing and must be revisited. See
+`CharacterDataCompiler_ResolvesMissingBaseHpSpThroughPinnedFormulaFallback`
+and `CharacterDataCompiler_JobStatsFactorsOnlyResetToDefaultOnFirstBlockForJob`
+(`tests/WorldDataImporter.Tests/CompilerTests.cs`) for fixture-based proof of
+both the formula fallback and the exists-flag overlay semantics, and
+`CharacterDataCompiler_CompilesRealPinnedCoverageAndNoviceFacts`/
+`ProgressionRegistry_PreservesNoviceAndCoversLaterJobs` for the real
+Dragon_Knight regression anchor (HpFactor 68, HpIncrease 5828, SpFactor 7,
+SpIncrease 14 -> base level 1/2/3 HP 93/152/212, SP 10/10/10).
+
+**Skill-tree `Inherit` is single-level, not transitive.** Verified against
+pinned `SkillTreeDatabase::loadingFinished` (`src/map/pc.cpp`): for each job
+with declared parents, the merge reads `this->find(parent_id)` for every
+parent BEFORE any job's tree is mutated (the merge-back into the live
+database happens in a wholly separate second pass after the first pass
+completes for every job) - so a parent's contribution is always its own
+directly-declared `Tree` block, never a grandparent's skills the parent itself
+inherited. A child's own direct entries always win over an inherited entry of
+the same skill ID (`if (data.second->skills.count(it.first) > 0) continue;`).
+An entry with `Exclude: true` on the PARENT's declaration is skipped entirely
+during inheritance (`if (it.second->exclude_inherit) continue;`) - it still
+exists in the parent's own tree, it simply never propagates to children; this
+is exactly how `NV_TRICKDEAD` reaches Novice but not Swordman, which inherits
+from Novice (see `SkillTrees_PreserveDirectInheritanceExcludeAndNumericPrerequisites`).
+The current compiler's `ResolveTrees` matches this precisely: each listed
+parent contributes only its declared `Tree`, not its already-populated
+effective tree.
+
+**`MaxLevel`/`BaseLevel`/`JobLevel` are clamped by pinned source, not passed
+through unclamped.** Verified against pinned `SkillTreeDatabase::parseBodyNode`
+and `loadingFinished`: `MaxLevel` clamps to the skill's own `skill_get_max`
+value at parse time; a `Requires` entry's `Level` clamps to the required
+skill's own max level; `BaseLevel`/`JobLevel` clamp to the DECLARING job's own
+`max_base_level`/`max_job_level` at parse time, and are clamped AGAIN in
+`loadingFinished` for INHERITED entries specifically, this time against the
+CHILD's own max levels (a direct entry was already clamped once against its
+own job, so re-clamping it is a no-op). The compiler's existing clamps in
+`ParseTrees` (skill's own `MaxLevel`/prerequisite's own max level) and the
+uniform `Math.Min(entry.BaseLevel, maxBase)`/`Math.Min(entry.JobLevel, maxJob)`
+applied to every entry (direct and inherited alike) in `ResolveTrees` are
+behaviorally equivalent to this two-stage pinned clamp and require no change.
 
 `CharacterProgressionService` applies Base and Job EXP independently, awards the
 difference between cumulative stat-point rows, and awards one skill point per Job
@@ -195,10 +290,16 @@ and caps overcarry to the crossed requirement minus one. One complete resulting
 snapshot is persisted through the versioned CharServer transaction before MapServer
 publishes it or sends packets. A failed/stale write sends no success updates.
 
-Base-level recalculation uses the pinned Novice HP/SP base tables, persistent VIT/INT,
-and generated Novice job bonuses. A base level fully restores recalculated HP/SP as
+Base-level recalculation uses the selected job's pinned HP/SP tables, persistent VIT/INT,
+and generated cumulative bonuses. A base level fully restores recalculated HP/SP as
 in `pc_checkbaselevelup`; job-only recalculation preserves current HP/SP within the
-new maxima. Equipment/status modifiers remain outside this Novice-only slice.
+new maxima. All six classic bonus dimensions are generated, while current runtime
+uses VIT/INT for HP/SP. Every job's HP/SP array is complete for every base level
+1..MaxBaseLevel - an explicit `db/re/job_basepoints.yml` table row where the pinned
+data provides one, `JobDatabase::calc_basehp`/`calc_basesp`'s formula (see above)
+everywhere else; no level is ever left zero-filled or invented outside that formula.
+Skill spending, `CharSkill` mutation, `0x0B32`, skill execution, and job changing
+remain unimplemented.
 
 `GameplayRateOptions` is loaded once and passed unchanged through `MapServerWorld`.
 ATHENA.NET SERVER POLICY: it separates always-present global rates
@@ -271,17 +372,14 @@ Generate the current Academy NPC definitions/placements/behaviors: see the
 Compiler audit/capability reports may still scan the complete pinned NPC tree;
 their breadth does not imply runtime support.
 
-Regenerate progression from the current pinned SHA (never edit generated output):
+Regenerate complete character data from the current pinned SHA (never edit generated output):
 
 ```bash
 dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- \
-  compile-progression --rathena-root legacy/rathena \
+  compile-character-data --rathena-root legacy/rathena \
   --rathena-commit e985006171d2eb320ee512a653f4c83aea3d81b6 \
-  --output src/MapServer/Generated/Progression
+  --output src/MapServer/Generated
 ```
-
-`--output` names a directory; the compiler writes both
-`GeneratedNoviceProgression.cs` and `GeneratedProgressionRegistry.cs` into it.
 
 ## Still missing
 
