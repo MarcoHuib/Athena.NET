@@ -212,15 +212,11 @@ public static class MapConfigLoader
         };
     }
 
-    // Global rate keys always parse to a plain uint (missing => the field default,
-    // 100). Override keys parse to a nullable uint (missing/unset => null =
-    // inherit the relevant global rate; present => REPLACES that global for its
+    // Global rate keys (base_exp_rate, job_exp_rate, item_drop_rate) always parse
+    // to a plain uint (missing => the field default, 100) - checked inline below.
+    // Override keys parse to a nullable uint (missing/unset => null = inherit the
+    // relevant global/generic rate; present => REPLACES that fallback for its
     // scope, never combines with it - see GameplayRateResolver).
-    private static readonly HashSet<string> GlobalRateKeys = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "base_exp_rate", "job_exp_rate", "item_drop_rate",
-    };
-
     private static readonly HashSet<string> OverrideExperienceRateKeys = new(StringComparer.OrdinalIgnoreCase)
     {
         "quest_base_exp_rate", "quest_job_exp_rate", "mvp_base_exp_rate", "mvp_job_exp_rate",

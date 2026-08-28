@@ -226,10 +226,17 @@ Item rate families (common/heal/use/equip/card, boss and MVP normal-drop variant
 and direct-reward `item_rate_mvp`) are parsed, modeled through the same
 inherit-unless-overridden `GameplayRateResolver.ResolveDropRate`, and retained -
 but not consumed by a generic drop runtime, because Athena has no generic
-normal-drop/MVP-reward runtime yet. `item_rate_mvp` (an MVP's own direct reward
-item) is a fully separate rate family from `item_rate_*_mvp` (a normal
-drop-table item merely dropped BY an MVP monster) and both are modeled
-distinctly in the resolver. Tutorial Wood/Lumber `QuestDropRule` handling is
+normal-drop/MVP-reward runtime yet. Resolution walks the most specific
+configured override first, each level replacing (never stacking with) the
+level below it: exact source+category override (e.g. `item_rate_card_boss`)
+-> source-level override (`boss_item_drop_rate`/`mvp_item_drop_rate`/
+`quest_item_drop_rate`) -> generic category override (`card_drop_rate` is
+currently the only category with one; Common/Heal/Use/Equip fall straight to
+the global) -> global `item_drop_rate`. `item_rate_mvp` (an MVP's own direct
+reward item) is a fully separate rate family from `item_rate_*_mvp` (a normal
+drop-table item merely dropped BY an MVP monster): it resolves
+`item_rate_mvp ?? mvp_item_drop_rate ?? item_drop_rate`, distinct from the
+normal-drop chain above. Tutorial Wood/Lumber `QuestDropRule` handling is
 unchanged and receives no item-rate multiplier; drop rate is scoped to scale a
 roll's chance/probability, never an item's count, so a guaranteed 100% quest
 drop remains capped at 100% regardless of configured rates.

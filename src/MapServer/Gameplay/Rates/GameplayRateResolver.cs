@@ -7,11 +7,15 @@ namespace Athena.Net.MapServer.Gameplay.Rates;
 // global. Pure, stateless, synchronous: no I/O, no persistence, no packets.
 public static class GameplayRateResolver
 {
-    // Resolves the single effective Base/Job EXP rate pair for a reward source.
-    // Monster and Script/Event awards always use the plain global rates (there is
-    // no "monster_exp_rate"/"event_exp_rate" override concept - only Quest and
-    // Mvp sources have optional overrides). An override, when set, REPLACES the
-    // corresponding global rate rather than combining with it.
+    // Resolves the single effective Base/Job EXP rate pair for a reward source:
+    //   Monster -> global Base/Job
+    //   Quest   -> Quest override ?? global
+    //   Script  -> Quest override ?? global
+    //   Mvp     -> Mvp override ?? global
+    //   Event   -> global Base/Job
+    // There is no "monster_exp_rate"/"event_exp_rate" override concept - only
+    // Quest and Mvp sources have optional overrides. An override, when set,
+    // REPLACES the corresponding global rate rather than combining with it.
     public static (uint BaseRate, uint JobRate) ResolveExperienceRate(GameplayRateOptions rates, ExperienceSource source) =>
         source switch
         {
@@ -28,32 +32,35 @@ public static class GameplayRateResolver
     // Resolves the single effective drop rate for one drop context. Resolution
     // order, each level REPLACING (never stacking with) the level below it when
     // present:
-    //   1. The most specific configured category/kind override for this context.
+    //   1. The exact source+category override (e.g. item_rate_card_boss).
     //   2. The source-level override (Quest/Boss/Mvp item drop rate), if any.
-    //   3. The global ItemDropRate.
+    //   3. The generic category override (currently only card_drop_rate).
+    //   4. The global ItemDropRate.
     // ItemRateMvp (direct MVP reward) is a completely separate rate family from
     // the ItemRate*Mvp normal-drop categories and is only used for
     // RewardKind.MvpReward.
     public static uint ResolveDropRate(GameplayRateOptions rates, DropContext context)
     {
         if (context.Kind == RewardKind.MvpReward)
-            return rates.ItemRateMvp ?? rates.ItemDropRate;
+            return rates.ItemRateMvp ?? rates.MvpItemDropRate ?? rates.ItemDropRate;
+
+        var generic = ResolveGenericCategory(context.Category, rates.CardDropRate, rates.ItemDropRate);
 
         return context.Source switch
         {
             DropSource.Mvp => ResolveCategory(
                 context.Category,
                 rates.ItemRateCommonMvp, rates.ItemRateHealMvp, rates.ItemRateUseMvp, rates.ItemRateEquipMvp, rates.ItemRateCardMvp,
-                rates.MvpItemDropRate ?? rates.ItemDropRate),
+                rates.MvpItemDropRate ?? generic),
             DropSource.Boss => ResolveCategory(
                 context.Category,
                 rates.ItemRateCommonBoss, rates.ItemRateHealBoss, rates.ItemRateUseBoss, rates.ItemRateEquipBoss, rates.ItemRateCardBoss,
-                rates.BossItemDropRate ?? rates.ItemDropRate),
-            DropSource.Quest => rates.QuestItemDropRate ?? rates.ItemDropRate,
+                rates.BossItemDropRate ?? generic),
+            DropSource.Quest => rates.QuestItemDropRate ?? generic,
             DropSource.Monster or DropSource.Script or DropSource.Event => ResolveCategory(
                 context.Category,
                 rates.ItemRateCommon, rates.ItemRateHeal, rates.ItemRateUse, rates.ItemRateEquip, rates.ItemRateCard,
-                rates.ItemDropRate),
+                generic),
             _ => throw new ArgumentOutOfRangeException(nameof(context)),
         };
     }
@@ -75,4 +82,9 @@ public static class GameplayRateResolver
         };
         return categoryOverride ?? fallback;
     }
+
+    // Generic (source-independent) category override. Only Card currently has one
+    // (card_drop_rate); Common/Heal/Use/Equip fall straight through to the global.
+    private static uint ResolveGenericCategory(ItemCategory? category, uint? card, uint global) =>
+        category == ItemCategory.Card ? card ?? global : global;
 }
