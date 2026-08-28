@@ -311,7 +311,7 @@ public sealed class MapClientSessionMonsterCombatTests
             6, 1, 1, 0, 6, 5, 1, 400, 1872, 672, 480, 150, 40,
             MobMode.CanMove | MobMode.CanAttack,
             new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/re/mob_db.yml", 136));
-        var rates = new GameplayRateOptions { BaseExperience = 500, JobExperience = 200 };
+        var rates = new GameplayRateOptions { BaseExpRate = 500, JobExpRate = 200 };
         var (client, stream, session, run, target) = await SetupAsync(
             new RecordingInventoryPersistence(), CharacterQuestStatus.Absent,
             gameplayState: WeakFreshNovice(), mobDefinition: poring, rates: rates);

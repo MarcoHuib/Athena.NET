@@ -8,9 +8,9 @@ using Athena.Net.MapServer.World;
 
 namespace Athena.Net.MapServer.Generated.Progression;
 
-internal static class GeneratedProgressionRegistry
+internal static class GeneratedNoviceProgression
 {
-    internal static readonly CharacterProgressionDefinition Novice = new(
+    internal static readonly CharacterProgressionDefinition Definition = new(
         JobClass: 0,
         MaxBaseLevel: 99,
         MaxJobLevel: 10,
@@ -21,11 +21,4 @@ internal static class GeneratedProgressionRegistry
         CumulativeStatPoints: new uint[] { 0, 48, 51, 54, 57, 60, 64, 68, 72, 76, 80, 85, 90, 95, 100, 105, 111, 117, 123, 129, 135, 142, 149, 156, 163, 170, 178, 186, 194, 202, 210, 219, 228, 237, 246, 255, 265, 275, 285, 295, 305, 316, 327, 338, 349, 360, 372, 384, 396, 408, 420, 433, 446, 459, 472, 485, 499, 513, 527, 541, 555, 570, 585, 600, 615, 630, 646, 662, 678, 694, 710, 727, 744, 761, 778, 795, 813, 831, 849, 867, 885, 904, 923, 942, 961, 980, 1000, 1020, 1040, 1060, 1080, 1101, 1122, 1143, 1164, 1185, 1207, 1229, 1251, 1273 },
         JobVitalityBonus: new uint[] { 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1 },
         JobIntelligenceBonus: new uint[] { 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1 });
-    private static readonly IReadOnlyDictionary<ushort, CharacterProgressionDefinition> ByJobClass =
-        new Dictionary<ushort, CharacterProgressionDefinition> { [Novice.JobClass] = Novice };
-
-    internal static CharacterProgressionDefinition Get(ushort jobClass) =>
-        ByJobClass.TryGetValue(jobClass, out var definition)
-            ? definition
-            : throw new NotSupportedException($"Progression data for job class {jobClass} is not generated.");
 }

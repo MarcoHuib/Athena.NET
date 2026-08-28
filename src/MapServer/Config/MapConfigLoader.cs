@@ -212,6 +212,29 @@ public static class MapConfigLoader
         };
     }
 
+    // Global rate keys always parse to a plain uint (missing => the field default,
+    // 100). Override keys parse to a nullable uint (missing/unset => null =
+    // inherit the relevant global rate; present => REPLACES that global for its
+    // scope, never combines with it - see GameplayRateResolver).
+    private static readonly HashSet<string> GlobalRateKeys = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "base_exp_rate", "job_exp_rate", "item_drop_rate",
+    };
+
+    private static readonly HashSet<string> OverrideExperienceRateKeys = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "quest_base_exp_rate", "quest_job_exp_rate", "mvp_base_exp_rate", "mvp_job_exp_rate",
+    };
+
+    private static readonly HashSet<string> OverrideDropRateKeys = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "card_drop_rate", "boss_item_drop_rate", "mvp_item_drop_rate", "quest_item_drop_rate",
+        "item_rate_common", "item_rate_heal", "item_rate_use", "item_rate_equip", "item_rate_card",
+        "item_rate_common_boss", "item_rate_heal_boss", "item_rate_use_boss", "item_rate_equip_boss", "item_rate_card_boss",
+        "item_rate_common_mvp", "item_rate_heal_mvp", "item_rate_use_mvp", "item_rate_equip_mvp", "item_rate_card_mvp",
+        "item_rate_mvp",
+    };
+
     private static bool TryApplyGameplayRate(
         string key,
         string value,
@@ -221,17 +244,16 @@ public static class MapConfigLoader
     {
         updated = current;
         var normalized = key.ToLowerInvariant();
-        var isExperience = normalized is "base_exp_rate" or "job_exp_rate" or "quest_exp_rate" or "mvp_exp_rate";
-        var isDrop = normalized is
-            "item_rate_common" or "item_rate_heal" or "item_rate_use" or "item_rate_equip" or "item_rate_card" or
-            "item_rate_common_boss" or "item_rate_heal_boss" or "item_rate_use_boss" or "item_rate_equip_boss" or "item_rate_card_boss" or
-            "item_rate_common_mvp" or "item_rate_heal_mvp" or "item_rate_use_mvp" or "item_rate_equip_mvp" or "item_rate_card_mvp" or
-            "item_rate_mvp";
-        if (!isExperience && !isDrop) return false;
+        var isGlobalExperience = normalized is "base_exp_rate" or "job_exp_rate";
+        var isGlobalDrop = normalized is "item_drop_rate";
+        var isOverrideExperience = OverrideExperienceRateKeys.Contains(normalized);
+        var isOverrideDrop = OverrideDropRateKeys.Contains(normalized);
+        if (!isGlobalExperience && !isGlobalDrop && !isOverrideExperience && !isOverrideDrop) return false;
 
+        var isExperience = isGlobalExperience || isOverrideExperience;
         if (!uint.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out var rate) ||
             (isExperience && rate > int.MaxValue) ||
-            (isDrop && rate > 1_000_000))
+            (!isExperience && rate > 1_000_000))
         {
             var maximum = isExperience ? int.MaxValue : 1_000_000;
             throw new InvalidOperationException(
@@ -240,26 +262,33 @@ public static class MapConfigLoader
 
         updated = normalized switch
         {
-            "base_exp_rate" => current with { BaseExperience = rate },
-            "job_exp_rate" => current with { JobExperience = rate },
-            "quest_exp_rate" => current with { QuestExperience = rate },
-            "mvp_exp_rate" => current with { MvpExperience = rate },
-            "item_rate_common" => current with { ItemCommon = rate },
-            "item_rate_heal" => current with { ItemHeal = rate },
-            "item_rate_use" => current with { ItemUse = rate },
-            "item_rate_equip" => current with { ItemEquip = rate },
-            "item_rate_card" => current with { ItemCard = rate },
-            "item_rate_common_boss" => current with { ItemCommonBoss = rate },
-            "item_rate_heal_boss" => current with { ItemHealBoss = rate },
-            "item_rate_use_boss" => current with { ItemUseBoss = rate },
-            "item_rate_equip_boss" => current with { ItemEquipBoss = rate },
-            "item_rate_card_boss" => current with { ItemCardBoss = rate },
-            "item_rate_common_mvp" => current with { ItemCommonMvp = rate },
-            "item_rate_heal_mvp" => current with { ItemHealMvp = rate },
-            "item_rate_use_mvp" => current with { ItemUseMvp = rate },
-            "item_rate_equip_mvp" => current with { ItemEquipMvp = rate },
-            "item_rate_card_mvp" => current with { ItemCardMvp = rate },
-            "item_rate_mvp" => current with { ItemMvp = rate },
+            "base_exp_rate" => current with { BaseExpRate = rate },
+            "job_exp_rate" => current with { JobExpRate = rate },
+            "item_drop_rate" => current with { ItemDropRate = rate },
+            "quest_base_exp_rate" => current with { QuestBaseExpRate = rate },
+            "quest_job_exp_rate" => current with { QuestJobExpRate = rate },
+            "mvp_base_exp_rate" => current with { MvpBaseExpRate = rate },
+            "mvp_job_exp_rate" => current with { MvpJobExpRate = rate },
+            "card_drop_rate" => current with { CardDropRate = rate },
+            "boss_item_drop_rate" => current with { BossItemDropRate = rate },
+            "mvp_item_drop_rate" => current with { MvpItemDropRate = rate },
+            "quest_item_drop_rate" => current with { QuestItemDropRate = rate },
+            "item_rate_common" => current with { ItemRateCommon = rate },
+            "item_rate_heal" => current with { ItemRateHeal = rate },
+            "item_rate_use" => current with { ItemRateUse = rate },
+            "item_rate_equip" => current with { ItemRateEquip = rate },
+            "item_rate_card" => current with { ItemRateCard = rate },
+            "item_rate_common_boss" => current with { ItemRateCommonBoss = rate },
+            "item_rate_heal_boss" => current with { ItemRateHealBoss = rate },
+            "item_rate_use_boss" => current with { ItemRateUseBoss = rate },
+            "item_rate_equip_boss" => current with { ItemRateEquipBoss = rate },
+            "item_rate_card_boss" => current with { ItemRateCardBoss = rate },
+            "item_rate_common_mvp" => current with { ItemRateCommonMvp = rate },
+            "item_rate_heal_mvp" => current with { ItemRateHealMvp = rate },
+            "item_rate_use_mvp" => current with { ItemRateUseMvp = rate },
+            "item_rate_equip_mvp" => current with { ItemRateEquipMvp = rate },
+            "item_rate_card_mvp" => current with { ItemRateCardMvp = rate },
+            "item_rate_mvp" => current with { ItemRateMvp = rate },
             _ => current,
         };
         return true;

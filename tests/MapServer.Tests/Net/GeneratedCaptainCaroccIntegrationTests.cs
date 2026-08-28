@@ -2,6 +2,7 @@ using System.Buffers.Binary;
 using System.Net;
 using System.Net.Sockets;
 using Athena.Net.MapServer.Config;
+using Athena.Net.MapServer.Gameplay.Rates;
 using Athena.Net.MapServer.Net;
 using Athena.Net.MapServer.World;
 using Athena.Net.MapServer.World.GeneratedScripts;
@@ -183,6 +184,115 @@ public sealed class GeneratedCaptainCaroccIntegrationTests
         Assert.Equal(10, blessing.Val1);
         Assert.True(session.StatusEffects.TryGet(CharacterStatusEffectState.StatusIds.IncreaseAgi, out var increaseAgi));
         Assert.Equal(10, increaseAgi.Val1);
+
+        client.Close(); await run.WaitAsync(TimeSpan.FromSeconds(5)); listener.Stop();
+    }
+
+    // Proves the central rate pipeline for the generated Captain getexp(600,600)
+    // call: ExperienceRewardService/GameplayRateResolver resolve the effective
+    // rate for ExperienceSource.Script BEFORE CharacterProgressionService ever
+    // sees an EXP value - the generated script call itself is untouched raw
+    // 600/600 (see academy.txt-derived CaptainCaroccOnClickScript.GrantExperienceAsync).
+    [Theory]
+    // Default 100/100 global rates: raw getexp(600,600) passes through unrated.
+    [InlineData(100u, 100u, null, null, 600UL, 600UL)]
+    // Global 500/500, no quest override: inherits the global 5x -> 3000/3000.
+    [InlineData(500u, 500u, null, null, 3000UL, 3000UL)]
+    // Global 500/500 AND an explicit quest override of 1000/1000: the override
+    // REPLACES the global entirely (600*10=6000), it must NOT stack/multiply
+    // with the inherited global (which would incorrectly yield 600*5*10=30000).
+    [InlineData(500u, 500u, 1000u, 1000u, 6000UL, 6000UL)]
+    public async Task GetExpAppliesCentralRateResolverBeforeProgression(
+        uint baseExpRate, uint jobExpRate, uint? questBaseExpRate, uint? questJobExpRate,
+        ulong expectedRatedBaseAwarded, ulong expectedRatedJobAwarded)
+    {
+        var rates = new GameplayRateOptions
+        {
+            BaseExpRate = baseExpRate,
+            JobExpRate = jobExpRate,
+            QuestBaseExpRate = questBaseExpRate,
+            QuestJobExpRate = questJobExpRate,
+        };
+
+        var entity = Assert.Single(GeneratedScriptRegistry.Entities, item => item.Id == EntityId);
+        var registry = new WorldMapRegistry([], [entity]);
+        var actor = Assert.Single(registry.GetVisibleWarpActors("int_land03", 78, 103));
+
+        var listener = new TcpListener(IPAddress.Loopback, 0); listener.Start();
+        using var client = new TcpClient(); var connect = client.ConnectAsync((IPEndPoint)listener.LocalEndpoint);
+        using var serverClient = await listener.AcceptTcpClientAsync(); await connect;
+        await using var stream = client.GetStream();
+        var questPersistence = new RecordingQuestPersistence(21001, CharacterQuestStatus.Active);
+        var gameplayPersistence = new RecordingGameplayStatePersistence(new(9, 0, 0, 1, 1, 0, 0, 20, 5, 40, 11, 48, 0, 1, 1, 1, 1, 1, 1));
+        await using var session = new MapClientSession(1, serverClient, new CharServerConnector(new MapConfigStore(new MapConfig(), "unused.conf")), true, "int_land03", 78, 103, registry,
+            questPersistence: questPersistence, gameplayStatePersistence: gameplayPersistence, accountId: 7, charId: 9, rates: rates);
+        var run = session.RunAsync(CancellationToken.None);
+        await session.CompleteIroAuthenticationAsync(new(7, 9, 1, 2, 0, 0, false, "int_land03", 78, 103, 0, 0, 0));
+        await ReadExact(stream, 29); // bootstrap
+
+        await stream.WriteAsync(new byte[] { 0x7d, 0x00, 0xaa });
+        await ReadExact(stream, 15); // 0x01D7
+        await ReadExact(stream, 6); // 0x0B08
+        await ReadExact(stream, 4); // 0x0B0B
+        await ReadDynamic(stream); // spawn broadcast
+
+        await stream.WriteAsync(ActorPacket(0x0090, actor.ActorId, 8));
+        for (var i = 0; i < 4; i++) await ReadDynamic(stream); // 4 mes lines
+        await ReadExact(stream, 6); // next prompt
+
+        await stream.WriteAsync(ActorPacket(0x00b9, actor.ActorId, 7));
+        await ReadDynamic(stream); // menu
+
+        await stream.WriteAsync(SelectionPacket(actor.ActorId, 1));
+        for (var i = 0; i < 4; i++) await ReadDynamic(stream); // 4 mes lines
+        await ReadExact(stream, 6); // next prompt
+
+        foreach (var messageCount in new[] { 2, 3, 2, 2 })
+        {
+            await stream.WriteAsync(ActorPacket(0x00b9, actor.ActorId, 7));
+            for (var i = 0; i < messageCount; i++) await ReadDynamic(stream);
+            await ReadExact(stream, 6);
+        }
+
+        await stream.WriteAsync(ActorPacket(0x00b9, actor.ActorId, 7));
+        await ReadDynamic(stream); // "[Captain Carocc]"
+        await ReadDynamic(stream); // "It is a hard task..."
+
+        // heal(9999,0) + visual + blessing cast/activation/stats + incagi cast/activation/stat.
+        await ReadExact(stream, 8); // heal parameter
+        await ReadExact(stream, 17); // heal visual
+        await ReadExact(stream, 17); // blessing cast visual
+        await ReadExact(stream, 29); // blessing activation
+        for (var i = 0; i < 3; i++) await ReadExact(stream, 14); // STR/INT/DEX
+        await ReadExact(stream, 17); // incagi cast visual
+        await ReadExact(stream, 29); // incagi activation
+        await ReadExact(stream, 14); // AGI stat
+
+        await ReadExact(stream, 6); // completequest 21001 -> 0x02B4
+
+        // Drain progression packets emitted by getexp until setquest 21008's 0x0B0C, collecting
+        // the two ZC_NOTIFY_EXPERIENCE (0x0ACC) amounts (Base then Job, per IroCharacterProgressionPackets.Build).
+        var experienceAmounts = new List<ulong>();
+        while (true)
+        {
+            var header = await ReadExact(stream, 2);
+            var packetId = BinaryPrimitives.ReadInt16LittleEndian(header);
+            if (packetId == 0x0b0c) { await ReadExact(stream, IroQuestPackets.AddQuestLength - 2); break; }
+            var length = packetId switch
+            {
+                PacketConstants.ZcLongLongParameterChange => 12,
+                PacketConstants.ZcNotifyExperience => PacketConstants.ZcNotifyExperienceLength,
+                PacketConstants.ZcNotifyEffect => PacketConstants.ZcNotifyEffectLength,
+                _ => 8,
+            };
+            var body = await ReadExact(stream, length - 2);
+            if (packetId == PacketConstants.ZcNotifyExperience)
+                experienceAmounts.Add(BinaryPrimitives.ReadUInt64LittleEndian(body.AsSpan(4)));
+        }
+
+        Assert.Equal(2, experienceAmounts.Count);
+        Assert.Equal(expectedRatedBaseAwarded, experienceAmounts[0]);
+        Assert.Equal(expectedRatedJobAwarded, experienceAmounts[1]);
 
         client.Close(); await run.WaitAsync(TimeSpan.FromSeconds(5)); listener.Stop();
     }

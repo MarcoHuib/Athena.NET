@@ -1,4 +1,3 @@
-using Athena.Net.MapServer.Gameplay.Rates;
 using Athena.Net.MapServer.Generated.Progression;
 using Athena.Net.MapServer.Net;
 
@@ -14,43 +13,30 @@ public readonly record struct CharacterProgressionResult(
     ulong BaseExperienceAwarded = 0,
     ulong JobExperienceAwarded = 0);
 
-public sealed class CharacterProgressionService(
-    CharacterGameplayStateSession stateSession,
-    GameplayRateOptions? rates = null)
+// Owns ONLY Base/Job EXP state, thresholds, Base/Job Level, stat/skill points,
+// HP/SP recalculation, max levels, and the EXP remainder/overcarry policy, plus
+// the one atomic persisted state transition. It receives already-rated final
+// Base/Job EXP values and does not know or care whether the reward came from a
+// monster, a script, an MVP, or an event - rate selection happens strictly
+// upstream, in Athena.Net.MapServer.Gameplay.Rates (GameplayRateResolver /
+// ExperienceRewardService), before this service is ever called.
+public sealed class CharacterProgressionService(CharacterGameplayStateSession stateSession)
 {
     private const ulong MaximumExperience = long.MaxValue;
     private const ulong MaximumBaseLevelExperience = 99_999_999;
     private const ulong MaximumJobLevelExperience = 999_999_999;
-    private readonly GameplayRateOptions _rates = rates ?? new GameplayRateOptions();
 
     public async Task<CharacterProgressionResult?> AddExperienceAsync(
-        long baseExperience,
-        long jobExperience,
-        ExperienceAwardSource source,
+        ulong baseExperience,
+        ulong jobExperience,
         CancellationToken cancellationToken)
     {
-        if (baseExperience < 0 || jobExperience < 0)
-            throw new ArgumentOutOfRangeException(nameof(baseExperience), "Experience awards must be non-negative.");
-
-        var rate = source switch
-        {
-            ExperienceAwardSource.Battle => (_rates.BaseExperience, _rates.JobExperience),
-            ExperienceAwardSource.Quest => (_rates.QuestExperience, _rates.QuestExperience),
-            _ => throw new ArgumentOutOfRangeException(nameof(source)),
-        };
-        var ratedBase = GameplayRateOptions.Apply((ulong)baseExperience, rate.Item1);
-        var ratedJob = GameplayRateOptions.Apply((ulong)jobExperience, rate.Item2);
         var before = stateSession.State;
-        var calculation = Calculate(before, ratedBase, ratedJob);
+        var calculation = Calculate(before, baseExperience, jobExperience);
         if (calculation.After == before) return calculation;
         var persisted = await stateSession.MutateAsync(_ => calculation.After, cancellationToken);
         return persisted is null ? null : calculation with { After = persisted };
     }
-
-    // Script getexp is the only pre-existing consumer, so this compatibility overload
-    // deliberately retains quest-rate semantics.
-    public Task<CharacterProgressionResult?> AddExperienceAsync(long baseExperience, long jobExperience, CancellationToken cancellationToken) =>
-        AddExperienceAsync(baseExperience, jobExperience, ExperienceAwardSource.Quest, cancellationToken);
 
     internal static CharacterProgressionResult Calculate(CharacterGameplayState state, ulong baseAward, ulong jobAward)
     {

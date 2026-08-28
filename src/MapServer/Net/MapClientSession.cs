@@ -1477,10 +1477,14 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
             // This currently-supported session is the authoritative single recipient: the
             // accepted attack was made by this authenticated account, with no party/contribution
             // policy invented. Zero-valued generated EXP produces no persistence and no packets.
-            var progression = await new CharacterProgressionService(_gameplayState, _rates).AddExperienceAsync(
+            var (ratedBaseExp, ratedJobExp) = ExperienceRewardService.ResolveReward(
+                _rates,
                 target.Spawn.Mob.BaseExp,
                 target.Spawn.Mob.JobExp,
-                ExperienceAwardSource.Battle,
+                ExperienceSource.Monster);
+            var progression = await new CharacterProgressionService(_gameplayState).AddExperienceAsync(
+                ratedBaseExp,
+                ratedJobExp,
                 cancellationToken);
             if (progression is null)
             {
@@ -2277,7 +2281,8 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
     async Task INpcScriptHost.GrantExperienceAsync(long baseExperience, long jobExperience, CancellationToken cancellationToken)
     {
         var state = _gameplayState ?? throw new InvalidOperationException("Character gameplay state is not loaded.");
-        var result = await new CharacterProgressionService(state, _rates).AddExperienceAsync(baseExperience, jobExperience, ExperienceAwardSource.Quest, cancellationToken)
+        var (ratedBaseExp, ratedJobExp) = ExperienceRewardService.ResolveReward(_rates, baseExperience, jobExperience, ExperienceSource.Script);
+        var result = await new CharacterProgressionService(state).AddExperienceAsync(ratedBaseExp, ratedJobExp, cancellationToken)
             ?? throw new InvalidOperationException("Character progression persistence failed.");
         foreach (var packet in IroCharacterProgressionPackets.Build(_accountId, result)) await WriteAsync(packet, cancellationToken);
     }

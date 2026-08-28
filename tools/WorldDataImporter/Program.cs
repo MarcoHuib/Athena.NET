@@ -274,10 +274,17 @@ internal static class WorldDataImporterCli
             await File.ReadAllTextAsync(Path.Combine(root, "db/re/job_stats.yml")),
             await File.ReadAllTextAsync(Path.Combine(root, "db/re/statpoint.yml")),
             options.Required("rathena-commit"));
-        var output = Path.GetFullPath(options.Required("output"));
-        Directory.CreateDirectory(Path.GetDirectoryName(output)!);
-        await File.WriteAllTextAsync(output, generated, new System.Text.UTF8Encoding(false));
-        Console.WriteLine($"Generated pinned progression registry into {output}.");
+        // --output names a directory: the compiler emits both the per-class data
+        // file and the small registry lookup file into it (see
+        // ProgressionDataCompiler.ProgressionOutput).
+        var outputDir = Path.GetFullPath(options.Required("output"));
+        Directory.CreateDirectory(outputDir);
+        var utf8NoBom = new System.Text.UTF8Encoding(false);
+        var dataPath = Path.Combine(outputDir, generated.DataFileName);
+        var registryPath = Path.Combine(outputDir, generated.RegistryFileName);
+        await File.WriteAllTextAsync(dataPath, generated.DataSource, utf8NoBom);
+        await File.WriteAllTextAsync(registryPath, generated.RegistrySource, utf8NoBom);
+        Console.WriteLine($"Generated pinned progression data into {dataPath} and registry into {registryPath}.");
         return 0;
     }
 
@@ -416,7 +423,7 @@ internal static class WorldDataImporterCli
         Console.Error.WriteLine("WorldDataImporter compile-script --source-root <folder> --rathena-commit <sha> --output <Npc.cs> --source-file <path> --map <map> --name <name> --kind <npc|warp> [--trigger OnClick|OnTouch]");
         Console.Error.WriteLine("WorldDataImporter compile-actors --source-root <folder> --rathena-commit <sha> --output <Actors.cs> --source-file <path> --map <map> --name <name> [--name <name>]");
         Console.Error.WriteLine("WorldDataImporter compile-navigation --source-root <folder> --output <Navigation.cs> --name <name> [--name <name>] [--namespace <ns>]");
-        Console.Error.WriteLine("WorldDataImporter compile-progression --rathena-root <folder> --output <Progression.cs>");
+        Console.Error.WriteLine("WorldDataImporter compile-progression --rathena-root <folder> --rathena-commit <sha> --output <Generated/Progression directory>");
         Console.Error.WriteLine("WorldDataImporter compile-mob-spawn --rathena-root <folder> --rathena-commit <sha> --mob-id <id> --name <spawn-name> --spawn-file <path> [--exclude-map <map>] --class-name <n> --constant-name <n> --spawn-class-name <n> --spawn-array-name <n> --output-definition <Mob.cs> --output-spawns <MobSpawns.cs>");
         Console.Error.WriteLine("WorldDataImporter compile-quest-drop --rathena-root <folder> --rathena-commit <sha> --quest-id <id> --output <QuestDrops.cs>");
         Console.Error.WriteLine("WorldDataImporter compile-item --rathena-root <folder> --rathena-commit <sha> --item-id <id> [--item-db-file <path>] --class-name <n> --constant-name <n> --output <Item.cs>");

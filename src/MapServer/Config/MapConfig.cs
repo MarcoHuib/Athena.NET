@@ -4,7 +4,7 @@ using Athena.Net.MapServer.Gameplay.Rates;
 
 namespace Athena.Net.MapServer.Config;
 
-public sealed class MapConfig
+public sealed record MapConfig
 {
     public string UserId { get; init; } = string.Empty;
     public string Password { get; init; } = string.Empty;

@@ -82,13 +82,16 @@ public sealed class CharacterProgressionServiceTests
         Assert.Equal(70U, result.After.CurrentHp);
     }
 
+    // CharacterProgressionService now receives only already-rated final Base/Job
+    // EXP - it has no ExperienceAwardSource/rate concept at all. Rate selection
+    // is exercised separately via GameplayRateResolver/ExperienceRewardService
+    // (see GameplayRateResolverTests / ExperienceRewardServiceTests).
     [Fact]
-    public async Task BattleRatesAreIndependentAndAppliedBeforeThresholds()
+    public async Task AddExperienceAsyncAppliesFinalValuesBeforeThresholds()
     {
         var store = new Store(State());
-        var rates = new GameplayRateOptions { BaseExperience = 500, JobExperience = 200 };
-        var result = await new CharacterProgressionService(new(7, State(), store), rates)
-            .AddExperienceAsync(110, 5, ExperienceAwardSource.Battle, default);
+        var result = await new CharacterProgressionService(new(7, State(), store))
+            .AddExperienceAsync(550, 10, default);
         Assert.NotNull(result);
         Assert.Equal(550UL, result.Value.BaseExperienceAwarded);
         Assert.Equal(10UL, result.Value.JobExperienceAwarded);
@@ -99,28 +102,11 @@ public sealed class CharacterProgressionServiceTests
     }
 
     [Fact]
-    public async Task QuestRateIsSeparateFromBattleRates()
-    {
-        var source = State();
-        var unchangedRates = new GameplayRateOptions { BaseExperience = 500, JobExperience = 500, QuestExperience = 100 };
-        var result = await new CharacterProgressionService(new(7, source, new Store(source)), unchangedRates)
-            .AddExperienceAsync(100, 100, ExperienceAwardSource.Quest, default);
-        Assert.Equal(100UL, result!.Value.BaseExperienceAwarded);
-        Assert.Equal(100UL, result.Value.JobExperienceAwarded);
-
-        var fiveTimes = new GameplayRateOptions { BaseExperience = 200, JobExperience = 300, QuestExperience = 500 };
-        result = await new CharacterProgressionService(new(7, source, new Store(source)), fiveTimes)
-            .AddExperienceAsync(100, 100, ExperienceAwardSource.Quest, default);
-        Assert.Equal(500UL, result!.Value.BaseExperienceAwarded);
-        Assert.Equal(500UL, result.Value.JobExperienceAwarded);
-    }
-
-    [Fact]
-    public async Task ZeroRawExperienceAtAnyRateDoesNotPersist()
+    public async Task ZeroFinalExperienceDoesNotPersist()
     {
         var store = new Store(State());
-        var result = await new CharacterProgressionService(new(7, State(), store), new() { BaseExperience = int.MaxValue, JobExperience = int.MaxValue })
-            .AddExperienceAsync(0, 0, ExperienceAwardSource.Battle, default);
+        var result = await new CharacterProgressionService(new(7, State(), store))
+            .AddExperienceAsync(0, 0, default);
         Assert.NotNull(result);
         Assert.Equal(0, store.Updates);
         Assert.Equal(State(), result.Value.After);

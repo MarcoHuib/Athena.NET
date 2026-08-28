@@ -46,28 +46,15 @@ public sealed class SecretConfig
         return new SecretConfig();
     }
 
-    public MapConfig ApplyTo(MapConfig config)
+    // SecretConfig owns exactly UserId/Password - nothing else. MapConfig is a
+    // record, so this clones every other property unchanged via `with` instead of
+    // re-listing them; adding a new non-secret MapConfig property in the future
+    // requires no change here.
+    public MapConfig ApplyTo(MapConfig config) => config with
     {
-        return new MapConfig
-        {
-            UserId = string.IsNullOrWhiteSpace(UserId) ? config.UserId : UserId,
-            Password = string.IsNullOrWhiteSpace(Password) ? config.Password : Password,
-            CharIp = config.CharIp,
-            CharPort = config.CharPort,
-            BindIp = config.BindIp,
-            MapIp = config.MapIp,
-            MapPort = config.MapPort,
-            ConsoleEnabled = config.ConsoleEnabled,
-            ConsoleMsgLog = config.ConsoleMsgLog,
-            ConsoleSilent = config.ConsoleSilent,
-            ConsoleLogFilePath = config.ConsoleLogFilePath,
-            TimestampFormat = config.TimestampFormat,
-            GameplayRuleSet = config.GameplayRuleSet,
-            GameplayRates = config.GameplayRates,
-            CollisionArtifacts = config.CollisionArtifacts,
-            MapCachePath = config.MapCachePath,
-        };
-    }
+        UserId = string.IsNullOrWhiteSpace(UserId) ? config.UserId : UserId,
+        Password = string.IsNullOrWhiteSpace(Password) ? config.Password : Password,
+    };
 
     private static string GetString(JsonElement element, string name)
     {

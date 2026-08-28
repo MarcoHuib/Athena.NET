@@ -25,7 +25,7 @@ public sealed class MapServerWorldGameplayRulesTests
     [Fact]
     public void Build_ProvidesTheSameImmutableRatePolicyToWorldConsumers()
     {
-        var rates = new GameplayRateOptions { BaseExperience = 500, QuestExperience = 200 };
+        var rates = new GameplayRateOptions { BaseExpRate = 500, QuestBaseExpRate = 200 };
         var world = MapServerWorld.Build(new GameplayRuleServices(new RenewalBasicAttackRules()), rates: rates);
         Assert.Same(rates, world.Rates);
     }

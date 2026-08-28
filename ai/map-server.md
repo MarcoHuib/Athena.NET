@@ -804,20 +804,58 @@ separate future work.
 
 ## Base/Job progression composition and presentation
 
-MapServer configuration also constructs one immutable `GameplayRateOptions` policy.
-Missing rate keys default to 100; explicit malformed, negative, or out-of-range
-values fail configuration loading. The same object flows through `MapServerWorld`
-to every `MapClientSession`. Monster awards select `base_exp_rate` and
-`job_exp_rate`; generated NPC/script `getexp` selects `quest_exp_rate` for both
-arguments and never receives the battle multipliers a second time.
+MapServer configuration constructs one immutable `GameplayRateOptions` policy
+(`Athena.Net.MapServer.Gameplay.Rates`). ATHENA.NET SERVER POLICY: global rates
+(`base_exp_rate`, `job_exp_rate`, `item_drop_rate`) always have a value (100 =
+1x when unset); every other rate key (`quest_base_exp_rate`,
+`quest_job_exp_rate`, `mvp_base_exp_rate`, `mvp_job_exp_rate`,
+`card_drop_rate`, `boss_item_drop_rate`, `mvp_item_drop_rate`,
+`quest_item_drop_rate`, the `item_rate_*` family, `item_rate_mvp`) is an
+OPTIONAL override: unset means "inherit the relevant global rate", never an
+independent default. Explicit malformed, negative, or out-of-range values fail
+configuration loading. The same immutable object flows through `MapServerWorld`
+to every `MapClientSession`.
 
-`CharacterProgressionService` resolves the active job through generated
-`GeneratedProgressionRegistry`, performs the one atomic versioned state mutation,
-and publishes no local state or packets until CharServer acknowledges it. On a
-player-caused Alive→Dead monster transition, raw generated mob EXP follows this
-same service before the dead actor is removed. G_PORING's generated zero/zero award
-therefore causes no persistence and no progression packets; a nonzero generated mob
-uses the identical path. Party attribution and MVP bonus EXP remain unimplemented.
+All reward sources inherit global server rates by default. Source-specific
+rates are optional overrides and REPLACE, rather than multiply, the inherited
+rate - there is exactly one place this is decided:
+`Athena.Net.MapServer.Gameplay.Rates.GameplayRateResolver`. Monster kills
+always resolve `base_exp_rate`/`job_exp_rate` directly (no monster-specific
+override exists). Generated NPC/script `getexp` and future quest rewards
+resolve `quest_base_exp_rate ?? base_exp_rate` and `quest_job_exp_rate ??
+job_exp_rate` - e.g. with `base_exp_rate: 500`/`job_exp_rate: 500` and no
+quest override configured, Captain Carocc's generated `getexp 600,600`
+resolves to 3000/3000 (inherits 5x), not 600 unrated; if
+`quest_base_exp_rate: 1000` were also configured, the same call resolves to
+6000 (the override REPLACES 500), never 30000 (it never stacks with the
+inherited global). `Athena.Net.MapServer.Gameplay.Rates.ExperienceRewardService`
+is the only place a raw Base/Job EXP reward is turned into this final rated
+value, tagged by `ExperienceSource` (Monster/Quest/Script/Mvp/Event); its
+output is the only thing `CharacterProgressionService` ever receives.
+
+`CharacterProgressionService` itself has no rate/source concept at all - it
+receives only already-rated final Base/Job EXP, resolves the active job
+through generated `GeneratedProgressionRegistry`, performs the one atomic
+versioned state mutation, and publishes no local state or packets until
+CharServer acknowledges it. On a player-caused Alive→Dead monster transition,
+raw generated mob EXP is resolved through `ExperienceRewardService`
+(`ExperienceSource.Monster`) before this service is called, then the dead
+actor is removed. G_PORING's generated zero/zero raw award resolves to
+zero/zero at any rate and therefore causes no persistence and no progression
+packets; a nonzero generated mob uses the identical path. Party attribution
+and MVP bonus EXP remain unimplemented.
+
+Drop-rate policy follows the identical inherit-unless-overridden shape via the
+same resolver's `ResolveDropRate`, modeled with `DropSource` (Monster/Boss/
+Mvp/Quest/Script/Event), `ItemCategory` (Common/Heal/Use/Equip/Card), and
+`RewardKind` (NormalDrop vs the MVP's own direct-reward `MvpReward` - distinct
+from the `item_rate_*_mvp` family, which is a normal-drop-table item merely
+dropped BY an MVP monster). This PR only makes the rate policy correct and
+extensible for drops - it does not add a generic monster drop/MVP-reward
+runtime. The tutorial Wood/Lumber `QuestDropRule` continues to roll its own
+probability unchanged; drop rate would only ever scale a roll CHANCE, never an
+item count, and a guaranteed 100% drop must remain capped at 100% regardless
+of any configured rate.
 
 `IroCharacterProgressionPackets` owns `0x00B0`, `0x0ACB`, capture-proven
 `0x0ACC/18`, and `0x019B/10`. Its API receives the authenticated actor/account ID
