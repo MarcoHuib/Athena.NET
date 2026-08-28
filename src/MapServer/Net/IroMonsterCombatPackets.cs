@@ -62,6 +62,26 @@ internal static class IroMonsterCombatPackets
         // offsets 34..69: HireExpireDate/bindOnEquipType/option_data/favorite/look/refine/grade - all zero
         return packet;
     }
+
+    // ZC_DELETE_ITEM_FROM_BODY (0x07FA), verified sailor-packet-export.txt frame 7291,
+    // TCP-payload offset 0x0049, exact 8-byte match: `fa 07 00 00 04 00 02 00`. Matches pinned
+    // clif_delitem (clif.cpp:2917): packetType.W deleteReason.W index.W amount.W. `clientIndex`
+    // must already be the pinned client_index() wire value (server array position + 2,
+    // clif.cpp:122-124) - callers pass the affected row's own SlotIndex + 2 at the moment of
+    // consumption, the same transform BuildItemPickupAck's callers already use. `amount` is the
+    // amount actually consumed FROM THAT ROW, not the total amount requested by the script
+    // command (a multi-row delitem sends one of these packets per affected row). `deleteReason`
+    // is `PacketConstants.ZcDeleteItemFromBodyReasonScriptDelitem` for the script `delitem`
+    // command specifically - see that constant's own doc comment for the pinned pc_delitem trace.
+    internal static byte[] BuildDeleteItemFromBody(ushort clientIndex, ushort amount, ushort deleteReason)
+    {
+        var packet = new byte[PacketConstants.ZcDeleteItemFromBodyLength];
+        BinaryPrimitives.WriteInt16LittleEndian(packet, PacketConstants.ZcDeleteItemFromBody);
+        BinaryPrimitives.WriteUInt16LittleEndian(packet.AsSpan(2), deleteReason);
+        BinaryPrimitives.WriteUInt16LittleEndian(packet.AsSpan(4), clientIndex);
+        BinaryPrimitives.WriteUInt16LittleEndian(packet.AsSpan(6), amount);
+        return packet;
+    }
 }
 
 // Self-facing appearance projection derived from the authoritative equipment snapshot -

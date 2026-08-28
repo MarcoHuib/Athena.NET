@@ -2120,6 +2120,18 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested || _sessionCancellation.IsCancellationRequested)
         {
         }
+        catch (ScriptMutationFailedException exception)
+        {
+            // A fallible generated-script mutation (delitem/getitem) reported an authoritative
+            // persistence failure. The remaining statement sequence never ran (no further
+            // reward/completequest/success dialogue), matching AGENTS.md's "do not report success
+            // before required persistence succeeds". Already-applied earlier statements in this
+            // same script are NOT rolled back (no distributed idempotency - ai/world-data.md).
+            // Minimal client-side interaction close, matching the generic catch below's own
+            // precedent for a mid-flow script abort.
+            MapLogger.Warning($"[iRO MAP DEBUG] Generated script mutation failed entity='{context.EntityId}': {exception.Message}");
+            await WriteAsync(IroNpcDialoguePackets.BuildClose(context.ActorId), CancellationToken.None);
+        }
         catch (Exception exception)
         {
             MapLogger.Warning($"Generated script aborted entity='{context.EntityId}' error={exception.GetType().Name}: {exception.Message}");
@@ -2386,6 +2398,16 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
                 : _inventory.WithUpdatedItem(row.DurableId, row.ItemId, consumeResult.NewAmount, row.Equip, row.Identified, row.Refine, row.Favorite, row.Bound);
             _equipment = CharacterEquipmentSnapshot.FromInventory(_inventory);
             remaining -= consumeAmount;
+
+            // ZC_DELETE_ITEM_FROM_BODY (0x07FA) - sent per-row, immediately after that row's own
+            // authoritative persistence/snapshot update, using THAT row's own client-facing slot
+            // (SlotIndex + 2, same transform GetItemAsync uses a few lines below for 0x0B41) and
+            // THAT row's own consumed amount, never the total requested amount. See
+            // sailor-packet-export.txt frame 7291 / IroMonsterCombatPackets.BuildDeleteItemFromBody.
+            var deleteClientIndex = (ushort)(row.SlotIndex + 2);
+            var deletePacket = IroMonsterCombatPackets.BuildDeleteItemFromBody((ushort)deleteClientIndex, (ushort)consumeAmount, PacketConstants.ZcDeleteItemFromBodyReasonScriptDelitem);
+            MapLogger.Info($"[iRO MAP DEBUG] Sending 0x07FA for delitem itemId={itemId} durableId={row.DurableId} amount={consumeAmount} clientIndex={deleteClientIndex}");
+            await WriteAsync(deletePacket, cancellationToken);
         }
 
         MapLogger.Info($"[iRO MAP DEBUG] delitem consumed itemId={itemId} amount={amount}.");
@@ -2400,22 +2422,29 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
     // generated-script item lookup in this class - never a hardcoded item id here. An itemId
     // absent from the generated registry is a data/generation gap, logged and skipped rather than
     // guessed at, matching the existing quest-drop/item-use-grant convention exactly.
-    async Task INpcScriptHost.GetItemAsync(int itemId, uint amount, CancellationToken cancellationToken)
+    //
+    // Returns false (never throws itself) for every "the reward was not actually granted/the
+    // client was not notified" outcome - unregistered itemId, missing runtime inventory snapshot,
+    // or a genuine CharServer persistence failure alike - so ScriptContext's wrapper (the one seam
+    // that decides generic generated-script mutation-failure semantics) can uniformly stop the
+    // remaining generated statement sequence (no completequest after a failed reward) regardless
+    // of which of these caused the failure.
+    async Task<bool> INpcScriptHost.GetItemAsync(int itemId, uint amount, CancellationToken cancellationToken)
     {
         if (!GeneratedItems.ById.TryGetValue(itemId, out var itemDefinition))
         {
             MapLogger.Warning($"[iRO MAP DEBUG] getitem references unregistered itemId={itemId}; skipping.");
-            return;
+            return false;
         }
 
-        if (_inventory is not { } inventory) return;
+        if (_inventory is not { } inventory) return false;
 
         var inventorySession = new CharacterInventorySession(_accountId, _charId, _inventoryPersistence);
         var addResult = await inventorySession.AddItemAsync(itemDefinition, amount, cancellationToken);
         if (!addResult.Success || addResult.Item is not { } addedRow)
         {
             MapLogger.Warning($"[iRO MAP DEBUG] getitem persistence failed for itemId={itemId}; not notifying client.");
-            return;
+            return false;
         }
 
         _inventory = addResult.IsNewRow
@@ -2428,6 +2457,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
         var pickupPacket = IroMonsterCombatPackets.BuildItemPickupAck(clientIndex, (ushort)amount, itemDefinition.ClientViewId, IroInventoryListPackets.ItemType(itemDefinition));
         MapLogger.Info($"[iRO MAP DEBUG] Sending 0x0B41 for getitem itemId={itemId} count={amount} clientIndex={clientIndex}");
         await WriteAsync(pickupPacket, cancellationToken);
+        return true;
     }
 
     private static TaskCompletionSource NewSignal() => new(TaskCreationOptions.RunContinuationsAsynchronously);
