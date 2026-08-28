@@ -340,9 +340,13 @@ public sealed class MapClientSessionUseItemTests
     // Proves that after opening a First Aid Box, the newly modeled item types it grants
     // (HealingItemDefinition: BluePotion/FreshMilk, DelayConsumeItemDefinition: NoviceMagnifier)
     // survive a reconnect/full inventory serialization (0x0B08/0x0B09/0x0B0B, the SAME
-    // SendSelfInventoryAsync path a real reconnect exercises) without throwing and with the
-    // correct pinned item_type byte - IT_HEALING=0, IT_DELAYCONSUME=11 - never the
-    // NotSupportedException ItemType() previously threw for these two types.
+    // SendSelfInventoryAsync path a real reconnect exercises) without throwing, with the correct
+    // pinned item_type byte for HealingItemDefinition (IT_HEALING=0), and with the current-iRO
+    // client-facing IT_USABLE=2 byte for DelayConsumeItemDefinition (NoviceMagnifier) - NOT
+    // pinned rAthena's own server-side IT_DELAYCONSUME=11, which a live stock-iRO test proved
+    // places the item under the client's Gear tab instead of Items (see
+    // IroInventoryListPackets.ItemType's own doc comment for the full capture/live-test trace).
+    // This never throws the NotSupportedException ItemType() previously threw for these two types.
     [Fact]
     public async Task ReconnectFullInventorySerialization_HealingAndDelayConsumeItemsSerializeWithCorrectItemType()
     {
@@ -377,7 +381,7 @@ public sealed class MapClientSessionUseItemTests
 
         Assert.Contains(entries, e => e.ItemId == 11518 && e.ItemType == 0);  // BluePotion, IT_HEALING
         Assert.Contains(entries, e => e.ItemId == 11614 && e.ItemType == 0);  // FreshMilk, IT_HEALING
-        Assert.Contains(entries, e => e.ItemId == 12325 && e.ItemType == 11); // NoviceMagnifier, IT_DELAYCONSUME
+        Assert.Contains(entries, e => e.ItemId == 12325 && e.ItemType == 2); // NoviceMagnifier, current-iRO client-facing IT_USABLE
 
         Assert.Equal(3, session.Inventory!.Items.Count); // Full reload succeeded - nothing dropped.
 
