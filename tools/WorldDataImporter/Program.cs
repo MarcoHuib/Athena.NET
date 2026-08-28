@@ -273,11 +273,11 @@ internal static class WorldDataImporterCli
             await File.ReadAllTextAsync(Path.Combine(root, "db/re/job_basepoints.yml")),
             await File.ReadAllTextAsync(Path.Combine(root, "db/re/job_stats.yml")),
             await File.ReadAllTextAsync(Path.Combine(root, "db/re/statpoint.yml")),
-            "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca");
+            options.Required("rathena-commit"));
         var output = Path.GetFullPath(options.Required("output"));
         Directory.CreateDirectory(Path.GetDirectoryName(output)!);
         await File.WriteAllTextAsync(output, generated, new System.Text.UTF8Encoding(false));
-        Console.WriteLine($"Generated pinned Novice progression data into {output}.");
+        Console.WriteLine($"Generated pinned progression registry into {output}.");
         return 0;
     }
 

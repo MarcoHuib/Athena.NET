@@ -802,6 +802,29 @@ implementation - the stock capture and this Athena run are not yet proven to
 share identical runtime status/buff state, so that exact-value comparison is
 separate future work.
 
+## Base/Job progression composition and presentation
+
+MapServer configuration also constructs one immutable `GameplayRateOptions` policy.
+Missing rate keys default to 100; explicit malformed, negative, or out-of-range
+values fail configuration loading. The same object flows through `MapServerWorld`
+to every `MapClientSession`. Monster awards select `base_exp_rate` and
+`job_exp_rate`; generated NPC/script `getexp` selects `quest_exp_rate` for both
+arguments and never receives the battle multipliers a second time.
+
+`CharacterProgressionService` resolves the active job through generated
+`GeneratedProgressionRegistry`, performs the one atomic versioned state mutation,
+and publishes no local state or packets until CharServer acknowledges it. On a
+player-caused Alive→Dead monster transition, raw generated mob EXP follows this
+same service before the dead actor is removed. G_PORING's generated zero/zero award
+therefore causes no persistence and no progression packets; a nonzero generated mob
+uses the identical path. Party attribution and MVP bonus EXP remain unimplemented.
+
+`IroCharacterProgressionPackets` owns `0x00B0`, `0x0ACB`, capture-proven
+`0x0ACC/18`, and `0x019B/10`. Its API receives the authenticated actor/account ID
+explicitly and serializes from the persisted `CharacterProgressionResult`; raw
+packet writes and captured payload replay do not occur in session logic. See
+`ai/iro-2026-wire.md` for the Full-izlude field layouts and ordering.
+
 ## Authoritative inventory SlotIndex consistency
 
 The live weapon-combat validation above also exposed a genuine authoritative-

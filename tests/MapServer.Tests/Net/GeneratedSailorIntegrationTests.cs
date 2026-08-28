@@ -310,8 +310,16 @@ public sealed class GeneratedSailorIntegrationTests
             var opcodeBytes = await ReadExact(fixture.Stream, 2);
             var opcode = BinaryPrimitives.ReadInt16LittleEndian(opcodeBytes);
             if (opcode == (short)0x0b41) { pickup = [.. opcodeBytes, .. await ReadExact(fixture.Stream, 68)]; break; }
-            if (opcode is not (0x00b0 or 0x0acb)) Assert.Fail($"Unexpected packet 0x{opcode:x4} while draining the getexp burst.");
-            await ReadExact(fixture.Stream, opcode == 0x00b0 ? 6 : 10);
+            var remaining = opcode switch
+            {
+                0x00b0 => 6,
+                0x0acb => 10,
+                0x0acc => PacketConstants.ZcNotifyExperienceLength - 2,
+                0x019b => PacketConstants.ZcNotifyEffectLength - 2,
+                _ => -1,
+            };
+            if (remaining < 0) Assert.Fail($"Unexpected packet 0x{opcode:x4} while draining the getexp burst.");
+            await ReadExact(fixture.Stream, remaining);
         }
 
         // getitem 611,5 -> reuses the existing 0x0B41 ZC_ITEM_PICKUP_ACK generation. Occurs after
@@ -436,8 +444,16 @@ public sealed class GeneratedSailorIntegrationTests
             var opcodeBytes = await ReadExact(fixture.Stream, 2);
             var opcode = BinaryPrimitives.ReadInt16LittleEndian(opcodeBytes);
             if (opcode == (short)0x00b6) { break; } // ZC_NPC_CLOSE - the script aborted here.
-            if (opcode is not (0x00b0 or 0x0acb)) Assert.Fail($"Unexpected packet 0x{opcode:x4} while draining the getexp burst.");
-            await ReadExact(fixture.Stream, opcode == 0x00b0 ? 6 : 10);
+            var remaining = opcode switch
+            {
+                0x00b0 => 6,
+                0x0acb => 10,
+                0x0acc => PacketConstants.ZcNotifyExperienceLength - 2,
+                0x019b => PacketConstants.ZcNotifyEffectLength - 2,
+                _ => -1,
+            };
+            if (remaining < 0) Assert.Fail($"Unexpected packet 0x{opcode:x4} while draining the getexp burst.");
+            await ReadExact(fixture.Stream, remaining);
         }
         await fixture.WaitForScriptCompletionAsync();
 

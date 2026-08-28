@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Net;
 using System.Net.Sockets;
 using Athena.Net.MapServer.Gameplay.Rules;
+using Athena.Net.MapServer.Gameplay.Rates;
 using Athena.Net.MapServer.Logging;
 
 namespace Athena.Net.MapServer.Config;
@@ -23,6 +24,7 @@ public static class MapConfigLoader
         var consoleLogFilePath = "./log/map-msg_log.log";
         var timestampFormat = string.Empty;
         var gameplayRuleSet = RagnarokRuleSet.Renewal;
+        var gameplayRates = new GameplayRateOptions();
         var collisionArtifacts = new List<MapCollisionArtifactConfig>();
         string? mapCachePath = null;
 
@@ -44,6 +46,7 @@ public static class MapConfigLoader
                 ConsoleLogFilePath = consoleLogFilePath,
                 TimestampFormat = timestampFormat,
                 GameplayRuleSet = gameplayRuleSet,
+                GameplayRates = gameplayRates,
             };
         }
 
@@ -149,6 +152,10 @@ public static class MapConfigLoader
                         $"Invalid gameplay_ruleset value '{value}' in '{path}'. Valid values: {string.Join(", ", Enum.GetNames<RagnarokRuleSet>())}.");
                 }
             }
+            else if (TryApplyGameplayRate(key, value, path, gameplayRates, out var updatedRates))
+            {
+                gameplayRates = updatedRates;
+            }
             else if (key.Equals("map_collision_artifact", StringComparison.OrdinalIgnoreCase))
             {
                 // Repeatable key (unlike every other key here, which overwrites a single scalar):
@@ -199,9 +206,63 @@ public static class MapConfigLoader
             ConsoleLogFilePath = consoleLogFilePath,
             TimestampFormat = timestampFormat,
             GameplayRuleSet = gameplayRuleSet,
+            GameplayRates = gameplayRates,
             CollisionArtifacts = collisionArtifacts,
             MapCachePath = mapCachePath,
         };
+    }
+
+    private static bool TryApplyGameplayRate(
+        string key,
+        string value,
+        string path,
+        GameplayRateOptions current,
+        out GameplayRateOptions updated)
+    {
+        updated = current;
+        var normalized = key.ToLowerInvariant();
+        var isExperience = normalized is "base_exp_rate" or "job_exp_rate" or "quest_exp_rate" or "mvp_exp_rate";
+        var isDrop = normalized is
+            "item_rate_common" or "item_rate_heal" or "item_rate_use" or "item_rate_equip" or "item_rate_card" or
+            "item_rate_common_boss" or "item_rate_heal_boss" or "item_rate_use_boss" or "item_rate_equip_boss" or "item_rate_card_boss" or
+            "item_rate_common_mvp" or "item_rate_heal_mvp" or "item_rate_use_mvp" or "item_rate_equip_mvp" or "item_rate_card_mvp" or
+            "item_rate_mvp";
+        if (!isExperience && !isDrop) return false;
+
+        if (!uint.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out var rate) ||
+            (isExperience && rate > int.MaxValue) ||
+            (isDrop && rate > 1_000_000))
+        {
+            var maximum = isExperience ? int.MaxValue : 1_000_000;
+            throw new InvalidOperationException(
+                $"Invalid {key} value '{value}' in '{path}'. Expected an integer from 0 through {maximum}.");
+        }
+
+        updated = normalized switch
+        {
+            "base_exp_rate" => current with { BaseExperience = rate },
+            "job_exp_rate" => current with { JobExperience = rate },
+            "quest_exp_rate" => current with { QuestExperience = rate },
+            "mvp_exp_rate" => current with { MvpExperience = rate },
+            "item_rate_common" => current with { ItemCommon = rate },
+            "item_rate_heal" => current with { ItemHeal = rate },
+            "item_rate_use" => current with { ItemUse = rate },
+            "item_rate_equip" => current with { ItemEquip = rate },
+            "item_rate_card" => current with { ItemCard = rate },
+            "item_rate_common_boss" => current with { ItemCommonBoss = rate },
+            "item_rate_heal_boss" => current with { ItemHealBoss = rate },
+            "item_rate_use_boss" => current with { ItemUseBoss = rate },
+            "item_rate_equip_boss" => current with { ItemEquipBoss = rate },
+            "item_rate_card_boss" => current with { ItemCardBoss = rate },
+            "item_rate_common_mvp" => current with { ItemCommonMvp = rate },
+            "item_rate_heal_mvp" => current with { ItemHealMvp = rate },
+            "item_rate_use_mvp" => current with { ItemUseMvp = rate },
+            "item_rate_equip_mvp" => current with { ItemEquipMvp = rate },
+            "item_rate_card_mvp" => current with { ItemCardMvp = rate },
+            "item_rate_mvp" => current with { ItemMvp = rate },
+            _ => current,
+        };
+        return true;
     }
 
     private static IEnumerable<string> ReadConfigLines(string path, HashSet<string> visited)

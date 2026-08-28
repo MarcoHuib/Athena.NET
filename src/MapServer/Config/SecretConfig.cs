@@ -63,6 +63,7 @@ public sealed class SecretConfig
             ConsoleLogFilePath = config.ConsoleLogFilePath,
             TimestampFormat = config.TimestampFormat,
             GameplayRuleSet = config.GameplayRuleSet,
+            GameplayRates = config.GameplayRates,
             CollisionArtifacts = config.CollisionArtifacts,
             MapCachePath = config.MapCachePath,
         };

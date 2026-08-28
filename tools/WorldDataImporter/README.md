@@ -238,17 +238,20 @@ dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- audit \
 
 The audit only produces counts and classifications; it does not convert content.
 
-## Novice progression data
+## Progression registry
 
 ```bash
 dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- compile-progression \
   --rathena-root legacy/rathena \
+  --rathena-commit e985006171d2eb320ee512a653f4c83aea3d81b6 \
   --output src/MapServer/Generated/Progression/NoviceProgression.cs
 ```
 
-This deliberately generates only the currently supported renewal Novice base/job
-EXP, HP/SP, stat-point, and relevant job-bonus tables. The pinned YAML remains the
-source of truth.
+This currently generates one registry entry for the supported renewal Novice
+Base/Job EXP, HP/SP, stat-point, and relevant job-bonus tables. Runtime consumes
+the job-keyed definition boundary, so adding another generated entry does not
+change progression logic. The pinned YAML and explicit current commit remain the
+source/provenance of truth; never hand-edit the output.
 
 ## Verification
 

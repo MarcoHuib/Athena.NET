@@ -153,17 +153,28 @@ public sealed class GeneratedCaptainCaroccIntegrationTests
         // the level-1 fixture, so several parameter packets precede setquest 21008's 0x0B0C -
         // drain until that expected packet ID, requiring at least one progression packet.
         var progressionPacketCount = 0;
+        var progressionPacketIds = new List<short>();
         byte[] addQuest;
         while (true)
         {
             var header = await ReadExact(stream, 2);
             var packetId = BinaryPrimitives.ReadInt16LittleEndian(header);
             if (packetId == 0x0b0c) { addQuest = [.. header, .. await ReadExact(stream, IroQuestPackets.AddQuestLength - 2)]; break; }
-            var length = packetId == PacketConstants.ZcLongLongParameterChange ? 12 : 8;
+            var length = packetId switch
+            {
+                PacketConstants.ZcLongLongParameterChange => 12,
+                PacketConstants.ZcNotifyExperience => PacketConstants.ZcNotifyExperienceLength,
+                PacketConstants.ZcNotifyEffect => PacketConstants.ZcNotifyEffectLength,
+                _ => 8,
+            };
             await ReadExact(stream, length - 2);
             progressionPacketCount++;
+            progressionPacketIds.Add(packetId);
         }
         Assert.True(progressionPacketCount > 0);
+        Assert.Contains(PacketConstants.ZcNotifyExperience, progressionPacketIds);
+        Assert.Contains(PacketConstants.ZcNotifyEffect, progressionPacketIds);
+        Assert.True(gameplayPersistence.Updates >= 2); // heal, then the one atomic getexp mutation
         Assert.Equal(21008u, BinaryPrimitives.ReadUInt32LittleEndian(addQuest.AsSpan(2)));
 
         // sc_start SC_BLESSING/SC_INCREASEAGI additionally applied to session-local status state
@@ -205,9 +216,11 @@ public sealed class GeneratedCaptainCaroccIntegrationTests
     private sealed class RecordingGameplayStatePersistence(CharacterGameplayState state) : ICharacterGameplayStatePersistence
     {
         private CharacterGameplayState _state = state;
+        public int Updates { get; private set; }
         public Task<CharacterGameplayState?> GetAsync(uint accountId, uint characterId, CancellationToken cancellationToken) => Task.FromResult<CharacterGameplayState?>(_state);
         public Task<CharacterGameplayState?> UpdateAsync(uint accountId, CharacterGameplayState expected, CharacterGameplayState updated, CancellationToken cancellationToken)
         {
+            Updates++;
             if (expected.Version != _state.Version) return Task.FromResult<CharacterGameplayState?>(null);
             _state = updated with { Version = expected.Version + 1 };
             return Task.FromResult<CharacterGameplayState?>(_state);

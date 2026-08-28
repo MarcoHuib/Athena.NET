@@ -3,6 +3,7 @@ using System.Net;
 using System.Net.Sockets;
 using Athena.Net.MapServer.Config;
 using Athena.Net.MapServer.Gameplay.Rules.Renewal;
+using Athena.Net.MapServer.Gameplay.Rates;
 using Athena.Net.MapServer.Generated.GameData.Items;
 using Athena.Net.MapServer.Generated.GameData.Mobs;
 using Athena.Net.MapServer.Net;
@@ -35,6 +36,7 @@ public sealed class MapClientSessionMonsterCombatTests
     private const uint AccountId = 7;
     private const uint CharId = 9;
     private const uint Quest21008 = 21008;
+    private RecordingGameplayStatePersistence? _lastGameplayPersistence;
 
     private sealed class RecordingQuestPersistence(uint questId, CharacterQuestStatus initialState) : ICharacterQuestPersistence
     {
@@ -45,8 +47,13 @@ public sealed class MapClientSessionMonsterCombatTests
 
     private sealed class RecordingGameplayStatePersistence(CharacterGameplayState state) : ICharacterGameplayStatePersistence
     {
+        public int Updates { get; private set; }
         public Task<CharacterGameplayState?> GetAsync(uint accountId, uint charId, CancellationToken cancellationToken) => Task.FromResult<CharacterGameplayState?>(state);
-        public Task<CharacterGameplayState?> UpdateAsync(uint accountId, CharacterGameplayState expected, CharacterGameplayState updated, CancellationToken cancellationToken) => Task.FromResult<CharacterGameplayState?>(updated);
+        public Task<CharacterGameplayState?> UpdateAsync(uint accountId, CharacterGameplayState expected, CharacterGameplayState updated, CancellationToken cancellationToken)
+        {
+            Updates++;
+            return Task.FromResult<CharacterGameplayState?>(updated);
+        }
     }
 
     // `existingRowCount` simulates however many DURABLE rows already exist in CharServer's own
@@ -144,7 +151,8 @@ public sealed class MapClientSessionMonsterCombatTests
 
     private async Task<(TcpClient Client, NetworkStream Stream, MapClientSession Session, Task RunTask, MobInstance Target)> SetupAsync(
         RecordingInventoryPersistence inventoryPersistence, CharacterQuestStatus questState, ICharacterInventoryListPersistence? inventoryListPersistence = null,
-        CharacterGameplayState? gameplayState = null, TimeProvider? timeProvider = null, Func<int, int, int>? rollWeaponAtk = null)
+        CharacterGameplayState? gameplayState = null, TimeProvider? timeProvider = null, Func<int, int, int>? rollWeaponAtk = null,
+        MobDefinition? mobDefinition = null, GameplayRateOptions? rates = null)
     {
         var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
@@ -156,7 +164,7 @@ public sealed class MapClientSessionMonsterCombatTests
         var stream = client.GetStream();
 
         var allocator = new WorldActorIdAllocator();
-        var spawnDefinition = new MobSpawnDefinition(GeneratedMobs.GPoring, "int_land03", 1, 5000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "test", 0));
+        var spawnDefinition = new MobSpawnDefinition(mobDefinition ?? GeneratedMobs.GPoring, "int_land03", 1, 5000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "test", 0));
         var registry = new MonsterRegistry([spawnDefinition], allocator, new FixedCellSelector(75, 51), TimeProvider.System);
         var questDrops = new QuestDropResolver(Generated.GameData.Quests.GeneratedQuestDrops.All);
         var combat = new MonsterCombatCoordinator(registry, questDrops, new RenewalBasicAttackRules(rollWeaponAtk));
@@ -164,6 +172,7 @@ public sealed class MapClientSessionMonsterCombatTests
 
         var questPersistence = new RecordingQuestPersistence(Quest21008, questState);
         var gameplayPersistence = new RecordingGameplayStatePersistence(gameplayState ?? StrongNovice());
+        _lastGameplayPersistence = gameplayPersistence;
 
         var session = new MapClientSession(
             1, serverClient, new CharServerConnector(new MapConfigStore(new MapConfig(), "unused.conf")), true,
@@ -171,7 +180,7 @@ public sealed class MapClientSessionMonsterCombatTests
             questPersistence: questPersistence, gameplayStatePersistence: gameplayPersistence,
             accountId: AccountId, charId: CharId, monsters: registry, combat: combat,
             inventoryPersistence: inventoryPersistence, inventoryListPersistence: inventoryListPersistence,
-            timeProvider: timeProvider);
+            timeProvider: timeProvider, rates: rates);
         var run = session.RunAsync(CancellationToken.None);
         await session.CompleteIroAuthenticationAsync(new(AccountId, CharId, 1, 2, 0, 0, false, "int_land03", 75, 51, 0, 0, 0));
 
@@ -249,6 +258,7 @@ public sealed class MapClientSessionMonsterCombatTests
         }
 
         Assert.False(target.IsAlive);
+        Assert.Equal(0, _lastGameplayPersistence!.Updates);
         client.Close();
         await run.WaitAsync(TimeSpan.FromSeconds(5));
     }
@@ -287,6 +297,67 @@ public sealed class MapClientSessionMonsterCombatTests
         await stream.WriteAsync(new byte[] { 0x1c, 0x0b });
         var next = await ReadExact(stream, 2);
         Assert.Equal((short)PacketConstants.ZcPingLive, BinaryPrimitives.ReadInt16LittleEndian(next));
+
+        client.Close();
+        await run.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
+    public async Task Attack_SourceBackedNonzeroMob_AppliesRatesPersistsThenSendsProgressionAndVisuals()
+    {
+        // Pinned db/re/mob_db.yml Id 1002, not a G_PORING override. Normal Poring's raw
+        // BaseExp/JobExp are 150/40; all other fields below are from the same pinned block.
+        var poring = new MobDefinition(1002, "PORING", "Poring", 1, 55, 1, 1, 2, 5,
+            6, 1, 1, 0, 6, 5, 1, 400, 1872, 672, 480, 150, 40,
+            MobMode.CanMove | MobMode.CanAttack,
+            new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/re/mob_db.yml", 136));
+        var rates = new GameplayRateOptions { BaseExperience = 500, JobExperience = 200 };
+        var (client, stream, session, run, target) = await SetupAsync(
+            new RecordingInventoryPersistence(), CharacterQuestStatus.Absent,
+            gameplayState: WeakFreshNovice(), mobDefinition: poring, rates: rates);
+        using var _ = client;
+
+        await stream.WriteAsync(new byte[] { 0x7d, 0x00, 0xaa });
+        await ReadExact(stream, 15);
+        await ReadExact(stream, 6);
+        await ReadExact(stream, 4);
+        var actorId = BinaryPrimitives.ReadUInt32LittleEndian((await ReadDynamic(stream)).AsSpan(5));
+        var progressionIds = new List<short>();
+
+        for (var i = 0; i < 30 && target.IsAlive; i++)
+        {
+            await stream.WriteAsync(AttackPacket(actorId));
+            await ReadExact(stream, PacketConstants.ZcNotifyAct3Length);
+            if (!target.IsAlive)
+            {
+                while (true)
+                {
+                    var header = await ReadExact(stream, 2);
+                    var id = BinaryPrimitives.ReadInt16LittleEndian(header);
+                    var length = id switch
+                    {
+                        PacketConstants.ZcLongLongParameterChange => 12,
+                        PacketConstants.ZcNotifyExperience => PacketConstants.ZcNotifyExperienceLength,
+                        PacketConstants.ZcNotifyEffect => PacketConstants.ZcNotifyEffectLength,
+                        PacketConstants.ZcParameterChange => 8,
+                        PacketConstants.ZcNotifyVanish => PacketConstants.ZcNotifyVanishLength,
+                        _ => throw new InvalidDataException($"Unexpected post-death packet 0x{id:X4}."),
+                    };
+                    await ReadExact(stream, length - 2);
+                    if (id == PacketConstants.ZcNotifyVanish) break;
+                    progressionIds.Add(id);
+                }
+            }
+        }
+
+        Assert.False(target.IsAlive);
+        Assert.Equal(1, _lastGameplayPersistence!.Updates);
+        Assert.Equal((ushort)2, session.GameplayState!.State.BaseLevel);
+        Assert.Equal(202UL, session.GameplayState.State.BaseExperience); // 150 * 500% - 548
+        Assert.Equal((ushort)2, session.GameplayState.State.JobLevel);
+        Assert.Equal(9UL, session.GameplayState.State.JobExperience); // pinned single-level overcarry cap
+        Assert.Equal(2, progressionIds.Count(id => id == PacketConstants.ZcNotifyExperience));
+        Assert.Equal(2, progressionIds.Count(id => id == PacketConstants.ZcNotifyEffect));
 
         client.Close();
         await run.WaitAsync(TimeSpan.FromSeconds(5));

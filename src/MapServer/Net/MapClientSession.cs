@@ -4,6 +4,7 @@ using System.Net.Sockets;
 using System.Runtime.ExceptionServices;
 using Athena.Net.MapServer.Generated.GameData.Items;
 using Athena.Net.MapServer.Generated.GameData.Quests;
+using Athena.Net.MapServer.Gameplay.Rates;
 using Athena.Net.MapServer.Logging;
 using Athena.Net.MapServer.World;
 using Athena.Net.MapServer.World.GeneratedScripts;
@@ -74,6 +75,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
     // EmptyMapCollisionProvider.Instance on the test-facing path, matching this project's existing
     // "collision-less means no real map is loaded" convention (MapServerWorld.Build's own default).
     private readonly IMapCollisionProvider _collisionProvider;
+    private readonly GameplayRateOptions _rates;
     // Owns authoritative per-cell walk timing (see CharacterMovementState's own doc comment for the
     // rAthena unit_walktoxy_timer trace this replaces). _x/_y/_mapName remain the fields every other
     // handler in this class reads; SyncPositionFromMovement() is the one place that reconciles them
@@ -181,7 +183,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
     // namespace alongside the composed MonsterRegistry's shared one.
     public MapClientSession(int sessionId, TcpClient client, CharServerConnector charConnector, MapServerWorld world)
         : this(sessionId, client, charConnector, world.Maps, monsters: world.Monsters, combat: world.Combat, spatialInspector: world.SpatialInspector,
-               movementPathProvider: world.MovementPathProvider, monsterRuntime: world.MonsterRuntime, collisionProvider: world.Collision)
+               movementPathProvider: world.MovementPathProvider, monsterRuntime: world.MonsterRuntime, collisionProvider: world.Collision, rates: world.Rates)
     {
     }
 
@@ -201,7 +203,8 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
         ICharacterInventoryListPersistence? inventoryListPersistence = null,
         MonsterSpatialInspector? spatialInspector = null,
         MonsterRuntime? monsterRuntime = null,
-        IMapCollisionProvider? collisionProvider = null)
+        IMapCollisionProvider? collisionProvider = null,
+        GameplayRateOptions? rates = null)
     {
         SessionId = sessionId;
         _client = client;
@@ -220,6 +223,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
         _timeProvider = timeProvider ?? TimeProvider.System;
         _movementPathProvider = movementPathProvider ?? new UnverifiedGridLineMovementPathProvider();
         _collisionProvider = collisionProvider ?? EmptyMapCollisionProvider.Instance;
+        _rates = rates ?? new GameplayRateOptions();
         _statusEffects = new CharacterStatusEffectState(_timeProvider);
     }
 
@@ -249,7 +253,8 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
         ICharacterInventoryListPersistence? inventoryListPersistence = null,
         MonsterSpatialInspector? spatialInspector = null,
         MonsterRuntime? monsterRuntime = null,
-        IMapCollisionProvider? collisionProvider = null)
+        IMapCollisionProvider? collisionProvider = null,
+        GameplayRateOptions? rates = null)
         : this(
             sessionId,
             client,
@@ -273,7 +278,8 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
             inventoryListPersistence ?? AlwaysEmptyInventoryListPersistence.Instance,
             spatialInspector,
             monsterRuntime,
-            collisionProvider)
+            collisionProvider,
+            rates)
     {
         _iroAuthRequested = iroAuthenticated;
         _authRequested = iroAuthenticated;
@@ -1467,6 +1473,25 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
 
         if (outcome.KilledByThisHit)
         {
+            // Pinned mob_dead awards generated monster EXP before clearing the dead unit.
+            // This currently-supported session is the authoritative single recipient: the
+            // accepted attack was made by this authenticated account, with no party/contribution
+            // policy invented. Zero-valued generated EXP produces no persistence and no packets.
+            var progression = await new CharacterProgressionService(_gameplayState, _rates).AddExperienceAsync(
+                target.Spawn.Mob.BaseExp,
+                target.Spawn.Mob.JobExp,
+                ExperienceAwardSource.Battle,
+                cancellationToken);
+            if (progression is null)
+            {
+                MapLogger.Warning($"[iRO MAP DEBUG] Monster EXP persistence failed actorId={expected.TargetActorId}; no progression packets sent.");
+            }
+            else
+            {
+                foreach (var packet in IroCharacterProgressionPackets.Build(_accountId, progression.Value))
+                    await WriteAsync(packet, cancellationToken);
+            }
+
             MapLogger.Info($"[iRO MAP DEBUG] Monster died actorId={expected.TargetActorId} mob={target.Spawn.Mob.AegisName}");
             var vanishPacket = IroMonsterCombatPackets.BuildNotifyVanish(expected.TargetActorId, PacketConstants.ZcNotifyVanishReasonDied);
             await WriteAsync(vanishPacket, cancellationToken);
@@ -2252,9 +2277,9 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
     async Task INpcScriptHost.GrantExperienceAsync(long baseExperience, long jobExperience, CancellationToken cancellationToken)
     {
         var state = _gameplayState ?? throw new InvalidOperationException("Character gameplay state is not loaded.");
-        var result = await new CharacterProgressionService(state).AddExperienceAsync(baseExperience, jobExperience, cancellationToken)
+        var result = await new CharacterProgressionService(state, _rates).AddExperienceAsync(baseExperience, jobExperience, ExperienceAwardSource.Quest, cancellationToken)
             ?? throw new InvalidOperationException("Character progression persistence failed.");
-        foreach (var packet in IroCharacterProgressionPackets.Build(result, baseExperience > 0, jobExperience > 0)) await WriteAsync(packet, cancellationToken);
+        foreach (var packet in IroCharacterProgressionPackets.Build(_accountId, result)) await WriteAsync(packet, cancellationToken);
     }
 
     // Frame 3496 of npc-interaction-heal-action.pcapng (Captain Carocc's completion burst;

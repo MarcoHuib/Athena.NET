@@ -96,6 +96,10 @@ public static class PacketConstants
     public const short ZcShowImage = 0x01b3;
     public const short ZcParameterChange = 0x00b0;
     public const short ZcLongLongParameterChange = 0x0acb;
+    public const short ZcNotifyExperience = 0x0acc;
+    public const int ZcNotifyExperienceLength = 18;
+    public const short ZcNotifyEffect = 0x019b;
+    public const int ZcNotifyEffectLength = 10;
     public const short ZcRefuseEnter = 0x74;
     public const short ZcNotifyActorInit = 0x0b1b;
     public const short ZcPingLive = 0x0b1d;

@@ -417,13 +417,62 @@ public sealed class CompilerTests
         var second = Path.Combine(Path.GetTempPath(), $"novice-progression-{Guid.NewGuid():N}.cs");
         try
         {
-            string[] Arguments(string output) => ["compile-progression", "--rathena-root", Path.Combine(repository, "legacy/rathena"), "--output", output];
+            string[] Arguments(string output) => ["compile-progression", "--rathena-root", Path.Combine(repository, "legacy/rathena"), "--rathena-commit", "e985006171d2eb320ee512a653f4c83aea3d81b6", "--output", output];
             Assert.Equal(0, await WorldDataImporterCli.RunAsync(Arguments(first)));
             Assert.Equal(0, await WorldDataImporterCli.RunAsync(Arguments(second)));
             Assert.Equal(await File.ReadAllBytesAsync(first), await File.ReadAllBytesAsync(second));
             Assert.Equal(await File.ReadAllBytesAsync(Path.Combine(repository, "src/MapServer/Generated/Progression/NoviceProgression.cs")), await File.ReadAllBytesAsync(first));
         }
         finally { File.Delete(first); File.Delete(second); }
+    }
+
+    [Fact]
+    public void ProgressionCompiler_EmitsGenericRegistryExactValuesAndProvenance()
+    {
+        var repository = FindRepositoryRoot();
+        var root = Path.Combine(repository, "legacy/rathena");
+        var generated = ProgressionDataCompiler.Generate(
+            File.ReadAllText(Path.Combine(root, "db/re/job_exp.yml")),
+            File.ReadAllText(Path.Combine(root, "db/re/job_basepoints.yml")),
+            File.ReadAllText(Path.Combine(root, "db/re/job_stats.yml")),
+            File.ReadAllText(Path.Combine(root, "db/re/statpoint.yml")),
+            "e985006171d2eb320ee512a653f4c83aea3d81b6");
+
+        Assert.Contains("GeneratedProgressionRegistry", generated);
+        Assert.Contains("BaseExperienceToNext: new ulong[] { 0, 548, 894, 1486", generated);
+        Assert.Contains("JobExperienceToNext: new ulong[] { 0, 10, 18, 28", generated);
+        Assert.Contains("BaseHp: new uint[] { 0, 40, 45, 50", generated);
+        Assert.Contains("BaseSp: new uint[] { 0, 11, 12, 13", generated);
+        Assert.Contains("CumulativeStatPoints: new uint[] { 0, 48, 51, 54", generated);
+        Assert.Contains("JobVitalityBonus: new uint[] { 0, 0, 0, 0, 0, 0, 1", generated);
+        Assert.Contains("rAthena commit: e985006171d2eb320ee512a653f4c83aea3d81b6", generated);
+    }
+
+    [Fact]
+    public void ProgressionCompiler_MissingRequiredSectionFailsLoudly()
+    {
+        var repository = FindRepositoryRoot();
+        var root = Path.Combine(repository, "legacy/rathena");
+        Assert.ThrowsAny<Exception>(() => ProgressionDataCompiler.Generate(
+            File.ReadAllText(Path.Combine(root, "db/re/job_exp.yml")).Replace("    BaseExp:", "    MissingBaseExp:", StringComparison.Ordinal),
+            File.ReadAllText(Path.Combine(root, "db/re/job_basepoints.yml")),
+            File.ReadAllText(Path.Combine(root, "db/re/job_stats.yml")),
+            File.ReadAllText(Path.Combine(root, "db/re/statpoint.yml")),
+            "commit"));
+    }
+
+    [Fact]
+    public void ProgressionCompiler_AmbiguousJobSectionsFailLoudly()
+    {
+        var repository = FindRepositoryRoot();
+        var root = Path.Combine(repository, "legacy/rathena");
+        var jobExperience = File.ReadAllText(Path.Combine(root, "db/re/job_exp.yml"));
+        Assert.Throws<InvalidOperationException>(() => ProgressionDataCompiler.Generate(
+            jobExperience + jobExperience,
+            File.ReadAllText(Path.Combine(root, "db/re/job_basepoints.yml")),
+            File.ReadAllText(Path.Combine(root, "db/re/job_stats.yml")),
+            File.ReadAllText(Path.Combine(root, "db/re/statpoint.yml")),
+            "commit"));
     }
 
     private static string FindRepositoryRoot()

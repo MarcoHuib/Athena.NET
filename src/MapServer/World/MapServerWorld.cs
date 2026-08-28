@@ -1,4 +1,5 @@
 using Athena.Net.MapServer.Gameplay.Rules;
+using Athena.Net.MapServer.Gameplay.Rates;
 using Athena.Net.MapServer.Generated.GameData.Quests;
 using Athena.Net.MapServer.World.GeneratedScripts;
 
@@ -14,7 +15,7 @@ namespace Athena.Net.MapServer.World;
 // fall back to WorldMapRegistry.Tutorial once this exists; that static
 // singleton remains only for existing tests/legacy standalone callers that
 // don't combine world data with a monster runtime.
-public sealed record MapServerWorld(WorldMapRegistry Maps, MonsterRegistry Monsters, MonsterCombatCoordinator Combat, IMapCollisionProvider Collision, MonsterSpatialInspector SpatialInspector, IMovementPathProvider MovementPathProvider, MonsterRuntime MonsterRuntime)
+public sealed record MapServerWorld(WorldMapRegistry Maps, MonsterRegistry Monsters, MonsterCombatCoordinator Combat, IMapCollisionProvider Collision, MonsterSpatialInspector SpatialInspector, IMovementPathProvider MovementPathProvider, MonsterRuntime MonsterRuntime, GameplayRateOptions? Rates = null)
 {
     // `cellSelector` defaults to null, which means "explicitly choose ONE of the two selectors
     // based on `collisionProvider`'s identity, right here at composition time" - never an internal
@@ -42,7 +43,7 @@ public sealed record MapServerWorld(WorldMapRegistry Maps, MonsterRegistry Monst
     // local/gitignored, never committed). Threaded through composition now so a future branch can
     // supply a real provider without touching this signature's callers again; nothing in the
     // current gameplay runtime consumes it yet.
-    public static MapServerWorld Build(GameplayRuleServices gameplayRules, IMobSpawnCellSelector? cellSelector = null, TimeProvider? timeProvider = null, IMapCollisionProvider? collisionProvider = null)
+    public static MapServerWorld Build(GameplayRuleServices gameplayRules, IMobSpawnCellSelector? cellSelector = null, TimeProvider? timeProvider = null, IMapCollisionProvider? collisionProvider = null, GameplayRateOptions? rates = null)
     {
         var resolvedCollisionProvider = collisionProvider ?? EmptyMapCollisionProvider.Instance;
         var allocator = new WorldActorIdAllocator();
@@ -70,7 +71,7 @@ public sealed record MapServerWorld(WorldMapRegistry Maps, MonsterRegistry Monst
             ? new UnverifiedGridLineMovementPathProvider()
             : new RathenaCompatibleMovementPathProvider(resolvedCollisionProvider);
         var monsterRuntime = new MonsterRuntime(monsters, resolvedCollisionProvider, movementPathProvider, timeProvider ?? TimeProvider.System);
-        return new MapServerWorld(maps, monsters, combat, resolvedCollisionProvider, spatialInspector, movementPathProvider, monsterRuntime);
+        return new MapServerWorld(maps, monsters, combat, resolvedCollisionProvider, spatialInspector, movementPathProvider, monsterRuntime, rates ?? new GameplayRateOptions());
     }
 
     // Production fail-closed guard: called explicitly by MapServerApp.RunAsync (the live

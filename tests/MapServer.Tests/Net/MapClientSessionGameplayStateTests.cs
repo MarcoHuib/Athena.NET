@@ -31,7 +31,7 @@ public sealed class MapClientSessionGameplayStateTests
         Assert.Equal(1,persistence.Updates);
         Assert.Equal((ushort)2,session.GameplayState!.State.BaseLevel);
         var packetId=await ReadInt16Async(client.GetStream());
-        Assert.Equal(PacketConstants.ZcParameterChange,packetId);
+        Assert.Equal(PacketConstants.ZcLongLongParameterChange,packetId);
     }
     private static async Task<short> ReadInt16Async(NetworkStream stream){var b=new byte[2];await stream.ReadExactlyAsync(b);return System.Buffers.Binary.BinaryPrimitives.ReadInt16LittleEndian(b);}
     private sealed class StubPersistence(CharacterGameplayState state):ICharacterGameplayStatePersistence

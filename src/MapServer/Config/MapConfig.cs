@@ -1,5 +1,6 @@
 using System.Net;
 using Athena.Net.MapServer.Gameplay.Rules;
+using Athena.Net.MapServer.Gameplay.Rates;
 
 namespace Athena.Net.MapServer.Config;
 
@@ -23,6 +24,7 @@ public sealed class MapConfig
     // own default) when unset or unrecognized, matching MapConfigLoader's existing
     // "use the field default on a bad/missing value" convention for every other key.
     public RagnarokRuleSet GameplayRuleSet { get; init; } = RagnarokRuleSet.Renewal;
+    public GameplayRateOptions GameplayRates { get; init; } = new();
 
     // Zero or more "map_collision_artifact: <path>|<map1>,<map2>,..." lines. Each entry names one
     // locally supplied Athena collision artifact file (see ai/world-data.md "Map collision data

@@ -1,6 +1,7 @@
 using System.Net;
 using Athena.Net.MapServer.Config;
 using Athena.Net.MapServer.Gameplay.Rules;
+using Athena.Net.MapServer.Gameplay.Rates;
 
 namespace Athena.Net.MapServer.Tests.Config;
 
@@ -31,6 +32,41 @@ public sealed class MapConfigLoaderTests
         var config = MapConfigLoader.Load(path);
 
         Assert.Equal(RagnarokRuleSet.Renewal, config.GameplayRuleSet);
+        Assert.Equal(100u, config.GameplayRates.BaseExperience);
+        Assert.Equal(100u, config.GameplayRates.JobExperience);
+        Assert.Equal(100u, config.GameplayRates.QuestExperience);
+    }
+
+    [Fact]
+    public void Load_ParsesIndependentExperienceAndDropPercentageRates()
+    {
+        var path = Path.Combine(CreateTempDir(), "map_athena.conf");
+        File.WriteAllText(path,
+            "base_exp_rate: 500\njob_exp_rate: 200\nquest_exp_rate: 100\nmvp_exp_rate: 300\n" +
+            "item_rate_common: 200\nitem_rate_common_boss: 300\nitem_rate_common_mvp: 400\nitem_rate_mvp: 500\n");
+
+        var rates = MapConfigLoader.Load(path).GameplayRates;
+        Assert.Equal(500u, rates.BaseExperience);
+        Assert.Equal(200u, rates.JobExperience);
+        Assert.Equal(100u, rates.QuestExperience);
+        Assert.Equal(300u, rates.MvpExperience);
+        Assert.Equal(200u, rates.ItemCommon);
+        Assert.Equal(300u, rates.ItemCommonBoss);
+        Assert.Equal(400u, rates.ItemCommonMvp);
+        Assert.Equal(500u, rates.ItemMvp);
+        Assert.Equal(100u, rates.ItemCard);
+    }
+
+    [Theory]
+    [InlineData("base_exp_rate: -1")]
+    [InlineData("base_exp_rate: 2147483648")]
+    [InlineData("item_rate_card: 1000001")]
+    [InlineData("quest_exp_rate: nope")]
+    public void Load_InvalidRateFailsLoudly(string line)
+    {
+        var path = Path.Combine(CreateTempDir(), "map_athena.conf");
+        File.WriteAllText(path, line + "\n");
+        Assert.Throws<InvalidOperationException>(() => MapConfigLoader.Load(path));
     }
 
     [Fact]
@@ -224,6 +260,14 @@ public sealed class MapConfigLoaderTests
         var merged = secrets.ApplyTo(config);
 
         Assert.Equal(RagnarokRuleSet.PreRenewal, merged.GameplayRuleSet);
+    }
+
+    [Fact]
+    public void SecretConfig_ApplyTo_PreservesSameImmutableRatePolicy()
+    {
+        var rates = new GameplayRateOptions { BaseExperience = 500 };
+        var merged = new SecretConfig().ApplyTo(new MapConfig { GameplayRates = rates });
+        Assert.Same(rates, merged.GameplayRates);
     }
 
     // Regression test: SecretConfig.ApplyTo previously reconstructed a brand-new MapConfig without
