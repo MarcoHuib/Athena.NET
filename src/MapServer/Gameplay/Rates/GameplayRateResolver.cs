@@ -29,11 +29,15 @@ public static class GameplayRateResolver
             _ => throw new ArgumentOutOfRangeException(nameof(source)),
         };
 
-    // Resolves the single effective drop rate for one drop context. Resolution
+    // Resolves the single effective drop rate for one drop context. This covers
+    // ONLY normal monster drop-table rolls (Monster/Boss/Mvp) - it does not and
+    // must not cover quest ITEM COLLECTION drop chance (owned entirely by
+    // generated QuestDropRule.Rate / QuestDropResolver) or quest COMPLETION
+    // item rewards (getitem, a fixed quantity, never a rated roll). Resolution
     // order, each level REPLACING (never stacking with) the level below it when
     // present:
     //   1. The exact source+category override (e.g. item_rate_card_boss).
-    //   2. The source-level override (Quest/Boss/Mvp item drop rate), if any.
+    //   2. The source-level override (Boss/Mvp item drop rate), if any.
     //   3. The generic category override (currently only card_drop_rate).
     //   4. The global ItemDropRate.
     // ItemRateMvp (direct MVP reward) is a completely separate rate family from
@@ -56,7 +60,6 @@ public static class GameplayRateResolver
                 context.Category,
                 rates.ItemRateCommonBoss, rates.ItemRateHealBoss, rates.ItemRateUseBoss, rates.ItemRateEquipBoss, rates.ItemRateCardBoss,
                 rates.BossItemDropRate ?? generic),
-            DropSource.Quest => rates.QuestItemDropRate ?? generic,
             DropSource.Monster or DropSource.Script or DropSource.Event => ResolveCategory(
                 context.Category,
                 rates.ItemRateCommon, rates.ItemRateHeal, rates.ItemRateUse, rates.ItemRateEquip, rates.ItemRateCard,

@@ -100,4 +100,22 @@ public sealed class QuestDropResolverTests
 
         Assert.Equal(first, second);
     }
+
+    // Quest ITEM COLLECTION drop chance (QuestDropRule.Rate) is content balancing owned entirely by
+    // generated quest data, never scaled by the central server-wide GameplayRateResolver drop-rate
+    // policy. QuestDropResolver takes no GameplayRateOptions at all - there is no code path through
+    // which a server item_drop_rate/card_drop_rate/etc. could reach this resolver. A guaranteed
+    // Rate=10000 (100%) rule must remain exactly 1 awarded drop regardless of any configured rate;
+    // this test exists so a future change wiring rate options into this resolver would have to
+    // knowingly break this assertion rather than silently drift.
+    [Fact]
+    public void ResolveDrops_GuaranteedRateIsUnaffectedByAnyServerDropRatePolicy()
+    {
+        var resolver = new QuestDropResolver(Quest21008Rule());
+        var drops = resolver.ResolveDrops(StatusOf(Quest21008, CharacterQuestStatus.Active), GPoringId);
+
+        var single = Assert.Single(drops);
+        Assert.Equal(WoodId, single.ItemId);
+        Assert.Equal(1, single.Count); // exact QuestDropRule.Count, never scaled/multiplied by any rate.
+    }
 }

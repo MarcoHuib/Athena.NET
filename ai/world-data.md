@@ -205,9 +205,11 @@ ATHENA.NET SERVER POLICY: it separates always-present global rates
 (`base_exp_rate`, `job_exp_rate`, `item_drop_rate`, default 100 = 1x) from
 nullable per-source/category overrides (`quest_base_exp_rate`,
 `quest_job_exp_rate`, `mvp_base_exp_rate`, `mvp_job_exp_rate`,
-`card_drop_rate`, `boss_item_drop_rate`, `mvp_item_drop_rate`,
-`quest_item_drop_rate`, the `item_rate_*` family, `item_rate_mvp`) whose unset
-value means "inherit the global rate" rather than an independent default.
+`card_drop_rate`, `boss_item_drop_rate`, `mvp_item_drop_rate`, the
+`item_rate_*` family, `item_rate_mvp`) whose unset value means "inherit the
+global rate" rather than an independent default. There is no
+`quest_item_drop_rate` - see below for why quest item collection/completion
+sit outside this rate policy entirely.
 `Athena.Net.MapServer.Gameplay.Rates.GameplayRateResolver` is the single place
 that turns a global + optional override into one effective rate - an override
 REPLACES the global it would otherwise inherit and never stacks/multiplies
@@ -229,17 +231,26 @@ but not consumed by a generic drop runtime, because Athena has no generic
 normal-drop/MVP-reward runtime yet. Resolution walks the most specific
 configured override first, each level replacing (never stacking with) the
 level below it: exact source+category override (e.g. `item_rate_card_boss`)
--> source-level override (`boss_item_drop_rate`/`mvp_item_drop_rate`/
-`quest_item_drop_rate`) -> generic category override (`card_drop_rate` is
-currently the only category with one; Common/Heal/Use/Equip fall straight to
-the global) -> global `item_drop_rate`. `item_rate_mvp` (an MVP's own direct
-reward item) is a fully separate rate family from `item_rate_*_mvp` (a normal
-drop-table item merely dropped BY an MVP monster): it resolves
+-> source-level override (`boss_item_drop_rate`/`mvp_item_drop_rate`) ->
+generic category override (`card_drop_rate` is currently the only category
+with one; Common/Heal/Use/Equip fall straight to the global) -> global
+`item_drop_rate`. `item_rate_mvp` (an MVP's own direct reward item) is a
+fully separate rate family from `item_rate_*_mvp` (a normal drop-table item
+merely dropped BY an MVP monster): it resolves
 `item_rate_mvp ?? mvp_item_drop_rate ?? item_drop_rate`, distinct from the
-normal-drop chain above. Tutorial Wood/Lumber `QuestDropRule` handling is
-unchanged and receives no item-rate multiplier; drop rate is scoped to scale a
-roll's chance/probability, never an item's count, so a guaranteed 100% quest
-drop remains capped at 100% regardless of configured rates.
+normal-drop chain above.
+
+There is deliberately no `DropSource.Quest` or `quest_item_drop_rate`. Three
+distinct concepts must never be conflated: normal monster drops (the resolver
+above); quest ITEM COLLECTION drop chance (the tutorial Wood/Lumber
+`QuestDropRule`), which is content balancing owned entirely by generated
+`QuestDropRule.Rate` / `QuestDropResolver` and is never scaled by any
+server-wide rate; and quest COMPLETION item rewards (`getitem`), which are
+fixed exact quantities, not a rated roll at all. `QuestDropResolver` handling
+is unchanged and receives no item-rate multiplier; drop rate is scoped to
+scale a monster drop-table roll's chance/probability, never an item's count,
+so a guaranteed 100% quest drop remains capped at 100% regardless of
+configured rates.
 
 ## Regeneration
 

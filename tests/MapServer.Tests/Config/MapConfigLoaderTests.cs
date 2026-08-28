@@ -61,7 +61,6 @@ public sealed class MapConfigLoaderTests
         Assert.Null(rates.CardDropRate);
         Assert.Null(rates.BossItemDropRate);
         Assert.Null(rates.MvpItemDropRate);
-        Assert.Null(rates.QuestItemDropRate);
     }
 
     [Fact]
@@ -70,7 +69,7 @@ public sealed class MapConfigLoaderTests
         var path = Path.Combine(CreateTempDir(), "map_athena.conf");
         File.WriteAllText(path,
             "base_exp_rate: 500\njob_exp_rate: 200\nquest_base_exp_rate: 1000\nquest_job_exp_rate: 1000\nmvp_base_exp_rate: 300\nmvp_job_exp_rate: 300\n" +
-            "item_drop_rate: 200\ncard_drop_rate: 100\nboss_item_drop_rate: 150\nmvp_item_drop_rate: 500\nquest_item_drop_rate: 10000\n" +
+            "item_drop_rate: 200\ncard_drop_rate: 100\nboss_item_drop_rate: 150\nmvp_item_drop_rate: 500\n" +
             "item_rate_common: 250\nitem_rate_common_boss: 300\nitem_rate_common_mvp: 400\nitem_rate_mvp: 700\n");
 
         var rates = MapConfigLoader.Load(path).GameplayRates;
@@ -84,7 +83,6 @@ public sealed class MapConfigLoaderTests
         Assert.Equal(100u, rates.CardDropRate);
         Assert.Equal(150u, rates.BossItemDropRate);
         Assert.Equal(500u, rates.MvpItemDropRate);
-        Assert.Equal(10000u, rates.QuestItemDropRate);
         Assert.Equal(250u, rates.ItemRateCommon);
         Assert.Equal(300u, rates.ItemRateCommonBoss);
         Assert.Equal(400u, rates.ItemRateCommonMvp);

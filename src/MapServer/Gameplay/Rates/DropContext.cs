@@ -1,14 +1,17 @@
 namespace Athena.Net.MapServer.Gameplay.Rates;
 
 // Where a candidate item drop/reward originates. Monster/Boss/Mvp are normal
-// drop-table rolls off a killed monster of increasing rarity tier; Quest/Script/
-// Event are non-monster-kill drop sources (e.g. a generated quest-drop rule).
+// drop-table rolls off a killed monster of increasing rarity tier; Script/Event
+// are non-monster-kill drop sources. There is deliberately no Quest source
+// here: quest ITEM COLLECTION drop chance is owned entirely by generated
+// QuestDropRule.Rate / QuestDropResolver (never scaled by the central
+// server-wide drop-rate policy), and quest COMPLETION item rewards (getitem)
+// are fixed quantities, not a rated roll at all.
 public enum DropSource
 {
     Monster,
     Boss,
     Mvp,
-    Quest,
     Script,
     Event,
 }

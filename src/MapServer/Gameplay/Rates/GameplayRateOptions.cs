@@ -22,11 +22,15 @@ public sealed record GameplayRateOptions
     public uint? MvpBaseExpRate { get; init; }
     public uint? MvpJobExpRate { get; init; }
 
-    // Optional drop-rate overrides. Null = inherit ItemDropRate.
+    // Optional drop-rate overrides. Null = inherit ItemDropRate. There is no
+    // Quest item-drop-rate override: quest ITEM COLLECTION drop chance is owned
+    // entirely by generated QuestDropRule.Rate / QuestDropResolver, and quest
+    // COMPLETION item rewards (getitem) are fixed quantities - neither is a
+    // server-wide-rate-scaled monster drop-table roll, so no
+    // "quest_item_drop_rate" concept exists here.
     public uint? CardDropRate { get; init; }
     public uint? BossItemDropRate { get; init; }
     public uint? MvpItemDropRate { get; init; }
-    public uint? QuestItemDropRate { get; init; }
 
     // Optional rAthena-style item-category overrides (normal-drop-table items,
     // categorized by item type). Null = inherit ItemDropRate (or the more

@@ -187,14 +187,4 @@ public sealed class GameplayRateResolverTests
         var globalOnly = new GameplayRateOptions { ItemDropRate = 200 };
         Assert.Equal(200u, GameplayRateResolver.ResolveDropRate(globalOnly, new DropContext(DropSource.Mvp, RewardKind.MvpReward)));
     }
-
-    [Fact]
-    public void ResolveDropRate_QuestSourceUsesQuestItemDropRateOrGlobal()
-    {
-        var globalOnly = new GameplayRateOptions { ItemDropRate = 200 };
-        Assert.Equal(200u, GameplayRateResolver.ResolveDropRate(globalOnly, new DropContext(DropSource.Quest, RewardKind.NormalDrop)));
-
-        var withOverride = globalOnly with { QuestItemDropRate = 10000 };
-        Assert.Equal(10000u, GameplayRateResolver.ResolveDropRate(withOverride, new DropContext(DropSource.Quest, RewardKind.NormalDrop)));
-    }
 }

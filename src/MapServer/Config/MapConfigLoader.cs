@@ -224,7 +224,7 @@ public static class MapConfigLoader
 
     private static readonly HashSet<string> OverrideDropRateKeys = new(StringComparer.OrdinalIgnoreCase)
     {
-        "card_drop_rate", "boss_item_drop_rate", "mvp_item_drop_rate", "quest_item_drop_rate",
+        "card_drop_rate", "boss_item_drop_rate", "mvp_item_drop_rate",
         "item_rate_common", "item_rate_heal", "item_rate_use", "item_rate_equip", "item_rate_card",
         "item_rate_common_boss", "item_rate_heal_boss", "item_rate_use_boss", "item_rate_equip_boss", "item_rate_card_boss",
         "item_rate_common_mvp", "item_rate_heal_mvp", "item_rate_use_mvp", "item_rate_equip_mvp", "item_rate_card_mvp",
@@ -268,7 +268,6 @@ public static class MapConfigLoader
             "card_drop_rate" => current with { CardDropRate = rate },
             "boss_item_drop_rate" => current with { BossItemDropRate = rate },
             "mvp_item_drop_rate" => current with { MvpItemDropRate = rate },
-            "quest_item_drop_rate" => current with { QuestItemDropRate = rate },
             "item_rate_common" => current with { ItemRateCommon = rate },
             "item_rate_heal" => current with { ItemRateHeal = rate },
             "item_rate_use" => current with { ItemRateUse = rate },
