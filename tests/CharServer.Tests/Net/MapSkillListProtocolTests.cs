@@ -34,8 +34,8 @@ public sealed class MapSkillListProtocolTests
     {
         var rows = new List<CharacterSkillRowDto>
         {
-            new(SkillId: 1, Level: 3),  // NV_BASIC
-            new(SkillId: 142, Level: 1), // NV_FIRSTAID
+            new(SkillId: 1, Level: 3, Flag: 0),  // NV_BASIC, SKILL_FLAG_PERMANENT
+            new(SkillId: 142, Level: 1, Flag: 1), // NV_FIRSTAID, SKILL_FLAG_TEMPORARY (fixture only - proves Flag is transported, not gameplay-accurate)
         };
         var response = MapSkillListProtocol.BuildResponse(0, 100, rows);
 
@@ -49,10 +49,12 @@ public sealed class MapSkillListProtocolTests
         var firstRow = response.AsSpan(MapSkillListProtocol.ResponseHeaderLength, MapSkillListProtocol.SkillLength);
         Assert.Equal((ushort)1, BinaryPrimitives.ReadUInt16LittleEndian(firstRow));
         Assert.Equal((byte)3, firstRow[2]);
+        Assert.Equal((byte)0, firstRow[3]);
 
         var secondRow = response.AsSpan(MapSkillListProtocol.ResponseHeaderLength + MapSkillListProtocol.SkillLength, MapSkillListProtocol.SkillLength);
         Assert.Equal((ushort)142, BinaryPrimitives.ReadUInt16LittleEndian(secondRow));
         Assert.Equal((byte)1, secondRow[2]);
+        Assert.Equal((byte)1, secondRow[3]);
     }
 
     [Fact]

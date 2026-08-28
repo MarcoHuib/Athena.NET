@@ -290,12 +290,13 @@ and caps overcarry to the crossed requirement minus one. One complete resulting
 snapshot is persisted through the versioned CharServer transaction before MapServer
 publishes it or sends packets. A failed/stale write sends no success updates.
 
-## Generated skill metadata: SpCost, Range, NormallyLearnable
+## Generated skill metadata: SpCost, Range, Inf, SkillAcquisitionFlags
 
 `GeneratedSkillDefinition` (`src/MapServer/World/GeneratedCharacterDataDefinitions.cs`) was
 extended narrowly to support `0x0B32` (ZC_SKILLINFO_LIST3, see `ai/iro-2026-wire.md`) and
 skill-point-spend eligibility, based on a direct audit of pinned `db/re/skill_db.yml`'s actual
-per-skill shapes:
+per-skill shapes and the pinned `clif_skillinfoblock`/`pc_calc_skilltree` call sites that consume
+them:
 
 - **`SpCostByLevel` (`IReadOnlyList<uint>`)**: `Requires.SpCost` is genuinely level-dependent in
   the source - either a bare scalar (e.g. `SM_MAGNUM: SpCost: 30`, applying uniformly at every
@@ -306,33 +307,75 @@ per-skill shapes:
   `MaxLevel`-length list at generation time; it never collapses a genuine per-level list into one
   number.
 - **`Range` (`short`)**: a top-level scalar in the source (never per-level - confirmed by auditing
-  every `Range:` occurrence in `skill_db.yml`), and genuinely signed (`SM_BASH: Range: -1`,
-  meaning "melee/weapon-range" per pinned convention - many skills carry negative values, not just
-  `-1`). Kept as a signed `short` in generated data specifically so a negative source value is
-  never silently coerced into an unsigned type - resolving what a negative/special `Range` actually
-  displays to the client requires LIVE character/equipment state (pinned `skill_get_range2`,
-  `skill.cpp:324-354`) and is therefore explicitly NOT done inside generated data or
-  `CharacterSkillService`; `IroSkillInfoEntry.From` (`src/MapServer/Net/IroSkillInfoEntry.cs`)
-  passes the raw value through unresolved, a disclosed gap rather than an invented resolution.
-- **`NormallyLearnable` (`bool`)**: source-backed from `skill_db.yml`'s `Flags` block -
-  `false` when `Flags.IsQuest`, `Flags.IsWedding`, or `Flags.IsGuild` is `true` (matching pinned
-  `pc_calc_skilltree`'s `INF2_ISQUEST`/`INF2_ISWEDDING` exclusion from the ordinary tree-walk grant
-  path - see `ai/iro-2026-wire.md`), `true` otherwise (including a skill with no `Flags` block at
-  all, e.g. `NV_BASIC`). This is the exact mechanism that keeps `NV_FIRSTAID`/`NV_TRICKDEAD` (both
-  `IsQuest`) out of normal skill-point spending without hardcoding either name anywhere in runtime
-  code - `CharacterSkillService.ValidateUpgrade` gates purely on this generated flag.
+  every `Range:` occurrence in `skill_db.yml`), and genuinely signed (`SM_BASH: Range: -1` -
+  many skills carry negative values, not just `-1`). Kept as a signed `short` in generated data
+  specifically so a negative source value is never silently coerced into an unsigned type. **This
+  is raw pinned SOURCE data, not necessarily the final 0x0B32 wire value** - resolving a negative
+  source `Range` into the client-facing value is a SEPARATE pure boundary,
+  `IroSkillRangeResolver` (`src/MapServer/Net/IroSkillRangeResolver.cs`), implementing pinned
+  `skill_get_range2`'s default absolute-value fallback (`skill.cpp:324-365`; the alternative
+  weapon-range-substitution branch requires `skillrange_from_weapon`/`battle_config.
+  use_weapon_skill_range`, which defaults to disabled for every actor type in pinned
+  `conf/battle/battle.conf`, so an unmodified server never takes that branch). A further, separate,
+  narrowly-scoped `IroWireCompatibility` layer (`src/MapServer/Net/IroWireCompatibility.cs`)
+  documents ONE verified capture-vs-pinned-source divergence (`NV_BASIC`'s captured range=1 against
+  pinned source's computed range=0) with explicit provenance - this override never mutates
+  generated data itself, which stays a faithful, unmodified reproduction of `legacy/rathena`.
+- **`Inf` (`ushort`)**: pinned `SKILLDATA.inf` (`clif_skillinfoblock`, `clif.cpp:5714`:
+  `data.inf = skill_get_inf(skill.id);`), sourced from `skill_db.yml`'s `TargetType` field (NOT the
+  separate `Type` field, which maps to an unrelated `skill_type`/`BF_*` concept) via the pinned
+  `"INF_" + TargetType + "_SKILL"` constant-name convention. Every `TargetType` value actually
+  present in the pinned database is covered (`Attack`→1, `Ground`→2, `Self`→4, `Support`→16,
+  `Trap`→32); an absent `TargetType` defaults to `0` (passive), matching pinned source's
+  zero-initialized struct default - confirmed exactly for `NV_BASIC` (no `TargetType`, `Inf=0`) and
+  `SM_BASH` (`TargetType: Attack`, `Inf=1`).
+- **`Acquisition` (`SkillAcquisitionFlags` record: `IsQuest`, `IsWedding`, `IsSpirit`)**:
+  source-backed facts only, from `skill_db.yml`'s `Flags` block - these are NOT one collapsed
+  learnability boolean. Pinned `pc_calc_skilltree`/`pc_check_skilltree`'s player skill-tree gate
+  (`pc.cpp:2735-2740`/`2862-2867`) evaluates each flag CONDITIONALLY:
+  `!(IsQuest && !quest_skill_learn) && !IsWedding && !(IsSpirit && !activeSpiritStatus)`. This
+  conditional evaluation - not the source facts themselves - is what `CharacterSkillService`
+  (runtime learnability policy) computes; see below. `IsGuild` is deliberately NOT tracked as an
+  acquisition flag: confirmed absent from this specific gate function in pinned source (a wholly
+  separate guild-skill code path that never populates `sd->status.skill[]`).
 
-All three fields are parsed by `CharacterDataCompiler.ParseSkills`'s existing narrow line-scanner
-(the same regex-based approach already used for `Id`/`Name`/`MaxLevel`, deliberately NOT the
-structured `SimpleYaml` parser - see that file's own header comment on why `skill_db.yml` is
-scanned separately). Regeneration is deterministic (verified: two consecutive
-`compile-character-data` runs produce byte-identical output).
+All fields are parsed by `CharacterDataCompiler.ParseSkills`'s existing narrow line-scanner (the
+same regex-based approach already used for `Id`/`Name`/`MaxLevel`, deliberately NOT the structured
+`SimpleYaml` parser - see that file's own header comment on why `skill_db.yml` is scanned
+separately). Regeneration is deterministic (verified: two consecutive `compile-character-data` runs
+produce byte-identical output).
 
-**Open question, not yet resolved by capture:** which level's SpCost/Range `0x0B32` actually
-displays is confirmed Reference-backed (pinned `clif_skillinfoblock` uses the character's CURRENT
-level) but the single captured `NV_BASIC` entry (a skill with no `Requires` block at all) cannot
-independently prove this for a skill with a real nonzero cost - see `ai/iro-2026-wire.md`'s
-`0x0B32` table for the full evidence classification.
+### Generated source facts vs. runtime learnability policy
+
+`GeneratedSkillDefinition.Acquisition` stores WHAT the source declares (three independent booleans).
+`CharacterSkillService` (`src/MapServer/World/CharacterSkillState.cs`) decides the actual CURRENT
+runtime learnability/visibility from those facts plus server config/character state that does not
+belong in generated data:
+- `IsQuest` is gated on `quest_skill_learn` - pinned default `no`
+  (`conf/battle/player.conf:39`). Athena has no server-config system for this yet, so it is
+  conservatively fixed at the pinned default (a hardcoded `false` constant,
+  `CharacterSkillService.QuestSkillLearnEnabled`) rather than invented as configurable.
+- `IsWedding` is unconditionally excluded (matches pinned source exactly - no config gates it).
+- `IsSpirit` is gated on an active `SC_SPIRIT` status. Athena does not yet model `SC_SPIRIT` -
+  this is a TEMPORARY runtime capability gap, not an intrinsic property of `IsSpirit` skills, so it
+  is represented as its own conditionally-evaluated gate
+  (`CharacterSkillService.HasActiveSpiritStatus`, currently a hardcoded `false`), never collapsed
+  into a permanent "not learnable" boolean on generated data. An unlearned (`CurrentLevel == 0`)
+  `IsSpirit` skill is never client-visible or normally learnable while this gap exists; an
+  ALREADY-persisted/learned `IsSpirit` skill (`CurrentLevel > 0`) is never hidden merely because of
+  the gap - exactly mirroring pinned source's own "already known skills survive the gate re-check"
+  rule for `IsQuest`/`IsWedding`. Replacing the hardcoded `false` with a real status-effect check in
+  a future PR requires touching only that one evaluation site - never generated data or skill
+  identities.
+
+### Open question, not yet resolved by capture
+
+Which level's SpCost the packet displays is confirmed Reference-backed (pinned `clif_skillinfoblock`
+uses the character's CURRENT level) but the single captured `NV_BASIC` entry (a skill with no
+`Requires` block at all) cannot independently prove this for a skill with a real nonzero cost - see
+`ai/iro-2026-wire.md`'s `0x0B32` table for the full evidence classification. The `NV_BASIC`
+range=1-vs-pinned-range=0 divergence is a SEPARATE, already-resolved (via `IroWireCompatibility`)
+finding, not an open question.
 
 Base-level recalculation uses the selected job's pinned HP/SP tables, persistent VIT/INT,
 and generated cumulative bonuses. A base level fully restores recalculated HP/SP as

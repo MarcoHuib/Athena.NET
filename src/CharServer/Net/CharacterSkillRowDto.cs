@@ -1,3 +1,3 @@
 namespace Athena.Net.CharServer.Net;
 
-internal sealed record CharacterSkillRowDto(ushort SkillId, byte Level);
+internal sealed record CharacterSkillRowDto(ushort SkillId, byte Level, byte Flag);

@@ -597,7 +597,7 @@ public sealed class MapServerSession : IDisposable, ISession
                 {
                     rows = await db.Skills.AsNoTracking()
                         .Where(s => s.CharId == charId)
-                        .Select(s => new CharacterSkillRowDto(s.SkillId, s.SkillLevel))
+                        .Select(s => new CharacterSkillRowDto(s.SkillId, s.SkillLevel, s.Flag))
                         .ToListAsync(cancellationToken);
                     result = 0;
                 }
@@ -715,6 +715,12 @@ public sealed class MapServerSession : IDisposable, ISession
         if (character.SkillPoint == 0) return false;
         var actualCurrentLevel = skillRow?.SkillLevel ?? 0;
         if (actualCurrentLevel != expectedCurrentLevel) return false;
+        // Structural overflow guard: a byte level can never legitimately reach byte.MaxValue (no
+        // generated skill's MaxLevel is anywhere close - see ai/world-data.md), but this rejects
+        // outright rather than letting `+1` silently wrap 255 -> 0 while still consuming a point.
+        // This is internal hardening only, not a gameplay MaxLevel policy - CharServer has no
+        // access to generated tree data to enforce that (see ai/map-server.md's authority split).
+        if (actualCurrentLevel == byte.MaxValue) return false;
 
         newLevel = (byte)(actualCurrentLevel + 1);
         isNewRow = skillRow is null;

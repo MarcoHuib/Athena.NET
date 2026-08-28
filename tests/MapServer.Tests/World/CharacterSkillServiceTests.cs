@@ -16,6 +16,9 @@ public sealed class CharacterSkillServiceTests
         BaseExperience: 0, JobExperience: 0, CurrentHp: 40, CurrentSp: 11, MaxHp: 40, MaxSp: 11,
         StatPoints: 0, SkillPoints: skillPoints, Strength: 1, Agility: 1, Vitality: 1, Intelligence: 1, Dexterity: 1, Luck: 1);
 
+    private static CharacterSkillSnapshot Learned(params (ushort SkillId, byte Level)[] rows) =>
+        CharacterSkillSnapshot.FromLogin([.. rows.Select(r => (r.SkillId, r.Level, CharSkillFlag.Permanent))]);
+
     [Fact]
     public void MissingPersistedRow_ResolvesToLevelZero()
     {
@@ -29,7 +32,7 @@ public sealed class CharacterSkillServiceTests
         // NV_FIRSTAID (142) is a real canonical skill, but not a member of FixtureTree - simulating
         // a legitimate historical skill from a prior job (job-changing is out of scope, but the
         // data model must not treat this as corrupted data).
-        var skills = CharacterSkillSnapshot.FromLogin([(142, 1)]);
+        var skills = Learned((142, 1));
         var effective = CharacterSkillService.CalculateEffectiveState(State(), skills, FixtureTree, out var inconsistent);
         Assert.DoesNotContain(effective, s => s.SkillId == 142);
         Assert.Empty(inconsistent);
@@ -38,7 +41,7 @@ public sealed class CharacterSkillServiceTests
     [Fact]
     public void PersistedLevelExceedingTreeMaxLevel_IsSurfacedAsInconsistency_NotThrown()
     {
-        var skills = CharacterSkillSnapshot.FromLogin([(1, 9)]).WithLearnedSkill(1, 9); // legit max
+        var skills = Learned((1, 9)).WithLearnedSkill(1, 9); // legit max
         // Simulate a MaxLevel-lowering regeneration: persisted level (9) now exceeds a smaller tree entry's max.
         var shrunkEntry = FirstSkill with { MaxLevel = 5 };
         var shrunkTree = FixtureTree with { EffectiveSkills = [shrunkEntry, GatedSkill] };
@@ -76,7 +79,7 @@ public sealed class CharacterSkillServiceTests
     [Fact]
     public void CurrentLevelEqualsMaxLevel_CannotUpgrade()
     {
-        var skills = CharacterSkillSnapshot.FromLogin([(1, 9)]); // FirstSkill.MaxLevel == 9
+        var skills = Learned((1, 9)); // FirstSkill.MaxLevel == 9
         var result = CharacterSkillService.ValidateUpgrade(State(), skills, FixtureTree, requestedSkillId: 1);
         Assert.False(result.IsValid);
         Assert.Equal(SkillUpgradeRejectionReason.MaxLevelReached, result.RejectionReason);
@@ -85,7 +88,7 @@ public sealed class CharacterSkillServiceTests
     [Fact]
     public void BaseLevelRequirementNotMet_CannotUpgrade()
     {
-        var skills = CharacterSkillSnapshot.FromLogin([(1, 4)]);
+        var skills = Learned((1, 4));
         var result = CharacterSkillService.ValidateUpgrade(State(baseLevel: 4, jobLevel: 10), skills, FixtureTree, requestedSkillId: 2);
         Assert.False(result.IsValid);
         Assert.Equal(SkillUpgradeRejectionReason.BaseLevelNotMet, result.RejectionReason);
@@ -94,7 +97,7 @@ public sealed class CharacterSkillServiceTests
     [Fact]
     public void JobLevelRequirementNotMet_CannotUpgrade()
     {
-        var skills = CharacterSkillSnapshot.FromLogin([(1, 4)]);
+        var skills = Learned((1, 4));
         var result = CharacterSkillService.ValidateUpgrade(State(baseLevel: 10, jobLevel: 2), skills, FixtureTree, requestedSkillId: 2);
         Assert.False(result.IsValid);
         Assert.Equal(SkillUpgradeRejectionReason.JobLevelNotMet, result.RejectionReason);
@@ -111,7 +114,7 @@ public sealed class CharacterSkillServiceTests
     [Fact]
     public void PrerequisiteBelowRequiredLevel_CannotUpgrade()
     {
-        var skills = CharacterSkillSnapshot.FromLogin([(1, 3)]); // GatedSkill requires SkillId 1 >= level 4
+        var skills = Learned((1, 3)); // GatedSkill requires SkillId 1 >= level 4
         var result = CharacterSkillService.ValidateUpgrade(State(), skills, FixtureTree, requestedSkillId: 2);
         Assert.False(result.IsValid);
         Assert.Equal(SkillUpgradeRejectionReason.PrerequisiteNotMet, result.RejectionReason);
@@ -120,7 +123,7 @@ public sealed class CharacterSkillServiceTests
     [Fact]
     public void PrerequisiteSatisfied_CanUpgrade()
     {
-        var skills = CharacterSkillSnapshot.FromLogin([(1, 4)]);
+        var skills = Learned((1, 4));
         var result = CharacterSkillService.ValidateUpgrade(State(), skills, FixtureTree, requestedSkillId: 2);
         Assert.True(result.IsValid);
         Assert.Equal((byte)1, result.NewSkillLevel);
@@ -129,7 +132,7 @@ public sealed class CharacterSkillServiceTests
     [Fact]
     public void ValidUpgrade_ComputesExactSkillPointAndLevelDelta()
     {
-        var skills = CharacterSkillSnapshot.FromLogin([(1, 3)]);
+        var skills = Learned((1, 3));
         var result = CharacterSkillService.ValidateUpgrade(State(skillPoints: 5), skills, FixtureTree, requestedSkillId: 1);
         Assert.True(result.IsValid);
         Assert.Equal((byte)4, result.NewSkillLevel);
@@ -138,14 +141,86 @@ public sealed class CharacterSkillServiceTests
     }
 
     [Fact]
-    public void NotNormallyLearnableSkill_CannotUpgrade()
+    public void QuestSkill_CannotBeInitiallyLearned_ButAlreadyLearnedCanBeRaised()
     {
-        // NV_FIRSTAID (142) is source-backed NormallyLearnable=false (skill_db.yml Flags.IsQuest).
+        // NV_FIRSTAID (142) is source-backed Acquisition.IsQuest=true (skill_db.yml Flags.IsQuest),
+        // and Athena's QuestSkillLearnEnabled matches pinned battle_config's default (off).
         var entry = new GeneratedSkillTreeEntry(SkillId: 142, MaxLevel: 1, BaseLevel: 0, JobLevel: 0, Prerequisites: [], ExcludeFromInheritance: false);
         var tree = new GeneratedSkillTreeDefinition(JobClass: 0, InheritedFrom: [], DeclaredSkills: [entry], EffectiveSkills: [entry]);
-        var result = CharacterSkillService.ValidateUpgrade(State(), CharacterSkillSnapshot.Empty, tree, requestedSkillId: 142);
+
+        var cannotInitiallyLearn = CharacterSkillService.ValidateUpgrade(State(), CharacterSkillSnapshot.Empty, tree, requestedSkillId: 142);
+        Assert.False(cannotInitiallyLearn.IsValid);
+        Assert.Equal(SkillUpgradeRejectionReason.NotNormallyLearnable, cannotInitiallyLearn.RejectionReason);
+
+        // NV_FIRSTAID has MaxLevel 1, so an already-learned level-1 row cannot be raised further -
+        // use a synthetic MaxLevel-2 entry to prove the "already-learned skips the gate" rule
+        // independent of the raise being blocked by MaxLevel for a different reason.
+        var raisableEntry = entry with { MaxLevel = 2 };
+        var raisableTree = tree with { EffectiveSkills = [raisableEntry] };
+        var alreadyLearned = Learned((142, 1));
+        var canRaiseFurther = CharacterSkillService.ValidateUpgrade(State(), alreadyLearned, raisableTree, requestedSkillId: 142);
+        Assert.True(canRaiseFurther.IsValid);
+        Assert.Equal((byte)2, canRaiseFurther.NewSkillLevel);
+    }
+
+    // Athena has no SC_SPIRIT model yet - an unlearned IsSpirit skill must never become client-
+    // visible or normally learnable (conservative narrowing, task correction section 7).
+    [Fact]
+    public void SpiritSkill_UnlearnedIsNeitherClientVisibleNorNormallyLearnable_ConservativeGap()
+    {
+        var entry = new GeneratedSkillTreeEntry(SkillId: 446 /* AM_BERSERKPITCHER, real IsSpirit=true skill */, MaxLevel: 10, BaseLevel: 0, JobLevel: 0, Prerequisites: [], ExcludeFromInheritance: false);
+        var tree = new GeneratedSkillTreeDefinition(JobClass: 0, InheritedFrom: [], DeclaredSkills: [entry], EffectiveSkills: [entry]);
+
+        var effective = CharacterSkillService.CalculateEffectiveState(State(), CharacterSkillSnapshot.Empty, tree, out _);
+        Assert.False(effective.Single(s => s.SkillId == 446).ClientVisible);
+
+        var upgrade = CharacterSkillService.ValidateUpgrade(State(), CharacterSkillSnapshot.Empty, tree, requestedSkillId: 446);
+        Assert.False(upgrade.IsValid);
+        Assert.Equal(SkillUpgradeRejectionReason.NotNormallyLearnable, upgrade.RejectionReason);
+    }
+
+    // An already-learned IsSpirit skill (e.g. persisted before this gap existed, or via a future
+    // real SC_SPIRIT grant) must never be hidden merely because Athena cannot currently prove an
+    // active SC_SPIRIT status - task correction section 7's explicit "already learned survives"
+    // requirement.
+    [Fact]
+    public void SpiritSkill_AlreadyLearned_RemainsClientVisibleDespiteConservativeGap()
+    {
+        var entry = new GeneratedSkillTreeEntry(SkillId: 446, MaxLevel: 10, BaseLevel: 0, JobLevel: 0, Prerequisites: [], ExcludeFromInheritance: false);
+        var tree = new GeneratedSkillTreeDefinition(JobClass: 0, InheritedFrom: [], DeclaredSkills: [entry], EffectiveSkills: [entry]);
+        var skills = Learned((446, 1));
+
+        var effective = CharacterSkillService.CalculateEffectiveState(State(), skills, tree, out _);
+        Assert.True(effective.Single(s => s.SkillId == 446).ClientVisible);
+    }
+
+    [Theory]
+    [InlineData(CharSkillFlag.Permanent, true)]
+    [InlineData(CharSkillFlag.Temporary, false)]
+    [InlineData(CharSkillFlag.Plagiarized, false)]
+    [InlineData(CharSkillFlag.PermGranted, false)]
+    public void Upgradeable_RequiresPermanentFlag_BelowMaxLevel(CharSkillFlag flag, bool expectedUpgradeable)
+    {
+        var skills = new CharacterSkillSnapshot([new CharacterLearnedSkill(1, 3, flag)]);
+        var effective = CharacterSkillService.CalculateEffectiveState(State(), skills, FixtureTree, out _);
+        Assert.Equal(expectedUpgradeable, effective.Single(s => s.SkillId == 1).Upgradeable);
+    }
+
+    [Fact]
+    public void Upgradeable_PermanentAtMaxLevel_IsFalse()
+    {
+        var skills = Learned((1, 9)); // FirstSkill.MaxLevel == 9
+        var effective = CharacterSkillService.CalculateEffectiveState(State(), skills, FixtureTree, out _);
+        Assert.False(effective.Single(s => s.SkillId == 1).Upgradeable);
+    }
+
+    [Fact]
+    public void ValidateUpgrade_NonPermanentFlag_Rejects()
+    {
+        var skills = new CharacterSkillSnapshot([new CharacterLearnedSkill(1, 3, CharSkillFlag.Temporary)]);
+        var result = CharacterSkillService.ValidateUpgrade(State(), skills, FixtureTree, requestedSkillId: 1);
         Assert.False(result.IsValid);
-        Assert.Equal(SkillUpgradeRejectionReason.NotNormallyLearnable, result.RejectionReason);
+        Assert.Equal(SkillUpgradeRejectionReason.NotPermanentSkill, result.RejectionReason);
     }
 
     // Proves genericity against a REAL generated job (Swordman) other than Novice, per the
@@ -160,7 +235,7 @@ public sealed class CharacterSkillServiceTests
         Assert.False(withoutSword.IsValid);
         Assert.Equal(SkillUpgradeRejectionReason.PrerequisiteNotMet, withoutSword.RejectionReason);
 
-        var withSword = CharacterSkillSnapshot.FromLogin([(2, 1)]); // SM_SWORD level 1
+        var withSword = Learned((2, 1)); // SM_SWORD level 1
         var canUpgrade = CharacterSkillService.ValidateUpgrade(swordmanState, withSword, tree, requestedSkillId: 3);
         Assert.True(canUpgrade.IsValid);
         Assert.Equal((byte)1, canUpgrade.NewSkillLevel);

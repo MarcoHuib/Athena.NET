@@ -4,8 +4,8 @@ internal static class MapSkillListProtocol
 {
     internal const int GetRequestLength = 10;
     internal const int ResponseHeaderLength = 11;
-    // skillId.W(2) level.B(1) = 3.
-    internal const int SkillLength = 3;
+    // skillId.W(2) level.B(1) flag.B(1) = 4.
+    internal const int SkillLength = 4;
 
     internal static bool TryParseGet(ReadOnlySpan<byte> p, out uint a, out uint c)
     {
@@ -34,6 +34,7 @@ internal static class MapSkillListProtocol
                 var row = rows[i];
                 BinaryPrimitives.WriteUInt16LittleEndian(span, row.SkillId);
                 span[2] = row.Level;
+                span[3] = row.Flag;
             }
         }
         return packet;

@@ -20,7 +20,7 @@ public sealed class MapSkillListProtocolTests
     [Fact]
     public void TryParseResponse_Success_WithSkills_ReturnsSnapshot()
     {
-        var skills = CharacterSkillSnapshot.FromLogin([(1, 3), (142, 1)]);
+        var skills = CharacterSkillSnapshot.FromLogin([(1, 3, CharSkillFlag.Permanent), (142, 1, CharSkillFlag.Permanent)]);
         var packet = MapSkillListProtocol.BuildResponse(0, 100, skills);
 
         Assert.True(MapSkillListProtocol.TryParseResponse(packet, out var result, out var charId, out var read));
@@ -29,6 +29,7 @@ public sealed class MapSkillListProtocolTests
         Assert.True(read.Succeeded);
         Assert.Equal((byte)3, read.Snapshot!.CurrentLevel(1));
         Assert.Equal((byte)1, read.Snapshot.CurrentLevel(142));
+        Assert.Equal(CharSkillFlag.Permanent, read.Snapshot.Flag(1));
     }
 
     [Fact]
@@ -64,7 +65,7 @@ public sealed class MapSkillListProtocolTests
     [Fact]
     public void TryParseResponse_SkillCountMismatchWithPayload_ReturnsFalse()
     {
-        var packet = MapSkillListProtocol.BuildResponse(0, 100, CharacterSkillSnapshot.FromLogin([(1, 1)]));
+        var packet = MapSkillListProtocol.BuildResponse(0, 100, CharacterSkillSnapshot.FromLogin([(1, 1, CharSkillFlag.Permanent)]));
         BinaryPrimitives.WriteUInt16LittleEndian(packet.AsSpan(9), 5); // claims 5 skills but payload only has 1
 
         Assert.False(MapSkillListProtocol.TryParseResponse(packet, out _, out _, out _));
@@ -73,7 +74,7 @@ public sealed class MapSkillListProtocolTests
     [Fact]
     public void TryParseResponse_DuplicateSkillIds_ReturnsFalse()
     {
-        var packet = MapSkillListProtocol.BuildResponse(0, 100, CharacterSkillSnapshot.FromLogin([(1, 1)]));
+        var packet = MapSkillListProtocol.BuildResponse(0, 100, CharacterSkillSnapshot.FromLogin([(1, 1, CharSkillFlag.Permanent)]));
         // Manually corrupt: append a second identical-SkillId row without going through FromLogin
         // (which would itself reject the duplicate) - simulates a malformed wire payload directly.
         var corrupted = new byte[packet.Length + MapSkillListProtocol.SkillLength];

@@ -11,19 +11,22 @@ internal static class MapSkillListProtocol
 {
     internal const int GetRequestLength = 10;
     internal const int ResponseHeaderLength = 11;
-    // skillId.W(2) level.B(1) = 3. CharServer's rows carry no runtime concept at all - a missing
-    // row already means level 0 (CharacterSkillSnapshot never persists a level-0 row).
-    internal const int SkillLength = 3;
+    // skillId.W(2) level.B(1) flag.B(1) = 4. Flag is the persisted CharSkill.Flag (e_skill_flag) -
+    // a DIFFERENT concept from the 0x0B32 wire `inf` field; never conflate the two. A missing row
+    // already means level 0/Permanent (CharacterSkillSnapshot never persists a level-0 row).
+    internal const int SkillLength = 4;
 
-    private static void WriteRow(Span<byte> span, ushort skillId, byte level)
+    private static void WriteRow(Span<byte> span, ushort skillId, byte level, byte flag)
     {
         BinaryPrimitives.WriteUInt16LittleEndian(span, skillId);
         span[2] = level;
+        span[3] = flag;
     }
 
-    private static (ushort SkillId, byte Level) ReadRow(ReadOnlySpan<byte> span) => (
+    private static (ushort SkillId, byte Level, byte Flag) ReadRow(ReadOnlySpan<byte> span) => (
         SkillId: BinaryPrimitives.ReadUInt16LittleEndian(span),
-        Level: span[2]);
+        Level: span[2],
+        Flag: span[3]);
 
     internal static byte[] BuildGetRequest(uint accountId, uint characterId)
     {
@@ -57,13 +60,13 @@ internal static class MapSkillListProtocol
         var expectedLength = ResponseHeaderLength + skillCount * SkillLength;
         if (expectedLength != packet.Length) return false;
 
-        var rows = new (ushort SkillId, byte Level)[skillCount];
+        var rows = new (ushort SkillId, byte Level, CharSkillFlag Flag)[skillCount];
         var seenIds = new HashSet<ushort>();
         for (var i = 0; i < skillCount; i++)
         {
             var row = ReadRow(packet.AsSpan(ResponseHeaderLength + i * SkillLength, SkillLength));
             if (!seenIds.Add(row.SkillId)) return false;
-            rows[i] = row;
+            rows[i] = (row.SkillId, row.Level, (CharSkillFlag)row.Flag);
         }
 
         skills = CharacterSkillReadResult.Success(CharacterSkillSnapshot.FromLogin(rows));
@@ -88,7 +91,7 @@ internal static class MapSkillListProtocol
             for (var i = 0; i < skills.Learned.Count; i++)
             {
                 var row = skills.Learned[i];
-                WriteRow(packet.AsSpan(ResponseHeaderLength + i * SkillLength, SkillLength), row.SkillId, row.Level);
+                WriteRow(packet.AsSpan(ResponseHeaderLength + i * SkillLength, SkillLength), row.SkillId, row.Level, (byte)row.Flag);
             }
         }
         return packet;

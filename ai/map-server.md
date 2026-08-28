@@ -1140,29 +1140,39 @@ orchestration:
 
 - `CalculateEffectiveState(gameplay, skills, tree, out inconsistentSkillIds)` projects every
   `GeneratedSkillTreeDefinition.EffectiveSkills` entry (not the persisted snapshot's own rows) into
-  a `CharacterSkillState` carrying four SEPARATELY computed booleans -
-  `EffectiveTreeMembership`/`NormallyLearnable`/`RequirementsSatisfied`/`ClientVisible` - plus
-  `Upgradeable` (level-vs-max only, independent of skill points). These are kept distinct because
-  pinned rAthena's own runtime model proves they are independent facts - see `ai/iro-2026-wire.md`'s
-  `0x0B32` section for the full traced evidence. A persisted skill outside the current effective
-  tree (a legitimate historical skill from a prior job - job-changing is out of scope for this
-  slice, but the model must not assume every persisted row belongs to the current tree forever) is
-  silently excluded from the result, never treated as an error. A persisted level exceeding ITS OWN
-  tree entry's MaxLevel (a genuine inconsistency, since this skill IS still a member of the current
-  tree) is surfaced via the `out` parameter and clamped for display, never thrown.
+  a `CharacterSkillState` carrying SEPARATELY computed booleans -
+  `EffectiveTreeMembership`/`RequirementsSatisfied`/`ClientVisible`/`Upgradeable`. These are kept
+  distinct because pinned rAthena's own runtime model proves they are independent facts - see
+  `ai/iro-2026-wire.md`'s `0x0B32` section for the full traced evidence. `ClientVisible` evaluates
+  THREE separately-conditioned acquisition gates (quest/wedding/spirit - see
+  `AcquisitionGateSatisfied` and `ai/world-data.md`'s "Generated source facts vs. runtime
+  learnability policy") rather than one collapsed boolean. `Upgradeable` requires the ACTUAL
+  persisted `CharSkillFlag` to be `Permanent` (a never-yet-learned skill defaults to Permanent,
+  matching pinned `pc_calc_skilltree`'s reset-then-grant sequence) AND `CurrentLevel < MaxLevel` -
+  independent of skill points. A persisted skill outside the current effective tree (a legitimate
+  historical skill from a prior job - job-changing is out of scope for this slice, but the model
+  must not assume every persisted row belongs to the current tree forever) is silently excluded
+  from the result, never treated as an error. A persisted level exceeding ITS OWN tree entry's
+  MaxLevel (a genuine inconsistency, since this skill IS still a member of the current tree) is
+  surfaced via the `out` parameter and clamped for display, never thrown.
 - `ValidateUpgrade(gameplay, skills, tree, requestedSkillId)` returns an immutable
   `SkillUpgradeValidationResult` - either a computed `{NewSkillLevel, NewSkillPoints, MaxLevel}` or
   a typed `SkillUpgradeRejectionReason` (`UnknownSkill`, `NotInEffectiveTree`,
-  `NotNormallyLearnable`, `NoSkillPoints`, `MaxLevelReached`, `BaseLevelNotMet`, `JobLevelNotMet`,
-  `PrerequisiteNotMet`). Never accepts or trusts a caller-supplied target level or point balance -
-  both are always derived internally.
+  `NotNormallyLearnable`, `NotPermanentSkill`, `NoSkillPoints`, `MaxLevelReached`,
+  `BaseLevelNotMet`, `JobLevelNotMet`, `PrerequisiteNotMet`). Never accepts or trusts a
+  caller-supplied target level or point balance - both are always derived internally. An
+  ALREADY-learned skill (`CurrentLevel > 0`) bypasses the acquisition gate for further leveling -
+  the gate only blocks the very first point spent on a not-normally-learnable skill, matching
+  pinned source's own "already known skills survive the gate re-check" rule.
 
-`CharacterSkillSnapshot` (every persisted `CharSkill` row for one character) enforces STRUCTURAL
-validity only when loaded (`FromLogin`): unknown canonical `SkillId`, a persisted level of exactly
-`0` (a learned row must never persist level 0 - a missing row already means level 0), or a
-duplicate `SkillId` all throw as data-corruption invariant violations. Whether a given `SkillId` is
-even a member of the CURRENT job's effective tree is a completely separate, per-call question
-answered by `CalculateEffectiveState` - never baked into the snapshot itself.
+`CharacterSkillSnapshot` (every persisted `CharSkill` row for one character, now including its
+persisted `CharSkillFlag`) enforces STRUCTURAL validity only when loaded (`FromLogin`): unknown
+canonical `SkillId`, a persisted level of exactly `0` (a learned row must never persist level 0 - a
+missing row already means level 0), or a duplicate `SkillId` all throw as data-corruption invariant
+violations. Whether a given `SkillId` is even a member of the CURRENT job's effective tree is a
+completely separate, per-call question answered by `CalculateEffectiveState` - never baked into the
+snapshot itself. `CharacterSkillSnapshot.Flag(skillId)` returns the actual persisted flag, or
+`Permanent` for a missing row (matching pinned `pc_calc_skilltree`'s reset-then-grant default).
 
 ### CharacterGameplayStateSession.LearnSkillAsync (single mutation lock, no second session)
 
@@ -1183,9 +1193,13 @@ open wire item below.
 ### Internal MapServer↔CharServer protocol (new opcodes 0x2b39-0x2b3c)
 
 - `MapSkillListGetRequest`/`Response` (`0x2b39`/`0x2b3a`): variable-length, same shape as
-  `MapInventoryListProtocol` - header + fixed 3-byte rows (`skillId.W level.B`), reject duplicate
-  SkillIds. Fetched as a third pre-bootstrap read in `MapClientSession.CompleteIroAuthenticationAsync`
-  (after gameplay state and inventory, same fail-closed policy).
+  `MapInventoryListProtocol` - header + fixed 4-byte rows (`skillId.W level.B flag.B`), reject
+  duplicate SkillIds. The `flag` byte transports the persisted `CharSkill.Flag` end-to-end
+  (CharServer query → `CharacterSkillRowDto` → wire row → `CharacterSkillSnapshot` →
+  `CharacterLearnedSkill.Flag`) - a DIFFERENT concept from the wire-facing 0x0B32 `inf` field (see
+  `ai/iro-2026-wire.md`); never conflated in code. Fetched as a third pre-bootstrap read in
+  `MapClientSession.CompleteIroAuthenticationAsync` (after gameplay state and inventory, same
+  fail-closed policy).
 - `MapSkillLearnRequest`/`Response` (`0x2b3b`/`0x2b3c`): ONE composite mutation request, fixed
   length (79-byte request, always-78-byte response - state/level fields zero-filled on failure,
   mirroring `MapCharacterGameplayStateProtocol.BuildResponse`'s own convention, so no variable-length
@@ -1202,21 +1216,33 @@ open wire item below.
   context), and `TryApplySkillLearn` (pure, unit-tested in `CharacterSkillPersistenceTests.cs`)
   re-validates only `GameplayStateVersion`, `SkillPoint > 0`, and the row's ACTUAL persisted level
   matching the caller's expected current level - rejecting with ZERO mutated fields if any check
-  fails. A new row is inserted with `Flag = 0` (`SKILL_FLAG_PERMANENT`, pinned `mmo.hpp` - the only
-  flag this PR's ordinary point-spend path ever produces); an existing row's `Flag` is preserved
-  unchanged on increment.
+  fails (including a structural byte-overflow guard: rejects outright if the actual level is
+  already `byte.MaxValue`, before any `+1` could wrap). A new row is inserted with `Flag = 0`
+  (`SKILL_FLAG_PERMANENT`, pinned `mmo.hpp` - the only flag this PR's ordinary point-spend path
+  ever produces); an existing row's `Flag` is preserved unchanged on increment.
 
 ### 0x0B32 map-entry emission
 
 `MapClientSession.BuildIroSkillInfoListPacket` filters `CalculateEffectiveState`'s result to
-`ClientVisible == true`, projects each through `IroSkillInfoEntry.From` (resolving `SpCost`/`Range`
-from `GeneratedSkillDefinition` at the character's CURRENT level - see `ai/iro-2026-wire.md`), and
+`ClientVisible == true`, projects each through `IroSkillInfoEntry.From`, and
 `IroSkillInfoListPackets.Build` serializes the result as a PURE function over already-resolved data
 (no registry/DB/session access inside the serializer itself, matching task section 22 and the
-`MapInventoryListProtocol` precedent). `IroMapEnterPackets.BuildInitialBootstrap`'s 4-packet payload
-is followed immediately by this `0x0B32` packet in `SendIroInitialBootstrapAsync`, matching the
-proven capture order exactly (`0x0B18, 0x0283, 0x0ADE, 0x02EB, 0x0B32`) - see
-`MapClientSessionSkillBootstrapTests.Bootstrap_SendsFourFixedPacketsThenSkillListInOfficialCaptureOrder`.
+`MapInventoryListProtocol` precedent). `IroSkillInfoEntry.From` resolves:
+`SpCost` from `GeneratedSkillDefinition.SpCostByLevel` at the character's CURRENT level; `Inf`
+copied directly from `GeneratedSkillDefinition.Inf`; `Range` through `IroSkillRangeResolver`
+(pinned absolute-value fallback for a negative source value) then `IroWireCompatibility` (the one
+verified `NV_BASIC` capture-vs-pinned-source divergence, applied with explicit provenance, never
+inside generated data itself); `SecondaryLevel` set equal to `CurrentLevel` (pinned
+`clif_skillinfoblock`'s `level2 = skill.lv` is a duplicate of the raw level, not a distinct
+"checked" concept - see `ai/iro-2026-wire.md`). `IroMapEnterPackets.BuildInitialBootstrap`'s
+4-packet payload is followed immediately by this `0x0B32` packet in
+`SendIroInitialBootstrapAsync`, matching the proven capture order exactly (`0x0B18, 0x0283, 0x0ADE,
+0x02EB, 0x0B32`) - see
+`MapClientSessionSkillBootstrapTests.Bootstrap_SendsFourFixedPacketsThenSkillListInOfficialCaptureOrder`
+and, critically, `IroSkillInfoProductionProjectionTests` in `tests/MapServer.Tests/Net/`, which
+exercises this EXACT production sequence (not a manually-constructed wire entry) and would have
+caught the historical Range=0 production bug - see this file's own PR-review-correction report for
+why the earlier serializer-only test could not.
 
 ### CURRENT OPEN WIRE ITEM
 

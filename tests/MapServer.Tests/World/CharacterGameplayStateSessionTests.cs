@@ -151,7 +151,7 @@ public sealed class CharacterGameplayStateSessionTests
 
         public Task<CharacterSkillReadResult> GetSkillsAsync(uint accountId, uint characterId, CancellationToken ct)
         {
-            var rows = _skillLevel == 0 ? [] : new List<(ushort SkillId, byte Level)> { (1, _skillLevel) };
+            var rows = _skillLevel == 0 ? [] : new List<(ushort SkillId, byte Level, CharSkillFlag Flag)> { (1, _skillLevel, CharSkillFlag.Permanent) };
             return Task.FromResult(CharacterSkillReadResult.Success(CharacterSkillSnapshot.FromLogin(rows)));
         }
 

@@ -44,7 +44,7 @@ internal static partial class CharacterDataCompiler
         internal StatBonus Add(StatBonus value) => new(Str + value.Str, Agi + value.Agi, Vit + value.Vit, Int + value.Int, Dex + value.Dex, Luk + value.Luk);
     }
     private sealed record Progression(JobIdentity Job, ushort MaxBaseLevel, ushort MaxJobLevel, ulong[] BaseExperience, ulong[] JobExperience, uint[] BaseHp, uint[] BaseSp, uint[] StatPoints, uint[] Str, uint[] Agi, uint[] Vit, uint[] Int, uint[] Dex, uint[] Luk, string DataKey);
-    private sealed record Skill(ushort Id, string Name, ushort MaxLevel, IReadOnlyList<uint> SpCostByLevel, short Range, bool NormallyLearnable);
+    private sealed record Skill(ushort Id, string Name, ushort MaxLevel, IReadOnlyList<uint> SpCostByLevel, short Range, bool IsQuest, bool IsWedding, bool IsSpirit, ushort Inf);
     private sealed record Requirement(ushort SkillId, ushort Level);
     private sealed record TreeEntry(ushort SkillId, ushort MaxLevel, ushort BaseLevel, ushort JobLevel, IReadOnlyList<Requirement> Requirements, bool Exclude);
     private sealed record DirectTree(JobIdentity Job, IReadOnlyList<JobIdentity> Parents, IReadOnlyList<TreeEntry> Entries);
@@ -343,18 +343,35 @@ internal static partial class CharacterDataCompiler
     // "- Level: N / Amount: X" sequence (e.g. SM_BASH has 10 distinct per-level costs). A skill
     // with no Requires block at all (e.g. NV_BASIC) has no SP cost. This scanner reproduces that
     // shape exactly rather than collapsing it into one number; see ai/world-data.md.
-    // Pinned db/re/skill_db.yml's Flags block marks a small set of skills as acquired outside
-    // ordinary skill-point spending: IsQuest (e.g. NV_FIRSTAID, NV_TRICKDEAD - granted via
-    // quest/event), IsWedding (WE_* family), and IsGuild (GD_* family - granted by guild level).
-    // A skill with none of these flags (or no Flags block at all, e.g. NV_BASIC) is normally
-    // learnable. This is scanned the same way as Requires/SpCost - narrowly, from source, never a
-    // hardcoded skill-name list.
-    private static readonly HashSet<string> NotNormallyLearnableFlags = ["IsQuest", "IsWedding", "IsGuild"];
+    //
+    // Pinned db/re/skill_db.yml's Flags block marks skills with conditional-acquisition source
+    // facts: IsQuest (e.g. NV_FIRSTAID, NV_TRICKDEAD), IsWedding (WE_* family), IsSpirit (skills
+    // that only appear while an active SC_SPIRIT status is present - pc_calc_skilltree/
+    // pc_check_skilltree, pc.cpp:2735-2740/2862-2867). These are scanned narrowly as source facts
+    // only; CharacterSkillService (not this compiler) decides current runtime learnability from
+    // them plus server config/character state - see ai/world-data.md. IsGuild is deliberately NOT
+    // tracked here: confirmed absent from the player skill-tree tree-walk gate in pinned source.
+    private static readonly HashSet<string> AcquisitionFlagNames = ["IsQuest", "IsWedding", "IsSpirit"];
+
+    // Pinned skill_get_inf's source: skill_db.yml's TargetType field, mapped to the e_skill_inf
+    // bitmask via the pinned "INF_" + TargetType + "_SKILL" constant-name convention (skill.cpp,
+    // SkillDatabase::parseBodyNode). Every TargetType value actually present in the pinned skill
+    // database is covered; absent TargetType defaults to 0 (INF_PASSIVE_SKILL), matching pinned
+    // source's zero-initialized struct default.
+    private static readonly IReadOnlyDictionary<string, ushort> TargetTypeToInf = new Dictionary<string, ushort>(StringComparer.Ordinal)
+    {
+        ["Attack"] = 0x01,  // INF_ATTACK_SKILL
+        ["Ground"] = 0x02,  // INF_GROUND_SKILL
+        ["Self"] = 0x04,    // INF_SELF_SKILL
+        ["Support"] = 0x10, // INF_SUPPORT_SKILL
+        ["Trap"] = 0x20,    // INF_TRAP_SKILL
+    };
 
     private static IReadOnlyList<Skill> ParseSkills(string yaml)
     {
         var result = new List<Skill>();
-        ushort? id = null; string? name = null; ushort maxLevel = 0; short range = 0; var normallyLearnable = true;
+        ushort? id = null; string? name = null; ushort maxLevel = 0; short range = 0; ushort inf = 0;
+        var isQuest = false; var isWedding = false; var isSpirit = false;
         uint? spCostScalar = null; SortedDictionary<ushort, uint>? spCostByLevel = null; ushort? pendingSpCostLevel = null;
         var inRequires = false; var inSpCostList = false; var inFlags = false;
         void Finish()
@@ -370,8 +387,8 @@ internal static partial class CharacterDataCompiler
             }
             else if (spCostScalar is { } scalar) spCost = Enumerable.Repeat(scalar, maxLevel).ToArray();
             else spCost = [];
-            result.Add(new(id.Value, name, maxLevel, spCost, range, normallyLearnable));
-            id = null; name = null; maxLevel = 0; range = 0; normallyLearnable = true; spCostScalar = null; spCostByLevel = null; pendingSpCostLevel = null; inRequires = false; inSpCostList = false; inFlags = false;
+            result.Add(new(id.Value, name, maxLevel, spCost, range, isQuest, isWedding, isSpirit, inf));
+            id = null; name = null; maxLevel = 0; range = 0; inf = 0; isQuest = false; isWedding = false; isSpirit = false; spCostScalar = null; spCostByLevel = null; pendingSpCostLevel = null; inRequires = false; inSpCostList = false; inFlags = false;
         }
         foreach (var line in yaml.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n'))
         {
@@ -381,6 +398,13 @@ internal static partial class CharacterDataCompiler
             match = SkillNameRegex().Match(line); if (match.Success) { name = match.Groups[1].Value; continue; }
             match = SkillMaxLevelRegex().Match(line); if (match.Success) { maxLevel = ushort.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture); continue; }
             match = SkillRangeRegex().Match(line); if (match.Success) { range = short.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture); continue; }
+            match = SkillTargetTypeRegex().Match(line);
+            if (match.Success)
+            {
+                if (!TargetTypeToInf.TryGetValue(match.Groups[1].Value, out inf))
+                    throw new ArgumentException($"db/re/skill_db.yml skill {id} ('{name}') has unrecognized TargetType '{match.Groups[1].Value}'.");
+                continue;
+            }
             match = SkillFlagsRegex().Match(line); if (match.Success) { inFlags = true; inRequires = false; inSpCostList = false; continue; }
             match = SkillRequiresRegex().Match(line); if (match.Success) { inRequires = true; inFlags = false; inSpCostList = false; continue; }
             if (inFlags)
@@ -389,7 +413,15 @@ internal static partial class CharacterDataCompiler
                 else
                 {
                     match = SkillFlagEntryRegex().Match(line);
-                    if (match.Success && NotNormallyLearnableFlags.Contains(match.Groups[1].Value) && bool.Parse(match.Groups[2].Value)) normallyLearnable = false;
+                    if (match.Success && AcquisitionFlagNames.Contains(match.Groups[1].Value) && bool.Parse(match.Groups[2].Value))
+                    {
+                        switch (match.Groups[1].Value)
+                        {
+                            case "IsQuest": isQuest = true; break;
+                            case "IsWedding": isWedding = true; break;
+                            case "IsSpirit": isSpirit = true; break;
+                        }
+                    }
                     continue;
                 }
             }
@@ -578,7 +610,8 @@ internal static partial class CharacterDataCompiler
         foreach (var skill in skills)
         {
             var spCost = string.Join(", ", skill.SpCostByLevel);
-            output.Append("        new(").Append(skill.Id).Append(", \"").Append(skill.Name).Append("\", [").Append(spCost).Append("], ").Append(skill.Range).Append(", ").Append(skill.NormallyLearnable ? "true" : "false").AppendLine("),");
+            var acquisition = $"new({(skill.IsQuest ? "true" : "false")}, {(skill.IsWedding ? "true" : "false")}, {(skill.IsSpirit ? "true" : "false")})";
+            output.Append("        new(").Append(skill.Id).Append(", \"").Append(skill.Name).Append("\", [").Append(spCost).Append("], ").Append(skill.Range).Append(", ").Append(acquisition).Append(", ").Append(skill.Inf).AppendLine("),");
         }
         return output.AppendLine("    ];").AppendLine("    private static readonly IReadOnlyDictionary<ushort, GeneratedSkillDefinition> ById = Definitions.ToDictionary(value => value.SkillId);").AppendLine("    private static readonly IReadOnlyDictionary<string, GeneratedSkillDefinition> ByName = Definitions.ToDictionary(value => value.Name, StringComparer.Ordinal);").AppendLine("    internal static IReadOnlyList<GeneratedSkillDefinition> All => Definitions;").AppendLine("    internal static GeneratedSkillDefinition GetById(ushort skillId) => ById.TryGetValue(skillId, out var value) ? value : throw new NotSupportedException($\"Skill ID {skillId} is not generated.\");").AppendLine("    internal static GeneratedSkillDefinition GetByName(string name) => ByName.TryGetValue(name, out var value) ? value : throw new NotSupportedException($\"Skill '{name}' is not generated.\");").AppendLine("}").ToString();
     }
@@ -633,6 +666,8 @@ internal static partial class CharacterDataCompiler
     private static partial Regex SkillMaxLevelRegex();
     [GeneratedRegex(@"^    Range: (-?\d+)$")]
     private static partial Regex SkillRangeRegex();
+    [GeneratedRegex(@"^    TargetType: (\w+)$")]
+    private static partial Regex SkillTargetTypeRegex();
     [GeneratedRegex(@"^    Requires:$")]
     private static partial Regex SkillRequiresRegex();
     [GeneratedRegex(@"^    Flags:$")]

@@ -86,7 +86,7 @@ public sealed class CharacterSkillLearnIntegrationTests
     {
         var tree = GeneratedSkillTreeRegistry.Get(JobClass.Novice);
         var persistence = new InMemorySkillPersistence(NoviceState(), initialSkills: [(1, 9)]); // NV_BASIC MaxLevel is 9
-        var session = new CharacterGameplayStateSession(AccountId, persistence.State, persistence, CharacterSkillSnapshot.FromLogin([(1, 9)]), persistence);
+        var session = new CharacterGameplayStateSession(AccountId, persistence.State, persistence, CharacterSkillSnapshot.FromLogin([(1, 9, CharSkillFlag.Permanent)]), persistence);
 
         Assert.Null(await session.LearnSkillAsync(tree, requestedSkillId: 1, default));
     }
@@ -196,7 +196,7 @@ public sealed class CharacterSkillLearnIntegrationTests
         }
 
         public Task<CharacterSkillReadResult> GetSkillsAsync(uint accountId, uint characterId, CancellationToken cancellationToken)
-            => Task.FromResult(CharacterSkillReadResult.Success(CharacterSkillSnapshot.FromLogin([.. _learned.Select(kv => (kv.Key, kv.Value))])));
+            => Task.FromResult(CharacterSkillReadResult.Success(CharacterSkillSnapshot.FromLogin([.. _learned.Select(kv => (kv.Key, kv.Value, CharSkillFlag.Permanent))])));
 
         public Task<CharacterSkillLearnResult?> LearnSkillAsync(uint accountId, CharacterGameplayState expectedGameplayState, ushort skillId, byte expectedCurrentLevel, CancellationToken cancellationToken)
         {
