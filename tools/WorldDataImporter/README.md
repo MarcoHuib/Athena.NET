@@ -254,14 +254,23 @@ effective trees, then replaces only the owned `Generated/Jobs`,
 `Generated/Progression`, and `Generated/Skills` directories. Generation is
 staged before replacement and rejects missing files or unresolved relationships.
 
-The six checked-in files provide job/skill identity, progression, and direct plus
+The six checked-in files provide job/skill identity (a generated `JobClass` enum
+plus `JobClassNames`, not a dictionary of records), progression, and direct plus
 effective skill-tree registries. Runtime consumes generated C# only. Current
-coverage is 194 exported numeric identities, 175 generated jobs, 147 progression
-mappings (67 unique value sets), 1,635 skills, and 175 direct/effective trees.
-Skill spending, `CharSkill` mutation, `0x0B32`, skill execution, and job changing
-remain out of scope. `compile-progression` remains available when only the owned
-progression directory needs regeneration; the command above is the canonical
-complete sequence.
+coverage is 194 exported numeric identities, 175 generated jobs, 175 progression
+mappings (89 unique value sets), 1,635 skills, and 175 direct/effective trees -
+every generated job now has complete progression data, since HP/SP resolve
+through pinned `JobDatabase::calc_basehp`/`calc_basesp` for any base level a
+job's `db/re/job_basepoints.yml` table doesn't cover explicitly (see
+`ai/world-data.md`'s "Generated character-data registries and rate policy"
+section for the full formula and mapid-category adjustments). `JobClass`
+member names are readable PascalCase identifiers (`Rune_Knight` ->
+`RuneKnight`) computed and collision-checked at compile time;
+`JobClassNames.GetRathenaName(JobClass)` recovers the canonical pinned source
+name verbatim. Skill spending, `CharSkill` mutation, `0x0B32`, skill execution,
+and job changing remain out of scope. `compile-progression` remains available
+when only the owned progression directory needs regeneration; the command
+above is the canonical complete sequence.
 
 ## Verification
 

@@ -439,12 +439,95 @@ public sealed class CompilerTests
         var repository = FindRepositoryRoot();
         var root = Path.Combine(repository, "legacy/rathena");
         var generated = CompileCharacterData(root);
-        Assert.Equal(new CharacterDataCounts(194, 175, 147, 67, 1635, 175, 175), generated.Counts);
+        // job_basepoints.yml's 24 fourth-job classes (Dragon_Knight, Meister, Windhawk, etc.,
+        // Jobs-block starting at line 19264) declare only BaseAp - no BaseHp/BaseSp rows.
+        // Pinned JobDatabase::loadingFinished (src/map/pc.cpp) resolves every base level
+        // whose base_hp[j]/base_sp[j] was never set through calc_basehp/calc_basesp instead
+        // of leaving it absent; all 175 generated jobs now get complete progression data
+        // (previously only 147 did, because the compiler required non-null BaseHp/BaseSp
+        // tables instead of falling back to the formula). Unique value sets rose from 67 to
+        // 89 because these newly-resolved HP/SP curves are genuinely distinct per job.
+        Assert.Equal(new CharacterDataCounts(194, 175, 175, 89, 1635, 175, 175), generated.Counts);
         var progression = generated.Artifacts.Single(item => item.RelativePath == "Progression/GeneratedProgressionData.cs").Source;
-        Assert.Contains("Job_0000 = new(0, 99, 10, [0, 548, 894, 1486", progression);
+        Assert.Contains("Novice = new(JobClass.Novice, 99, 10, [0, 548, 894, 1486", progression);
         Assert.Contains("[0, 10, 18, 28", progression);
         Assert.Contains("[0, 40, 45, 50", progression);
         Assert.Contains("rAthena commit: e985006171d2eb320ee512a653f4c83aea3d81b6", progression);
+
+        // Dragon_Knight (4252) regression anchor for the HP/SP formula fix: its job_stats.yml
+        // block declares HpFactor 68, HpIncrease 5828, SpFactor 7, SpIncrease 14 with no
+        // Ninja/Gunslinger/Summoner/Super Novice mapid adjustment, giving calc_basehp/
+        // calc_basesp(1) = 93/10, (2) = 152/10, (3) = 212/10 exactly.
+        Assert.Contains("DragonKnight = new(JobClass.DragonKnight, ", progression);
+        var dragonKnightLine = progression.Split('\n').Single(line => line.Contains("DragonKnight = new(JobClass.DragonKnight, ", StringComparison.Ordinal));
+        Assert.Contains("[0, 93, 152, 212, ", dragonKnightLine);
+    }
+
+    [Fact]
+    public void CharacterDataCompiler_ResolvesMissingBaseHpSpThroughPinnedFormulaFallback()
+    {
+        // Synthetic fixture: Swordman's job_basepoints.yml block declares BaseHp/BaseSp only
+        // for levels 1-2 (a sparse table, mirroring how the 24 real fourth-job classes in
+        // db/re/job_basepoints.yml declare none at all), and its job_stats.yml block sets
+        // explicit HpFactor/HpIncrease/SpFactor/SpIncrease. Every level the table omits must
+        // resolve through JobDatabase::calc_basehp/calc_basesp (src/map/pc.cpp), not error
+        // out and not silently stay zero.
+        var root = Path.Combine(FindRepositoryRoot(), "legacy/rathena");
+        var sources = ReadCharacterData(root);
+        // Strip every real "Swordman: true" membership line first so only the synthetic
+        // block below governs Swordman - the real job_basepoints.yml/job_stats.yml both
+        // declare additional Swordman blocks later in the file that would otherwise overlay
+        // (last-row-wins) on top of this fixture's rows.
+        var isolatedBasePoints = sources.JobBasePoints.Replace("      Swordman: true\n", "", StringComparison.Ordinal);
+        var isolatedStats = sources.JobStats.Replace("      Swordman: true\n", "", StringComparison.Ordinal);
+        var sparseBasePoints = ReplaceFirst(isolatedBasePoints,
+            "  - Jobs:\n      Novice: true",
+            "  - Jobs:\n      Swordman: true\n    BaseHp:\n      - Level: 1\n        Hp: 999\n    BaseSp:\n      - Level: 1\n        Sp: 999\n  - Jobs:\n      Novice: true");
+        var explicitFactors = ReplaceFirst(isolatedStats,
+            "  - Jobs:\n      Novice: true",
+            "  - Jobs:\n      Swordman: true\n    HpFactor: 100\n    HpIncrease: 200\n    SpFactor: 10\n    SpIncrease: 50\n  - Jobs:\n      Novice: true");
+        var generated = CharacterDataCompiler.Compile(sources with { JobBasePoints = sparseBasePoints, JobStats = explicitFactors }, "commit");
+        var progression = generated.Artifacts.Single(item => item.RelativePath == "Progression/GeneratedProgressionData.cs").Source;
+        var swordmanLine = progression.Split('\n').Single(line => line.Contains("Swordman = new(JobClass.Swordman, ", StringComparison.Ordinal));
+
+        // Level 1 keeps the explicit table row (999) - table always wins over formula.
+        // Level 2 has no table row, so it must resolve via calc_basehp/calc_basesp:
+        //   base_hp = 35 + floor(2*200/100) + floor(100/100*2+0.5) = 35+4+2 = 41
+        //   base_sp = 10 + floor(2*50/100) + floor(10/100*2+0.5)   = 10+1+0 = 11
+        Assert.Contains("[0, 999, 41,", swordmanLine);
+        Assert.Contains("[0, 999, 11,", swordmanLine);
+    }
+
+    [Fact]
+    public void CharacterDataCompiler_JobStatsFactorsOnlyResetToDefaultOnFirstBlockForJob()
+    {
+        // Pinned JobDatabase::parseBodyNode's "exists" flag (src/map/pc.cpp): a job_id's
+        // hp_factor/hp_increase/sp_factor/sp_increase only reset to the rAthena defaults
+        // (0/500/0/100) the FIRST time that job_id is seen across job_stats.yml's repeated
+        // Jobs blocks. A LATER block that omits a field must leave the earlier explicit value
+        // untouched, not silently reset it. This fixture gives Swordman an explicit HpFactor
+        // in its first block, then a second block (shared with Novice) that sets only
+        // SpFactor - HpFactor set earlier must survive into the second block untouched.
+        var root = Path.Combine(FindRepositoryRoot(), "legacy/rathena");
+        var sources = ReadCharacterData(root);
+        var isolatedBasePoints = sources.JobBasePoints.Replace("      Swordman: true\n", "", StringComparison.Ordinal);
+        var isolatedStats = sources.JobStats.Replace("      Swordman: true\n", "", StringComparison.Ordinal);
+        var sparseBasePoints = ReplaceFirst(isolatedBasePoints,
+            "  - Jobs:\n      Novice: true",
+            "  - Jobs:\n      Swordman: true\n    BaseHp:\n      - Level: 1\n        Hp: 1\n    BaseSp:\n      - Level: 1\n        Sp: 1\n  - Jobs:\n      Novice: true");
+        var twoBlockFactors = ReplaceFirst(isolatedStats,
+            "  - Jobs:\n      Novice: true",
+            "  - Jobs:\n      Swordman: true\n    HpFactor: 300\n  - Jobs:\n      Swordman: true\n    SpFactor: 20\n  - Jobs:\n      Novice: true");
+        var generated = CharacterDataCompiler.Compile(sources with { JobBasePoints = sparseBasePoints, JobStats = twoBlockFactors }, "commit");
+        var progression = generated.Artifacts.Single(item => item.RelativePath == "Progression/GeneratedProgressionData.cs").Source;
+        var swordmanLine = progression.Split('\n').Single(line => line.Contains("Swordman = new(JobClass.Swordman, ", StringComparison.Ordinal));
+
+        // Level 2 (no table row): base_hp = 35 + floor(2*500/100) + floor(300/100*2+0.5) = 35+10+6 = 51
+        // (HpIncrease keeps its untouched default of 500; HpFactor 300 survives from block 1).
+        // base_sp = 10 + floor(2*100/100) + floor(20/100*2+0.5) = 10+2+0 = 12
+        // (SpIncrease keeps its untouched default of 100; SpFactor 20 set in block 2).
+        Assert.Contains("[0, 1, 51,", swordmanLine);
+        Assert.Contains("[0, 1, 12,", swordmanLine);
     }
 
     [Fact]

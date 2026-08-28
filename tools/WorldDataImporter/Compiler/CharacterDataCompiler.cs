@@ -11,12 +11,32 @@ internal sealed record CharacterDataCounts(int NumericJobIdentitiesDiscovered, i
 
 internal static partial class CharacterDataCompiler
 {
-    private sealed record JobIdentity(ushort Id, string Name, string EnumName);
+    private sealed record JobIdentity(ushort Id, string Name, string EnumName)
+    {
+        // Readable PascalCase C# identifier for this job, computed once and reused for the
+        // JobClass enum member and every generated Job_<name> static field. Never re-derived
+        // by guessing from the identifier elsewhere - the pinned rAthena canonical name
+        // (Name, e.g. "Rune_Knight") stays the single source of truth and is preserved
+        // verbatim through JobClassNames.
+        internal string CSharpIdentifier { get; } = SanitizeIdentifier(Name);
+    }
+    // Pinned JobDatabase::parseBodyNode's "exists" flag (src/map/pc.cpp) means these four
+    // factors only reset to their rAthena defaults the FIRST time a job_id is seen across
+    // job_stats.yml's repeated Jobs blocks; a later block that omits a field leaves the
+    // previously-set value untouched rather than resetting it. hp_increase/sp_increase
+    // default to 500/100 respectively; hp_factor/sp_factor default to 0.
+    private sealed class HpSpFactors
+    {
+        internal uint HpFactor; internal uint HpIncrease = 500; internal uint SpFactor; internal uint SpIncrease = 100;
+    }
     private sealed class ProgressionBuilder(JobIdentity job)
     {
         internal JobIdentity Job { get; } = job;
         internal ushort? MaxBaseLevel, MaxJobLevel;
-        internal SortedDictionary<ushort, ulong>? BaseExperience, JobExperience, BaseHp, BaseSp;
+        internal SortedDictionary<ushort, ulong>? BaseExperience, JobExperience;
+        internal SortedDictionary<ushort, ulong> BaseHp = [], BaseSp = [];
+        internal readonly HpSpFactors Factors = new();
+        internal bool HasJobStatsBlock;
         internal readonly SortedDictionary<ushort, StatBonus> Bonuses = [];
     }
     private readonly record struct StatBonus(int Str, int Agi, int Vit, int Int, int Dex, int Luk)
@@ -40,7 +60,17 @@ internal static partial class CharacterDataCompiler
         ApplyJobDatabase(sources.JobBasePoints, "db/re/job_basepoints.yml", aliases, builders, includeExperience: false, includeBasePoints: true, includeBonuses: false);
         ApplyJobDatabase(sources.JobStats, "db/re/job_stats.yml", aliases, builders, includeExperience: false, includeBasePoints: false, includeBonuses: true);
         var statPoints = ParseStatPoints(sources.StatPoints);
-        var progressions = BuildProgressions(builders.Values, statPoints);
+        // Pinned pc_jobid2mapid (src/map/pc.cpp): the exact, fixed set of job identities whose
+        // mapid resolves to MAPID_SUMMONER (Summoner, Baby_Summoner) or matches
+        // MAPID_SUPER_NOVICE under MAPID_SECONDMASK (Super_Novice, Super_Baby, and the
+        // MAPID_THIRDMASK-only-widened Super_Novice_E/Super_Baby_E, whose extra JOBL_THIRD
+        // bit falls outside SECONDMASK so they still match). Resolved by canonical name
+        // through the same alias table job_stats.yml/job_basepoints.yml use, not by a
+        // hand-copied numeric ID list, so a future pinned renumbering cannot silently
+        // desync this from the job identity table.
+        var summonerJobIds = new[] { "Summoner", "Baby_Summoner" }.Where(aliases.ContainsKey).Select(name => aliases[name].Id).ToHashSet();
+        var superNoviceJobIds = new[] { "Super_Novice", "Super_Baby", "Super_Novice_E", "Super_Baby_E" }.Where(aliases.ContainsKey).Select(name => aliases[name].Id).ToHashSet();
+        var progressions = BuildProgressions(builders.Values, statPoints, summonerJobIds, superNoviceJobIds);
         var skills = ParseSkills(sources.SkillDatabase);
         var skillsByName = skills.ToDictionary(skill => skill.Name, StringComparer.OrdinalIgnoreCase);
         var directTrees = ParseTrees(sources.SkillTree, aliases, skillsByName);
@@ -51,6 +81,7 @@ internal static partial class CharacterDataCompiler
         var jobs = identities.Where(job => includedIds.Contains(job.Id)).OrderBy(job => job.Id).ToArray();
         var exclusions = identities.Where(job => !includedIds.Contains(job.Id)).OrderBy(job => job.Id).Select(job => $"{job.Id} {job.Name}: no complete progression definition and no Renewal skill-tree declaration.").ToArray();
         ValidateCrossRegistry(jobs, progressions, skills, directTrees, effectiveTrees);
+        ValidateIdentifierUniqueness(jobs);
 
         var artifacts = new List<CharacterDataArtifact>
         {
@@ -132,8 +163,20 @@ internal static partial class CharacterDataCompiler
                 }
                 if (includeBasePoints)
                 {
-                    ApplyLevels(node, "BaseHp", "Hp", values => target.BaseHp = values, context);
-                    ApplyLevels(node, "BaseSp", "Sp", values => target.BaseSp = values, context);
+                    ApplyLevels(node, "BaseHp", "Hp", values => { foreach (var pair in values) target.BaseHp[pair.Key] = pair.Value; }, context);
+                    ApplyLevels(node, "BaseSp", "Sp", values => { foreach (var pair in values) target.BaseSp[pair.Key] = pair.Value; }, context);
+                }
+                if (includeBonuses)
+                {
+                    // Pinned JobDatabase::parseBodyNode (src/map/pc.cpp): a field present in this
+                    // block overwrites the running value; an absent field only resets to the
+                    // rAthena default the first time this job_id is ever seen ("exists" flag).
+                    var firstBlockForJob = !target.HasJobStatsBlock;
+                    target.HasJobStatsBlock = true;
+                    ApplyFactor(node, "HpFactor", firstBlockForJob, value => target.Factors.HpFactor = value, () => target.Factors.HpFactor = 0, context);
+                    ApplyFactor(node, "HpIncrease", firstBlockForJob, value => target.Factors.HpIncrease = value, () => target.Factors.HpIncrease = 500, context);
+                    ApplyFactor(node, "SpFactor", firstBlockForJob, value => target.Factors.SpFactor = value, () => target.Factors.SpFactor = 0, context);
+                    ApplyFactor(node, "SpIncrease", firstBlockForJob, value => target.Factors.SpIncrease = value, () => target.Factors.SpIncrease = 100, context);
                 }
                 if (includeBonuses && node.Optional("BonusStats") is { } bonuses)
                 {
@@ -150,6 +193,11 @@ internal static partial class CharacterDataCompiler
     }
 
     private static void ApplyScalar(SimpleYamlMap map, string key, Action<ushort> apply, string context) { if (map.Optional(key) is { } node) apply(node.UShort($"{context}.{key}")); }
+    private static void ApplyFactor(SimpleYamlMap map, string key, bool firstBlockForJob, Action<uint> apply, Action applyDefault, string context)
+    {
+        if (map.Optional(key) is { } node) apply(checked((uint)node.ULong($"{context}.{key}")));
+        else if (firstBlockForJob) applyDefault();
+    }
     private static void ApplyLevels(SimpleYamlMap map, string section, string valueName, Action<SortedDictionary<ushort, ulong>> apply, string context)
     {
         if (map.Optional(section) is not { } sectionNode) return;
@@ -184,17 +232,26 @@ internal static partial class CharacterDataCompiler
         return result;
     }
 
-    private static IReadOnlyList<Progression> BuildProgressions(IEnumerable<ProgressionBuilder> builders, uint[] globalStatPoints)
+    // Pinned pc_jobid2mapid (src/map/pc.cpp) - the exact fixed set of numeric job IDs whose
+    // calc_basehp/calc_basesp mapid category triggers an additional adjustment beyond the
+    // plain HpFactor/HpIncrease/SpFactor/SpIncrease formula. Renewal never compiles the
+    // Ninja/Gunslinger branch (#ifndef RENEWAL guards only the HP side; even SP's branch is
+    // moot here because this project only ever loads db/re/* Renewal data, never those two
+    // mapid categories' pre-Renewal SP override path is exercised against non-Renewal data);
+    // Summoner (+50% HP and SP) and Super Novice (level 99/150 HP bonus) are the two
+    // adjustments that DO apply in Renewal and are implemented below.
+    private static IReadOnlyList<Progression> BuildProgressions(IEnumerable<ProgressionBuilder> builders, uint[] globalStatPoints, IReadOnlyCollection<ushort> summonerJobIds, IReadOnlyCollection<ushort> superNoviceJobIds)
     {
         var result = new List<Progression>();
         foreach (var builder in builders.OrderBy(item => item.Job.Id))
         {
-            if (builder.MaxBaseLevel is null || builder.MaxJobLevel is null || builder.BaseExperience is null || builder.JobExperience is null || builder.BaseHp is null || builder.BaseSp is null) continue;
+            if (builder.MaxBaseLevel is null || builder.MaxJobLevel is null || builder.BaseExperience is null || builder.JobExperience is null) continue;
             var maxBase = builder.MaxBaseLevel.Value; var maxJob = builder.MaxJobLevel.Value;
             var baseExp = Complete(builder.BaseExperience, maxBase, builder.Job.Name, "BaseExp");
             var jobExp = Complete(builder.JobExperience, maxJob, builder.Job.Name, "JobExp");
-            var hp = CompleteUInt(builder.BaseHp, maxBase, builder.Job.Name, "BaseHp");
-            var sp = CompleteUInt(builder.BaseSp, maxBase, builder.Job.Name, "BaseSp");
+            var mapidCategory = summonerJobIds.Contains(builder.Job.Id) ? MapidCategory.Summoner : superNoviceJobIds.Contains(builder.Job.Id) ? MapidCategory.SuperNovice : MapidCategory.None;
+            var hp = ResolveBaseHpSp(builder.BaseHp, maxBase, builder.Factors, mapidCategory, isHp: true);
+            var sp = ResolveBaseHpSp(builder.BaseSp, maxBase, builder.Factors, mapidCategory, isHp: false);
             if (globalStatPoints.Length <= maxBase) throw new ArgumentException($"db/re/statpoint.yml does not cover {builder.Job.Name} max base level {maxBase}.");
             var statPoints = globalStatPoints[..(maxBase + 1)];
             var stats = Enumerable.Range(0, 6).Select(_ => new uint[maxJob + 1]).ToArray();
@@ -216,14 +273,60 @@ internal static partial class CharacterDataCompiler
         for (ushort level = 1; level <= max; level++) result[level] = values.TryGetValue(level, out var value) && value > 0 ? value : throw new ArgumentException($"{job} {section} is missing level {level}.");
         return result;
     }
-    private static uint[] CompleteUInt(SortedDictionary<ushort, ulong> values, ushort max, string job, string section)
+    private enum MapidCategory { None, Summoner, SuperNovice }
+
+    // Matches pinned JobDatabase::loadingFinished (src/map/pc.cpp): for every base level,
+    // an explicit table row wins; a level the table never set (job->base_hp[j] == 0) is
+    // resolved through calc_basehp/calc_basesp instead. A table row for a level beyond
+    // maxBase is silently discarded, mirroring the pinned parse loop's
+    // "if (level > job->max_base_level) continue;".
+    private static uint[] ResolveBaseHpSp(SortedDictionary<ushort, ulong> tableRows, ushort maxBase, HpSpFactors factors, MapidCategory mapid, bool isHp)
     {
-        // Pinned JobDatabase initializes HP/SP arrays to zero and several advanced
-        // classes intentionally provide rows only from their legal change level.
-        var result = new uint[max + 1];
-        foreach (var pair in values.Where(pair => pair.Key <= max)) result[pair.Key] = checked((uint)pair.Value);
-        if (result.All(value => value == 0)) throw new ArgumentException($"{job} {section} has no rows through max level {max}.");
+        var result = new uint[maxBase + 1];
+        for (ushort level = 1; level <= maxBase; level++)
+        {
+            var fromTable = tableRows.TryGetValue(level, out var value) ? checked((uint)value) : 0;
+            result[level] = fromTable != 0 ? fromTable : isHp ? CalcBaseHp(level, factors, mapid) : CalcBaseSp(level, factors, mapid);
+        }
         return result;
+    }
+
+    // Pinned JobDatabase::calc_basehp (src/map/pc.cpp). The Ninja/Gunslinger branch is
+    // guarded by #ifndef RENEWAL in pinned source and is never compiled for Renewal builds;
+    // this project only ever loads db/re/* Renewal data, so that branch is intentionally
+    // omitted here, not merely unimplemented.
+    private static uint CalcBaseHp(ushort level, HpSpFactors factors, MapidCategory mapid)
+    {
+        double baseHp = 35.0;
+        baseHp += Math.Floor(level * (factors.HpIncrease / 100.0));
+        for (var i = 2; i <= level; i++) baseHp += Math.Floor(factors.HpFactor / 100.0 * i + 0.5);
+        if (mapid == MapidCategory.Summoner) baseHp += Math.Floor(baseHp / 2 + 0.5);
+        else if (mapid == MapidCategory.SuperNovice)
+        {
+            if (level >= 99) baseHp += 2000.0;
+            if (level >= 150) baseHp += 2000.0;
+        }
+        return checked((uint)baseHp);
+    }
+
+    // Pinned JobDatabase::calc_basesp (src/map/pc.cpp). Unlike calc_basehp's HP branch, the
+    // Ninja/Gunslinger SP adjustment carries NO #ifndef RENEWAL guard, so pinned rAthena DOES
+    // apply it in Renewal. It is deliberately NOT implemented here: Ninja/Baby_Ninja and
+    // Gunslinger/Baby_Gunslinger each declare their own explicit BaseSp rows for every base
+    // level through their max_base_level in db/re/job_basepoints.yml (verified: these are
+    // the four job_stats.yml Jobs-block members whose base-points block is fully dense, not
+    // one of the 24 sparse fourth-job entries), so job->base_sp[j] is never 0 for them and
+    // calc_basesp's branch is never reached by pinned loadingFinished's `if (base_sp[j]==0)`
+    // gate for these jobs. If a future job_basepoints.yml revision ever leaves a Ninja/
+    // Gunslinger base level's BaseSp row unset, this omission becomes load-bearing and must
+    // be revisited; ResolveBaseHpSp has no way to detect that condition today.
+    private static uint CalcBaseSp(ushort level, HpSpFactors factors, MapidCategory mapid)
+    {
+        double baseSp = 10.0;
+        baseSp += Math.Floor(level * (factors.SpIncrease / 100.0));
+        for (var i = 2; i <= level; i++) baseSp += Math.Floor(factors.SpFactor / 100.0 * i + 0.5);
+        if (mapid == MapidCategory.Summoner) baseSp += Math.Floor(baseSp / 2 + 0.5);
+        return checked((uint)baseSp);
     }
     private static string HashKey(params object[] values) => string.Join('|', values.Select(StableValue));
     private static string StableValue(object? value) => value switch
@@ -356,28 +459,71 @@ internal static partial class CharacterDataCompiler
     private static ushort ReadOptionalUShort(SimpleYamlMap map, string key) => map.Optional(key)?.UShort(key) ?? 0;
     private static int ReadOptionalInt(SimpleYamlMap map, string key) => map.Optional(key) is { } node && int.TryParse(node.Scalar(key), NumberStyles.Integer, CultureInfo.InvariantCulture, out var value) ? value : map.Optional(key) is null ? 0 : throw new ArgumentException($"{key} must be an integer.");
     private static string CanonicalJobName(string name) => string.Join('_', name.Split('_').Select(part => part.Length == 0 ? part : char.ToUpperInvariant(part[0]) + part[1..].ToLowerInvariant()));
+
+    // Every C# reserved keyword (not contextual keywords, which are fine as identifiers).
+    // None of the 175 pinned rAthena job names collide with one today, but a future job
+    // added upstream might, so this is escaped defensively with '@' rather than assumed away.
+    private static readonly HashSet<string> CSharpKeywords =
+    [
+        "abstract","as","base","bool","break","byte","case","catch","char","checked","class","const","continue","decimal","default","delegate","do","double","else","enum","event","explicit","extern","false","finally","fixed","float","for","foreach","goto","if","implicit","in","int","interface","internal","is","lock","long","namespace","new","null","object","operator","out","override","params","private","protected","public","readonly","ref","return","sbyte","sealed","short","sizeof","stackalloc","static","string","struct","switch","this","throw","true","try","typeof","uint","ulong","unchecked","unsafe","ushort","using","virtual","void","volatile","while",
+    ];
+
+    // Strips the underscore separators CanonicalJobName introduces, producing a readable
+    // PascalCase C# identifier (e.g. "Rune_Knight_T2" -> "RuneKnightT2"). CanonicalJobName
+    // already upper-cases each underscore-delimited segment's first letter, so concatenation
+    // alone yields PascalCase without re-deriving casing here.
+    private static string SanitizeIdentifier(string canonicalName)
+    {
+        var identifier = canonicalName.Replace("_", "", StringComparison.Ordinal);
+        if (identifier.Length == 0 || char.IsDigit(identifier[0])) identifier = "Job" + identifier;
+        return CSharpKeywords.Contains(identifier) ? "@" + identifier : identifier;
+    }
+
+    // Fails generation loudly rather than silently merging two source job identities that
+    // sanitize to the same C# identifier - see SanitizeIdentifier.
+    private static void ValidateIdentifierUniqueness(IReadOnlyList<JobIdentity> jobs)
+    {
+        var duplicate = jobs.GroupBy(job => job.CSharpIdentifier, StringComparer.Ordinal).FirstOrDefault(group => group.Count() > 1);
+        if (duplicate is not null) throw new ArgumentException($"Jobs {string.Join(", ", duplicate.Select(job => $"{job.Name} ({job.Id})"))} all sanitize to the same C# identifier '{duplicate.Key}'.");
+    }
     private static string Header(string commit, params string[] sources) => "// <auto-generated>\n// Generated by Athena.WorldCompiler.\n// Sources:\n" + string.Concat(sources.Select(source => $"//   legacy/rathena/{source}\n")) + $"// rAthena commit: {commit}\n// Do not edit this file directly.\n// </auto-generated>\n";
     private static string Array<T>(IEnumerable<T> values) where T : IFormattable => "[" + string.Join(", ", values.Select(value => value.ToString(null, CultureInfo.InvariantCulture))) + "]";
 
     private static string EmitJobs(IReadOnlyList<JobIdentity> jobs, string commit)
     {
-        var output = new StringBuilder(Header(commit, "src/common/mmo.hpp", "src/map/script_constants.hpp")).AppendLine("using Athena.Net.MapServer.World;").AppendLine("namespace Athena.Net.MapServer.Generated.Jobs;").AppendLine("internal static class GeneratedJobRegistry").AppendLine("{").AppendLine("    private static readonly IReadOnlyDictionary<ushort, GeneratedJobDefinition> ById = new Dictionary<ushort, GeneratedJobDefinition>").AppendLine("    {");
-        foreach (var job in jobs) output.Append("        [").Append(job.Id).Append("] = new(").Append(job.Id).Append(", \"").Append(job.Name).AppendLine("\"),");
-        return output.AppendLine("    };").AppendLine("    internal static IEnumerable<GeneratedJobDefinition> All => ById.Values;").AppendLine("    internal static GeneratedJobDefinition Get(ushort jobClass) => ById.TryGetValue(jobClass, out var value) ? value : throw new NotSupportedException($\"Job class {jobClass} is not generated.\");").AppendLine("}").ToString();
+        var output = new StringBuilder(Header(commit, "src/common/mmo.hpp", "src/map/script_constants.hpp")).AppendLine("namespace Athena.Net.MapServer.Generated.Jobs;").AppendLine();
+        output.AppendLine("// Numeric values are the exact pinned rAthena/client job-class IDs - never renumbered here.");
+        output.AppendLine("// Public: flows through the public CharacterProgressionDefinition.JobClass domain field.");
+        output.AppendLine("public enum JobClass : ushort").AppendLine("{");
+        foreach (var job in jobs) output.Append("    ").Append(job.CSharpIdentifier).Append(" = ").Append(job.Id).AppendLine(",");
+        output.AppendLine("}").AppendLine();
+        output.AppendLine("// Preserves each job's canonical pinned rAthena source name (e.g. \"Rune_Knight\") for");
+        output.AppendLine("// display/logging/lookup - never re-derived by guessing from the enum member name.");
+        output.AppendLine("internal static class JobClassNames").AppendLine("{");
+        output.AppendLine("    private static readonly IReadOnlyDictionary<JobClass, string> ByJobClass = new Dictionary<JobClass, string>").AppendLine("    {");
+        foreach (var job in jobs) output.Append("        [JobClass.").Append(job.CSharpIdentifier).Append("] = \"").Append(job.Name).AppendLine("\",");
+        output.AppendLine("    };");
+        output.AppendLine("    internal static string GetRathenaName(JobClass jobClass) => ByJobClass.TryGetValue(jobClass, out var value) ? value : throw new NotSupportedException($\"Job class {jobClass} is not generated.\");");
+        output.AppendLine("    internal static bool IsDefined(ushort jobClass) => ByJobClass.ContainsKey((JobClass)jobClass);");
+        return output.AppendLine("}").ToString();
     }
 
     private static string EmitProgressions(IReadOnlyList<Progression> progressions, string commit)
     {
-        var output = new StringBuilder(Header(commit, "db/re/job_exp.yml", "db/re/job_basepoints.yml", "db/re/job_stats.yml", "db/re/statpoint.yml")).AppendLine("using Athena.Net.MapServer.World;").AppendLine("namespace Athena.Net.MapServer.Generated.Progression;").AppendLine("internal static class GeneratedProgressionData").AppendLine("{");
-        foreach (var item in progressions) output.Append("    internal static readonly CharacterProgressionDefinition Job_").Append(item.Job.Id.ToString("D4", CultureInfo.InvariantCulture)).Append(" = new(").Append(item.Job.Id).Append(", ").Append(item.MaxBaseLevel).Append(", ").Append(item.MaxJobLevel).Append(", ").Append(Array(item.BaseExperience)).Append(", ").Append(Array(item.JobExperience)).Append(", ").Append(Array(item.BaseHp)).Append(", ").Append(Array(item.BaseSp)).Append(", ").Append(Array(item.StatPoints)).Append(", ").Append(Array(item.Str)).Append(", ").Append(Array(item.Agi)).Append(", ").Append(Array(item.Vit)).Append(", ").Append(Array(item.Int)).Append(", ").Append(Array(item.Dex)).Append(", ").Append(Array(item.Luk)).AppendLine(");");
+        var output = new StringBuilder(Header(commit, "db/re/job_exp.yml", "db/re/job_basepoints.yml", "db/re/job_stats.yml", "db/re/statpoint.yml")).AppendLine("using Athena.Net.MapServer.Generated.Jobs;").AppendLine("using Athena.Net.MapServer.World;").AppendLine("namespace Athena.Net.MapServer.Generated.Progression;").AppendLine("internal static class GeneratedProgressionData").AppendLine("{");
+        foreach (var item in progressions) output.Append("    internal static readonly CharacterProgressionDefinition ").Append(item.Job.CSharpIdentifier).Append(" = new(JobClass.").Append(item.Job.CSharpIdentifier).Append(", ").Append(item.MaxBaseLevel).Append(", ").Append(item.MaxJobLevel).Append(", ").Append(Array(item.BaseExperience)).Append(", ").Append(Array(item.JobExperience)).Append(", ").Append(Array(item.BaseHp)).Append(", ").Append(Array(item.BaseSp)).Append(", ").Append(Array(item.StatPoints)).Append(", ").Append(Array(item.Str)).Append(", ").Append(Array(item.Agi)).Append(", ").Append(Array(item.Vit)).Append(", ").Append(Array(item.Int)).Append(", ").Append(Array(item.Dex)).Append(", ").Append(Array(item.Luk)).AppendLine(");");
         return output.AppendLine("}").ToString();
     }
 
     private static string EmitProgressionRegistry(IReadOnlyList<Progression> progressions, string commit)
     {
-        var output = new StringBuilder(Header(commit, "db/re/job_exp.yml", "db/re/job_basepoints.yml", "db/re/job_stats.yml", "db/re/statpoint.yml")).AppendLine("using Athena.Net.MapServer.World;").AppendLine("namespace Athena.Net.MapServer.Generated.Progression;").AppendLine("internal static class GeneratedProgressionRegistry").AppendLine("{").AppendLine("    private static readonly IReadOnlyDictionary<ushort, CharacterProgressionDefinition> ByJobClass = new Dictionary<ushort, CharacterProgressionDefinition>").AppendLine("    {");
-        foreach (var item in progressions) output.Append("        [").Append(item.Job.Id).Append("] = GeneratedProgressionData.Job_").Append(item.Job.Id.ToString("D4", CultureInfo.InvariantCulture)).AppendLine(",");
-        return output.AppendLine("    };").AppendLine("    internal static IEnumerable<CharacterProgressionDefinition> All => ByJobClass.Values;").AppendLine("    internal static CharacterProgressionDefinition Get(ushort jobClass) => ByJobClass.TryGetValue(jobClass, out var value) ? value : throw new NotSupportedException($\"Progression data for job class {jobClass} is not generated.\");").AppendLine("}").ToString();
+        var output = new StringBuilder(Header(commit, "db/re/job_exp.yml", "db/re/job_basepoints.yml", "db/re/job_stats.yml", "db/re/statpoint.yml")).AppendLine("using Athena.Net.MapServer.Generated.Jobs;").AppendLine("using Athena.Net.MapServer.World;").AppendLine("namespace Athena.Net.MapServer.Generated.Progression;").AppendLine("internal static class GeneratedProgressionRegistry").AppendLine("{").AppendLine("    private static readonly IReadOnlyDictionary<JobClass, CharacterProgressionDefinition> ByJobClass = new Dictionary<JobClass, CharacterProgressionDefinition>").AppendLine("    {");
+        foreach (var item in progressions) output.Append("        [JobClass.").Append(item.Job.CSharpIdentifier).Append("] = GeneratedProgressionData.").Append(item.Job.CSharpIdentifier).AppendLine(",");
+        output.AppendLine("    };");
+        output.AppendLine("    internal static IEnumerable<CharacterProgressionDefinition> All => ByJobClass.Values;");
+        output.AppendLine("    internal static CharacterProgressionDefinition Get(JobClass jobClass) => ByJobClass.TryGetValue(jobClass, out var value) ? value : throw new NotSupportedException($\"Progression data for job class {jobClass} is not generated.\");");
+        output.AppendLine("    internal static CharacterProgressionDefinition Get(ushort jobClass) => Get((JobClass)jobClass);");
+        return output.AppendLine("}").ToString();
     }
 
     private static string EmitSkills(IReadOnlyList<Skill> skills, string commit)
@@ -392,7 +538,7 @@ internal static partial class CharacterDataCompiler
         var output = new StringBuilder(Header(commit, "db/re/skill_tree.yml", "db/re/skill_db.yml", "src/common/mmo.hpp")).AppendLine("using Athena.Net.MapServer.World;").AppendLine("namespace Athena.Net.MapServer.Generated.Skills;").AppendLine("internal static class GeneratedSkillTrees").AppendLine("{");
         foreach (var tree in trees)
         {
-            output.Append("    internal static readonly GeneratedSkillTreeDefinition Job_").Append(tree.Direct.Job.Id.ToString("D4", CultureInfo.InvariantCulture)).Append(" = new(").Append(tree.Direct.Job.Id).Append(", ").Append(Array(tree.Direct.Parents.Select(parent => parent.Id))).AppendLine(",");
+            output.Append("    internal static readonly GeneratedSkillTreeDefinition ").Append(tree.Direct.Job.CSharpIdentifier).Append(" = new(").Append(tree.Direct.Job.Id).Append(", ").Append(Array(tree.Direct.Parents.Select(parent => parent.Id))).AppendLine(",");
             EmitTreeEntries(output, tree.Direct.Entries, "        "); output.AppendLine(","); EmitTreeEntries(output, tree.Entries, "        "); output.AppendLine(");");
         }
         return output.AppendLine("}").ToString();
@@ -412,9 +558,13 @@ internal static partial class CharacterDataCompiler
 
     private static string EmitTreeRegistry(IReadOnlyList<EffectiveTree> trees, string commit)
     {
-        var output = new StringBuilder(Header(commit, "db/re/skill_tree.yml", "db/re/skill_db.yml", "src/common/mmo.hpp")).AppendLine("using Athena.Net.MapServer.World;").AppendLine("namespace Athena.Net.MapServer.Generated.Skills;").AppendLine("internal static class GeneratedSkillTreeRegistry").AppendLine("{").AppendLine("    private static readonly IReadOnlyDictionary<ushort, GeneratedSkillTreeDefinition> ByJobClass = new Dictionary<ushort, GeneratedSkillTreeDefinition>").AppendLine("    {");
-        foreach (var tree in trees) output.Append("        [").Append(tree.Direct.Job.Id).Append("] = GeneratedSkillTrees.Job_").Append(tree.Direct.Job.Id.ToString("D4", CultureInfo.InvariantCulture)).AppendLine(",");
-        return output.AppendLine("    };").AppendLine("    internal static IEnumerable<GeneratedSkillTreeDefinition> All => ByJobClass.Values;").AppendLine("    internal static GeneratedSkillTreeDefinition Get(ushort jobClass) => ByJobClass.TryGetValue(jobClass, out var value) ? value : throw new NotSupportedException($\"Skill tree for job class {jobClass} is not generated.\");").AppendLine("}").ToString();
+        var output = new StringBuilder(Header(commit, "db/re/skill_tree.yml", "db/re/skill_db.yml", "src/common/mmo.hpp")).AppendLine("using Athena.Net.MapServer.Generated.Jobs;").AppendLine("using Athena.Net.MapServer.World;").AppendLine("namespace Athena.Net.MapServer.Generated.Skills;").AppendLine("internal static class GeneratedSkillTreeRegistry").AppendLine("{").AppendLine("    private static readonly IReadOnlyDictionary<JobClass, GeneratedSkillTreeDefinition> ByJobClass = new Dictionary<JobClass, GeneratedSkillTreeDefinition>").AppendLine("    {");
+        foreach (var tree in trees) output.Append("        [JobClass.").Append(tree.Direct.Job.CSharpIdentifier).Append("] = GeneratedSkillTrees.").Append(tree.Direct.Job.CSharpIdentifier).AppendLine(",");
+        output.AppendLine("    };");
+        output.AppendLine("    internal static IEnumerable<GeneratedSkillTreeDefinition> All => ByJobClass.Values;");
+        output.AppendLine("    internal static GeneratedSkillTreeDefinition Get(JobClass jobClass) => ByJobClass.TryGetValue(jobClass, out var value) ? value : throw new NotSupportedException($\"Skill tree for job class {jobClass} is not generated.\");");
+        output.AppendLine("    internal static GeneratedSkillTreeDefinition Get(ushort jobClass) => Get((JobClass)jobClass);");
+        return output.AppendLine("}").ToString();
     }
 
     [GeneratedRegex(@"(?s)enum\s+e_job\s*\{(.*?)\};")]

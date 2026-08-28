@@ -11,7 +11,7 @@ using Athena.Net.MapServer.World;
 namespace Athena.Net.MapServer.Generated.Skills;
 internal static class GeneratedSkillTrees
 {
-    internal static readonly GeneratedSkillTreeDefinition Job_0000 = new(0, [],
+    internal static readonly GeneratedSkillTreeDefinition Novice = new(0, [],
         [
             new(1, 9, 0, 0, [], false),
             new(142, 1, 0, 0, [], false),
@@ -24,7 +24,7 @@ internal static class GeneratedSkillTrees
             new(143, 1, 0, 0, [], true),
             new(410, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_0001 = new(1, [0],
+    internal static readonly GeneratedSkillTreeDefinition Swordman = new(1, [0],
         [
             new(2, 10, 0, 0, [], false),
             new(3, 10, 0, 0, [new SkillPrerequisite(2, 1)], false),
@@ -52,7 +52,7 @@ internal static class GeneratedSkillTrees
             new(146, 1, 0, 0, [], false),
             new(410, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_0002 = new(2, [0],
+    internal static readonly GeneratedSkillTreeDefinition Mage = new(2, [0],
         [
             new(9, 10, 0, 0, [], false),
             new(10, 1, 0, 0, [], false),
@@ -88,7 +88,7 @@ internal static class GeneratedSkillTrees
             new(157, 1, 0, 0, [], false),
             new(410, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_0003 = new(3, [0],
+    internal static readonly GeneratedSkillTreeDefinition Archer = new(3, [0],
         [
             new(43, 10, 0, 0, [], false),
             new(44, 10, 0, 0, [new SkillPrerequisite(43, 3)], false),
@@ -110,7 +110,7 @@ internal static class GeneratedSkillTrees
             new(148, 1, 0, 0, [], false),
             new(410, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_0004 = new(4, [0],
+    internal static readonly GeneratedSkillTreeDefinition Acolyte = new(4, [0],
         [
             new(22, 10, 0, 0, [], false),
             new(23, 10, 0, 0, [new SkillPrerequisite(22, 3)], false),
@@ -148,7 +148,7 @@ internal static class GeneratedSkillTrees
             new(156, 1, 0, 0, [], false),
             new(410, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_0005 = new(5, [0],
+    internal static readonly GeneratedSkillTreeDefinition Merchant = new(5, [0],
         [
             new(36, 10, 0, 0, [], false),
             new(37, 10, 0, 0, [new SkillPrerequisite(36, 3)], false),
@@ -180,7 +180,7 @@ internal static class GeneratedSkillTrees
             new(2535, 1, 0, 0, [new SkillPrerequisite(41, 1)], false),
             new(2544, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_0006 = new(6, [0],
+    internal static readonly GeneratedSkillTreeDefinition Thief = new(6, [0],
         [
             new(48, 10, 0, 0, [], false),
             new(49, 10, 0, 0, [], false),
@@ -208,7 +208,7 @@ internal static class GeneratedSkillTrees
             new(152, 1, 0, 0, [], false),
             new(410, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_0007 = new(7, [0, 1],
+    internal static readonly GeneratedSkillTreeDefinition Knight = new(7, [0, 1],
         [
             new(55, 10, 0, 0, [], false),
             new(56, 10, 0, 0, [new SkillPrerequisite(55, 1)], false),
@@ -250,7 +250,7 @@ internal static class GeneratedSkillTrees
             new(495, 1, 0, 0, [new SkillPrerequisite(60, 10)], false),
             new(1001, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_0008 = new(8, [0, 4],
+    internal static readonly GeneratedSkillTreeDefinition Priest = new(8, [0, 4],
         [
             new(9, 10, 0, 0, [], false),
             new(12, 10, 0, 0, [new SkillPrerequisite(68, 4), new SkillPrerequisite(70, 3)], false),
@@ -311,7 +311,7 @@ internal static class GeneratedSkillTrees
             new(410, 1, 0, 0, [], false),
             new(1014, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_0009 = new(9, [0, 2],
+    internal static readonly GeneratedSkillTreeDefinition Wizard = new(9, [0, 2],
         [
             new(80, 10, 0, 0, [new SkillPrerequisite(18, 1)], false),
             new(81, 10, 0, 0, [new SkillPrerequisite(10, 1), new SkillPrerequisite(20, 1)], false),
@@ -361,7 +361,7 @@ internal static class GeneratedSkillTrees
             new(410, 1, 0, 0, [], false),
             new(1006, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_0010 = new(10, [0, 5],
+    internal static readonly GeneratedSkillTreeDefinition Blacksmith = new(10, [0, 5],
         [
             new(94, 5, 0, 0, [], false),
             new(95, 5, 0, 0, [new SkillPrerequisite(94, 1)], false),
@@ -429,7 +429,7 @@ internal static class GeneratedSkillTrees
             new(2535, 1, 0, 0, [new SkillPrerequisite(41, 1)], false),
             new(2544, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_0011 = new(11, [0, 3],
+    internal static readonly GeneratedSkillTreeDefinition Hunter = new(11, [0, 3],
         [
             new(115, 5, 0, 0, [], false),
             new(116, 5, 0, 0, [], false),
@@ -482,7 +482,7 @@ internal static class GeneratedSkillTrees
             new(499, 1, 0, 0, [new SkillPrerequisite(46, 10)], false),
             new(1009, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_0012 = new(12, [0, 6],
+    internal static readonly GeneratedSkillTreeDefinition Assassin = new(12, [0, 6],
         [
             new(132, 5, 0, 0, [], false),
             new(133, 5, 0, 0, [new SkillPrerequisite(132, 2)], false),
@@ -524,7 +524,7 @@ internal static class GeneratedSkillTrees
             new(1003, 1, 0, 0, [], false),
             new(1004, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_0013 = new(13, [0, 1, 7],
+    internal static readonly GeneratedSkillTreeDefinition Knight2 = new(13, [0, 1, 7],
         [
         ],
         [
@@ -554,7 +554,7 @@ internal static class GeneratedSkillTrees
             new(495, 1, 0, 0, [new SkillPrerequisite(60, 10)], false),
             new(1001, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_0014 = new(14, [0, 1],
+    internal static readonly GeneratedSkillTreeDefinition Crusader = new(14, [0, 1],
         [
             new(22, 10, 0, 0, [new SkillPrerequisite(35, 1)], false),
             new(23, 10, 0, 0, [new SkillPrerequisite(22, 3)], false),
@@ -610,7 +610,7 @@ internal static class GeneratedSkillTrees
             new(410, 1, 0, 0, [], false),
             new(1002, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_0015 = new(15, [0, 4],
+    internal static readonly GeneratedSkillTreeDefinition Monk = new(15, [0, 4],
         [
             new(259, 10, 0, 0, [new SkillPrerequisite(22, 10), new SkillPrerequisite(23, 10)], false),
             new(260, 5, 0, 0, [new SkillPrerequisite(269, 2)], false),
@@ -667,7 +667,7 @@ internal static class GeneratedSkillTrees
             new(1015, 1, 0, 0, [], false),
             new(1016, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_0016 = new(16, [0, 2],
+    internal static readonly GeneratedSkillTreeDefinition Sage = new(16, [0, 2],
         [
             new(90, 5, 0, 0, [new SkillPrerequisite(283, 1)], false),
             new(91, 5, 0, 0, [new SkillPrerequisite(90, 1)], false),
@@ -739,7 +739,7 @@ internal static class GeneratedSkillTrees
             new(1018, 1, 0, 0, [], false),
             new(1019, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_0017 = new(17, [0, 6],
+    internal static readonly GeneratedSkillTreeDefinition Rogue = new(17, [0, 6],
         [
             new(2, 10, 0, 0, [], false),
             new(44, 10, 0, 0, [], false),
@@ -799,7 +799,7 @@ internal static class GeneratedSkillTrees
             new(410, 1, 0, 0, [], false),
             new(1005, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_0018 = new(18, [0, 5],
+    internal static readonly GeneratedSkillTreeDefinition Alchemist = new(18, [0, 5],
         [
             new(226, 10, 0, 0, [], false),
             new(227, 10, 0, 0, [], false),
@@ -859,7 +859,7 @@ internal static class GeneratedSkillTrees
             new(2535, 1, 0, 0, [new SkillPrerequisite(41, 1)], false),
             new(2544, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_0019 = new(19, [0, 3],
+    internal static readonly GeneratedSkillTreeDefinition Bard = new(19, [0, 3],
         [
             new(304, 1, 0, 0, [], false),
             new(305, 1, 0, 0, [new SkillPrerequisite(304, 1)], false),
@@ -912,7 +912,7 @@ internal static class GeneratedSkillTrees
             new(410, 1, 0, 0, [], false),
             new(1010, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_0020 = new(20, [0, 3],
+    internal static readonly GeneratedSkillTreeDefinition Dancer = new(20, [0, 3],
         [
             new(304, 1, 0, 0, [], false),
             new(305, 1, 0, 0, [new SkillPrerequisite(304, 1)], false),
@@ -965,7 +965,7 @@ internal static class GeneratedSkillTrees
             new(410, 1, 0, 0, [], false),
             new(1011, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_0021 = new(21, [0, 1, 14],
+    internal static readonly GeneratedSkillTreeDefinition Crusader2 = new(21, [0, 1, 14],
         [
         ],
         [
@@ -1002,7 +1002,7 @@ internal static class GeneratedSkillTrees
             new(410, 1, 0, 0, [], false),
             new(1002, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_0023 = new(23, [0],
+    internal static readonly GeneratedSkillTreeDefinition SuperNovice = new(23, [0],
         [
             new(2, 10, 0, 0, [], false),
             new(4, 10, 0, 0, [], false),
@@ -1112,7 +1112,7 @@ internal static class GeneratedSkillTrees
             new(2535, 1, 0, 0, [new SkillPrerequisite(41, 1)], false),
             new(2544, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_0024 = new(24, [0],
+    internal static readonly GeneratedSkillTreeDefinition Gunslinger = new(24, [0],
         [
             new(500, 5, 0, 0, [], false),
             new(501, 1, 0, 0, [new SkillPrerequisite(500, 1)], false),
@@ -1164,7 +1164,7 @@ internal static class GeneratedSkillTrees
             new(520, 10, 0, 0, [new SkillPrerequisite(509, 5)], false),
             new(521, 10, 0, 0, [new SkillPrerequisite(520, 7)], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_0025 = new(25, [0],
+    internal static readonly GeneratedSkillTreeDefinition Ninja = new(25, [0],
         [
             new(522, 10, 0, 0, [], false),
             new(523, 10, 0, 0, [new SkillPrerequisite(522, 1)], false),
@@ -1218,7 +1218,7 @@ internal static class GeneratedSkillTrees
             new(543, 5, 0, 0, [new SkillPrerequisite(533, 5)], false),
             new(544, 10, 0, 0, [new SkillPrerequisite(522, 7), new SkillPrerequisite(530, 5), new SkillPrerequisite(543, 1)], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4001 = new(4001, [0],
+    internal static readonly GeneratedSkillTreeDefinition NoviceHigh = new(4001, [0],
         [
             new(143, 1, 0, 0, [], true),
         ],
@@ -1228,7 +1228,7 @@ internal static class GeneratedSkillTrees
             new(143, 1, 0, 0, [], true),
             new(410, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4002 = new(4002, [0, 1],
+    internal static readonly GeneratedSkillTreeDefinition SwordmanHigh = new(4002, [0, 1],
         [
         ],
         [
@@ -1246,7 +1246,7 @@ internal static class GeneratedSkillTrees
             new(146, 1, 0, 0, [], false),
             new(410, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4003 = new(4003, [0, 2],
+    internal static readonly GeneratedSkillTreeDefinition MageHigh = new(4003, [0, 2],
         [
         ],
         [
@@ -1268,7 +1268,7 @@ internal static class GeneratedSkillTrees
             new(157, 1, 0, 0, [], false),
             new(410, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4004 = new(4004, [0, 3],
+    internal static readonly GeneratedSkillTreeDefinition ArcherHigh = new(4004, [0, 3],
         [
         ],
         [
@@ -1283,7 +1283,7 @@ internal static class GeneratedSkillTrees
             new(148, 1, 0, 0, [], false),
             new(410, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4005 = new(4005, [0, 4],
+    internal static readonly GeneratedSkillTreeDefinition AcolyteHigh = new(4005, [0, 4],
         [
         ],
         [
@@ -1306,7 +1306,7 @@ internal static class GeneratedSkillTrees
             new(156, 1, 0, 0, [], false),
             new(410, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4006 = new(4006, [0, 5],
+    internal static readonly GeneratedSkillTreeDefinition MerchantHigh = new(4006, [0, 5],
         [
         ],
         [
@@ -1326,7 +1326,7 @@ internal static class GeneratedSkillTrees
             new(2535, 1, 0, 0, [new SkillPrerequisite(41, 1)], false),
             new(2544, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4007 = new(4007, [0, 6],
+    internal static readonly GeneratedSkillTreeDefinition ThiefHigh = new(4007, [0, 6],
         [
         ],
         [
@@ -1344,7 +1344,7 @@ internal static class GeneratedSkillTrees
             new(152, 1, 0, 0, [], false),
             new(410, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4008 = new(4008, [0, 1, 7],
+    internal static readonly GeneratedSkillTreeDefinition LordKnight = new(4008, [0, 1, 7],
         [
             new(355, 5, 0, 0, [new SkillPrerequisite(3, 5), new SkillPrerequisite(7, 5)], false),
             new(356, 10, 0, 0, [new SkillPrerequisite(3, 10), new SkillPrerequisite(6, 5), new SkillPrerequisite(60, 3)], false),
@@ -1390,7 +1390,7 @@ internal static class GeneratedSkillTrees
             new(495, 1, 0, 0, [new SkillPrerequisite(60, 10)], false),
             new(1001, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4009 = new(4009, [0, 4, 8],
+    internal static readonly GeneratedSkillTreeDefinition HighPriest = new(4009, [0, 4, 8],
         [
             new(71, 4, 0, 0, [], false),
             new(361, 5, 0, 0, [new SkillPrerequisite(9, 3), new SkillPrerequisite(33, 1), new SkillPrerequisite(66, 3)], false),
@@ -1441,7 +1441,7 @@ internal static class GeneratedSkillTrees
             new(481, 5, 0, 0, [new SkillPrerequisite(23, 10), new SkillPrerequisite(65, 10)], false),
             new(1014, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4010 = new(4010, [0, 2, 9],
+    internal static readonly GeneratedSkillTreeDefinition HighWizard = new(4010, [0, 2, 9],
         [
             new(364, 10, 0, 0, [new SkillPrerequisite(9, 5), new SkillPrerequisite(13, 7)], false),
             new(365, 1, 0, 0, [new SkillPrerequisite(9, 1)], false),
@@ -1489,7 +1489,7 @@ internal static class GeneratedSkillTrees
             new(484, 5, 0, 0, [new SkillPrerequisite(92, 1), new SkillPrerequisite(365, 1), new SkillPrerequisite(366, 10)], false),
             new(1006, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4011 = new(4011, [0, 5, 10],
+    internal static readonly GeneratedSkillTreeDefinition Whitesmith = new(4011, [0, 5, 10],
         [
             new(384, 10, 0, 0, [new SkillPrerequisite(105, 1), new SkillPrerequisite(107, 5), new SkillPrerequisite(109, 3), new SkillPrerequisite(113, 3)], false),
             new(387, 1, 0, 0, [new SkillPrerequisite(39, 5), new SkillPrerequisite(105, 1), new SkillPrerequisite(153, 1), new SkillPrerequisite(154, 1)], false),
@@ -1543,7 +1543,7 @@ internal static class GeneratedSkillTrees
             new(2535, 1, 0, 0, [new SkillPrerequisite(41, 1)], false),
             new(2544, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4012 = new(4012, [0, 3, 11],
+    internal static readonly GeneratedSkillTreeDefinition Sniper = new(4012, [0, 3, 11],
         [
             new(380, 10, 0, 0, [new SkillPrerequisite(43, 10), new SkillPrerequisite(44, 10), new SkillPrerequisite(45, 10), new SkillPrerequisite(127, 1)], false),
             new(381, 5, 0, 0, [new SkillPrerequisite(44, 5), new SkillPrerequisite(127, 1), new SkillPrerequisite(128, 3), new SkillPrerequisite(129, 5)], false),
@@ -1585,7 +1585,7 @@ internal static class GeneratedSkillTrees
             new(499, 1, 0, 0, [new SkillPrerequisite(46, 10)], false),
             new(1009, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4013 = new(4013, [0, 6, 12],
+    internal static readonly GeneratedSkillTreeDefinition AssassinCross = new(4013, [0, 6, 12],
         [
             new(376, 5, 0, 0, [new SkillPrerequisite(48, 5), new SkillPrerequisite(134, 7)], false),
             new(378, 5, 0, 0, [new SkillPrerequisite(407, 1)], false),
@@ -1625,7 +1625,7 @@ internal static class GeneratedSkillTrees
             new(1003, 1, 0, 0, [], false),
             new(1004, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4014 = new(4014, [0, 1, 7, 4008],
+    internal static readonly GeneratedSkillTreeDefinition LordKnight2 = new(4014, [0, 1, 7, 4008],
         [
         ],
         [
@@ -1663,7 +1663,7 @@ internal static class GeneratedSkillTrees
             new(495, 1, 0, 0, [new SkillPrerequisite(60, 10)], false),
             new(1001, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4015 = new(4015, [0, 1, 14],
+    internal static readonly GeneratedSkillTreeDefinition Paladin = new(4015, [0, 1, 14],
         [
             new(367, 5, 0, 0, [new SkillPrerequisite(8, 5), new SkillPrerequisite(248, 5), new SkillPrerequisite(250, 2)], false),
             new(368, 5, 0, 0, [new SkillPrerequisite(8, 1), new SkillPrerequisite(255, 3)], false),
@@ -1708,7 +1708,7 @@ internal static class GeneratedSkillTrees
             new(480, 5, 0, 0, [new SkillPrerequisite(251, 5)], false),
             new(1002, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4016 = new(4016, [0, 4, 15],
+    internal static readonly GeneratedSkillTreeDefinition Champion = new(4016, [0, 4, 15],
         [
             new(370, 5, 0, 0, [new SkillPrerequisite(259, 7), new SkillPrerequisite(261, 5)], false),
             new(371, 5, 0, 0, [new SkillPrerequisite(259, 5), new SkillPrerequisite(263, 5), new SkillPrerequisite(273, 3)], false),
@@ -1756,7 +1756,7 @@ internal static class GeneratedSkillTrees
             new(1015, 1, 0, 0, [], false),
             new(1016, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4017 = new(4017, [0, 2, 16],
+    internal static readonly GeneratedSkillTreeDefinition Professor = new(4017, [0, 2, 16],
         [
             new(373, 5, 0, 0, [new SkillPrerequisite(9, 1), new SkillPrerequisite(276, 1)], false),
             new(374, 1, 0, 0, [new SkillPrerequisite(276, 3), new SkillPrerequisite(277, 2)], false),
@@ -1819,7 +1819,7 @@ internal static class GeneratedSkillTrees
             new(1018, 1, 0, 0, [], false),
             new(1019, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4018 = new(4018, [0, 6, 17],
+    internal static readonly GeneratedSkillTreeDefinition Stalker = new(4018, [0, 6, 17],
         [
             new(389, 5, 0, 0, [new SkillPrerequisite(51, 5), new SkillPrerequisite(213, 3)], false),
             new(390, 5, 0, 0, [], false),
@@ -1866,7 +1866,7 @@ internal static class GeneratedSkillTrees
             new(476, 5, 0, 0, [new SkillPrerequisite(215, 5)], false),
             new(1005, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4019 = new(4019, [0, 5, 18],
+    internal static readonly GeneratedSkillTreeDefinition Creator = new(4019, [0, 5, 18],
         [
             new(478, 10, 0, 0, [new SkillPrerequisite(231, 5)], false),
             new(479, 5, 0, 0, [new SkillPrerequisite(234, 5), new SkillPrerequisite(235, 5), new SkillPrerequisite(236, 5), new SkillPrerequisite(237, 5)], false),
@@ -1912,7 +1912,7 @@ internal static class GeneratedSkillTrees
             new(2535, 1, 0, 0, [new SkillPrerequisite(41, 1)], false),
             new(2544, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4020 = new(4020, [0, 3, 19],
+    internal static readonly GeneratedSkillTreeDefinition Clown = new(4020, [0, 3, 19],
         [
             new(394, 10, 0, 0, [new SkillPrerequisite(46, 5), new SkillPrerequisite(47, 5), new SkillPrerequisite(316, 1)], false),
             new(395, 5, 0, 0, [new SkillPrerequisite(45, 5), new SkillPrerequisite(315, 7)], false),
@@ -1958,7 +1958,7 @@ internal static class GeneratedSkillTrees
             new(1010, 1, 0, 0, [], false),
             new(5068, 1, 0, 0, [new SkillPrerequisite(315, 10), new SkillPrerequisite(317, 3), new SkillPrerequisite(396, 1)], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4021 = new(4021, [0, 3, 20],
+    internal static readonly GeneratedSkillTreeDefinition Gypsy = new(4021, [0, 3, 20],
         [
             new(394, 10, 0, 0, [new SkillPrerequisite(46, 5), new SkillPrerequisite(47, 5), new SkillPrerequisite(324, 1)], false),
             new(395, 5, 0, 0, [new SkillPrerequisite(45, 5), new SkillPrerequisite(323, 7)], false),
@@ -2004,7 +2004,7 @@ internal static class GeneratedSkillTrees
             new(1011, 1, 0, 0, [], false),
             new(5068, 1, 0, 0, [new SkillPrerequisite(323, 10), new SkillPrerequisite(325, 3), new SkillPrerequisite(396, 1)], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4022 = new(4022, [0, 1, 14, 4015],
+    internal static readonly GeneratedSkillTreeDefinition Paladin2 = new(4022, [0, 1, 14, 4015],
         [
         ],
         [
@@ -2045,7 +2045,7 @@ internal static class GeneratedSkillTrees
             new(480, 5, 0, 0, [new SkillPrerequisite(251, 5)], false),
             new(1002, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4023 = new(4023, [],
+    internal static readonly GeneratedSkillTreeDefinition Baby = new(4023, [],
         [
             new(1, 9, 0, 0, [], false),
             new(142, 1, 0, 0, [], false),
@@ -2062,7 +2062,7 @@ internal static class GeneratedSkillTrees
             new(409, 1, 0, 0, [], false),
             new(5065, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4024 = new(4024, [4023, 1],
+    internal static readonly GeneratedSkillTreeDefinition BabySwordman = new(4024, [4023, 1],
         [
         ],
         [
@@ -2082,7 +2082,7 @@ internal static class GeneratedSkillTrees
             new(409, 1, 0, 0, [], false),
             new(5065, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4025 = new(4025, [4023, 2],
+    internal static readonly GeneratedSkillTreeDefinition BabyMage = new(4025, [4023, 2],
         [
         ],
         [
@@ -2106,7 +2106,7 @@ internal static class GeneratedSkillTrees
             new(409, 1, 0, 0, [], false),
             new(5065, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4026 = new(4026, [4023, 3],
+    internal static readonly GeneratedSkillTreeDefinition BabyArcher = new(4026, [4023, 3],
         [
         ],
         [
@@ -2123,7 +2123,7 @@ internal static class GeneratedSkillTrees
             new(409, 1, 0, 0, [], false),
             new(5065, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4027 = new(4027, [4023, 4],
+    internal static readonly GeneratedSkillTreeDefinition BabyAcolyte = new(4027, [4023, 4],
         [
         ],
         [
@@ -2148,7 +2148,7 @@ internal static class GeneratedSkillTrees
             new(409, 1, 0, 0, [], false),
             new(5065, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4028 = new(4028, [4023, 5],
+    internal static readonly GeneratedSkillTreeDefinition BabyMerchant = new(4028, [4023, 5],
         [
         ],
         [
@@ -2170,7 +2170,7 @@ internal static class GeneratedSkillTrees
             new(2544, 1, 0, 0, [], false),
             new(5065, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4029 = new(4029, [4023, 6],
+    internal static readonly GeneratedSkillTreeDefinition BabyThief = new(4029, [4023, 6],
         [
         ],
         [
@@ -2190,7 +2190,7 @@ internal static class GeneratedSkillTrees
             new(409, 1, 0, 0, [], false),
             new(5065, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4030 = new(4030, [4023, 1, 7],
+    internal static readonly GeneratedSkillTreeDefinition BabyKnight = new(4030, [4023, 1, 7],
         [
         ],
         [
@@ -2222,7 +2222,7 @@ internal static class GeneratedSkillTrees
             new(1001, 1, 0, 0, [], false),
             new(5065, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4031 = new(4031, [4023, 4, 8],
+    internal static readonly GeneratedSkillTreeDefinition BabyPriest = new(4031, [4023, 4, 8],
         [
         ],
         [
@@ -2266,7 +2266,7 @@ internal static class GeneratedSkillTrees
             new(1014, 1, 0, 0, [], false),
             new(5065, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4032 = new(4032, [4023, 2, 9],
+    internal static readonly GeneratedSkillTreeDefinition BabyWizard = new(4032, [4023, 2, 9],
         [
         ],
         [
@@ -2304,7 +2304,7 @@ internal static class GeneratedSkillTrees
             new(1006, 1, 0, 0, [], false),
             new(5065, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4033 = new(4033, [4023, 5, 10],
+    internal static readonly GeneratedSkillTreeDefinition BabyBlacksmith = new(4033, [4023, 5, 10],
         [
         ],
         [
@@ -2350,7 +2350,7 @@ internal static class GeneratedSkillTrees
             new(2544, 1, 0, 0, [], false),
             new(5065, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4034 = new(4034, [4023, 3, 11],
+    internal static readonly GeneratedSkillTreeDefinition BabyHunter = new(4034, [4023, 3, 11],
         [
         ],
         [
@@ -2386,7 +2386,7 @@ internal static class GeneratedSkillTrees
             new(1009, 1, 0, 0, [], false),
             new(5065, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4035 = new(4035, [4023, 6, 12],
+    internal static readonly GeneratedSkillTreeDefinition BabyAssassin = new(4035, [4023, 6, 12],
         [
         ],
         [
@@ -2418,7 +2418,7 @@ internal static class GeneratedSkillTrees
             new(1004, 1, 0, 0, [], false),
             new(5065, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4036 = new(4036, [4023, 1, 7],
+    internal static readonly GeneratedSkillTreeDefinition BabyKnight2 = new(4036, [4023, 1, 7],
         [
         ],
         [
@@ -2450,7 +2450,7 @@ internal static class GeneratedSkillTrees
             new(1001, 1, 0, 0, [], false),
             new(5065, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4037 = new(4037, [4023, 1, 14],
+    internal static readonly GeneratedSkillTreeDefinition BabyCrusader = new(4037, [4023, 1, 14],
         [
         ],
         [
@@ -2489,7 +2489,7 @@ internal static class GeneratedSkillTrees
             new(1002, 1, 0, 0, [], false),
             new(5065, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4038 = new(4038, [4023, 4, 15],
+    internal static readonly GeneratedSkillTreeDefinition BabyMonk = new(4038, [4023, 4, 15],
         [
         ],
         [
@@ -2531,7 +2531,7 @@ internal static class GeneratedSkillTrees
             new(1016, 1, 0, 0, [], false),
             new(5065, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4039 = new(4039, [4023, 2, 16],
+    internal static readonly GeneratedSkillTreeDefinition BabySage = new(4039, [4023, 2, 16],
         [
         ],
         [
@@ -2580,7 +2580,7 @@ internal static class GeneratedSkillTrees
             new(1019, 1, 0, 0, [], false),
             new(5065, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4040 = new(4040, [4023, 6, 17],
+    internal static readonly GeneratedSkillTreeDefinition BabyRogue = new(4040, [4023, 6, 17],
         [
         ],
         [
@@ -2621,7 +2621,7 @@ internal static class GeneratedSkillTrees
             new(1005, 1, 0, 0, [], false),
             new(5065, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4041 = new(4041, [4023, 5, 18],
+    internal static readonly GeneratedSkillTreeDefinition BabyAlchemist = new(4041, [4023, 5, 18],
         [
         ],
         [
@@ -2663,7 +2663,7 @@ internal static class GeneratedSkillTrees
             new(2544, 1, 0, 0, [], false),
             new(5065, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4042 = new(4042, [4023, 3, 19],
+    internal static readonly GeneratedSkillTreeDefinition BabyBard = new(4042, [4023, 3, 19],
         [
         ],
         [
@@ -2699,7 +2699,7 @@ internal static class GeneratedSkillTrees
             new(1010, 1, 0, 0, [], false),
             new(5065, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4043 = new(4043, [4023, 3, 20],
+    internal static readonly GeneratedSkillTreeDefinition BabyDancer = new(4043, [4023, 3, 20],
         [
         ],
         [
@@ -2735,7 +2735,7 @@ internal static class GeneratedSkillTrees
             new(1011, 1, 0, 0, [], false),
             new(5065, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4044 = new(4044, [4023, 1, 14],
+    internal static readonly GeneratedSkillTreeDefinition BabyCrusader2 = new(4044, [4023, 1, 14],
         [
         ],
         [
@@ -2774,7 +2774,7 @@ internal static class GeneratedSkillTrees
             new(1002, 1, 0, 0, [], false),
             new(5065, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4045 = new(4045, [4023],
+    internal static readonly GeneratedSkillTreeDefinition SuperBaby = new(4045, [4023],
         [
             new(2, 10, 0, 0, [], false),
             new(4, 10, 0, 0, [], false),
@@ -2886,7 +2886,7 @@ internal static class GeneratedSkillTrees
             new(2544, 1, 0, 0, [], false),
             new(5065, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4046 = new(4046, [0],
+    internal static readonly GeneratedSkillTreeDefinition Taekwon = new(4046, [0],
         [
             new(411, 10, 0, 0, [], false),
             new(412, 1, 0, 0, [new SkillPrerequisite(413, 1)], false),
@@ -2928,7 +2928,7 @@ internal static class GeneratedSkillTrees
             new(426, 5, 0, 0, [], false),
             new(493, 1, 0, 0, [new SkillPrerequisite(424, 5)], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4047 = new(4047, [0, 4046],
+    internal static readonly GeneratedSkillTreeDefinition StarGladiator = new(4047, [0, 4046],
         [
             new(427, 3, 0, 0, [], false),
             new(428, 3, 0, 0, [new SkillPrerequisite(427, 1)], false),
@@ -2989,7 +2989,7 @@ internal static class GeneratedSkillTrees
             new(444, 1, 0, 0, [new SkillPrerequisite(443, 9)], false),
             new(493, 1, 0, 0, [new SkillPrerequisite(424, 5)], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4048 = new(4048, [0, 4046, 4047],
+    internal static readonly GeneratedSkillTreeDefinition StarGladiator2 = new(4048, [0, 4046, 4047],
         [
         ],
         [
@@ -3032,7 +3032,7 @@ internal static class GeneratedSkillTrees
             new(444, 1, 0, 0, [new SkillPrerequisite(443, 9)], false),
             new(493, 1, 0, 0, [new SkillPrerequisite(424, 5)], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4049 = new(4049, [0, 4046],
+    internal static readonly GeneratedSkillTreeDefinition SoulLinker = new(4049, [0, 4046],
         [
             new(445, 5, 0, 0, [], false),
             new(447, 5, 0, 0, [], false),
@@ -3111,7 +3111,7 @@ internal static class GeneratedSkillTrees
             new(493, 1, 0, 0, [new SkillPrerequisite(424, 5)], false),
             new(494, 5, 0, 0, [new SkillPrerequisite(451, 5)], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4050 = new(4050, [0],
+    internal static readonly GeneratedSkillTreeDefinition Gangsi = new(4050, [0],
         [
         ],
         [
@@ -3119,7 +3119,7 @@ internal static class GeneratedSkillTrees
             new(142, 1, 0, 0, [], false),
             new(410, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4051 = new(4051, [0],
+    internal static readonly GeneratedSkillTreeDefinition DeathKnight = new(4051, [0],
         [
         ],
         [
@@ -3127,7 +3127,7 @@ internal static class GeneratedSkillTrees
             new(142, 1, 0, 0, [], false),
             new(410, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4052 = new(4052, [0],
+    internal static readonly GeneratedSkillTreeDefinition DarkCollector = new(4052, [0],
         [
         ],
         [
@@ -3135,7 +3135,7 @@ internal static class GeneratedSkillTrees
             new(142, 1, 0, 0, [], false),
             new(410, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4054 = new(4054, [0, 1, 7],
+    internal static readonly GeneratedSkillTreeDefinition RuneKnight = new(4054, [0, 1, 7],
         [
             new(2001, 10, 0, 0, [new SkillPrerequisite(2010, 2)], false),
             new(2002, 10, 0, 0, [new SkillPrerequisite(2001, 3)], false),
@@ -3191,7 +3191,7 @@ internal static class GeneratedSkillTrees
             new(5004, 10, 0, 0, [new SkillPrerequisite(2007, 2)], false),
             new(5014, 5, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4055 = new(4055, [0, 2, 9],
+    internal static readonly GeneratedSkillTreeDefinition Warlock = new(4055, [0, 2, 9],
         [
             new(2201, 5, 0, 0, [new SkillPrerequisite(2202, 3)], false),
             new(2202, 5, 0, 0, [new SkillPrerequisite(2210, 1)], false),
@@ -3277,7 +3277,7 @@ internal static class GeneratedSkillTrees
             new(5012, 5, 0, 0, [new SkillPrerequisite(2202, 5)], false),
             new(5014, 5, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4056 = new(4056, [0, 3, 11],
+    internal static readonly GeneratedSkillTreeDefinition Ranger = new(4056, [0, 3, 11],
         [
             new(2233, 10, 0, 0, [new SkillPrerequisite(2236, 5)], false),
             new(2234, 5, 0, 0, [new SkillPrerequisite(2233, 5), new SkillPrerequisite(2247, 1)], false),
@@ -3359,7 +3359,7 @@ internal static class GeneratedSkillTrees
             new(5002, 5, 0, 0, [new SkillPrerequisite(2234, 5)], false),
             new(5014, 5, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4057 = new(4057, [0, 4, 8],
+    internal static readonly GeneratedSkillTreeDefinition ArchBishop = new(4057, [0, 4, 8],
         [
             new(2038, 10, 0, 0, [new SkillPrerequisite(77, 1)], false),
             new(2039, 1, 0, 0, [new SkillPrerequisite(2041, 3)], false),
@@ -3445,7 +3445,7 @@ internal static class GeneratedSkillTrees
             new(5072, 5, 0, 0, [new SkillPrerequisite(2044, 1), new SkillPrerequisite(2053, 1)], false),
             new(5073, 1, 0, 0, [new SkillPrerequisite(2039, 1), new SkillPrerequisite(2046, 5)], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4058 = new(4058, [0, 5, 10],
+    internal static readonly GeneratedSkillTreeDefinition Mechanic = new(4058, [0, 5, 10],
         [
             new(2255, 5, 0, 0, [], false),
             new(2256, 5, 0, 0, [new SkillPrerequisite(2255, 1)], false),
@@ -3551,7 +3551,7 @@ internal static class GeneratedSkillTrees
             new(5006, 5, 0, 0, [new SkillPrerequisite(2277, 1)], false),
             new(5014, 5, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4059 = new(4059, [0, 6, 12],
+    internal static readonly GeneratedSkillTreeDefinition GuillotineCross = new(4059, [0, 6, 12],
         [
             new(2021, 5, 0, 0, [], false),
             new(2022, 5, 0, 0, [new SkillPrerequisite(136, 10)], false),
@@ -3619,7 +3619,7 @@ internal static class GeneratedSkillTrees
             new(5001, 5, 0, 0, [new SkillPrerequisite(2023, 5)], false),
             new(5014, 5, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4060 = new(4060, [0, 1, 7, 4008, 4054],
+    internal static readonly GeneratedSkillTreeDefinition RuneKnightT = new(4060, [0, 1, 7, 4008, 4054],
         [
             new(359, 1, 0, 0, [], false),
         ],
@@ -3671,7 +3671,7 @@ internal static class GeneratedSkillTrees
             new(5004, 10, 0, 0, [new SkillPrerequisite(2007, 2)], false),
             new(5014, 5, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4061 = new(4061, [0, 2, 9, 4010, 4055],
+    internal static readonly GeneratedSkillTreeDefinition WarlockT = new(4061, [0, 2, 9, 4010, 4055],
         [
         ],
         [
@@ -3738,7 +3738,7 @@ internal static class GeneratedSkillTrees
             new(5012, 5, 0, 0, [new SkillPrerequisite(2202, 5)], false),
             new(5014, 5, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4062 = new(4062, [0, 3, 11, 4012, 4056],
+    internal static readonly GeneratedSkillTreeDefinition RangerT = new(4062, [0, 3, 11, 4012, 4056],
         [
         ],
         [
@@ -3800,7 +3800,7 @@ internal static class GeneratedSkillTrees
             new(5002, 5, 0, 0, [new SkillPrerequisite(2234, 5)], false),
             new(5014, 5, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4063 = new(4063, [0, 4, 8, 4009, 4057],
+    internal static readonly GeneratedSkillTreeDefinition ArchBishopT = new(4063, [0, 4, 8, 4009, 4057],
         [
         ],
         [
@@ -3868,7 +3868,7 @@ internal static class GeneratedSkillTrees
             new(5072, 5, 0, 0, [new SkillPrerequisite(2044, 1), new SkillPrerequisite(2053, 1)], false),
             new(5073, 1, 0, 0, [new SkillPrerequisite(2039, 1), new SkillPrerequisite(2046, 5)], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4064 = new(4064, [0, 5, 10, 4011, 4058],
+    internal static readonly GeneratedSkillTreeDefinition MechanicT = new(4064, [0, 5, 10, 4011, 4058],
         [
         ],
         [
@@ -3948,7 +3948,7 @@ internal static class GeneratedSkillTrees
             new(5006, 5, 0, 0, [new SkillPrerequisite(2277, 1)], false),
             new(5014, 5, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4065 = new(4065, [0, 6, 12, 4013, 4059],
+    internal static readonly GeneratedSkillTreeDefinition GuillotineCrossT = new(4065, [0, 6, 12, 4013, 4059],
         [
         ],
         [
@@ -4002,7 +4002,7 @@ internal static class GeneratedSkillTrees
             new(5001, 5, 0, 0, [new SkillPrerequisite(2023, 5)], false),
             new(5014, 5, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4066 = new(4066, [0, 1, 14],
+    internal static readonly GeneratedSkillTreeDefinition RoyalGuard = new(4066, [0, 1, 14],
         [
             new(2307, 5, 0, 0, [new SkillPrerequisite(2312, 1)], false),
             new(2308, 10, 0, 0, [new SkillPrerequisite(55, 1)], false),
@@ -4081,7 +4081,7 @@ internal static class GeneratedSkillTrees
             new(5013, 5, 0, 0, [new SkillPrerequisite(2311, 5)], false),
             new(5014, 5, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4067 = new(4067, [0, 2, 16],
+    internal static readonly GeneratedSkillTreeDefinition Sorcerer = new(4067, [0, 2, 16],
         [
             new(2443, 5, 0, 0, [new SkillPrerequisite(285, 1)], false),
             new(2444, 5, 0, 0, [new SkillPrerequisite(287, 1)], false),
@@ -4184,7 +4184,7 @@ internal static class GeneratedSkillTrees
             new(5008, 5, 0, 0, [new SkillPrerequisite(2456, 3)], false),
             new(5014, 5, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4068 = new(4068, [0, 3, 19],
+    internal static readonly GeneratedSkillTreeDefinition Minstrel = new(4068, [0, 3, 19],
         [
             new(2381, 5, 0, 0, [new SkillPrerequisite(2422, 1)], false),
             new(2382, 5, 0, 0, [new SkillPrerequisite(2422, 1)], false),
@@ -4268,7 +4268,7 @@ internal static class GeneratedSkillTrees
             new(5007, 5, 0, 0, [new SkillPrerequisite(2412, 2)], false),
             new(5014, 5, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4069 = new(4069, [0, 3, 20],
+    internal static readonly GeneratedSkillTreeDefinition Wanderer = new(4069, [0, 3, 20],
         [
             new(2350, 5, 0, 0, [new SkillPrerequisite(2422, 1)], false),
             new(2351, 5, 0, 0, [new SkillPrerequisite(2422, 1)], false),
@@ -4352,7 +4352,7 @@ internal static class GeneratedSkillTrees
             new(5007, 5, 0, 0, [new SkillPrerequisite(2412, 2)], false),
             new(5014, 5, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4070 = new(4070, [0, 4, 15],
+    internal static readonly GeneratedSkillTreeDefinition Sura = new(4070, [0, 4, 15],
         [
             new(2326, 10, 0, 0, [new SkillPrerequisite(263, 5)], false),
             new(2327, 5, 0, 0, [new SkillPrerequisite(2326, 3)], false),
@@ -4440,7 +4440,7 @@ internal static class GeneratedSkillTrees
             new(5009, 5, 0, 0, [new SkillPrerequisite(2326, 3), new SkillPrerequisite(2327, 1), new SkillPrerequisite(2329, 3), new SkillPrerequisite(2330, 5)], false),
             new(5014, 5, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4071 = new(4071, [0, 5, 18],
+    internal static readonly GeneratedSkillTreeDefinition Genetic = new(4071, [0, 5, 18],
         [
             new(2474, 5, 0, 0, [], false),
             new(2475, 5, 0, 0, [], false),
@@ -4518,7 +4518,7 @@ internal static class GeneratedSkillTrees
             new(5003, 5, 0, 0, [new SkillPrerequisite(2497, 1)], false),
             new(5014, 5, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4072 = new(4072, [0, 6, 17],
+    internal static readonly GeneratedSkillTreeDefinition ShadowChaser = new(4072, [0, 6, 17],
         [
             new(2284, 10, 0, 0, [new SkillPrerequisite(219, 5)], false),
             new(2285, 10, 0, 0, [new SkillPrerequisite(225, 5)], false),
@@ -4603,7 +4603,7 @@ internal static class GeneratedSkillTrees
             new(5010, 5, 0, 0, [new SkillPrerequisite(2288, 2)], false),
             new(5014, 5, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4073 = new(4073, [0, 1, 14, 4015, 4066],
+    internal static readonly GeneratedSkillTreeDefinition RoyalGuardT = new(4073, [0, 1, 14, 4015, 4066],
         [
         ],
         [
@@ -4665,7 +4665,7 @@ internal static class GeneratedSkillTrees
             new(5013, 5, 0, 0, [new SkillPrerequisite(2311, 5)], false),
             new(5014, 5, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4074 = new(4074, [0, 2, 16, 4017, 4067],
+    internal static readonly GeneratedSkillTreeDefinition SorcererT = new(4074, [0, 2, 16, 4017, 4067],
         [
         ],
         [
@@ -4748,7 +4748,7 @@ internal static class GeneratedSkillTrees
             new(5008, 5, 0, 0, [new SkillPrerequisite(2456, 3)], false),
             new(5014, 5, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4075 = new(4075, [0, 3, 19, 4020, 4068],
+    internal static readonly GeneratedSkillTreeDefinition MinstrelT = new(4075, [0, 3, 19, 4020, 4068],
         [
         ],
         [
@@ -4813,7 +4813,7 @@ internal static class GeneratedSkillTrees
             new(5014, 5, 0, 0, [], false),
             new(5068, 1, 0, 0, [new SkillPrerequisite(315, 10), new SkillPrerequisite(317, 3), new SkillPrerequisite(396, 1)], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4076 = new(4076, [0, 3, 20, 4021, 4069],
+    internal static readonly GeneratedSkillTreeDefinition WandererT = new(4076, [0, 3, 20, 4021, 4069],
         [
         ],
         [
@@ -4878,7 +4878,7 @@ internal static class GeneratedSkillTrees
             new(5014, 5, 0, 0, [], false),
             new(5068, 1, 0, 0, [new SkillPrerequisite(323, 10), new SkillPrerequisite(325, 3), new SkillPrerequisite(396, 1)], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4077 = new(4077, [0, 4, 15, 4016, 4070],
+    internal static readonly GeneratedSkillTreeDefinition SuraT = new(4077, [0, 4, 15, 4016, 4070],
         [
         ],
         [
@@ -4946,7 +4946,7 @@ internal static class GeneratedSkillTrees
             new(5009, 5, 0, 0, [new SkillPrerequisite(2326, 3), new SkillPrerequisite(2327, 1), new SkillPrerequisite(2329, 3), new SkillPrerequisite(2330, 5)], false),
             new(5014, 5, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4078 = new(4078, [0, 5, 18, 4019, 4071],
+    internal static readonly GeneratedSkillTreeDefinition GeneticT = new(4078, [0, 5, 18, 4019, 4071],
         [
         ],
         [
@@ -5008,7 +5008,7 @@ internal static class GeneratedSkillTrees
             new(5003, 5, 0, 0, [new SkillPrerequisite(2497, 1)], false),
             new(5014, 5, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4079 = new(4079, [0, 6, 17, 4018, 4072],
+    internal static readonly GeneratedSkillTreeDefinition ShadowChaserT = new(4079, [0, 6, 17, 4018, 4072],
         [
         ],
         [
@@ -5074,7 +5074,7 @@ internal static class GeneratedSkillTrees
             new(5010, 5, 0, 0, [new SkillPrerequisite(2288, 2)], false),
             new(5014, 5, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4080 = new(4080, [0, 1, 7, 4054],
+    internal static readonly GeneratedSkillTreeDefinition RuneKnight2 = new(4080, [0, 1, 7, 4054],
         [
         ],
         [
@@ -5117,7 +5117,7 @@ internal static class GeneratedSkillTrees
             new(5004, 10, 0, 0, [new SkillPrerequisite(2007, 2)], false),
             new(5014, 5, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4081 = new(4081, [0, 1, 7, 4008, 4054, 4060],
+    internal static readonly GeneratedSkillTreeDefinition RuneKnightT2 = new(4081, [0, 1, 7, 4008, 4054, 4060],
         [
         ],
         [
@@ -5168,7 +5168,7 @@ internal static class GeneratedSkillTrees
             new(5004, 10, 0, 0, [new SkillPrerequisite(2007, 2)], false),
             new(5014, 5, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4082 = new(4082, [0, 1, 14, 4066],
+    internal static readonly GeneratedSkillTreeDefinition RoyalGuard2 = new(4082, [0, 1, 14, 4066],
         [
         ],
         [
@@ -5226,7 +5226,7 @@ internal static class GeneratedSkillTrees
             new(5013, 5, 0, 0, [new SkillPrerequisite(2311, 5)], false),
             new(5014, 5, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4083 = new(4083, [0, 1, 14, 4015, 4066],
+    internal static readonly GeneratedSkillTreeDefinition RoyalGuardT2 = new(4083, [0, 1, 14, 4015, 4066],
         [
         ],
         [
@@ -5288,7 +5288,7 @@ internal static class GeneratedSkillTrees
             new(5013, 5, 0, 0, [new SkillPrerequisite(2311, 5)], false),
             new(5014, 5, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4084 = new(4084, [0, 3, 11, 4056],
+    internal static readonly GeneratedSkillTreeDefinition Ranger2 = new(4084, [0, 3, 11, 4056],
         [
         ],
         [
@@ -5346,7 +5346,7 @@ internal static class GeneratedSkillTrees
             new(5002, 5, 0, 0, [new SkillPrerequisite(2234, 5)], false),
             new(5014, 5, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4085 = new(4085, [0, 3, 11, 4012, 4056],
+    internal static readonly GeneratedSkillTreeDefinition RangerT2 = new(4085, [0, 3, 11, 4012, 4056],
         [
         ],
         [
@@ -5408,7 +5408,7 @@ internal static class GeneratedSkillTrees
             new(5002, 5, 0, 0, [new SkillPrerequisite(2234, 5)], false),
             new(5014, 5, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4086 = new(4086, [0, 5, 10, 4058],
+    internal static readonly GeneratedSkillTreeDefinition Mechanic2 = new(4086, [0, 5, 10, 4058],
         [
         ],
         [
@@ -5483,7 +5483,7 @@ internal static class GeneratedSkillTrees
             new(5006, 5, 0, 0, [new SkillPrerequisite(2277, 1)], false),
             new(5014, 5, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4087 = new(4087, [0, 5, 10, 4011, 4058],
+    internal static readonly GeneratedSkillTreeDefinition MechanicT2 = new(4087, [0, 5, 10, 4011, 4058],
         [
         ],
         [
@@ -5563,7 +5563,7 @@ internal static class GeneratedSkillTrees
             new(5006, 5, 0, 0, [new SkillPrerequisite(2277, 1)], false),
             new(5014, 5, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4096 = new(4096, [4023, 1, 7, 4054],
+    internal static readonly GeneratedSkillTreeDefinition BabyRuneKnight = new(4096, [4023, 1, 7, 4054],
         [
         ],
         [
@@ -5608,7 +5608,7 @@ internal static class GeneratedSkillTrees
             new(5014, 5, 0, 0, [], false),
             new(5065, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4097 = new(4097, [4023, 2, 9, 4055],
+    internal static readonly GeneratedSkillTreeDefinition BabyWarlock = new(4097, [4023, 2, 9, 4055],
         [
         ],
         [
@@ -5671,7 +5671,7 @@ internal static class GeneratedSkillTrees
             new(5014, 5, 0, 0, [], false),
             new(5065, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4098 = new(4098, [4023, 3, 11, 4056],
+    internal static readonly GeneratedSkillTreeDefinition BabyRanger = new(4098, [4023, 3, 11, 4056],
         [
         ],
         [
@@ -5731,7 +5731,7 @@ internal static class GeneratedSkillTrees
             new(5014, 5, 0, 0, [], false),
             new(5065, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4099 = new(4099, [4023, 4, 8, 4057],
+    internal static readonly GeneratedSkillTreeDefinition BabyArchBishop = new(4099, [4023, 4, 8, 4057],
         [
         ],
         [
@@ -5797,7 +5797,7 @@ internal static class GeneratedSkillTrees
             new(5072, 5, 0, 0, [new SkillPrerequisite(2044, 1), new SkillPrerequisite(2053, 1)], false),
             new(5073, 1, 0, 0, [new SkillPrerequisite(2039, 1), new SkillPrerequisite(2046, 5)], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4100 = new(4100, [4023, 5, 10, 4058],
+    internal static readonly GeneratedSkillTreeDefinition BabyMechanic = new(4100, [4023, 5, 10, 4058],
         [
         ],
         [
@@ -5874,7 +5874,7 @@ internal static class GeneratedSkillTrees
             new(5014, 5, 0, 0, [], false),
             new(5065, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4101 = new(4101, [4023, 6, 12, 4059],
+    internal static readonly GeneratedSkillTreeDefinition BabyGuillotineCross = new(4101, [4023, 6, 12, 4059],
         [
         ],
         [
@@ -5925,7 +5925,7 @@ internal static class GeneratedSkillTrees
             new(5014, 5, 0, 0, [], false),
             new(5065, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4102 = new(4102, [4023, 1, 14, 4066],
+    internal static readonly GeneratedSkillTreeDefinition BabyRoyalGuard = new(4102, [4023, 1, 14, 4066],
         [
         ],
         [
@@ -5985,7 +5985,7 @@ internal static class GeneratedSkillTrees
             new(5014, 5, 0, 0, [], false),
             new(5065, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4103 = new(4103, [4023, 2, 16, 4067],
+    internal static readonly GeneratedSkillTreeDefinition BabySorcerer = new(4103, [4023, 2, 16, 4067],
         [
         ],
         [
@@ -6062,7 +6062,7 @@ internal static class GeneratedSkillTrees
             new(5014, 5, 0, 0, [], false),
             new(5065, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4104 = new(4104, [4023, 3, 19, 4068],
+    internal static readonly GeneratedSkillTreeDefinition BabyMinstrel = new(4104, [4023, 3, 19, 4068],
         [
         ],
         [
@@ -6123,7 +6123,7 @@ internal static class GeneratedSkillTrees
             new(5014, 5, 0, 0, [], false),
             new(5065, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4105 = new(4105, [4023, 3, 20, 4069],
+    internal static readonly GeneratedSkillTreeDefinition BabyWanderer = new(4105, [4023, 3, 20, 4069],
         [
         ],
         [
@@ -6184,7 +6184,7 @@ internal static class GeneratedSkillTrees
             new(5014, 5, 0, 0, [], false),
             new(5065, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4106 = new(4106, [4023, 4, 15, 4070],
+    internal static readonly GeneratedSkillTreeDefinition BabySura = new(4106, [4023, 4, 15, 4070],
         [
         ],
         [
@@ -6250,7 +6250,7 @@ internal static class GeneratedSkillTrees
             new(5014, 5, 0, 0, [], false),
             new(5065, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4107 = new(4107, [4023, 5, 18, 4071],
+    internal static readonly GeneratedSkillTreeDefinition BabyGenetic = new(4107, [4023, 5, 18, 4071],
         [
         ],
         [
@@ -6311,7 +6311,7 @@ internal static class GeneratedSkillTrees
             new(5014, 5, 0, 0, [], false),
             new(5065, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4108 = new(4108, [4023, 6, 17, 4072],
+    internal static readonly GeneratedSkillTreeDefinition BabyShadowChaser = new(4108, [4023, 6, 17, 4072],
         [
         ],
         [
@@ -6375,7 +6375,7 @@ internal static class GeneratedSkillTrees
             new(5014, 5, 0, 0, [], false),
             new(5065, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4109 = new(4109, [4023, 1, 7, 4054],
+    internal static readonly GeneratedSkillTreeDefinition BabyRuneKnight2 = new(4109, [4023, 1, 7, 4054],
         [
         ],
         [
@@ -6420,7 +6420,7 @@ internal static class GeneratedSkillTrees
             new(5014, 5, 0, 0, [], false),
             new(5065, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4110 = new(4110, [4023, 1, 14, 4066],
+    internal static readonly GeneratedSkillTreeDefinition BabyRoyalGuard2 = new(4110, [4023, 1, 14, 4066],
         [
         ],
         [
@@ -6480,7 +6480,7 @@ internal static class GeneratedSkillTrees
             new(5014, 5, 0, 0, [], false),
             new(5065, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4111 = new(4111, [4023, 3, 11, 4056],
+    internal static readonly GeneratedSkillTreeDefinition BabyRanger2 = new(4111, [4023, 3, 11, 4056],
         [
         ],
         [
@@ -6540,7 +6540,7 @@ internal static class GeneratedSkillTrees
             new(5014, 5, 0, 0, [], false),
             new(5065, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4112 = new(4112, [4023, 5, 10, 4058],
+    internal static readonly GeneratedSkillTreeDefinition BabyMechanic2 = new(4112, [4023, 5, 10, 4058],
         [
         ],
         [
@@ -6617,7 +6617,7 @@ internal static class GeneratedSkillTrees
             new(5014, 5, 0, 0, [], false),
             new(5065, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4190 = new(4190, [0, 23],
+    internal static readonly GeneratedSkillTreeDefinition SuperNoviceE = new(4190, [0, 23],
         [
             new(66, 5, 0, 0, [], false),
             new(68, 5, 0, 0, [new SkillPrerequisite(31, 1), new SkillPrerequisite(66, 3)], false),
@@ -6774,7 +6774,7 @@ internal static class GeneratedSkillTrees
             new(5076, 1, 0, 0, [], false),
             new(5077, 5, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4191 = new(4191, [4023, 4045, 4190],
+    internal static readonly GeneratedSkillTreeDefinition SuperBabyE = new(4191, [4023, 4045, 4190],
         [
         ],
         [
@@ -6884,7 +6884,7 @@ internal static class GeneratedSkillTrees
             new(5076, 1, 0, 0, [], false),
             new(5077, 5, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4211 = new(4211, [0, 25],
+    internal static readonly GeneratedSkillTreeDefinition Kagerou = new(4211, [0, 25],
         [
             new(3001, 1, 0, 0, [new SkillPrerequisite(530, 5)], false),
             new(3002, 5, 0, 0, [], false),
@@ -6965,7 +6965,7 @@ internal static class GeneratedSkillTrees
             new(3024, 5, 0, 0, [new SkillPrerequisite(3023, 2)], false),
             new(3025, 5, 0, 0, [new SkillPrerequisite(3024, 3)], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4212 = new(4212, [0, 25],
+    internal static readonly GeneratedSkillTreeDefinition Oboro = new(4212, [0, 25],
         [
             new(3001, 1, 0, 0, [new SkillPrerequisite(530, 5)], false),
             new(3002, 5, 0, 0, [], false),
@@ -7046,7 +7046,7 @@ internal static class GeneratedSkillTrees
             new(3027, 5, 0, 0, [new SkillPrerequisite(3029, 3)], false),
             new(3029, 5, 0, 0, [new SkillPrerequisite(3026, 2)], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4215 = new(4215, [0, 24],
+    internal static readonly GeneratedSkillTreeDefinition Rebellion = new(4215, [0, 24],
         [
             new(2552, 1, 0, 0, [new SkillPrerequisite(500, 5)], false),
             new(2553, 5, 0, 0, [new SkillPrerequisite(514, 1)], false),
@@ -7116,7 +7116,7 @@ internal static class GeneratedSkillTrees
             new(2570, 5, 0, 0, [new SkillPrerequisite(2554, 3)], false),
             new(2571, 10, 0, 0, [new SkillPrerequisite(2552, 1), new SkillPrerequisite(2569, 3)], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4218 = new(4218, [],
+    internal static readonly GeneratedSkillTreeDefinition Summoner = new(4218, [],
         [
             new(410, 1, 0, 0, [], false),
             new(5018, 1, 0, 0, [], false),
@@ -7193,7 +7193,7 @@ internal static class GeneratedSkillTrees
             new(5055, 5, 100, 0, [new SkillPrerequisite(5025, 1)], false),
             new(5056, 1, 100, 0, [new SkillPrerequisite(5051, 5)], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4220 = new(4220, [4218],
+    internal static readonly GeneratedSkillTreeDefinition BabySummoner = new(4220, [4218],
         [
             new(408, 1, 0, 0, [], false),
             new(409, 1, 0, 0, [], false),
@@ -7240,7 +7240,7 @@ internal static class GeneratedSkillTrees
             new(5056, 1, 100, 0, [new SkillPrerequisite(5051, 5)], false),
             new(5065, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4222 = new(4222, [4023, 25],
+    internal static readonly GeneratedSkillTreeDefinition BabyNinja = new(4222, [4023, 25],
         [
         ],
         [
@@ -7273,7 +7273,7 @@ internal static class GeneratedSkillTrees
             new(544, 10, 0, 0, [new SkillPrerequisite(522, 7), new SkillPrerequisite(530, 5), new SkillPrerequisite(543, 1)], false),
             new(5065, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4223 = new(4223, [4023, 25, 4211],
+    internal static readonly GeneratedSkillTreeDefinition BabyKagerou = new(4223, [4023, 25, 4211],
         [
         ],
         [
@@ -7331,7 +7331,7 @@ internal static class GeneratedSkillTrees
             new(3025, 5, 0, 0, [new SkillPrerequisite(3024, 3)], false),
             new(5065, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4224 = new(4224, [4023, 25, 4212],
+    internal static readonly GeneratedSkillTreeDefinition BabyOboro = new(4224, [4023, 25, 4212],
         [
         ],
         [
@@ -7389,7 +7389,7 @@ internal static class GeneratedSkillTrees
             new(3029, 5, 0, 0, [new SkillPrerequisite(3026, 2)], false),
             new(5065, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4225 = new(4225, [4023, 4046],
+    internal static readonly GeneratedSkillTreeDefinition BabyTaekwon = new(4225, [4023, 4046],
         [
         ],
         [
@@ -7416,7 +7416,7 @@ internal static class GeneratedSkillTrees
             new(493, 1, 0, 0, [new SkillPrerequisite(424, 5)], false),
             new(5065, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4226 = new(4226, [4023, 4046, 4047],
+    internal static readonly GeneratedSkillTreeDefinition BabyStarGladiator = new(4226, [4023, 4046, 4047],
         [
         ],
         [
@@ -7461,7 +7461,7 @@ internal static class GeneratedSkillTrees
             new(493, 1, 0, 0, [new SkillPrerequisite(424, 5)], false),
             new(5065, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4227 = new(4227, [4023, 4046, 4049],
+    internal static readonly GeneratedSkillTreeDefinition BabySoulLinker = new(4227, [4023, 4046, 4049],
         [
         ],
         [
@@ -7515,7 +7515,7 @@ internal static class GeneratedSkillTrees
             new(494, 5, 0, 0, [new SkillPrerequisite(451, 5)], false),
             new(5065, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4228 = new(4228, [4023, 24],
+    internal static readonly GeneratedSkillTreeDefinition BabyGunslinger = new(4228, [4023, 24],
         [
         ],
         [
@@ -7547,7 +7547,7 @@ internal static class GeneratedSkillTrees
             new(521, 10, 0, 0, [new SkillPrerequisite(520, 7)], false),
             new(5065, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4229 = new(4229, [4023, 24, 4215],
+    internal static readonly GeneratedSkillTreeDefinition BabyRebellion = new(4229, [4023, 24, 4215],
         [
         ],
         [
@@ -7599,7 +7599,7 @@ internal static class GeneratedSkillTrees
             new(2571, 10, 0, 0, [new SkillPrerequisite(2552, 1), new SkillPrerequisite(2569, 3)], false),
             new(5065, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4238 = new(4238, [4023, 4046, 4047],
+    internal static readonly GeneratedSkillTreeDefinition BabyStarGladiator2 = new(4238, [4023, 4046, 4047],
         [
         ],
         [
@@ -7644,7 +7644,7 @@ internal static class GeneratedSkillTrees
             new(493, 1, 0, 0, [new SkillPrerequisite(424, 5)], false),
             new(5065, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4239 = new(4239, [0, 4046, 4047],
+    internal static readonly GeneratedSkillTreeDefinition StarEmperor = new(4239, [0, 4046, 4047],
         [
             new(2574, 5, 0, 0, [new SkillPrerequisite(2576, 3)], false),
             new(2575, 3, 0, 0, [new SkillPrerequisite(2588, 1)], false),
@@ -7727,7 +7727,7 @@ internal static class GeneratedSkillTrees
             new(2592, 10, 0, 0, [new SkillPrerequisite(2593, 7)], false),
             new(2593, 7, 0, 0, [new SkillPrerequisite(2591, 1)], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4240 = new(4240, [0, 4046, 4049],
+    internal static readonly GeneratedSkillTreeDefinition SoulReaper = new(4240, [0, 4046, 4049],
         [
             new(2596, 5, 0, 0, [new SkillPrerequisite(2608, 2)], false),
             new(2597, 5, 0, 0, [new SkillPrerequisite(2605, 5)], false),
@@ -7813,7 +7813,7 @@ internal static class GeneratedSkillTrees
             new(2611, 5, 0, 0, [new SkillPrerequisite(2609, 1)], false),
             new(2612, 5, 0, 0, [new SkillPrerequisite(2611, 1)], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4241 = new(4241, [4023, 4046, 4047, 4239],
+    internal static readonly GeneratedSkillTreeDefinition BabyStarEmperor = new(4241, [4023, 4046, 4047, 4239],
         [
         ],
         [
@@ -7878,7 +7878,7 @@ internal static class GeneratedSkillTrees
             new(2593, 7, 0, 0, [new SkillPrerequisite(2591, 1)], false),
             new(5065, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4242 = new(4242, [4023, 4046, 4049, 4240],
+    internal static readonly GeneratedSkillTreeDefinition BabySoulReaper = new(4242, [4023, 4046, 4049, 4240],
         [
         ],
         [
@@ -7949,7 +7949,7 @@ internal static class GeneratedSkillTrees
             new(2612, 5, 0, 0, [new SkillPrerequisite(2611, 1)], false),
             new(5065, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4243 = new(4243, [0, 4046, 4047, 4239],
+    internal static readonly GeneratedSkillTreeDefinition StarEmperor2 = new(4243, [0, 4046, 4047, 4239],
         [
         ],
         [
@@ -8012,7 +8012,7 @@ internal static class GeneratedSkillTrees
             new(2592, 10, 0, 0, [new SkillPrerequisite(2593, 7)], false),
             new(2593, 7, 0, 0, [new SkillPrerequisite(2591, 1)], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4244 = new(4244, [4023, 4046, 4047, 4239],
+    internal static readonly GeneratedSkillTreeDefinition BabyStarEmperor2 = new(4244, [4023, 4046, 4047, 4239],
         [
         ],
         [
@@ -8077,7 +8077,7 @@ internal static class GeneratedSkillTrees
             new(2593, 7, 0, 0, [new SkillPrerequisite(2591, 1)], false),
             new(5065, 1, 0, 0, [], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4252 = new(4252, [0, 1, 7, 4008, 4054, 4060],
+    internal static readonly GeneratedSkillTreeDefinition DragonKnight = new(4252, [0, 1, 7, 4008, 4054, 4060],
         [
             new(5201, 5, 0, 0, [], false),
             new(5203, 5, 0, 0, [new SkillPrerequisite(5201, 3)], false),
@@ -8154,7 +8154,7 @@ internal static class GeneratedSkillTrees
             new(6001, 10, 0, 0, [new SkillPrerequisite(2008, 10), new SkillPrerequisite(5004, 10)], false),
             new(6502, 5, 0, 0, [new SkillPrerequisite(5208, 7)], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4253 = new(4253, [0, 5, 10, 4011, 4058, 4064],
+    internal static readonly GeneratedSkillTreeDefinition Meister = new(4253, [0, 5, 10, 4011, 4058, 4064],
         [
             new(5295, 5, 0, 0, [new SkillPrerequisite(5300, 5)], false),
             new(5296, 10, 0, 0, [new SkillPrerequisite(5295, 5)], false),
@@ -8268,7 +8268,7 @@ internal static class GeneratedSkillTrees
             new(6507, 5, 0, 0, [new SkillPrerequisite(6506, 3)], false),
             new(6508, 5, 0, 0, [new SkillPrerequisite(6003, 3)], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4254 = new(4254, [0, 6, 12, 4013, 4059, 4065],
+    internal static readonly GeneratedSkillTreeDefinition ShadowCross = new(4254, [0, 6, 12, 4013, 4059, 4065],
         [
             new(5285, 10, 0, 0, [new SkillPrerequisite(5288, 7), new SkillPrerequisite(5290, 3), new SkillPrerequisite(5293, 5)], false),
             new(5286, 5, 0, 0, [new SkillPrerequisite(5288, 3)], false),
@@ -8344,7 +8344,7 @@ internal static class GeneratedSkillTrees
             new(5294, 10, 0, 0, [new SkillPrerequisite(5291, 5), new SkillPrerequisite(5292, 5)], false),
             new(6511, 5, 0, 0, [new SkillPrerequisite(2028, 3), new SkillPrerequisite(5286, 3)], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4255 = new(4255, [0, 2, 9, 4010, 4055, 4061],
+    internal static readonly GeneratedSkillTreeDefinition ArchMage = new(4255, [0, 2, 9, 4010, 4055, 4061],
         [
             new(5214, 5, 0, 0, [new SkillPrerequisite(5217, 3)], false),
             new(5215, 5, 0, 0, [new SkillPrerequisite(5227, 3)], false),
@@ -8449,7 +8449,7 @@ internal static class GeneratedSkillTrees
             new(5237, 5, 0, 0, [new SkillPrerequisite(5216, 1)], false),
             new(6516, 5, 0, 0, [new SkillPrerequisite(2206, 2), new SkillPrerequisite(5232, 1)], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4256 = new(4256, [0, 4, 8, 4009, 4057, 4063],
+    internal static readonly GeneratedSkillTreeDefinition Cardinal = new(4256, [0, 4, 8, 4009, 4057, 4063],
         [
             new(5268, 5, 0, 0, [new SkillPrerequisite(5269, 3)], false),
             new(5269, 5, 0, 0, [new SkillPrerequisite(5280, 3)], false),
@@ -8551,7 +8551,7 @@ internal static class GeneratedSkillTrees
             new(5284, 5, 0, 0, [new SkillPrerequisite(2038, 10), new SkillPrerequisite(5276, 5)], false),
             new(6518, 5, 0, 0, [new SkillPrerequisite(2040, 5), new SkillPrerequisite(5284, 5)], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4257 = new(4257, [0, 3, 11, 4012, 4056, 4062],
+    internal static readonly GeneratedSkillTreeDefinition Windhawk = new(4257, [0, 3, 11, 4012, 4056, 4062],
         [
             new(5323, 5, 0, 0, [new SkillPrerequisite(2248, 3)], false),
             new(5324, 5, 0, 0, [new SkillPrerequisite(5325, 5)], false),
@@ -8641,7 +8641,7 @@ internal static class GeneratedSkillTrees
             new(5335, 5, 0, 0, [new SkillPrerequisite(5332, 1)], false),
             new(6520, 5, 0, 0, [new SkillPrerequisite(5325, 3), new SkillPrerequisite(5326, 3)], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4258 = new(4258, [0, 1, 14, 4015, 4066, 4073],
+    internal static readonly GeneratedSkillTreeDefinition ImperialGuard = new(4258, [0, 1, 14, 4015, 4066, 4073],
         [
             new(5255, 5, 0, 0, [new SkillPrerequisite(5258, 3)], false),
             new(5256, 5, 0, 0, [new SkillPrerequisite(5255, 2)], false),
@@ -8735,7 +8735,7 @@ internal static class GeneratedSkillTrees
             new(6504, 5, 0, 0, [new SkillPrerequisite(5266, 5)], false),
             new(6505, 5, 0, 0, [new SkillPrerequisite(5255, 3), new SkillPrerequisite(5259, 7)], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4259 = new(4259, [0, 5, 18, 4019, 4071, 4078],
+    internal static readonly GeneratedSkillTreeDefinition Biolo = new(4259, [0, 5, 18, 4019, 4071, 4078],
         [
             new(5336, 5, 0, 0, [new SkillPrerequisite(2497, 5)], false),
             new(5337, 10, 0, 0, [], false),
@@ -8831,7 +8831,7 @@ internal static class GeneratedSkillTrees
             new(6509, 5, 0, 0, [new SkillPrerequisite(6005, 5)], false),
             new(6510, 5, 0, 0, [new SkillPrerequisite(6509, 3)], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4260 = new(4260, [0, 6, 17, 4018, 4072, 4079],
+    internal static readonly GeneratedSkillTreeDefinition AbyssChaser = new(4260, [0, 6, 17, 4018, 4072, 4079],
         [
             new(5311, 10, 0, 0, [], false),
             new(5312, 10, 0, 0, [new SkillPrerequisite(2285, 5), new SkillPrerequisite(2286, 5)], false),
@@ -8929,7 +8929,7 @@ internal static class GeneratedSkillTrees
             new(6514, 5, 0, 0, [new SkillPrerequisite(6512, 3)], false),
             new(6515, 5, 0, 0, [new SkillPrerequisite(5312, 5), new SkillPrerequisite(5317, 3)], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4261 = new(4261, [0, 2, 16, 4017, 4067, 4074],
+    internal static readonly GeneratedSkillTreeDefinition ElementalMaster = new(4261, [0, 2, 16, 4017, 4067, 4074],
         [
             new(5365, 10, 0, 0, [], false),
             new(5366, 5, 0, 0, [new SkillPrerequisite(5365, 5)], false),
@@ -9048,7 +9048,7 @@ internal static class GeneratedSkillTrees
             new(5381, 5, 0, 0, [new SkillPrerequisite(5374, 3)], false),
             new(6517, 5, 0, 0, [new SkillPrerequisite(5365, 5), new SkillPrerequisite(5369, 3), new SkillPrerequisite(5370, 3), new SkillPrerequisite(5371, 3), new SkillPrerequisite(5372, 3), new SkillPrerequisite(5373, 3)], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4262 = new(4262, [0, 4, 15, 4016, 4070, 4077],
+    internal static readonly GeneratedSkillTreeDefinition Inquisitor = new(4262, [0, 4, 15, 4016, 4070, 4077],
         [
             new(5238, 5, 0, 0, [new SkillPrerequisite(5240, 1)], false),
             new(5239, 5, 0, 0, [new SkillPrerequisite(5240, 1)], false),
@@ -9152,7 +9152,7 @@ internal static class GeneratedSkillTrees
             new(5254, 5, 0, 0, [new SkillPrerequisite(5247, 1)], false),
             new(6519, 5, 0, 0, [new SkillPrerequisite(5243, 7)], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4263 = new(4263, [0, 3, 19, 4020, 4068, 4075],
+    internal static readonly GeneratedSkillTreeDefinition Troubadour = new(4263, [0, 3, 19, 4020, 4068, 4075],
         [
             new(5349, 5, 0, 0, [], false),
             new(5350, 1, 0, 0, [new SkillPrerequisite(5349, 1)], false),
@@ -9249,7 +9249,7 @@ internal static class GeneratedSkillTrees
             new(5364, 5, 0, 0, [new SkillPrerequisite(5360, 1)], false),
             new(6521, 5, 0, 0, [new SkillPrerequisite(5356, 3)], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4264 = new(4264, [0, 3, 20, 4021, 4069, 4076],
+    internal static readonly GeneratedSkillTreeDefinition Trouvere = new(4264, [0, 3, 20, 4021, 4069, 4076],
         [
             new(5349, 5, 0, 0, [], false),
             new(5350, 1, 0, 0, [new SkillPrerequisite(5349, 1)], false),
@@ -9346,7 +9346,7 @@ internal static class GeneratedSkillTrees
             new(5364, 5, 0, 0, [new SkillPrerequisite(5360, 1)], false),
             new(6521, 5, 0, 0, [new SkillPrerequisite(5356, 3)], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4278 = new(4278, [0, 3, 11, 4012, 4056, 4062, 4257],
+    internal static readonly GeneratedSkillTreeDefinition Windhawk2 = new(4278, [0, 3, 11, 4012, 4056, 4062, 4257],
         [
         ],
         [
@@ -9422,7 +9422,7 @@ internal static class GeneratedSkillTrees
             new(5335, 5, 0, 0, [new SkillPrerequisite(5332, 1)], false),
             new(6520, 5, 0, 0, [new SkillPrerequisite(5325, 3), new SkillPrerequisite(5326, 3)], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4279 = new(4279, [0, 5, 10, 4011, 4058, 4064, 4253],
+    internal static readonly GeneratedSkillTreeDefinition Meister2 = new(4279, [0, 5, 10, 4011, 4058, 4064, 4253],
         [
         ],
         [
@@ -9519,7 +9519,7 @@ internal static class GeneratedSkillTrees
             new(6507, 5, 0, 0, [new SkillPrerequisite(6506, 3)], false),
             new(6508, 5, 0, 0, [new SkillPrerequisite(6003, 3)], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4280 = new(4280, [0, 1, 7, 4008, 4054, 4060, 4252],
+    internal static readonly GeneratedSkillTreeDefinition DragonKnight2 = new(4280, [0, 1, 7, 4008, 4054, 4060, 4252],
         [
         ],
         [
@@ -9583,7 +9583,7 @@ internal static class GeneratedSkillTrees
             new(6001, 10, 0, 0, [new SkillPrerequisite(2008, 10), new SkillPrerequisite(5004, 10)], false),
             new(6502, 5, 0, 0, [new SkillPrerequisite(5208, 7)], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4281 = new(4281, [0, 1, 14, 4015, 4066, 4073, 4258],
+    internal static readonly GeneratedSkillTreeDefinition ImperialGuard2 = new(4281, [0, 1, 14, 4015, 4066, 4073, 4258],
         [
         ],
         [
@@ -9661,7 +9661,7 @@ internal static class GeneratedSkillTrees
             new(6504, 5, 0, 0, [new SkillPrerequisite(5266, 5)], false),
             new(6505, 5, 0, 0, [new SkillPrerequisite(5255, 3), new SkillPrerequisite(5259, 7)], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4302 = new(4302, [0, 4046, 4047, 4239],
+    internal static readonly GeneratedSkillTreeDefinition SkyEmperor = new(4302, [0, 4046, 4047, 4239],
         [
             new(5463, 10, 0, 0, [], false),
             new(5464, 10, 0, 0, [], false),
@@ -9756,7 +9756,7 @@ internal static class GeneratedSkillTrees
             new(5503, 5, 0, 0, [new SkillPrerequisite(5469, 3), new SkillPrerequisite(5470, 3), new SkillPrerequisite(5475, 7)], false),
             new(5504, 5, 0, 0, [new SkillPrerequisite(5472, 3), new SkillPrerequisite(5473, 3), new SkillPrerequisite(5475, 7)], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4303 = new(4303, [0, 4046, 4049, 4240],
+    internal static readonly GeneratedSkillTreeDefinition SoulAscetic = new(4303, [0, 4046, 4049, 4240],
         [
             new(5416, 10, 0, 0, [], false),
             new(5417, 10, 0, 0, [], false),
@@ -9859,7 +9859,7 @@ internal static class GeneratedSkillTrees
             new(5431, 5, 0, 0, [new SkillPrerequisite(5417, 3), new SkillPrerequisite(5423, 1), new SkillPrerequisite(5430, 1)], false),
             new(5432, 10, 0, 0, [new SkillPrerequisite(5418, 5), new SkillPrerequisite(5419, 5), new SkillPrerequisite(5420, 5), new SkillPrerequisite(5423, 5)], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4304 = new(4304, [0, 25, 4211],
+    internal static readonly GeneratedSkillTreeDefinition Shinkiro = new(4304, [0, 25, 4211],
         [
             new(5476, 5, 0, 0, [new SkillPrerequisite(5479, 1)], false),
             new(5477, 5, 0, 0, [new SkillPrerequisite(5479, 1)], false),
@@ -9957,7 +9957,7 @@ internal static class GeneratedSkillTrees
             new(5495, 1, 0, 0, [new SkillPrerequisite(5479, 1), new SkillPrerequisite(5488, 5), new SkillPrerequisite(5489, 5), new SkillPrerequisite(5490, 5), new SkillPrerequisite(5491, 5), new SkillPrerequisite(5492, 5)], false),
             new(5499, 1, 0, 0, [new SkillPrerequisite(3019, 1), new SkillPrerequisite(5479, 1)], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4305 = new(4305, [0, 25, 4212],
+    internal static readonly GeneratedSkillTreeDefinition Shiranui = new(4305, [0, 25, 4212],
         [
             new(5476, 5, 0, 0, [new SkillPrerequisite(5479, 1)], false),
             new(5477, 5, 0, 0, [new SkillPrerequisite(5479, 1)], false),
@@ -10055,7 +10055,7 @@ internal static class GeneratedSkillTrees
             new(5495, 1, 0, 0, [new SkillPrerequisite(5479, 1), new SkillPrerequisite(5488, 5), new SkillPrerequisite(5489, 5), new SkillPrerequisite(5490, 5), new SkillPrerequisite(5491, 5), new SkillPrerequisite(5492, 5)], false),
             new(5499, 1, 0, 0, [new SkillPrerequisite(3019, 1), new SkillPrerequisite(5479, 1)], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4306 = new(4306, [0, 24, 4215],
+    internal static readonly GeneratedSkillTreeDefinition NightWatch = new(4306, [0, 24, 4215],
         [
             new(5401, 10, 0, 0, [], false),
             new(5402, 10, 0, 0, [], false),
@@ -10139,7 +10139,7 @@ internal static class GeneratedSkillTrees
             new(5500, 5, 0, 0, [new SkillPrerequisite(5406, 3), new SkillPrerequisite(5407, 3), new SkillPrerequisite(5408, 3)], false),
             new(5501, 5, 0, 0, [new SkillPrerequisite(5405, 3), new SkillPrerequisite(5408, 3), new SkillPrerequisite(5409, 3)], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4307 = new(4307, [0, 23, 4190],
+    internal static readonly GeneratedSkillTreeDefinition HyperNovice = new(4307, [0, 23, 4190],
         [
             new(5449, 10, 0, 0, [], false),
             new(5450, 10, 0, 0, [], false),
@@ -10277,7 +10277,7 @@ internal static class GeneratedSkillTrees
             new(5462, 1, 0, 0, [new SkillPrerequisite(5455, 5), new SkillPrerequisite(5456, 5), new SkillPrerequisite(5457, 5), new SkillPrerequisite(5458, 5), new SkillPrerequisite(5459, 5), new SkillPrerequisite(5460, 5)], false),
             new(5505, 5, 0, 0, [new SkillPrerequisite(5449, 5), new SkillPrerequisite(5450, 5)], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4308 = new(4308, [4218],
+    internal static readonly GeneratedSkillTreeDefinition SpiritHandler = new(4308, [4218],
         [
             new(5433, 10, 0, 0, [], false),
             new(5434, 1, 0, 0, [new SkillPrerequisite(5433, 7), new SkillPrerequisite(5437, 3)], false),
@@ -10354,7 +10354,7 @@ internal static class GeneratedSkillTrees
             new(5506, 7, 0, 0, [new SkillPrerequisite(5433, 7), new SkillPrerequisite(5435, 5)], false),
             new(5507, 7, 0, 0, [new SkillPrerequisite(5433, 7), new SkillPrerequisite(5445, 5)], false),
         ]);
-    internal static readonly GeneratedSkillTreeDefinition Job_4316 = new(4316, [0, 4046, 4047, 4239, 4302],
+    internal static readonly GeneratedSkillTreeDefinition SkyEmperor2 = new(4316, [0, 4046, 4047, 4239, 4302],
         [
         ],
         [

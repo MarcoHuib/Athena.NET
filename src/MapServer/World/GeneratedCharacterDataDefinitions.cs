@@ -1,6 +1,5 @@
 namespace Athena.Net.MapServer.World;
 
-public sealed record GeneratedJobDefinition(ushort JobClass, string Name);
 public sealed record GeneratedSkillDefinition(ushort SkillId, string Name);
 public sealed record SkillPrerequisite(ushort SkillId, ushort Level);
 public sealed record GeneratedSkillTreeEntry(
