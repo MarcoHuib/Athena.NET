@@ -142,8 +142,10 @@ public sealed class MapClientSessionCombatRangeTests
         var run = session.RunAsync(CancellationToken.None);
         await session.CompleteIroAuthenticationAsync(new(AccountId, CharId, 1, 2, 0, 0, false, "int_land03", playerX, playerY, 0, 0, 0));
 
-        // Consume the fixed 4-packet iRO bootstrap (0x0B18/0x0283/0x0ADE/0x02EB).
+        // Consume the fixed 4-packet iRO bootstrap (0x0B18/0x0283/0x0ADE/0x02EB) plus the
+        // variable-length 0x0B32 skill list that now always follows it.
         await ReadExact(stream, 4 + 6 + 6 + 13);
+        await ReadDynamic(stream);
 
         await stream.WriteAsync(new byte[] { 0x7d, 0x00, 0xaa });
         await ReadExact(stream, 15); // 0x01D7 self weapon look

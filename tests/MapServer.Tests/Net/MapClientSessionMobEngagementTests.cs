@@ -82,6 +82,8 @@ public sealed class MapClientSessionMobEngagementTests
     private static async Task ConsumeBootstrapAsync(Stream stream)
     {
         await ReadExact(stream, 4 + 6 + 6 + 13); // 0x0B18/0x0283/0x0ADE/0x02EB.
+        var skillListHeader = await ReadExact(stream, 4); // 0x0B32 header
+        await ReadExact(stream, BinaryPrimitives.ReadUInt16LittleEndian(skillListHeader.AsSpan(2)) - 4); // 0x0B32 body
         await stream.WriteAsync(new byte[] { 0x7d, 0x00, 0xaa }); // 0x007D map-loaded.
         await ReadExact(stream, 15); // 0x01D7 self weapon look
         await ReadExact(stream, 6);  // 0x0B08 inventoryStart

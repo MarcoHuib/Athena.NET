@@ -498,5 +498,57 @@ the next packet's 2-byte opcode header, producing a corrupted opcode - live-obse
 `0x00AB`) and `0x6025` (a further cascading desync). Athena now reads
 `IroCzReqWearEquipLength=9` / `IroCzReqTakeoffEquipLength=5`, eliminating the residue.
 
+## Verified 0x0B32 (ZC_SKILLINFO_LIST3) skill-info-list
+
+Formalizing the entry layout already captured and documented in `ai/map-server.md`'s map-entry
+burst table: `0x0B32` is a 4-byte header (`id.W totalLength.W`) plus zero or more packed 15-byte
+`SKILLDATA` entries. The captured entry for a fresh Novice's `NV_BASIC` at learned level 0:
+
+| Entry offset | Type | Captured value | Field | Evidence status |
+|---:|---|---:|---|---|
+| 0 | `uint16` | 1 | SkillId | **Verified** (stock-iRO capture) |
+| 2 | `int32` | 0 | flags | **Unknown** beyond this single all-zero observation - not a proven constant-for-all-skills semantic |
+| 6 | `uint16` | 0 | currentLevel | **Verified** (capture) + **Reference-backed** (pinned `clif_skillinfoblock`, `clif.cpp:5696-5767`, reads `sd->status.skill[i].lv` directly - the character's actual current level, never level 1/next-level/MaxLevel) |
+| 8 | `uint16` | 0 | spCost | **Verified layout** (capture) + **Reference-backed value semantics**: pinned `clif.cpp:5737` computes `skill_get_sp(skill.id, skill.lv)` - the CURRENT level's cost. `NV_BASIC` has no `Requires.SpCost` at any level, so `0` here is consistent with, but does not by itself independently prove, the current-level interpretation for a skill with a real nonzero cost. A future capture of a real-cost skill's entry (e.g. mid-game `SM_BASH`) would fully confirm this. |
+| 10 | `uint16` | 1 | range | **Verified layout** (capture) + **Reference-backed**: pinned `clif.cpp:5738` computes `skill_get_range2(&sd, skill.id, skill.lv, false)` - also current-level-derived, and additionally capable of resolving a negative/special generated `Range` value (e.g. `SM_BASH`'s `Range: -1`) using LIVE character/equipment state (equipped weapon range, Vulture's Eye/Snake Eye bonuses, Shadow Jump/Radius overrides). Athena's `IroSkillInfoEntry.From` passes a negative `Range` through UNRESOLVED (see `ai/world-data.md`) - a disclosed gap, not a silently-invented value. |
+| 12 | `uint8` | 1 | upgradable | **Verified** (capture) + **Reference-backed**: pinned `upFlag = (flag == SKILL_FLAG_PERMANENT) && (level < skill_tree_get_max(skill_id, class_))` - independent of remaining skill points. |
+| 13 | `uint16` | 0 | secondaryLevel | **Unknown** beyond this single all-zero observation. |
+
+**Visibility (which skills appear at all) is NOT the same as `GeneratedSkillTreeDefinition.
+EffectiveSkills` membership.** Pinned `pc_calc_skilltree`/`pc_check_skilltree` (`pc.cpp:2601-2873`)
+populate a per-character runtime array (`sd->status.skill[]`) that `clif_skillinfoblock` reads from
+- NOT a live scan of the static per-job tree. A tree-declared skill only enters that array (and
+therefore appears in `0x0B32`) if: it is already learned (`CurrentLevel > 0`), OR its
+BaseLevel/JobLevel/prerequisite requirements are currently satisfied AND it is "normally learnable"
+(pinned `INF2_ISQUEST`/`INF2_ISWEDDING`/`INF2_ISSPIRIT` skills are excluded from the *automatic*
+grant unless already learned via a quest script). Athena models this as
+`CharacterSkillState.ClientVisible` (`CurrentLevel > 0 || (RequirementsSatisfied &&
+NormallyLearnable)`) - see `CharacterSkillService.CalculateEffectiveState`'s doc comment in
+`src/MapServer/World/CharacterSkillState.cs` for the full evidence trace.
+
+Map-entry ordering: `0x0B32` is emitted immediately after `0x02EB` in the initial bootstrap,
+matching the captured burst order (`0x0B18, 0x0283, 0x0ADE, 0x02EB, 0x0B32, ...`) - see
+`IroMapEnterPackets`/`MapClientSession.SendIroInitialBootstrapAsync`.
+
+## CURRENT OPEN WIRE ITEM
+
+Stock iRO client → MapServer skill-level-up request: not yet captured/verified.
+
+Do not implement from rAthena packet tables alone.
+
+Required capture:
+```text
+character with available skill point
+→ open stock skill window
+→ click + on a skill
+→ record client→server packet.
+```
+
+No guessed packet ID, layout, or response sequence is implemented anywhere in this codebase
+pending that capture. `CharacterGameplayStateSession.LearnSkillAsync` implements the complete
+internal validate → atomic-persist → replace-both-snapshots pipeline this future request will call,
+but no client-facing packet handler exists yet - see `ai/map-server.md`'s skill-state section for
+the full architecture this future handler will plug into.
+
 ## Capture handling
 Official captures can contain credentials, account/session identifiers, bearer/JWT-like tokens, and other sensitive authentication material. Never commit unsanitized PCAPs or raw token dumps to the repository.

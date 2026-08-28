@@ -1129,3 +1129,102 @@ through the SAME `CharInventoryOrdering.InStableSlotOrder` the list/add/
 equip-update handlers already share, decrements or deletes it (pinned
 `pc_delitem`), and reports `RowDeleted` so MapServer knows whether to replace or
 remove that slot in its own runtime snapshot.
+
+## Skill state, skill window, and skill-point spending
+
+### CharacterSkillService (`src/MapServer/World/CharacterSkillState.cs`)
+
+Static/pure domain rules, no constructor, no stored session references, no I/O - mirrors
+`CharacterProgressionService`'s own separation between pure calculation and session/persistence
+orchestration:
+
+- `CalculateEffectiveState(gameplay, skills, tree, out inconsistentSkillIds)` projects every
+  `GeneratedSkillTreeDefinition.EffectiveSkills` entry (not the persisted snapshot's own rows) into
+  a `CharacterSkillState` carrying four SEPARATELY computed booleans -
+  `EffectiveTreeMembership`/`NormallyLearnable`/`RequirementsSatisfied`/`ClientVisible` - plus
+  `Upgradeable` (level-vs-max only, independent of skill points). These are kept distinct because
+  pinned rAthena's own runtime model proves they are independent facts - see `ai/iro-2026-wire.md`'s
+  `0x0B32` section for the full traced evidence. A persisted skill outside the current effective
+  tree (a legitimate historical skill from a prior job - job-changing is out of scope for this
+  slice, but the model must not assume every persisted row belongs to the current tree forever) is
+  silently excluded from the result, never treated as an error. A persisted level exceeding ITS OWN
+  tree entry's MaxLevel (a genuine inconsistency, since this skill IS still a member of the current
+  tree) is surfaced via the `out` parameter and clamped for display, never thrown.
+- `ValidateUpgrade(gameplay, skills, tree, requestedSkillId)` returns an immutable
+  `SkillUpgradeValidationResult` - either a computed `{NewSkillLevel, NewSkillPoints, MaxLevel}` or
+  a typed `SkillUpgradeRejectionReason` (`UnknownSkill`, `NotInEffectiveTree`,
+  `NotNormallyLearnable`, `NoSkillPoints`, `MaxLevelReached`, `BaseLevelNotMet`, `JobLevelNotMet`,
+  `PrerequisiteNotMet`). Never accepts or trusts a caller-supplied target level or point balance -
+  both are always derived internally.
+
+`CharacterSkillSnapshot` (every persisted `CharSkill` row for one character) enforces STRUCTURAL
+validity only when loaded (`FromLogin`): unknown canonical `SkillId`, a persisted level of exactly
+`0` (a learned row must never persist level 0 - a missing row already means level 0), or a
+duplicate `SkillId` all throw as data-corruption invariant violations. Whether a given `SkillId` is
+even a member of the CURRENT job's effective tree is a completely separate, per-call question
+answered by `CalculateEffectiveState` - never baked into the snapshot itself.
+
+### CharacterGameplayStateSession.LearnSkillAsync (single mutation lock, no second session)
+
+A skill learn is a COMPOSITE mutation of `CharacterGameplayState` (`SkillPoints`, `Version`) and
+`CharacterSkillSnapshot` (the learned skill's level) that must be replaced together, atomically,
+under the SAME per-character `SemaphoreSlim(1,1)` `MutateAsync` already uses - not a second,
+independently-locked session. `CharacterGameplayStateSession` was extended with a `Skills` property
+and a `LearnSkillAsync(tree, requestedSkillId, cancellationToken)` method that: takes the lock,
+calls the pure `CharacterSkillService.ValidateUpgrade`, sends ONE composite request through
+`ICharacterSkillPersistence.LearnSkillAsync`, and on success replaces BOTH `State` and `Skills`
+before releasing the lock. This guarantees no window exists where a concurrent mutation could act
+on a stale `SkillPoints`/`Version` pair - proven by
+`CharacterGameplayStateSessionTests.LearnSkillAsync_TwoConcurrentCallsAgainstSameSession_OnlyOneSucceeds`.
+
+**This method sends NO client-facing packet.** It returns the composite result and stops - see the
+open wire item below.
+
+### Internal MapServer↔CharServer protocol (new opcodes 0x2b39-0x2b3c)
+
+- `MapSkillListGetRequest`/`Response` (`0x2b39`/`0x2b3a`): variable-length, same shape as
+  `MapInventoryListProtocol` - header + fixed 3-byte rows (`skillId.W level.B`), reject duplicate
+  SkillIds. Fetched as a third pre-bootstrap read in `MapClientSession.CompleteIroAuthenticationAsync`
+  (after gameplay state and inventory, same fail-closed policy).
+- `MapSkillLearnRequest`/`Response` (`0x2b3b`/`0x2b3c`): ONE composite mutation request, fixed
+  length (79-byte request, always-78-byte response - state/level fields zero-filled on failure,
+  mirroring `MapCharacterGameplayStateProtocol.BuildResponse`'s own convention, so no variable-length
+  registration is needed for this response). Carries `accountId`, the expected full
+  `CharacterGameplayState` (so `Version` and current `SkillPoints` travel together), the requested
+  `SkillId`, and the EXPECTED CURRENT persisted skill level - deliberately NOT a MapServer-computed
+  `MaxLevel` (that would be redundant: both values already originate from the same MapServer-side
+  `ValidateUpgrade` call, so CharServer comparing them again adds no independent invariant).
+  **MapServer is the gameplay-rule authority** (tree membership, normal-learnability,
+  BaseLevel/JobLevel, prerequisites, MaxLevel - all validated before this request is ever sent).
+  **CharServer is the persistence/concurrency authority** - `HandleSkillLearnUpdateAsync` mirrors
+  `HandleGameplayStateUpdateAsync`'s exact transaction shape extended to a third table
+  (`CreateExecutionStrategy` + explicit transaction, loads `CharCharacter` + `CharSkill` in one
+  context), and `TryApplySkillLearn` (pure, unit-tested in `CharacterSkillPersistenceTests.cs`)
+  re-validates only `GameplayStateVersion`, `SkillPoint > 0`, and the row's ACTUAL persisted level
+  matching the caller's expected current level - rejecting with ZERO mutated fields if any check
+  fails. A new row is inserted with `Flag = 0` (`SKILL_FLAG_PERMANENT`, pinned `mmo.hpp` - the only
+  flag this PR's ordinary point-spend path ever produces); an existing row's `Flag` is preserved
+  unchanged on increment.
+
+### 0x0B32 map-entry emission
+
+`MapClientSession.BuildIroSkillInfoListPacket` filters `CalculateEffectiveState`'s result to
+`ClientVisible == true`, projects each through `IroSkillInfoEntry.From` (resolving `SpCost`/`Range`
+from `GeneratedSkillDefinition` at the character's CURRENT level - see `ai/iro-2026-wire.md`), and
+`IroSkillInfoListPackets.Build` serializes the result as a PURE function over already-resolved data
+(no registry/DB/session access inside the serializer itself, matching task section 22 and the
+`MapInventoryListProtocol` precedent). `IroMapEnterPackets.BuildInitialBootstrap`'s 4-packet payload
+is followed immediately by this `0x0B32` packet in `SendIroInitialBootstrapAsync`, matching the
+proven capture order exactly (`0x0B18, 0x0283, 0x0ADE, 0x02EB, 0x0B32`) - see
+`MapClientSessionSkillBootstrapTests.Bootstrap_SendsFourFixedPacketsThenSkillListInOfficialCaptureOrder`.
+
+### CURRENT OPEN WIRE ITEM
+
+Stock iRO client → MapServer skill-level-up request: not yet captured/verified. Do not implement
+from rAthena packet tables alone. Required capture: a character with an available skill point opens
+the stock skill window and clicks + on a skill; record the exact client→server bytes. No guessed
+packet ID, layout, or response sequence exists anywhere in this codebase. When that capture lands,
+the future handler is expected to be a thin parse-and-call: parse the verified SkillId, call
+`CharacterGameplayStateSession.LearnSkillAsync`, send the verified response bytes - every domain
+rule already lives in `CharacterSkillService`/`CharacterGameplayStateSession`, never in networking
+code.

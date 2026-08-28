@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Net; using System.Net.Sockets;
 using Athena.Net.MapServer.Config; using Athena.Net.MapServer.Net; using Athena.Net.MapServer.World;
 using Athena.Net.MapServer.World.GeneratedScripts;
@@ -24,7 +25,7 @@ public sealed class MapClientSessionGameplayStateTests
         var persistence=new ProgressionPersistence(new(9,0,0,1,1,0,0,40,11,40,11,48,0,1,1,1,1,1,1));
         await using var session=new MapClientSession(1,server,new CharServerConnector(new MapConfigStore(new MapConfig(),"unused")),false,gameplayStatePersistence:persistence);
         await session.CompleteIroAuthenticationAsync(new(7,9,1,2,0,0,false,"iz_int01",18,26,0,0,0));
-        var bootstrap=new byte[29]; await client.GetStream().ReadExactlyAsync(bootstrap);
+        var bootstrap=new byte[29]; await client.GetStream().ReadExactlyAsync(bootstrap); var skillListHeader=new byte[4]; await client.GetStream().ReadExactlyAsync(skillListHeader); var skillListBody=new byte[BinaryPrimitives.ReadUInt16LittleEndian(skillListHeader.AsSpan(2))-4]; await client.GetStream().ReadExactlyAsync(skillListBody);
 
         await new ScriptContext(session,"npc:test",1,"Test",null).GrantExperienceAsync(548,10,default);
 

@@ -290,6 +290,50 @@ and caps overcarry to the crossed requirement minus one. One complete resulting
 snapshot is persisted through the versioned CharServer transaction before MapServer
 publishes it or sends packets. A failed/stale write sends no success updates.
 
+## Generated skill metadata: SpCost, Range, NormallyLearnable
+
+`GeneratedSkillDefinition` (`src/MapServer/World/GeneratedCharacterDataDefinitions.cs`) was
+extended narrowly to support `0x0B32` (ZC_SKILLINFO_LIST3, see `ai/iro-2026-wire.md`) and
+skill-point-spend eligibility, based on a direct audit of pinned `db/re/skill_db.yml`'s actual
+per-skill shapes:
+
+- **`SpCostByLevel` (`IReadOnlyList<uint>`)**: `Requires.SpCost` is genuinely level-dependent in
+  the source - either a bare scalar (e.g. `SM_MAGNUM: SpCost: 30`, applying uniformly at every
+  level) or an explicit `- Level: N / Amount: X` sequence (e.g. `SM_BASH` has 10 distinct per-level
+  costs: `8,8,8,8,8,15,15,15,15,15`). A skill with no `Requires` block at all (e.g. `NV_BASIC`) has
+  an empty `SpCostByLevel` - this matches the stock-iRO capture's `spCost=0` for a level-0
+  `NV_BASIC` entry exactly. The compiler expands a scalar source value into a uniform
+  `MaxLevel`-length list at generation time; it never collapses a genuine per-level list into one
+  number.
+- **`Range` (`short`)**: a top-level scalar in the source (never per-level - confirmed by auditing
+  every `Range:` occurrence in `skill_db.yml`), and genuinely signed (`SM_BASH: Range: -1`,
+  meaning "melee/weapon-range" per pinned convention - many skills carry negative values, not just
+  `-1`). Kept as a signed `short` in generated data specifically so a negative source value is
+  never silently coerced into an unsigned type - resolving what a negative/special `Range` actually
+  displays to the client requires LIVE character/equipment state (pinned `skill_get_range2`,
+  `skill.cpp:324-354`) and is therefore explicitly NOT done inside generated data or
+  `CharacterSkillService`; `IroSkillInfoEntry.From` (`src/MapServer/Net/IroSkillInfoEntry.cs`)
+  passes the raw value through unresolved, a disclosed gap rather than an invented resolution.
+- **`NormallyLearnable` (`bool`)**: source-backed from `skill_db.yml`'s `Flags` block -
+  `false` when `Flags.IsQuest`, `Flags.IsWedding`, or `Flags.IsGuild` is `true` (matching pinned
+  `pc_calc_skilltree`'s `INF2_ISQUEST`/`INF2_ISWEDDING` exclusion from the ordinary tree-walk grant
+  path - see `ai/iro-2026-wire.md`), `true` otherwise (including a skill with no `Flags` block at
+  all, e.g. `NV_BASIC`). This is the exact mechanism that keeps `NV_FIRSTAID`/`NV_TRICKDEAD` (both
+  `IsQuest`) out of normal skill-point spending without hardcoding either name anywhere in runtime
+  code - `CharacterSkillService.ValidateUpgrade` gates purely on this generated flag.
+
+All three fields are parsed by `CharacterDataCompiler.ParseSkills`'s existing narrow line-scanner
+(the same regex-based approach already used for `Id`/`Name`/`MaxLevel`, deliberately NOT the
+structured `SimpleYaml` parser - see that file's own header comment on why `skill_db.yml` is
+scanned separately). Regeneration is deterministic (verified: two consecutive
+`compile-character-data` runs produce byte-identical output).
+
+**Open question, not yet resolved by capture:** which level's SpCost/Range `0x0B32` actually
+displays is confirmed Reference-backed (pinned `clif_skillinfoblock` uses the character's CURRENT
+level) but the single captured `NV_BASIC` entry (a skill with no `Requires` block at all) cannot
+independently prove this for a skill with a real nonzero cost - see `ai/iro-2026-wire.md`'s
+`0x0B32` table for the full evidence classification.
+
 Base-level recalculation uses the selected job's pinned HP/SP tables, persistent VIT/INT,
 and generated cumulative bonuses. A base level fully restores recalculated HP/SP as
 in `pc_checkbaselevelup`; job-only recalculation preserves current HP/SP within the

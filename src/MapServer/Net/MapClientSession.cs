@@ -46,6 +46,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
     private readonly ICharacterGameplayStatePersistence _gameplayStatePersistence;
     private readonly ICharacterInventoryListPersistence _inventoryListPersistence;
     private readonly ICharacterInventoryPersistence _inventoryPersistence;
+    private readonly ICharacterSkillPersistence _skillPersistence;
     private readonly WorldMapRegistry _worldMapRegistry;
     // Null when no MapServerWorld was supplied (test-facing constructor default).
     private readonly MonsterRegistry? _monsters;
@@ -201,6 +202,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
         MonsterCombatCoordinator? combat = null,
         ICharacterInventoryPersistence? inventoryPersistence = null,
         ICharacterInventoryListPersistence? inventoryListPersistence = null,
+        ICharacterSkillPersistence? skillPersistence = null,
         MonsterSpatialInspector? spatialInspector = null,
         MonsterRuntime? monsterRuntime = null,
         IMapCollisionProvider? collisionProvider = null,
@@ -215,6 +217,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
         _gameplayStatePersistence = gameplayStatePersistence ?? charConnector;
         _inventoryPersistence = inventoryPersistence ?? charConnector;
         _inventoryListPersistence = inventoryListPersistence ?? charConnector;
+        _skillPersistence = skillPersistence ?? charConnector;
         _worldMapRegistry = worldMapRegistry;
         _monsters = monsters;
         _combat = combat;
@@ -251,6 +254,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
         MonsterCombatCoordinator? combat = null,
         ICharacterInventoryPersistence? inventoryPersistence = null,
         ICharacterInventoryListPersistence? inventoryListPersistence = null,
+        ICharacterSkillPersistence? skillPersistence = null,
         MonsterSpatialInspector? spatialInspector = null,
         MonsterRuntime? monsterRuntime = null,
         IMapCollisionProvider? collisionProvider = null,
@@ -276,6 +280,8 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
             // failed read must pass inventoryListPersistence explicitly, same as
             // gameplayStatePersistence.
             inventoryListPersistence ?? AlwaysEmptyInventoryListPersistence.Instance,
+            // Same reasoning as inventoryListPersistence above, for skills.
+            skillPersistence ?? AlwaysEmptySkillPersistence.Instance,
             spatialInspector,
             monsterRuntime,
             collisionProvider,
@@ -418,7 +424,6 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
             MapLogger.Warning($"[iRO MAP DEBUG] Character gameplay state load failed accountId={authOk.AccountId} charId={authOk.CharId}.");
             HandleAuthFail(); return;
         }
-        _gameplayState = new CharacterGameplayStateSession(authOk.AccountId, state, _gameplayStatePersistence);
 
         var inventoryRead = await _inventoryListPersistence.GetInventoryAsync(authOk.AccountId, authOk.CharId, _sessionCancellation.Token);
         if (!inventoryRead.Succeeded)
@@ -426,6 +431,18 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
             MapLogger.Warning($"[iRO MAP DEBUG] Character inventory load failed accountId={authOk.AccountId} charId={authOk.CharId}.");
             HandleAuthFail(); return;
         }
+
+        // Third fetch in the pre-bootstrap sequence, same fail-closed policy as gameplay state and
+        // inventory above - an authenticated session must never have unknown skill state.
+        var skillRead = await _skillPersistence.GetSkillsAsync(authOk.AccountId, authOk.CharId, _sessionCancellation.Token);
+        if (!skillRead.Succeeded)
+        {
+            MapLogger.Warning($"[iRO MAP DEBUG] Character skill load failed accountId={authOk.AccountId} charId={authOk.CharId}.");
+            HandleAuthFail(); return;
+        }
+
+        _gameplayState = new CharacterGameplayStateSession(authOk.AccountId, state, _gameplayStatePersistence, skillRead.Snapshot!, _skillPersistence);
+
         // Invariant: an authenticated session always has gameplay state AND inventory state
         // loaded. A failed/unavailable inventory read must never let a session become
         // authenticated with unknown inventory/equipment state - future combat/appearance code
@@ -2841,10 +2858,40 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
         MapLogger.Info("[iRO MAP DEBUG] Sending 0x0ADE len=6 overweightPercent=70");
         MapLogger.Info(
             $"[iRO MAP DEBUG] Sending 0x02EB len=13 map='{authOk.MapName}' x={authOk.X} y={authOk.Y}");
-        var payload = IroMapEnterPackets.BuildInitialBootstrap(
-            authOk,
-            unchecked((uint)Environment.TickCount));
+        var skillListPacket = BuildIroSkillInfoListPacket();
+        MapLogger.Info($"[iRO MAP DEBUG] Sending 0x0B32 len={skillListPacket.Length}");
+        var bootstrap = IroMapEnterPackets.BuildInitialBootstrap(authOk, unchecked((uint)Environment.TickCount));
+        var payload = new byte[bootstrap.Length + skillListPacket.Length];
+        bootstrap.CopyTo(payload, 0);
+        skillListPacket.CopyTo(payload, bootstrap.Length);
         return WriteAsync(payload, cancellationToken);
+    }
+
+    // Builds the verified initial map-entry 0x0B32: every effective-tree skill filtered to
+    // ClientVisible per CharacterSkillService.CalculateEffectiveState's traced pinned semantics
+    // (see ai/map-server.md), then projected through IroSkillInfoEntry.From. Requires an
+    // authenticated session (_gameplayState non-null) - only called from
+    // SendIroInitialBootstrapAsync, itself only reachable after CompleteIroAuthenticationAsync
+    // succeeds.
+    private byte[] BuildIroSkillInfoListPacket()
+    {
+        var gameplayState = _gameplayState ?? throw new InvalidOperationException("Gameplay state must be loaded before building the skill list.");
+        var tree = Athena.Net.MapServer.Generated.Skills.GeneratedSkillTreeRegistry.Get(gameplayState.State.JobClass);
+        var effective = CharacterSkillService.CalculateEffectiveState(gameplayState.State, gameplayState.Skills, tree, out var inconsistentSkillIds);
+        foreach (var skillId in inconsistentSkillIds)
+        {
+            MapLogger.Warning(
+                $"[iRO MAP DEBUG] Persisted skill inconsistency accountId={_accountId} charId={_charId} " +
+                $"skillId={skillId}: persisted level exceeds effective tree MaxLevel; clamped for display.");
+        }
+        var entries = new List<IroSkillInfoEntry>();
+        foreach (var state in effective)
+        {
+            if (!state.ClientVisible) continue;
+            var canonical = Athena.Net.MapServer.Generated.Skills.GeneratedSkillRegistry.GetById(state.SkillId);
+            entries.Add(IroSkillInfoEntry.From(state, canonical));
+        }
+        return IroSkillInfoListPackets.Build(entries);
     }
 
     private async Task HandleEnterAsync(byte[] packet, CancellationToken cancellationToken)
@@ -3065,5 +3112,20 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
 
         public Task<bool> SetItemEquipAsync(uint accountId, uint characterId, uint slotIndex, uint equip, CancellationToken cancellationToken)
             => Task.FromResult(false);
+    }
+
+    // Test-only default for the internal test-facing constructor (see its skillPersistence
+    // parameter). Always reports a successful read with no learned skills, so tests that never
+    // pass skillPersistence explicitly still authenticate successfully.
+    private sealed class AlwaysEmptySkillPersistence : ICharacterSkillPersistence
+    {
+        internal static readonly AlwaysEmptySkillPersistence Instance = new();
+        private static readonly CharacterSkillReadResult Empty = CharacterSkillReadResult.Success(CharacterSkillSnapshot.Empty);
+
+        public Task<CharacterSkillReadResult> GetSkillsAsync(uint accountId, uint characterId, CancellationToken cancellationToken)
+            => Task.FromResult(Empty);
+
+        public Task<CharacterSkillLearnResult?> LearnSkillAsync(uint accountId, CharacterGameplayState expectedGameplayState, ushort skillId, byte expectedCurrentLevel, CancellationToken cancellationToken)
+            => Task.FromResult<CharacterSkillLearnResult?>(null);
     }
 }

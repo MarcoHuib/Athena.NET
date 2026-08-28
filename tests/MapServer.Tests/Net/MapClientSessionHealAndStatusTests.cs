@@ -18,7 +18,7 @@ public sealed class MapClientSessionHealAndStatusTests
         var persistence = new RecordingPersistence(new(9, 0, 0, 1, 1, 0, 0, 20, 5, 40, 11, 48, 0, 1, 1, 1, 1, 1, 1));
         await using var session = new MapClientSession(1, server, new CharServerConnector(new MapConfigStore(new MapConfig(), "unused")), false, gameplayStatePersistence: persistence);
         await session.CompleteIroAuthenticationAsync(new(7, 9, 1, 2, 0, 0, false, "iz_int01", 18, 26, 0, 0, 0));
-        var bootstrap = new byte[29]; await client.GetStream().ReadExactlyAsync(bootstrap);
+        var bootstrap = new byte[29]; await client.GetStream().ReadExactlyAsync(bootstrap); var skillListHeader=new byte[4]; await client.GetStream().ReadExactlyAsync(skillListHeader); var skillListBody=new byte[BinaryPrimitives.ReadUInt16LittleEndian(skillListHeader.AsSpan(2))-4]; await client.GetStream().ReadExactlyAsync(skillListBody);
 
         await new ScriptContext(session, "npc:test", 1, "Test", null).HealAsync(9999, 0, default);
 
@@ -38,7 +38,7 @@ public sealed class MapClientSessionHealAndStatusTests
         var persistence = new RecordingPersistence(new(9, 0, 0, 1, 1, 0, 0, 40, 5, 40, 11, 48, 0, 1, 1, 1, 1, 1, 1));
         await using var session = new MapClientSession(1, server, new CharServerConnector(new MapConfigStore(new MapConfig(), "unused")), false, gameplayStatePersistence: persistence);
         await session.CompleteIroAuthenticationAsync(new(7, 9, 1, 2, 0, 0, false, "iz_int01", 18, 26, 0, 0, 0));
-        var bootstrap = new byte[29]; await client.GetStream().ReadExactlyAsync(bootstrap);
+        var bootstrap = new byte[29]; await client.GetStream().ReadExactlyAsync(bootstrap); var skillListHeader=new byte[4]; await client.GetStream().ReadExactlyAsync(skillListHeader); var skillListBody=new byte[BinaryPrimitives.ReadUInt16LittleEndian(skillListHeader.AsSpan(2))-4]; await client.GetStream().ReadExactlyAsync(skillListBody);
 
         await new ScriptContext(session, "npc:test", 1, "Test", null).HealAsync(0, 6, default);
 
@@ -58,7 +58,7 @@ public sealed class MapClientSessionHealAndStatusTests
         var persistence = new RecordingPersistence(new(9, 0, 0, 1, 1, 0, 0, 20, 5, 40, 11, 48, 0, 1, 1, 1, 1, 1, 1));
         await using var session = new MapClientSession(1, server, new CharServerConnector(new MapConfigStore(new MapConfig(), "unused")), false, gameplayStatePersistence: persistence);
         await session.CompleteIroAuthenticationAsync(new(7, 9, 1, 2, 0, 0, false, "iz_int01", 18, 26, 0, 0, 0));
-        var bootstrap = new byte[29]; await client.GetStream().ReadExactlyAsync(bootstrap);
+        var bootstrap = new byte[29]; await client.GetStream().ReadExactlyAsync(bootstrap); var skillListHeader=new byte[4]; await client.GetStream().ReadExactlyAsync(skillListHeader); var skillListBody=new byte[BinaryPrimitives.ReadUInt16LittleEndian(skillListHeader.AsSpan(2))-4]; await client.GetStream().ReadExactlyAsync(skillListBody);
 
         await new ScriptContext(session, "npc:test", 1, "Test", null).HealAsync(9999, 9999, default);
 
@@ -80,7 +80,7 @@ public sealed class MapClientSessionHealAndStatusTests
         var persistence = new RecordingPersistence(new(9, 0, 0, 1, 1, 0, 0, 20, 5, 40, 11, 48, 0, 1, 1, 1, 1, 1, 1));
         await using var session = new MapClientSession(1, server, new CharServerConnector(new MapConfigStore(new MapConfig(), "unused")), false, accountId: 7, gameplayStatePersistence: persistence);
         await session.CompleteIroAuthenticationAsync(new(7, 9, 1, 2, 0, 0, false, "iz_int01", 18, 26, 0, 0, 0));
-        var bootstrap = new byte[29]; await client.GetStream().ReadExactlyAsync(bootstrap);
+        var bootstrap = new byte[29]; await client.GetStream().ReadExactlyAsync(bootstrap); var skillListHeader=new byte[4]; await client.GetStream().ReadExactlyAsync(skillListHeader); var skillListBody=new byte[BinaryPrimitives.ReadUInt16LittleEndian(skillListHeader.AsSpan(2))-4]; await client.GetStream().ReadExactlyAsync(skillListBody);
 
         await new ScriptContext(session, "npc:test", 1, "Test", null).HealAsync(9999, 0, default);
 
@@ -101,7 +101,7 @@ public sealed class MapClientSessionHealAndStatusTests
         var persistence = new RecordingPersistence(new(9, 0, 0, 1, 1, 0, 0, 40, 11, 40, 11, 48, 0, 1, 1, 1, 1, 1, 1));
         await using var session = new MapClientSession(1, server, new CharServerConnector(new MapConfigStore(new MapConfig(), "unused")), false, gameplayStatePersistence: persistence);
         await session.CompleteIroAuthenticationAsync(new(7, 9, 1, 2, 0, 0, false, "iz_int01", 18, 26, 0, 0, 0));
-        var bootstrap = new byte[29]; await client.GetStream().ReadExactlyAsync(bootstrap);
+        var bootstrap = new byte[29]; await client.GetStream().ReadExactlyAsync(bootstrap); var skillListHeader=new byte[4]; await client.GetStream().ReadExactlyAsync(skillListHeader); var skillListBody=new byte[BinaryPrimitives.ReadUInt16LittleEndian(skillListHeader.AsSpan(2))-4]; await client.GetStream().ReadExactlyAsync(skillListBody);
 
         await new ScriptContext(session, "npc:test", 1, "Test", null).HealAsync(9999, 9999, default);
 
@@ -117,7 +117,7 @@ public sealed class MapClientSessionHealAndStatusTests
         var persistence = new RecordingPersistence(new(9, 0, 0, 1, 1, 0, 0, 20, 5, 40, 11, 48, 0, 1, 1, 1, 1, 1, 1)) { FailUpdates = true };
         await using var session = new MapClientSession(1, server, new CharServerConnector(new MapConfigStore(new MapConfig(), "unused")), false, gameplayStatePersistence: persistence);
         await session.CompleteIroAuthenticationAsync(new(7, 9, 1, 2, 0, 0, false, "iz_int01", 18, 26, 0, 0, 0));
-        var bootstrap = new byte[29]; await client.GetStream().ReadExactlyAsync(bootstrap);
+        var bootstrap = new byte[29]; await client.GetStream().ReadExactlyAsync(bootstrap); var skillListHeader=new byte[4]; await client.GetStream().ReadExactlyAsync(skillListHeader); var skillListBody=new byte[BinaryPrimitives.ReadUInt16LittleEndian(skillListHeader.AsSpan(2))-4]; await client.GetStream().ReadExactlyAsync(skillListBody);
 
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
             new ScriptContext(session, "npc:test", 1, "Test", null).HealAsync(10, 0, default));
@@ -133,7 +133,7 @@ public sealed class MapClientSessionHealAndStatusTests
         var persistence = new RecordingPersistence(new(9, 0, 0, 1, 1, 0, 0, 40, 11, 40, 11, 48, 0, 1, 1, 1, 1, 1, 1));
         await using var session = new MapClientSession(1, server, new CharServerConnector(new MapConfigStore(new MapConfig(), "unused")), false, gameplayStatePersistence: persistence);
         await session.CompleteIroAuthenticationAsync(new(7, 9, 1, 2, 0, 0, false, "iz_int01", 18, 26, 0, 0, 0));
-        var bootstrap = new byte[29]; await client.GetStream().ReadExactlyAsync(bootstrap);
+        var bootstrap = new byte[29]; await client.GetStream().ReadExactlyAsync(bootstrap); var skillListHeader=new byte[4]; await client.GetStream().ReadExactlyAsync(skillListHeader); var skillListBody=new byte[BinaryPrimitives.ReadUInt16LittleEndian(skillListHeader.AsSpan(2))-4]; await client.GetStream().ReadExactlyAsync(skillListBody);
 
         var context = new ScriptContext(session, "npc:test", 1, "Test", null);
         await context.StartStatusAsync(CharacterStatusEffectState.StatusIds.Blessing, 240000, 10, default);
@@ -161,7 +161,7 @@ public sealed class MapClientSessionHealAndStatusTests
         var persistence = new RecordingPersistence(new(9, 0, 0, 1, 1, 0, 0, 40, 11, 40, 11, 48, 0, 1, 1, 1, 1, 1, 1));
         await using var session = new MapClientSession(1, server, new CharServerConnector(new MapConfigStore(new MapConfig(), "unused")), false, accountId: 7, gameplayStatePersistence: persistence);
         await session.CompleteIroAuthenticationAsync(new(7, 9, 1, 2, 0, 0, false, "iz_int01", 18, 26, 0, 0, 0));
-        var bootstrap = new byte[29]; await client.GetStream().ReadExactlyAsync(bootstrap);
+        var bootstrap = new byte[29]; await client.GetStream().ReadExactlyAsync(bootstrap); var skillListHeader=new byte[4]; await client.GetStream().ReadExactlyAsync(skillListHeader); var skillListBody=new byte[BinaryPrimitives.ReadUInt16LittleEndian(skillListHeader.AsSpan(2))-4]; await client.GetStream().ReadExactlyAsync(skillListBody);
 
         await new ScriptContext(session, "npc:test", 1, "Test", null).StartStatusAsync(CharacterStatusEffectState.StatusIds.Blessing, 240000, 10, default);
 
@@ -197,7 +197,7 @@ public sealed class MapClientSessionHealAndStatusTests
         var persistence = new RecordingPersistence(new(9, 0, 0, 1, 1, 0, 0, 40, 11, 40, 11, 48, 0, 1, 1, 1, 1, 1, 1));
         await using var session = new MapClientSession(1, server, new CharServerConnector(new MapConfigStore(new MapConfig(), "unused")), false, accountId: 7, gameplayStatePersistence: persistence);
         await session.CompleteIroAuthenticationAsync(new(7, 9, 1, 2, 0, 0, false, "iz_int01", 18, 26, 0, 0, 0));
-        var bootstrap = new byte[29]; await client.GetStream().ReadExactlyAsync(bootstrap);
+        var bootstrap = new byte[29]; await client.GetStream().ReadExactlyAsync(bootstrap); var skillListHeader=new byte[4]; await client.GetStream().ReadExactlyAsync(skillListHeader); var skillListBody=new byte[BinaryPrimitives.ReadUInt16LittleEndian(skillListHeader.AsSpan(2))-4]; await client.GetStream().ReadExactlyAsync(skillListBody);
 
         await new ScriptContext(session, "npc:test", 1, "Test", null).StartStatusAsync(CharacterStatusEffectState.StatusIds.IncreaseAgi, 240000, 10, default);
 
@@ -224,7 +224,7 @@ public sealed class MapClientSessionHealAndStatusTests
         var persistence = new RecordingPersistence(new(9, 0, 0, 1, 1, 0, 0, 40, 11, 40, 11, 48, 0, 1, 1, 1, 1, 1, 1));
         await using var session = new MapClientSession(1, server, new CharServerConnector(new MapConfigStore(new MapConfig(), "unused")), false, gameplayStatePersistence: persistence);
         await session.CompleteIroAuthenticationAsync(new(7, 9, 1, 2, 0, 0, false, "iz_int01", 18, 26, 0, 0, 0));
-        var bootstrap = new byte[29]; await client.GetStream().ReadExactlyAsync(bootstrap);
+        var bootstrap = new byte[29]; await client.GetStream().ReadExactlyAsync(bootstrap); var skillListHeader=new byte[4]; await client.GetStream().ReadExactlyAsync(skillListHeader); var skillListBody=new byte[BinaryPrimitives.ReadUInt16LittleEndian(skillListHeader.AsSpan(2))-4]; await client.GetStream().ReadExactlyAsync(skillListBody);
 
         var context = new ScriptContext(session, "npc:test", 1, "Test", null);
         await context.StartStatusAsync(CharacterStatusEffectState.StatusIds.Blessing, 240000, 10, default);
@@ -246,7 +246,7 @@ public sealed class MapClientSessionHealAndStatusTests
         var persistence = new RecordingPersistence(new(9, 0, 0, 1, 1, 0, 0, 40, 11, 40, 11, 48, 0, 1, 1, 1, 1, 1, 1));
         await using var session = new MapClientSession(1, server, new CharServerConnector(new MapConfigStore(new MapConfig(), "unused")), false, accountId: 7, gameplayStatePersistence: persistence);
         await session.CompleteIroAuthenticationAsync(new(7, 9, 1, 2, 0, 0, false, "iz_int01", 18, 26, 0, 0, 0));
-        var bootstrap = new byte[29]; await client.GetStream().ReadExactlyAsync(bootstrap);
+        var bootstrap = new byte[29]; await client.GetStream().ReadExactlyAsync(bootstrap); var skillListHeader=new byte[4]; await client.GetStream().ReadExactlyAsync(skillListHeader); var skillListBody=new byte[BinaryPrimitives.ReadUInt16LittleEndian(skillListHeader.AsSpan(2))-4]; await client.GetStream().ReadExactlyAsync(skillListBody);
 
         await new ScriptContext(session, "npc:test", 1, "Test", null).SkillEffectAsync(34, 10, default);
 
@@ -268,7 +268,7 @@ public sealed class MapClientSessionHealAndStatusTests
         var persistence = new RecordingPersistence(new(9, 0, 0, 1, 1, 0, 0, 40, 11, 40, 11, 48, 0, 1, 1, 1, 1, 1, 1));
         await using var session = new MapClientSession(1, server, new CharServerConnector(new MapConfigStore(new MapConfig(), "unused")), false, gameplayStatePersistence: persistence);
         await session.CompleteIroAuthenticationAsync(new(7, 9, 1, 2, 0, 0, false, "iz_int01", 18, 26, 0, 0, 0));
-        var bootstrap = new byte[29]; await client.GetStream().ReadExactlyAsync(bootstrap);
+        var bootstrap = new byte[29]; await client.GetStream().ReadExactlyAsync(bootstrap); var skillListHeader=new byte[4]; await client.GetStream().ReadExactlyAsync(skillListHeader); var skillListBody=new byte[BinaryPrimitives.ReadUInt16LittleEndian(skillListHeader.AsSpan(2))-4]; await client.GetStream().ReadExactlyAsync(skillListBody);
 
         await new ScriptContext(session, "npc:test", 1, "Test", null).SpecialEffectAsync(RathenaConstants.EF_HEAL2, default);
 
@@ -285,7 +285,7 @@ public sealed class MapClientSessionHealAndStatusTests
         var persistence = new RecordingPersistence(new(9, 0, 0, 1, 1, 0, 0, 40, 11, 40, 11, 48, 0, 1, 1, 1, 1, 1, 1));
         await using var session = new MapClientSession(1, server, new CharServerConnector(new MapConfigStore(new MapConfig(), "unused")), false, gameplayStatePersistence: persistence);
         await session.CompleteIroAuthenticationAsync(new(7, 9, 1, 2, 0, 0, false, "iz_int01", 18, 26, 0, 0, 0));
-        var bootstrap = new byte[29]; await client.GetStream().ReadExactlyAsync(bootstrap);
+        var bootstrap = new byte[29]; await client.GetStream().ReadExactlyAsync(bootstrap); var skillListHeader=new byte[4]; await client.GetStream().ReadExactlyAsync(skillListHeader); var skillListBody=new byte[BinaryPrimitives.ReadUInt16LittleEndian(skillListHeader.AsSpan(2))-4]; await client.GetStream().ReadExactlyAsync(skillListBody);
 
         var context = new ScriptContext(session, "npc:test", 1, "Test", null);
         await context.StartStatusAsync(CharacterStatusEffectState.StatusIds.Blessing, 240000, 10, default);

@@ -48,6 +48,10 @@ public static class PacketConstants
     public const short MapInventoryEquipUpdateResponse = 0x2b36;
     public const short MapInventoryConsumeRequest = 0x2b37;
     public const short MapInventoryConsumeResponse = 0x2b38;
+    public const short MapSkillListGetRequest = 0x2b39;
+    public const short MapSkillListGetResponse = 0x2b3a;
+    public const short MapSkillLearnRequest = 0x2b3b;
+    public const short MapSkillLearnResponse = 0x2b3c;
 
     public const short ChReqConnect = 0x65;
     public const short ChSelectChar = 0x66;
