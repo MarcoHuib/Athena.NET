@@ -238,17 +238,29 @@ dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- audit \
 
 The audit only produces counts and classifications; it does not convert content.
 
-## Novice progression data
+## Progression registry
 
 ```bash
 dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- compile-progression \
   --rathena-root legacy/rathena \
-  --output src/MapServer/Generated/Progression/NoviceProgression.cs
+  --rathena-commit e985006171d2eb320ee512a653f4c83aea3d81b6 \
+  --output src/MapServer/Generated/Progression
 ```
 
-This deliberately generates only the currently supported renewal Novice base/job
-EXP, HP/SP, stat-point, and relevant job-bonus tables. The pinned YAML remains the
-source of truth.
+`--output` names a directory. The compiler writes two files into it:
+
+- `GeneratedNoviceProgression.cs` - the actual generated per-class
+  `CharacterProgressionDefinition` data (Base/Job EXP thresholds, HP/SP,
+  stat-point, and job-bonus tables) for the supported renewal Novice job.
+- `GeneratedProgressionRegistry.cs` - a small `jobClass -> definition` lookup
+  only; it contains no data arrays of its own.
+
+Runtime (`CharacterProgressionService`) consumes only the job-keyed
+`GeneratedProgressionRegistry.Get(jobClass)` boundary and has no knowledge of
+job names, so adding another generated `Generated<JobClass>Progression.cs` file
+and one more registry entry does not change progression logic. The pinned YAML
+and explicit current commit remain the source/provenance of truth; never
+hand-edit either generated output file.
 
 ## Verification
 

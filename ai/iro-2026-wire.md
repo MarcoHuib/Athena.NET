@@ -440,6 +440,35 @@ transcription of frame 566 dropped one 16-byte all-zero row, producing a false a
 self-consistent 90-byte `0x09FF` immediately followed by a 96-byte `0x09FD`, summing exactly to
 the captured 186-byte TCP payload. There is no length-field anomaly in the real capture.
 
+## Verified Full-izlude progression evidence
+
+Sanitized companion trace `athena_full_izlude_packet_trace.txt` documents
+`Full-izlude.pcapng` (SHA-256
+`ee3bcbf2429d944c512d2ced10ce9c8db099dec79ad499f23b977462a0af2ec9`).
+Three tutorial G_PORING deaths use `0x0080/7` reason 1 and subsequent Wood/Lumber
+pickups use `0x0B41/70` with item 6008, amount 1, result 0. No `0x0ACB` or
+`0x0ACC` progression packet is adjacent to any death. This agrees with generated
+G_PORING BaseExp/JobExp both being 0; it is not a mob-ID special case.
+
+The Captain Carocc burst proves `0x0ACC/18` (`ZC_NOTIFY_EXP2`) as
+`packetType.W actorId.L amount.Q parameterId.W gainFlag.W`: amount 150 with
+parameter 1 for Base EXP and amount 150 with parameter 2 for Job EXP; both flags
+are 0. It proves `0x019B/10` as `packetType.W actorId.L effectType.L`, with type 1
+for Job level-up. Reference source identifies type 0 as Base level-up; Athena's
+serializer accepts only these two known types.
+
+Captured order: current Base EXP (`0x0ACB param 1 = 150`), Base gain (`0x0ACC`),
+Skill Points (`0x00B0 param 12 = 1`), Job Level (`0x00B0 param 55 = 2`), next Job
+EXP (`0x0ACB param 23 = 18`), next Base EXP (`0x0ACB param 22 = 548`), Job
+level-up visual (`0x019B type 1`), current Job EXP (`0x0ACB param 2 = 9`), Job
+gain (`0x0ACC`), then quest 21008 activation (`0x0B0C`). No Base-level update or
+type-0 visual occurs in this burst.
+
+The capture's 150/150 gain differs from pinned
+`npc/re/jobs/novice/academy.txt` and generated Captain content (`getexp 600,600`).
+Capture remains wire authority and pinned rAthena remains Athena's content source;
+the generated reward intentionally remains 600/600.
+
 ## Verified equip/unequip request framing (0x0998, 0x00AB)
 
 Live stock-iRO client session, map flow `192.168.178.55 -> 128.241.92.42:4506`. **These two

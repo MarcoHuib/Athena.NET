@@ -802,6 +802,93 @@ implementation - the stock capture and this Athena run are not yet proven to
 share identical runtime status/buff state, so that exact-value comparison is
 separate future work.
 
+## Base/Job progression composition and presentation
+
+MapServer configuration constructs one immutable `GameplayRateOptions` policy
+(`Athena.Net.MapServer.Gameplay.Rates`). ATHENA.NET SERVER POLICY: global rates
+(`base_exp_rate`, `job_exp_rate`, `item_drop_rate`) always have a value (100 =
+1x when unset); every other rate key (`quest_base_exp_rate`,
+`quest_job_exp_rate`, `mvp_base_exp_rate`, `mvp_job_exp_rate`,
+`card_drop_rate`, `boss_item_drop_rate`, `mvp_item_drop_rate`, the
+`item_rate_*` family, `item_rate_mvp`) is an OPTIONAL override: unset means
+"inherit the relevant global rate", never an independent default. Explicit
+malformed, negative, or out-of-range values fail configuration loading. The
+same immutable object flows through `MapServerWorld` to every
+`MapClientSession`. There is deliberately no `quest_item_drop_rate`: see the
+drop-rate paragraph below for why quest item collection/completion are
+excluded from this rate policy entirely.
+
+All reward sources inherit global server rates by default. Source-specific
+rates are optional overrides and REPLACE, rather than multiply, the inherited
+rate - there is exactly one place this is decided:
+`Athena.Net.MapServer.Gameplay.Rates.GameplayRateResolver`. Monster kills
+always resolve `base_exp_rate`/`job_exp_rate` directly (no monster-specific
+override exists). Generated NPC/script `getexp` and future quest rewards
+resolve `quest_base_exp_rate ?? base_exp_rate` and `quest_job_exp_rate ??
+job_exp_rate` - e.g. with `base_exp_rate: 500`/`job_exp_rate: 500` and no
+quest override configured, Captain Carocc's generated `getexp 600,600`
+resolves to 3000/3000 (inherits 5x), not 600 unrated; if
+`quest_base_exp_rate: 1000` were also configured, the same call resolves to
+6000 (the override REPLACES 500), never 30000 (it never stacks with the
+inherited global). `Athena.Net.MapServer.Gameplay.Rates.ExperienceRewardService`
+is the only place a raw Base/Job EXP reward is turned into this final rated
+value, tagged by `ExperienceSource` (Monster/Quest/Script/Mvp/Event); its
+output is the only thing `CharacterProgressionService` ever receives.
+
+`CharacterProgressionService` itself has no rate/source concept at all - it
+receives only already-rated final Base/Job EXP, resolves the active job
+through generated `GeneratedProgressionRegistry`, performs the one atomic
+versioned state mutation, and publishes no local state or packets until
+CharServer acknowledges it. On a player-caused Alive→Dead monster transition,
+raw generated mob EXP is resolved through `ExperienceRewardService`
+(`ExperienceSource.Monster`) before this service is called, then the dead
+actor is removed. G_PORING's generated zero/zero raw award resolves to
+zero/zero at any rate and therefore causes no persistence and no progression
+packets; a nonzero generated mob uses the identical path. Party attribution
+and MVP bonus EXP remain unimplemented.
+
+Drop-rate policy follows the identical inherit-unless-overridden shape via the
+same resolver's `ResolveDropRate`, modeled with `DropSource` (Monster/Boss/
+Mvp/Script/Event), `ItemCategory` (Common/Heal/Use/Equip/Card), and
+`RewardKind` (NormalDrop vs the MVP's own direct-reward `MvpReward` - distinct
+from the `item_rate_*_mvp` family, which is a normal-drop-table item merely
+dropped BY an MVP monster). ATHENA.NET SERVER POLICY: resolution uses the most
+specific configured override, each level REPLACING (never stacking with) the
+level below it: (1) the exact source+category override, e.g.
+`item_rate_card_boss`; (2) the source-level override, e.g.
+`boss_item_drop_rate`/`mvp_item_drop_rate`; (3) the generic category override
+- currently only `card_drop_rate`, the sole category with a
+source-independent override; other categories (Common/Heal/Use/Equip) fall
+straight from their source-level override to (4) the global `item_drop_rate`.
+Example: `item_drop_rate: 200`, `card_drop_rate: 100`,
+`boss_item_drop_rate: 300`, `item_rate_card_boss` unset resolves Boss Card to
+300 (source-level beats the generic category and global); setting
+`item_rate_card_boss: 50` instead resolves it to 50. The direct MVP reward
+(`RewardKind.MvpReward`) resolves
+`item_rate_mvp ?? mvp_item_drop_rate ?? item_drop_rate` - a separate rate
+family from the `item_rate_*_mvp` normal-drop-table categories above. This PR
+only makes the rate policy correct and extensible for drops - it does not add
+a generic monster drop/MVP-reward runtime.
+
+There is deliberately no `DropSource.Quest` and no `quest_item_drop_rate` in
+this resolver. Three distinct concepts must never be conflated: (1) NORMAL
+MONSTER DROPS, covered by the resolver above; (2) QUEST ITEM COLLECTION drop
+chance (e.g. the tutorial Wood/Lumber `QuestDropRule`), which is content
+balancing owned entirely by generated `QuestDropRule.Rate` /
+`QuestDropResolver` and is never scaled by any server-wide rate; and (3) QUEST
+COMPLETION item rewards (a script `getitem` call), which are fixed exact
+quantities, not a rated roll at all. `QuestDropResolver` continues to roll its
+own probability completely unchanged and untouched by
+`GameplayRateResolver`; drop rate would only ever scale a monster drop-table
+roll's CHANCE, never an item count, and a guaranteed 100% quest drop remains
+capped at 100% regardless of any configured server rate.
+
+`IroCharacterProgressionPackets` owns `0x00B0`, `0x0ACB`, capture-proven
+`0x0ACC/18`, and `0x019B/10`. Its API receives the authenticated actor/account ID
+explicitly and serializes from the persisted `CharacterProgressionResult`; raw
+packet writes and captured payload replay do not occur in session logic. See
+`ai/iro-2026-wire.md` for the Full-izlude field layouts and ordering.
+
 ## Authoritative inventory SlotIndex consistency
 
 The live weapon-combat validation above also exposed a genuine authoritative-

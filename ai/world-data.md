@@ -168,26 +168,89 @@ EF transaction. MapServer replaces its local snapshot only after that commit is
 acknowledged with the incremented authoritative version.
 
 HP/SP and MaxHP/MaxSP already existed as relational `char` fields and remain stored.
-Outside the generated Novice progression slice the maxima are transported unchanged;
-unsupported jobs do not receive invented recalculation formulas.
+Unsupported jobs fail through the generated progression lookup; they do not receive
+invented recalculation formulas.
 
-## Novice progression
+## Generated progression registry and rate policy
 
 `compile-progression` reads pinned renewal `job_exp.yml`, `job_basepoints.yml`,
-`job_stats.yml`, and `statpoint.yml` and emits deterministic strongly typed C#.
-The generated table currently covers job class 0 (Novice), base levels 1-99 and
-job levels 1-10. EXP entries are per-current-level costs, not cumulative totals.
+`job_stats.yml`, and `statpoint.yml` and emits two deterministic generated files
+into its `--output` directory: `GeneratedNoviceProgression.cs` (the actual
+per-class `CharacterProgressionDefinition` data - Base/Job EXP thresholds,
+HP/SP, stat-point, and job-bonus tables) and `GeneratedProgressionRegistry.cs`
+(a small `jobClass -> definition` lookup only, with no data arrays of its own).
+It currently contains job class 0 (Novice), base levels 1-99 and job levels
+1-10. EXP entries are per-current-level costs, not cumulative totals. Runtime
+(`CharacterProgressionService`) consumes only
+`GeneratedProgressionRegistry.Get(jobClass)` and has no knowledge of job names
+like Novice/Swordman/Mage; adding another job's
+`Generated<JobClass>Progression.cs` file plus one more registry entry requires
+no change to progression logic.
 
-`CharacterProgressionService` applies base and job EXP independently, loops over
-all crossed thresholds, awards the difference between cumulative stat-point rows,
-and awards one skill point per job level. One complete resulting gameplay snapshot
-is persisted through the versioned CharServer transaction before MapServer publishes
-it or sends client parameter updates. A failed/stale write sends no success updates.
+`CharacterProgressionService` applies Base and Job EXP independently, awards the
+difference between cumulative stat-point rows, and awards one skill point per Job
+level. Pinned `conf/battle/exp.conf` defaults `multi_level_up: no`; matching
+`pc_checkbaselevelup`/`pc_checkjoblevelup`, one award crosses at most one threshold
+and caps overcarry to the crossed requirement minus one. One complete resulting
+snapshot is persisted through the versioned CharServer transaction before MapServer
+publishes it or sends packets. A failed/stale write sends no success updates.
 
 Base-level recalculation uses the pinned Novice HP/SP base tables, persistent VIT/INT,
 and generated Novice job bonuses. A base level fully restores recalculated HP/SP as
 in `pc_checkbaselevelup`; job-only recalculation preserves current HP/SP within the
 new maxima. Equipment/status modifiers remain outside this Novice-only slice.
+
+`GameplayRateOptions` is loaded once and passed unchanged through `MapServerWorld`.
+ATHENA.NET SERVER POLICY: it separates always-present global rates
+(`base_exp_rate`, `job_exp_rate`, `item_drop_rate`, default 100 = 1x) from
+nullable per-source/category overrides (`quest_base_exp_rate`,
+`quest_job_exp_rate`, `mvp_base_exp_rate`, `mvp_job_exp_rate`,
+`card_drop_rate`, `boss_item_drop_rate`, `mvp_item_drop_rate`, the
+`item_rate_*` family, `item_rate_mvp`) whose unset value means "inherit the
+global rate" rather than an independent default. There is no
+`quest_item_drop_rate` - see below for why quest item collection/completion
+sit outside this rate policy entirely.
+`Athena.Net.MapServer.Gameplay.Rates.GameplayRateResolver` is the single place
+that turns a global + optional override into one effective rate - an override
+REPLACES the global it would otherwise inherit and never stacks/multiplies
+with it. Raw generated monster Base/Job EXP always resolves the plain global
+`base_exp_rate`/`job_exp_rate`. Generated script `getexp` (and future quest
+rewards) resolves `quest_base_exp_rate ?? base_exp_rate` and
+`quest_job_exp_rate ?? job_exp_rate` through
+`Athena.Net.MapServer.Gameplay.Rates.ExperienceRewardService`, the only place a
+raw reward becomes the final rated value `CharacterProgressionService`
+receives - all reward sources inherit the global rate by default, and a
+source-specific override replaces rather than multiplies it. Positive
+multiplication is exact integer `raw * rate / 100`, truncating the remainder
+and capping at pinned `MAX_EXP` (`INT64_MAX`) without floating point.
+
+Item rate families (common/heal/use/equip/card, boss and MVP normal-drop variants,
+and direct-reward `item_rate_mvp`) are parsed, modeled through the same
+inherit-unless-overridden `GameplayRateResolver.ResolveDropRate`, and retained -
+but not consumed by a generic drop runtime, because Athena has no generic
+normal-drop/MVP-reward runtime yet. Resolution walks the most specific
+configured override first, each level replacing (never stacking with) the
+level below it: exact source+category override (e.g. `item_rate_card_boss`)
+-> source-level override (`boss_item_drop_rate`/`mvp_item_drop_rate`) ->
+generic category override (`card_drop_rate` is currently the only category
+with one; Common/Heal/Use/Equip fall straight to the global) -> global
+`item_drop_rate`. `item_rate_mvp` (an MVP's own direct reward item) is a
+fully separate rate family from `item_rate_*_mvp` (a normal drop-table item
+merely dropped BY an MVP monster): it resolves
+`item_rate_mvp ?? mvp_item_drop_rate ?? item_drop_rate`, distinct from the
+normal-drop chain above.
+
+There is deliberately no `DropSource.Quest` or `quest_item_drop_rate`. Three
+distinct concepts must never be conflated: normal monster drops (the resolver
+above); quest ITEM COLLECTION drop chance (the tutorial Wood/Lumber
+`QuestDropRule`), which is content balancing owned entirely by generated
+`QuestDropRule.Rate` / `QuestDropResolver` and is never scaled by any
+server-wide rate; and quest COMPLETION item rewards (`getitem`), which are
+fixed exact quantities, not a rated roll at all. `QuestDropResolver` handling
+is unchanged and receives no item-rate multiplier; drop rate is scoped to
+scale a monster drop-table roll's chance/probability, never an item's count,
+so a guaranteed 100% quest drop remains capped at 100% regardless of
+configured rates.
 
 ## Regeneration
 
@@ -207,6 +270,18 @@ Generate the current Academy NPC definitions/placements/behaviors: see the
 
 Compiler audit/capability reports may still scan the complete pinned NPC tree;
 their breadth does not imply runtime support.
+
+Regenerate progression from the current pinned SHA (never edit generated output):
+
+```bash
+dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- \
+  compile-progression --rathena-root legacy/rathena \
+  --rathena-commit e985006171d2eb320ee512a653f4c83aea3d81b6 \
+  --output src/MapServer/Generated/Progression
+```
+
+`--output` names a directory; the compiler writes both
+`GeneratedNoviceProgression.cs` and `GeneratedProgressionRegistry.cs` into it.
 
 ## Still missing
 
@@ -274,9 +349,6 @@ misattributed frame and has been retracted (see `ai/iro-2026-wire.md`).
 `specialeffect2`'s own zero-byte finding, specifically, still holds.
 
 - Remaining rAthena NPCs, warps, shops, items, and scripts.
-- Live client-facing monster spawn/attack/death/item-acquisition wire packets
-  (domain runtime exists; the network path is not wired - see "Monster combat
-  and quest drops" below).
 - Broader event/state-machine lowering and persistent rAthena variable scopes.
 
 ## Monster combat and quest drops (G_PORING / quest 21008)
@@ -422,6 +494,15 @@ property.
 `BasicAttackCalculator` is the pure damage-calculation function described
 above. `MonsterCombatCoordinator` is the single authoritative
 attack→damage→(exactly-once)death→quest-drop→respawn-scheduling transition.
+When the authenticated session's accepted hit causes that transition, the session
+uses the same `CharacterProgressionService` as generated NPC `getexp`: raw
+`MobDefinition.BaseExp`/`JobExp` receive battle Base/Job rates, the one complete
+state mutation is acknowledged by CharServer, then `IroCharacterProgressionPackets`
+emits state/gain/level-up packets before the dead actor's `0x0080` removal. The
+current combat slice has one authoritative attacker/session recipient and invents
+no party or damage-contribution policy. Generated zero/zero EXP returns no mutation
+and no progression packets; G_PORING therefore retains the capture-proven zero-EXP
+death and quest-specific Wood path.
 `QuestDropResolver` is generic/data-driven over `GeneratedQuestDrops.All`, not
 quest-21008-specific code, and is kept **pure and synchronous**: it takes a
 `Func<uint, CharacterQuestStatus>` — an already-resolved, in-memory snapshot

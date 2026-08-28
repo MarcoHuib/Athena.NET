@@ -1,6 +1,7 @@
 using System.Net;
 using Athena.Net.MapServer.Config;
 using Athena.Net.MapServer.Gameplay.Rules;
+using Athena.Net.MapServer.Gameplay.Rates;
 
 namespace Athena.Net.MapServer.Tests.Config;
 
@@ -31,6 +32,76 @@ public sealed class MapConfigLoaderTests
         var config = MapConfigLoader.Load(path);
 
         Assert.Equal(RagnarokRuleSet.Renewal, config.GameplayRuleSet);
+        Assert.Equal(100u, config.GameplayRates.BaseExpRate);
+        Assert.Equal(100u, config.GameplayRates.JobExpRate);
+        Assert.Equal(100u, config.GameplayRates.ItemDropRate);
+        Assert.Null(config.GameplayRates.QuestBaseExpRate);
+        Assert.Null(config.GameplayRates.QuestJobExpRate);
+        Assert.Null(config.GameplayRates.MvpBaseExpRate);
+        Assert.Null(config.GameplayRates.MvpJobExpRate);
+        Assert.Null(config.GameplayRates.CardDropRate);
+        Assert.Null(config.GameplayRates.MvpItemDropRate);
+    }
+
+    [Fact]
+    public void Load_ParsesGlobalRatesAndLeavesOverridesUnset()
+    {
+        var path = Path.Combine(CreateTempDir(), "map_athena.conf");
+        File.WriteAllText(path, "base_exp_rate: 500\njob_exp_rate: 500\nitem_drop_rate: 200\n");
+
+        var rates = MapConfigLoader.Load(path).GameplayRates;
+        Assert.Equal(500u, rates.BaseExpRate);
+        Assert.Equal(500u, rates.JobExpRate);
+        Assert.Equal(200u, rates.ItemDropRate);
+        // Overrides are null (inherit), never an independent default of 100.
+        Assert.Null(rates.QuestBaseExpRate);
+        Assert.Null(rates.QuestJobExpRate);
+        Assert.Null(rates.MvpBaseExpRate);
+        Assert.Null(rates.MvpJobExpRate);
+        Assert.Null(rates.CardDropRate);
+        Assert.Null(rates.BossItemDropRate);
+        Assert.Null(rates.MvpItemDropRate);
+    }
+
+    [Fact]
+    public void Load_ParsesExplicitOverridesAndItemCategoryRates()
+    {
+        var path = Path.Combine(CreateTempDir(), "map_athena.conf");
+        File.WriteAllText(path,
+            "base_exp_rate: 500\njob_exp_rate: 200\nquest_base_exp_rate: 1000\nquest_job_exp_rate: 1000\nmvp_base_exp_rate: 300\nmvp_job_exp_rate: 300\n" +
+            "item_drop_rate: 200\ncard_drop_rate: 100\nboss_item_drop_rate: 150\nmvp_item_drop_rate: 500\n" +
+            "item_rate_common: 250\nitem_rate_common_boss: 300\nitem_rate_common_mvp: 400\nitem_rate_mvp: 700\n");
+
+        var rates = MapConfigLoader.Load(path).GameplayRates;
+        Assert.Equal(500u, rates.BaseExpRate);
+        Assert.Equal(200u, rates.JobExpRate);
+        Assert.Equal(1000u, rates.QuestBaseExpRate);
+        Assert.Equal(1000u, rates.QuestJobExpRate);
+        Assert.Equal(300u, rates.MvpBaseExpRate);
+        Assert.Equal(300u, rates.MvpJobExpRate);
+        Assert.Equal(200u, rates.ItemDropRate);
+        Assert.Equal(100u, rates.CardDropRate);
+        Assert.Equal(150u, rates.BossItemDropRate);
+        Assert.Equal(500u, rates.MvpItemDropRate);
+        Assert.Equal(250u, rates.ItemRateCommon);
+        Assert.Equal(300u, rates.ItemRateCommonBoss);
+        Assert.Equal(400u, rates.ItemRateCommonMvp);
+        Assert.Equal(700u, rates.ItemRateMvp);
+        // Unconfigured category override stays null (inherit).
+        Assert.Null(rates.ItemRateCard);
+    }
+
+    [Theory]
+    [InlineData("base_exp_rate: -1")]
+    [InlineData("base_exp_rate: 2147483648")]
+    [InlineData("item_rate_card: 1000001")]
+    [InlineData("quest_base_exp_rate: nope")]
+    [InlineData("item_drop_rate: -1")]
+    public void Load_InvalidRateFailsLoudly(string line)
+    {
+        var path = Path.Combine(CreateTempDir(), "map_athena.conf");
+        File.WriteAllText(path, line + "\n");
+        Assert.Throws<InvalidOperationException>(() => MapConfigLoader.Load(path));
     }
 
     [Fact]
@@ -224,6 +295,44 @@ public sealed class MapConfigLoaderTests
         var merged = secrets.ApplyTo(config);
 
         Assert.Equal(RagnarokRuleSet.PreRenewal, merged.GameplayRuleSet);
+    }
+
+    [Fact]
+    public void SecretConfig_ApplyTo_PreservesSameImmutableRatePolicy()
+    {
+        var rates = new GameplayRateOptions { BaseExpRate = 500 };
+        var merged = new SecretConfig().ApplyTo(new MapConfig { GameplayRates = rates });
+        Assert.Same(rates, merged.GameplayRates);
+    }
+
+    // Acceptance criterion for Correction 7: SecretConfig only knows about
+    // UserId/Password. MapConfig is a record, so ApplyTo clones every other
+    // property via `with` - adding a brand-new non-secret MapConfig property
+    // (simulated here by round-tripping GameplayRates itself, which is exactly
+    // the kind of gameplay-only property that must never require touching
+    // SecretConfig again) flows through untouched with no SecretConfig change.
+    [Fact]
+    public void SecretConfig_ApplyTo_RoundTripsGameplayRatesWithoutSecretConfigChanges()
+    {
+        var rates = new GameplayRateOptions { BaseExpRate = 500, JobExpRate = 500, ItemDropRate = 200 };
+        var config = new MapConfig { GameplayRates = rates, UserId = "u", Password = "p" };
+
+        var merged = new SecretConfig { UserId = "override" }.ApplyTo(config);
+
+        Assert.Same(rates, merged.GameplayRates);
+        Assert.Equal("override", merged.UserId);
+        Assert.Equal("p", merged.Password);
+    }
+
+    // SecretConfig.ApplyTo must touch ONLY UserId/Password - every other property
+    // is passed through unchanged (asserted via reference/structural equality of
+    // the whole MapConfig record modulo the two secret fields).
+    [Fact]
+    public void SecretConfig_ApplyTo_OnlyChangesUserIdAndPassword()
+    {
+        var config = new MapConfig { UserId = "original", Password = "secret" };
+        var merged = new SecretConfig().ApplyTo(config);
+        Assert.Equal(config with { }, merged);
     }
 
     // Regression test: SecretConfig.ApplyTo previously reconstructed a brand-new MapConfig without

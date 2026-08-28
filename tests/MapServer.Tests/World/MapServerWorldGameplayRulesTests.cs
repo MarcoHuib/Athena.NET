@@ -1,5 +1,6 @@
 using Athena.Net.MapServer.Gameplay.Rules;
 using Athena.Net.MapServer.Gameplay.Rules.Renewal;
+using Athena.Net.MapServer.Gameplay.Rates;
 using Athena.Net.MapServer.World;
 
 namespace Athena.Net.MapServer.Tests.World;
@@ -19,6 +20,14 @@ public sealed class MapServerWorldGameplayRulesTests
         var world = MapServerWorld.Build(new GameplayRuleServices(new RenewalBasicAttackRules()));
 
         Assert.NotNull(world.Combat);
+    }
+
+    [Fact]
+    public void Build_ProvidesTheSameImmutableRatePolicyToWorldConsumers()
+    {
+        var rates = new GameplayRateOptions { BaseExpRate = 500, QuestBaseExpRate = 200 };
+        var world = MapServerWorld.Build(new GameplayRuleServices(new RenewalBasicAttackRules()), rates: rates);
+        Assert.Same(rates, world.Rates);
     }
 
     // No map in this repository has imported collision data (see MapCollisionArtifact/

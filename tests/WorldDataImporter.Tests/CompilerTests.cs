@@ -413,17 +413,89 @@ public sealed class CompilerTests
     public async Task NoviceProgression_IsDeterministicAndMatchesCompiledSource()
     {
         var repository = FindRepositoryRoot();
-        var first = Path.Combine(Path.GetTempPath(), $"novice-progression-{Guid.NewGuid():N}.cs");
-        var second = Path.Combine(Path.GetTempPath(), $"novice-progression-{Guid.NewGuid():N}.cs");
+        var firstDir = Path.Combine(Path.GetTempPath(), $"novice-progression-{Guid.NewGuid():N}");
+        var secondDir = Path.Combine(Path.GetTempPath(), $"novice-progression-{Guid.NewGuid():N}");
         try
         {
-            string[] Arguments(string output) => ["compile-progression", "--rathena-root", Path.Combine(repository, "legacy/rathena"), "--output", output];
-            Assert.Equal(0, await WorldDataImporterCli.RunAsync(Arguments(first)));
-            Assert.Equal(0, await WorldDataImporterCli.RunAsync(Arguments(second)));
-            Assert.Equal(await File.ReadAllBytesAsync(first), await File.ReadAllBytesAsync(second));
-            Assert.Equal(await File.ReadAllBytesAsync(Path.Combine(repository, "src/MapServer/Generated/Progression/NoviceProgression.cs")), await File.ReadAllBytesAsync(first));
+            string[] Arguments(string output) => ["compile-progression", "--rathena-root", Path.Combine(repository, "legacy/rathena"), "--rathena-commit", "e985006171d2eb320ee512a653f4c83aea3d81b6", "--output", output];
+            Assert.Equal(0, await WorldDataImporterCli.RunAsync(Arguments(firstDir)));
+            Assert.Equal(0, await WorldDataImporterCli.RunAsync(Arguments(secondDir)));
+
+            const string dataFile = "GeneratedNoviceProgression.cs";
+            const string registryFile = "GeneratedProgressionRegistry.cs";
+            Assert.Equal(
+                await File.ReadAllBytesAsync(Path.Combine(firstDir, dataFile)),
+                await File.ReadAllBytesAsync(Path.Combine(secondDir, dataFile)));
+            Assert.Equal(
+                await File.ReadAllBytesAsync(Path.Combine(firstDir, registryFile)),
+                await File.ReadAllBytesAsync(Path.Combine(secondDir, registryFile)));
+
+            var progressionDir = Path.Combine(repository, "src/MapServer/Generated/Progression");
+            Assert.Equal(
+                await File.ReadAllBytesAsync(Path.Combine(progressionDir, dataFile)),
+                await File.ReadAllBytesAsync(Path.Combine(firstDir, dataFile)));
+            Assert.Equal(
+                await File.ReadAllBytesAsync(Path.Combine(progressionDir, registryFile)),
+                await File.ReadAllBytesAsync(Path.Combine(firstDir, registryFile)));
         }
-        finally { File.Delete(first); File.Delete(second); }
+        finally { Directory.Delete(firstDir, recursive: true); Directory.Delete(secondDir, recursive: true); }
+    }
+
+    [Fact]
+    public void ProgressionCompiler_EmitsSplitDataAndRegistryWithExactValuesAndProvenance()
+    {
+        var repository = FindRepositoryRoot();
+        var root = Path.Combine(repository, "legacy/rathena");
+        var generated = ProgressionDataCompiler.Generate(
+            File.ReadAllText(Path.Combine(root, "db/re/job_exp.yml")),
+            File.ReadAllText(Path.Combine(root, "db/re/job_basepoints.yml")),
+            File.ReadAllText(Path.Combine(root, "db/re/job_stats.yml")),
+            File.ReadAllText(Path.Combine(root, "db/re/statpoint.yml")),
+            "e985006171d2eb320ee512a653f4c83aea3d81b6");
+
+        Assert.Equal("GeneratedNoviceProgression.cs", generated.DataFileName);
+        Assert.Equal("GeneratedProgressionRegistry.cs", generated.RegistryFileName);
+
+        // The data file holds the actual arrays; the registry file only looks them up.
+        Assert.Contains("GeneratedNoviceProgression", generated.DataSource);
+        Assert.Contains("BaseExperienceToNext: new ulong[] { 0, 548, 894, 1486", generated.DataSource);
+        Assert.Contains("JobExperienceToNext: new ulong[] { 0, 10, 18, 28", generated.DataSource);
+        Assert.Contains("BaseHp: new uint[] { 0, 40, 45, 50", generated.DataSource);
+        Assert.Contains("BaseSp: new uint[] { 0, 11, 12, 13", generated.DataSource);
+        Assert.Contains("CumulativeStatPoints: new uint[] { 0, 48, 51, 54", generated.DataSource);
+        Assert.Contains("JobVitalityBonus: new uint[] { 0, 0, 0, 0, 0, 0, 1", generated.DataSource);
+        Assert.Contains("rAthena commit: e985006171d2eb320ee512a653f4c83aea3d81b6", generated.DataSource);
+
+        Assert.Contains("GeneratedProgressionRegistry", generated.RegistrySource);
+        Assert.Contains("GeneratedNoviceProgression.Definition", generated.RegistrySource);
+        Assert.DoesNotContain("BaseExperienceToNext", generated.RegistrySource);
+    }
+
+    [Fact]
+    public void ProgressionCompiler_MissingRequiredSectionFailsLoudly()
+    {
+        var repository = FindRepositoryRoot();
+        var root = Path.Combine(repository, "legacy/rathena");
+        Assert.ThrowsAny<Exception>(() => ProgressionDataCompiler.Generate(
+            File.ReadAllText(Path.Combine(root, "db/re/job_exp.yml")).Replace("    BaseExp:", "    MissingBaseExp:", StringComparison.Ordinal),
+            File.ReadAllText(Path.Combine(root, "db/re/job_basepoints.yml")),
+            File.ReadAllText(Path.Combine(root, "db/re/job_stats.yml")),
+            File.ReadAllText(Path.Combine(root, "db/re/statpoint.yml")),
+            "commit"));
+    }
+
+    [Fact]
+    public void ProgressionCompiler_AmbiguousJobSectionsFailLoudly()
+    {
+        var repository = FindRepositoryRoot();
+        var root = Path.Combine(repository, "legacy/rathena");
+        var jobExperience = File.ReadAllText(Path.Combine(root, "db/re/job_exp.yml"));
+        Assert.Throws<InvalidOperationException>(() => ProgressionDataCompiler.Generate(
+            jobExperience + jobExperience,
+            File.ReadAllText(Path.Combine(root, "db/re/job_basepoints.yml")),
+            File.ReadAllText(Path.Combine(root, "db/re/job_stats.yml")),
+            File.ReadAllText(Path.Combine(root, "db/re/statpoint.yml")),
+            "commit"));
     }
 
     private static string FindRepositoryRoot()

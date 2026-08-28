@@ -63,7 +63,7 @@ public static class MapServerApp
         MapServerWorld.RequireRealCollisionSourceIfMobSpawnsExist(GeneratedScriptRegistry.MobSpawns.Count > 0, collisionProvider);
         MapLogger.Status(
             $"Monster spawn positioning: {(ReferenceEquals(collisionProvider, EmptyMapCollisionProvider.Instance) ? "none configured (no generated monster spawns)" : "rAthena collision-backed")}");
-        var world = MapServerWorld.Build(gameplayRules, collisionProvider: collisionProvider);
+        var world = MapServerWorld.Build(gameplayRules, collisionProvider: collisionProvider, rates: mergedConfig.GameplayRates);
         var connector = new CharServerConnector(configStore);
         var mapServer = new MapTcpServer(configStore, connector, world);
 
