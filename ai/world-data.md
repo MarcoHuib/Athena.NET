@@ -306,21 +306,49 @@ them:
   `NV_BASIC` entry exactly. The compiler expands a scalar source value into a uniform
   `MaxLevel`-length list at generation time; it never collapses a genuine per-level list into one
   number.
-- **`Range` (`short`)**: a top-level scalar in the source (never per-level - confirmed by auditing
-  every `Range:` occurrence in `skill_db.yml`), and genuinely signed (`SM_BASH: Range: -1` -
-  many skills carry negative values, not just `-1`). Kept as a signed `short` in generated data
-  specifically so a negative source value is never silently coerced into an unsigned type. **This
-  is raw pinned SOURCE data, not necessarily the final 0x0B32 wire value** - resolving a negative
-  source `Range` into the client-facing value is a SEPARATE pure boundary,
-  `IroSkillRangeResolver` (`src/MapServer/Net/IroSkillRangeResolver.cs`), implementing pinned
-  `skill_get_range2`'s default absolute-value fallback (`skill.cpp:324-365`; the alternative
-  weapon-range-substitution branch requires `skillrange_from_weapon`/`battle_config.
-  use_weapon_skill_range`, which defaults to disabled for every actor type in pinned
-  `conf/battle/battle.conf`, so an unmodified server never takes that branch). A further, separate,
+- **`RangeByLevel` (`IReadOnlyList<short>`)**: `Range` is genuinely level-dependent in the source,
+  exactly like `Requires.SpCost` - either a bare scalar (e.g. `SM_BASH: Range: -1`, applying
+  uniformly at every level - many skills carry negative values, not just `-1`) or an explicit
+  `- Level: N / Size: X` sequence (e.g. `KN_SPEARBOOMERANG` has 5 distinct per-level ranges:
+  `3,5,7,9,11`). **An earlier version of this compiler only recognized the scalar form and
+  silently generated `Range=0` (an empty list) for every per-level skill** - this was a genuine
+  supported-job bug (`KN_SPEARBOOMERANG` is reachable through the real generated Knight tree), not
+  unused source data, and is now fixed: the compiler expands a scalar into a uniform
+  `MaxLevel`-length list, parses a per-level list exactly, and leaves the list empty only when
+  `Range` is absent entirely (e.g. `NV_BASIC`). Kept as signed `short` values specifically so a
+  negative source value is never silently coerced into an unsigned type. **This is raw pinned
+  SOURCE data, not necessarily the final 0x0B32 wire value** - resolving it (at the character's
+  CURRENT level, matching `SpCost`'s own current-level selection) into the client-facing value is a
+  SEPARATE pure boundary, `IroSkillRangeResolver` (`src/MapServer/Net/IroSkillRangeResolver.cs`),
+  implementing pinned `skill_get_range2`'s default absolute-value fallback (`skill.cpp:324-365`;
+  the alternative weapon-range-substitution branch requires `skillrange_from_weapon`/
+  `battle_config.use_weapon_skill_range`, which defaults to disabled for every actor type in pinned
+  `conf/battle/battle.conf`, so an unmodified server never takes that branch) PLUS the five
+  companion-skill-level range modifiers - see the `RangeFlags` bullet below. A further, separate,
   narrowly-scoped `IroWireCompatibility` layer (`src/MapServer/Net/IroWireCompatibility.cs`)
   documents ONE verified capture-vs-pinned-source divergence (`NV_BASIC`'s captured range=1 against
   pinned source's computed range=0) with explicit provenance - this override never mutates
   generated data itself, which stays a faithful, unmodified reproduction of `legacy/rathena`.
+- **`RangeFlags` (`SkillRangeFlags` record: `AlterRangeVulture`, `AlterRangeSnakeEye`,
+  `AlterRangeShadowJump`, `AlterRangeRadius`, `AlterRangeResearchTrap`)**: source-backed facts from
+  `skill_db.yml`'s `Flags` block, all five confirmed present in currently-generated effective trees
+  (e.g. `AC_DOUBLE`/Archer for Vulture, `KN_...`-adjacent `NJ_KIRIKAGE`/Ninja for ShadowJump,
+  `GS_PIERCINGSHOT`/Gunslinger for SnakeEye, `WL_WHITEIMPRISON`/Warlock for Radius,
+  `RA_CLUSTERBOMB`/Ranger and `HT_LANDMINE`/Hunter for ResearchTrap) - none of these flags are
+  theoretical or unused. `IroSkillRangeResolver.Resolve(skill, currentLevel, learnedSkills)`
+  reproduces pinned `skill_get_range2`'s exact per-flag logic (`skill.cpp:336-354`) purely from
+  these flags plus the caster's own learned level of the referenced companion skill (`AC_VULTURE`
+  id 44, `GS_SNAKEEYE` id 510, `NJ_SHADOWJUMP` id 529, `WL_RADIUS` id 2208, `RA_RESEARCHTRAP` id
+  2248 - stable canonical identities the source flags themselves reference, read via
+  `CharacterSkillSnapshot.CurrentLevel`, never a per-skill-name runtime branch): Vulture/SnakeEye
+  ADD the companion level to the already-resolved range; Radius/ResearchTrap (through pinned's own
+  non-linear `{0,1,1,2,2,3,3,4,4,5,5}` table) likewise ADD; ShadowJump REPLACES the range outright
+  with `NJ_SHADOWJUMP`'s own per-level range at the caster's `NJ_SHADOWJUMP` level. All five are
+  fully reproducible from data already available to MapServer (no live equipment/status state
+  needed, unlike the earlier draft's now-superseded claim that these required unavailable `inf2`
+  data) - verified against real generated data for every flag in
+  `tests/MapServer.Tests/Net/IroSkillRangeResolverTests.cs` and against the real Archer/Knight
+  production pipeline in `IroSkillInfoProductionProjectionTests`.
 - **`Inf` (`ushort`)**: pinned `SKILLDATA.inf` (`clif_skillinfoblock`, `clif.cpp:5714`:
   `data.inf = skill_get_inf(skill.id);`), sourced from `skill_db.yml`'s `TargetType` field (NOT the
   separate `Type` field, which maps to an unrelated `skill_type`/`BF_*` concept) via the pinned

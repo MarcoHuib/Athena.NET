@@ -35,7 +35,7 @@ public sealed class IroSkillInfoProductionProjectionTests
         {
             if (!state.ClientVisible) continue;
             var canonical = GeneratedSkillRegistry.GetById(state.SkillId);
-            entries.Add(IroSkillInfoEntry.From(state, canonical));
+            entries.Add(IroSkillInfoEntry.From(state, canonical, skills));
         }
         return IroSkillInfoListPackets.Build(entries);
     }
@@ -85,5 +85,56 @@ public sealed class IroSkillInfoProductionProjectionTests
         var firstEntry = packet.AsSpan(IroSkillInfoListPackets.HeaderLength, IroSkillInfoListPackets.EntryLength);
         Assert.Equal((ushort)3, BinaryPrimitives.ReadUInt16LittleEndian(firstEntry[6..]));  // currentLevel
         Assert.Equal((ushort)3, BinaryPrimitives.ReadUInt16LittleEndian(firstEntry[13..])); // secondaryLevel mirrors it
+    }
+
+    private static ReadOnlySpan<byte> FindEntry(byte[] packet, ushort skillId)
+    {
+        var count = (packet.Length - IroSkillInfoListPackets.HeaderLength) / IroSkillInfoListPackets.EntryLength;
+        for (var i = 0; i < count; i++)
+        {
+            var entry = packet.AsSpan(IroSkillInfoListPackets.HeaderLength + i * IroSkillInfoListPackets.EntryLength, IroSkillInfoListPackets.EntryLength);
+            if (BinaryPrimitives.ReadUInt16LittleEndian(entry) == skillId) return entry;
+        }
+        throw new InvalidOperationException($"SkillId {skillId} not found in packet.");
+    }
+
+    // Real generated Knight tree, real per-level KN_SPEARBOOMERANG (59) Range data
+    // ([3,5,7,9,11]) through the full production pipeline - the exact regression that would have
+    // caught the historical "per-level Range silently generated as 0" compiler bug (task
+    // correction section 1). KN_SPEARBOOMERANG requires SM_BASH(56) >= 3 to become normally
+    // learnable from scratch; persisting it directly at level 2 proves the "already learned
+    // survives the gate" rule while exercising its real per-level range at that level.
+    [Fact]
+    public void Knight_SpearBoomerang_ResolvesRealPerLevelRangeThroughProductionPipeline()
+    {
+        var gameplay = FreshNoviceJobLevel2SkillPoint1() with { JobClass = (ushort)JobClass.Knight, BaseLevel = 99, JobLevel = 50 };
+        var skills = CharacterSkillSnapshot.FromLogin([(59, 2, CharSkillFlag.Permanent)]); // KN_SPEARBOOMERANG level 2
+        var packet = BuildProductionSkillListPacket(gameplay, skills);
+        var entry = FindEntry(packet, 59);
+
+        Assert.Equal((ushort)2, BinaryPrimitives.ReadUInt16LittleEndian(entry[6..])); // currentLevel
+        // Real pinned per-level Range for KN_SPEARBOOMERANG: [3,5,7,9,11] - level 2 -> 5, never
+        // the pre-fix generated zero.
+        Assert.Equal((ushort)5, BinaryPrimitives.ReadUInt16LittleEndian(entry[10..]));
+    }
+
+    // Real generated Archer tree: AC_DOUBLE (46, Flags.AlterRangeVulture, Range: -9) resolved
+    // through the full production pipeline at two different AC_VULTURE (44) learned levels,
+    // proving the companion-skill-level range modifier is generic (driven by
+    // GeneratedSkillDefinition.RangeFlags, not a hardcoded AC_DOUBLE/AC_VULTURE runtime case) and
+    // actually wired end-to-end from CharacterSkillSnapshot through IroSkillRangeResolver.
+    [Theory]
+    [InlineData((byte)0, (ushort)9)]  // abs(-9) + 0 (no AC_VULTURE learned)
+    [InlineData((byte)5, (ushort)14)] // abs(-9) + 5
+    public void Archer_Double_RangeIncludesAcVultureLearnedLevel(byte vultureLevel, ushort expectedRange)
+    {
+        var gameplay = FreshNoviceJobLevel2SkillPoint1() with { JobClass = (ushort)JobClass.Archer, BaseLevel = 99, JobLevel = 50 };
+        var rows = new List<(ushort SkillId, byte Level, CharSkillFlag Flag)> { (46, 1, CharSkillFlag.Permanent) }; // AC_DOUBLE level 1
+        if (vultureLevel > 0) rows.Add((44, vultureLevel, CharSkillFlag.Permanent)); // AC_VULTURE
+        var skills = CharacterSkillSnapshot.FromLogin(rows);
+        var packet = BuildProductionSkillListPacket(gameplay, skills);
+        var entry = FindEntry(packet, 46);
+
+        Assert.Equal(expectedRange, BinaryPrimitives.ReadUInt16LittleEndian(entry[10..]));
     }
 }

@@ -77,11 +77,11 @@ public sealed class IroSkillInfoListPacketsTests
         // SM_BASH (id 5): SpCostByLevel = [8,8,8,8,8,15,15,15,15,15] (real generated data).
         var canonical = GeneratedSkillRegistry.GetById(5);
         var stateAtLevel3 = new CharacterSkillState(SkillId: 5, CurrentLevel: 3, MaxLevel: 10, EffectiveTreeMembership: true, RequirementsSatisfied: true, ClientVisible: true, Upgradeable: true);
-        var entry = IroSkillInfoEntry.From(stateAtLevel3, canonical);
+        var entry = IroSkillInfoEntry.From(stateAtLevel3, canonical, CharacterSkillSnapshot.Empty);
         Assert.Equal((ushort)8, entry.SpCost); // level-3 cost, not level-1 or MaxLevel(10)'s cost of 15.
 
         var stateAtLevel6 = stateAtLevel3 with { CurrentLevel = 6 };
-        var entryAtLevel6 = IroSkillInfoEntry.From(stateAtLevel6, canonical);
+        var entryAtLevel6 = IroSkillInfoEntry.From(stateAtLevel6, canonical, CharacterSkillSnapshot.Empty);
         Assert.Equal((ushort)15, entryAtLevel6.SpCost);
     }
 
@@ -90,19 +90,19 @@ public sealed class IroSkillInfoListPacketsTests
     {
         var canonical = GeneratedSkillRegistry.GetById(1); // NV_BASIC, no Requires block at all.
         var state = new CharacterSkillState(SkillId: 1, CurrentLevel: 0, MaxLevel: 9, EffectiveTreeMembership: true, RequirementsSatisfied: true, ClientVisible: true, Upgradeable: true);
-        var entry = IroSkillInfoEntry.From(state, canonical);
+        var entry = IroSkillInfoEntry.From(state, canonical, CharacterSkillSnapshot.Empty);
         Assert.Equal((ushort)0, entry.SpCost);
     }
 
     [Fact]
     public void From_NegativeGeneratedRange_ResolvesToAbsoluteValue()
     {
-        // SM_BASH's real generated Range is -1; pinned skill_get_range2's default (no
-        // skillrange_from_weapon config) is an absolute-value fallback, not a raw pass-through.
+        // SM_BASH's real generated Range is -1 at every level; pinned skill_get_range2's default
+        // (no skillrange_from_weapon config) is an absolute-value fallback, not a raw pass-through.
         var canonical = GeneratedSkillRegistry.GetById(5);
-        Assert.Equal((short)-1, canonical.Range); // confirms the generated source data itself is unmodified/negative
+        Assert.Equal((short)-1, canonical.RangeByLevel[0]); // confirms the generated source data itself is unmodified/negative
         var state = new CharacterSkillState(SkillId: 5, CurrentLevel: 1, MaxLevel: 10, EffectiveTreeMembership: true, RequirementsSatisfied: true, ClientVisible: true, Upgradeable: true);
-        var entry = IroSkillInfoEntry.From(state, canonical);
+        var entry = IroSkillInfoEntry.From(state, canonical, CharacterSkillSnapshot.Empty);
         Assert.Equal((short)1, entry.Range);
     }
 
@@ -113,8 +113,8 @@ public sealed class IroSkillInfoListPacketsTests
         var smBash = GeneratedSkillRegistry.GetById(5);  // TargetType: Attack -> Inf 1
         var nvBasicState = new CharacterSkillState(SkillId: 1, CurrentLevel: 0, MaxLevel: 9, EffectiveTreeMembership: true, RequirementsSatisfied: true, ClientVisible: true, Upgradeable: true);
         var smBashState = new CharacterSkillState(SkillId: 5, CurrentLevel: 1, MaxLevel: 10, EffectiveTreeMembership: true, RequirementsSatisfied: true, ClientVisible: true, Upgradeable: true);
-        Assert.Equal((ushort)0, IroSkillInfoEntry.From(nvBasicState, nvBasic).Inf);
-        Assert.Equal((ushort)1, IroSkillInfoEntry.From(smBashState, smBash).Inf);
+        Assert.Equal((ushort)0, IroSkillInfoEntry.From(nvBasicState, nvBasic, CharacterSkillSnapshot.Empty).Inf);
+        Assert.Equal((ushort)1, IroSkillInfoEntry.From(smBashState, smBash, CharacterSkillSnapshot.Empty).Inf);
     }
 
     [Theory]
@@ -125,7 +125,7 @@ public sealed class IroSkillInfoListPacketsTests
     {
         var canonical = GeneratedSkillRegistry.GetById(1);
         var state = new CharacterSkillState(SkillId: 1, CurrentLevel: currentLevel, MaxLevel: 9, EffectiveTreeMembership: true, RequirementsSatisfied: true, ClientVisible: true, Upgradeable: true);
-        var entry = IroSkillInfoEntry.From(state, canonical);
+        var entry = IroSkillInfoEntry.From(state, canonical, CharacterSkillSnapshot.Empty);
         Assert.Equal(currentLevel, entry.SecondaryLevel);
         Assert.Equal(entry.CurrentLevel, entry.SecondaryLevel);
     }

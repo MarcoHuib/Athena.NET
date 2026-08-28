@@ -464,6 +464,45 @@ public sealed class CompilerTests
     }
 
     [Fact]
+    public void CharacterDataCompiler_GeneratesRealPinnedPerLevelAndScalarRange()
+    {
+        // Real pinned-data regression for skill_db.yml's Range field, which is genuinely
+        // level-dependent exactly like Requires.SpCost: a bare scalar (SM_BASH, SM_PROVOKE), an
+        // explicit per-level "- Level: N / Size: X" sequence (KN_SPEARBOOMERANG), or absent
+        // entirely (NV_BASIC). Before this fix, the compiler only recognized the scalar form and
+        // silently generated Range=[] (effectively 0) for every per-level skill, including
+        // KN_SPEARBOOMERANG which is reachable through the real generated Knight tree - a genuine
+        // supported-job bug, not unused source data.
+        var root = Path.Combine(FindRepositoryRoot(), "legacy/rathena");
+        var generated = CompileCharacterData(root);
+        var registry = generated.Artifacts.Single(item => item.RelativePath == "Skills/GeneratedSkillRegistry.cs").Source;
+
+        Assert.Contains("new(1, \"NV_BASIC\", [], [], ", registry); // no Range field at all -> empty
+        Assert.Contains("new(5, \"SM_BASH\", [8, 8, 8, 8, 8, 15, 15, 15, 15, 15], [-1, -1, -1, -1, -1, -1, -1, -1, -1, -1], ", registry); // scalar Range: -1, expanded across MaxLevel 10
+        Assert.Contains("new(6, \"SM_PROVOKE\", [4, 5, 6, 7, 8, 9, 10, 11, 12, 13], [9, 9, 9, 9, 9, 9, 9, 9, 9, 9], ", registry); // scalar Range: 9, expanded across MaxLevel 10
+        Assert.Contains("new(59, \"KN_SPEARBOOMERANG\", [10, 10, 10, 10, 10], [3, 5, 7, 9, 11], ", registry); // real per-level Range, NOT generated zero
+    }
+
+    [Fact]
+    public void CharacterDataCompiler_GeneratesRealPinnedRangeFlagsForVultureModifiedSkill()
+    {
+        // AC_DOUBLE (real generated Archer/Hunter tree member) has Flags.AlterRangeVulture: true
+        // and a scalar Range: -9 - proves the range-modifier source flags are captured alongside
+        // the scalar/per-level Range parsing, not merely the numeric value.
+        var root = Path.Combine(FindRepositoryRoot(), "legacy/rathena");
+        var generated = CompileCharacterData(root);
+        var registry = generated.Artifacts.Single(item => item.RelativePath == "Skills/GeneratedSkillRegistry.cs").Source;
+
+        var acDoubleLine = registry.Split('\n').Single(line => line.Contains("\"AC_DOUBLE\"", StringComparison.Ordinal));
+        Assert.Contains("[-9, -9, -9, -9, -9, -9, -9, -9, -9, -9]", acDoubleLine);
+        Assert.EndsWith("new(true, false, false, false, false)),", acDoubleLine.TrimStart());
+
+        // AC_VULTURE itself carries no range-altering flags of its own.
+        var acVultureLine = registry.Split('\n').Single(line => line.Contains("\"AC_VULTURE\"", StringComparison.Ordinal));
+        Assert.EndsWith("new(false, false, false, false, false)),", acVultureLine.TrimStart());
+    }
+
+    [Fact]
     public void CharacterDataCompiler_ResolvesMissingBaseHpSpThroughPinnedFormulaFallback()
     {
         // Synthetic fixture: Swordman's job_basepoints.yml block declares BaseHp/BaseSp only

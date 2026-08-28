@@ -2889,7 +2889,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
         {
             if (!state.ClientVisible) continue;
             var canonical = Athena.Net.MapServer.Generated.Skills.GeneratedSkillRegistry.GetById(state.SkillId);
-            entries.Add(IroSkillInfoEntry.From(state, canonical));
+            entries.Add(IroSkillInfoEntry.From(state, canonical, gameplayState.Skills));
         }
         return IroSkillInfoListPackets.Build(entries);
     }

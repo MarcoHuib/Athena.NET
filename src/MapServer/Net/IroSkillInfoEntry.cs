@@ -21,8 +21,11 @@ namespace Athena.Net.MapServer.Net;
 //     NV_BASIC entry exactly).
 //   - Range: Verified layout (capture) + Reference-backed runtime resolution (pinned
 //     skill_get_range2, skill.cpp:324-365: absolute-value fallback for a negative source value by
-//     default). One verified stock-iRO capture divergence (NV_BASIC's captured range=1 against
-//     pinned source's computed range=0) is documented and resolved separately in
+//     default, plus additive/replacing companion-skill-level modifiers for skills flagged
+//     AlterRangeVulture/SnakeEye/ShadowJump/Radius/ResearchTrap - see IroSkillRangeResolver for the
+//     full generic implementation, driven entirely by GeneratedSkillDefinition.RangeFlags, never a
+//     per-skill-name special case). One verified stock-iRO capture divergence (NV_BASIC's captured
+//     range=1 against pinned source's computed range=0) is documented and resolved separately in
 //     IroWireCompatibility with explicit provenance - never silently absorbed into this
 //     projection's ordinary resolution path.
 //   - SecondaryLevel: Verified+Reference-backed - pinned clif.cpp:5732 (`data.level2 =
@@ -50,15 +53,17 @@ internal readonly record struct IroSkillInfoEntry(
     // Projects one domain CharacterSkillState (already filtered to ClientVisible by the caller -
     // this method does not itself filter) into its wire entry. SpCost is resolved from
     // GeneratedSkillDefinition at the character's CURRENT level; Range is resolved through
-    // IroSkillRangeResolver then IroWireCompatibility's verified-divergence override; Inf is
-    // copied directly from generated data; SecondaryLevel mirrors CurrentLevel exactly (see this
-    // type's own doc comment for why that is the correct pinned behavior, not a placeholder).
-    internal static IroSkillInfoEntry From(CharacterSkillState state, GeneratedSkillDefinition canonical)
+    // IroSkillRangeResolver (which itself needs `learnedSkills` to reproduce pinned
+    // skill_get_range2's companion-skill-level range modifiers, e.g. Vulture's Eye) then
+    // IroWireCompatibility's verified-divergence override; Inf is copied directly from generated
+    // data; SecondaryLevel mirrors CurrentLevel exactly (see this type's own doc comment for why
+    // that is the correct pinned behavior, not a placeholder).
+    internal static IroSkillInfoEntry From(CharacterSkillState state, GeneratedSkillDefinition canonical, CharacterSkillSnapshot learnedSkills)
     {
         var spCost = state.CurrentLevel > 0 && state.CurrentLevel <= canonical.SpCostByLevel.Count
             ? canonical.SpCostByLevel[state.CurrentLevel - 1]
             : 0u;
-        var resolvedRange = IroSkillRangeResolver.Resolve(canonical);
+        var resolvedRange = IroSkillRangeResolver.Resolve(canonical, state.CurrentLevel, learnedSkills);
         var finalRange = IroWireCompatibility.ResolveVerifiedRangeOverride(state.SkillId, resolvedRange);
         return new IroSkillInfoEntry(
             state.SkillId,
