@@ -15,5 +15,11 @@
 
   <Folder Name="/tools/">
     <Project Path="tools/WorldDataImporter/WorldDataImporter.csproj" />
+    <Project Path="tools/launcher/src/Athena.Launcher/Athena.Launcher.csproj" />
+    <Project Path="tools/launcher/src/Athena.Launcher.Core/Athena.Launcher.Core.csproj" />
+    <Project Path="tools/launcher/src/Athena.Launcher.Networking/Athena.Launcher.Networking.csproj" />
+    <Project Path="tools/launcher/src/Athena.Launcher.Watchdog/Athena.Launcher.Watchdog.csproj" />
+    <Project Path="tools/launcher/tests/Athena.Launcher.Core.Tests/Athena.Launcher.Core.Tests.csproj" />
+    <Project Path="tools/launcher/tests/Athena.Launcher.Networking.Tests/Athena.Launcher.Networking.Tests.csproj" />
   </Folder>
 </Solution>

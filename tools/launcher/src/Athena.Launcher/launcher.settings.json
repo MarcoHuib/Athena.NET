@@ -1,0 +1,15 @@
+{
+  "RagnarokPath": null,
+  "UpdaterExecutable": null,
+  "AthenaHost": "62.194.40.186",
+  "LoginTargetPort": 6900,
+  "CharacterTargetPort": 6121,
+  "MapTargetPort": 5121,
+  "CharacterListenAddress": "198.18.0.1",
+  "CharacterListenPort": 4500,
+  "MapListenAddress": "198.18.0.2",
+  "MapListenPort": 4501,
+  "GameStartTimeoutSeconds": 90,
+  "NetworkInterfaceIndex": null,
+  "NetworkInterfaceAlias": null
+}

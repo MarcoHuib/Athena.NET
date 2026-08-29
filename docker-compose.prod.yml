@@ -2,10 +2,16 @@ services:
   login-server:
     environment:
       ATHENA_NET_LOGIN_DB_AUTOMIGRATE: "false"
+      # RFC 2544 launcher-owned local listener; never routed over the public Internet.
+      ATHENA_NET_LOGIN_IRO_CHAR_IP: "198.18.0.1"
+      ATHENA_NET_LOGIN_IRO_CHAR_PORT: "4500"
       DOTNET_ENVIRONMENT: "Production"
   char-server:
     environment:
       ATHENA_NET_CHAR_DB_AUTOMIGRATE: "false"
+      # RFC 2544 launcher-owned local listener; never routed over the public Internet.
+      ATHENA_NET_CHAR_IRO_MAP_IP: "198.18.0.2"
+      ATHENA_NET_CHAR_IRO_MAP_PORT: "4501"
       DOTNET_ENVIRONMENT: "Production"
   map-server:
     environment:

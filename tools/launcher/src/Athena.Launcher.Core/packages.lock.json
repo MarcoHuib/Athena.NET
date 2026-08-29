@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "dependencies": {
+    "net10.0": {
+      "GRF": {
+        "type": "Direct",
+        "requested": "[0.3.1, )",
+        "resolved": "0.3.1",
+        "contentHash": "y7PN6NoTqxtulkVU3XWxfr4ENFyGtJRACvkfQOfUUI8ehB5rxJY85kf2eQ09yWPBebPWo8Ob22v2Znx9S3AxXA==",
+        "dependencies": {
+          "Ionic.Zlib.Core": "1.0.0"
+        }
+      },
+      "Ionic.Zlib.Core": {
+        "type": "Transitive",
+        "resolved": "1.0.0",
+        "contentHash": "3GBgjMQA/uPTiqv+wMCpLsyK5dcHCF6EV8+pg4IMKLbgbMGEtIkvErEO4ql5Cv18n94Smf3NAhY/sCed2Tb+Tw=="
+      }
+    }
+  }
+}

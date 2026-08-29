@@ -1,0 +1,70 @@
+name: Windows Launcher CI
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+    branches: [ main ]
+    paths:
+      - "tools/launcher/**"
+      - "Directory.Build.*"
+      - "Athena.NET.sln"
+      - "Athena.NET.slnx"
+      - ".github/workflows/launcher-ci.yml"
+
+jobs:
+  build-and-test:
+    name: Restore, build, and test
+    runs-on: windows-latest
+    env:
+      LAUNCHER_PROJECT: tools/launcher/src/Athena.Launcher/Athena.Launcher.csproj
+      WATCHDOG_PROJECT: tools/launcher/src/Athena.Launcher.Watchdog/Athena.Launcher.Watchdog.csproj
+      CORE_TEST_PROJECT: tools/launcher/tests/Athena.Launcher.Core.Tests/Athena.Launcher.Core.Tests.csproj
+      NETWORKING_TEST_PROJECT: tools/launcher/tests/Athena.Launcher.Networking.Tests/Athena.Launcher.Networking.Tests.csproj
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+          cache: true
+          cache-dependency-path: "tools/launcher/**/packages.lock.json"
+
+      # PR CI never publishes, so no RuntimeIdentifier is requested anywhere in
+      # this restore graph. Athena.Launcher.Core and Athena.Launcher.Networking
+      # are shared via ProjectReference by both the (RID-less, here) app
+      # projects and the test projects, so every restore in this job must
+      # agree on "no RID" or --locked-mode rejects the shared lock files
+      # (NU1004). The win-x64 RID is only ever requested by the release
+      # workflow's publish step, never here.
+      - name: Restore launcher projects
+        shell: pwsh
+        run: |
+          dotnet restore $env:LAUNCHER_PROJECT --locked-mode
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet restore $env:WATCHDOG_PROJECT --locked-mode
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet restore $env:CORE_TEST_PROJECT --locked-mode
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet restore $env:NETWORKING_TEST_PROJECT --locked-mode
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build launcher
+        shell: pwsh
+        run: dotnet build $env:LAUNCHER_PROJECT --configuration Release --no-restore
+
+      - name: Build watchdog
+        shell: pwsh
+        run: dotnet build $env:WATCHDOG_PROJECT --configuration Release --no-restore
+
+      - name: Test launcher core
+        shell: pwsh
+        run: dotnet test $env:CORE_TEST_PROJECT --configuration Release --no-restore --logger "trx;LogFileName=launcher-core.trx"
+
+      - name: Test launcher networking
+        shell: pwsh
+        run: dotnet test $env:NETWORKING_TEST_PROJECT --configuration Release --no-restore --logger "trx;LogFileName=launcher-networking.trx"
