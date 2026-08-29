@@ -2,6 +2,7 @@ using Athena.Net.MapServer.Generated.World.Izlude.Academy;
 using Athena.Net.MapServer.Generated.World.Izlude.IzludeCity;
 using Athena.Net.MapServer.Generated.World.Prontera;
 using Athena.Net.MapServer.Generated.World.PrtFild08d;
+using PrtFild08dMobs = Athena.Net.MapServer.Generated.World.PrtFild08d.PrtFild08dMobSpawns;
 
 namespace Athena.Net.MapServer.World.GeneratedScripts;
 
@@ -59,6 +60,15 @@ public static partial class GeneratedScriptRegistry
         // judged disproportionate for this one loop, so it lives here instead, alongside this file's
         // other hand-authored composition logic.
         foreach (var spawn in AcademyMobSpawns.GPoringSpawns) builder.AddMobSpawn(spawn);
+        // prt_fild08d field population (izlude-prontera-travel-trace.txt / ai/world-data.md's
+        // travel-corridor section): source-backed from legacy/rathena/npc/re/mobs/academy.txt via
+        // compile-mob-spawn, same composition pattern as AcademyMobSpawns.GPoringSpawns above - no
+        // MonsterRegistry/MobSpawnDefinition/IMobSpawnCellSelector changes were needed, since that
+        // runtime is already generic over whatever spawns are registered here.
+        foreach (var spawn in PrtFild08dMobs.PoringSpawns) builder.AddMobSpawn(spawn);
+        foreach (var spawn in PrtFild08dMobs.LunaticSpawns) builder.AddMobSpawn(spawn);
+        foreach (var spawn in PrtFild08dMobs.FabreSpawns) builder.AddMobSpawn(spawn);
+        foreach (var spawn in PrtFild08dMobs.LittlePoringSpawns) builder.AddMobSpawn(spawn);
     }
 
     private static WorldRegistryBuildResult BuildRegistry()

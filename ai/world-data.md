@@ -636,6 +636,103 @@ overrides (all defaulting to the prior hardcoded `Athena.Net.MapServer.Generated
 `GeneratedWarps`/`Academy` values) so a new area's generated classes are named for that area
 instead of every area's output being named `Academy*` regardless of its actual namespace.
 
+### prt_fild08d monster population
+
+The existing generic monster runtime (`MonsterRegistry`, `MobSpawnDefinition`,
+`IMobSpawnCellSelector`, movement, combat, death, respawn, EXP, and quest-drop pipeline) was
+**reused entirely unmodified**. This slice is pure content generation plus one small, generic
+hosting-scope addition (`MapServerHostingScope`, below) — no route-specific runtime logic exists
+anywhere in `MonsterRegistry` or the combat pipeline.
+
+Authoritative spawn source: `legacy/rathena/npc/re/mobs/academy.txt:32-35`
+(`prt_fild08d,0,0 monster {Poring 1002,110,5000 | Lunatic 1063,100,5000 | Fabre 1007,100,5000 |
+Little Poring 2398,30,50000}`) — the pinned `0,0` center with no `xs,ys` columns means the
+existing `IMobSpawnCellSelector` map-wide randomized-search semantics apply (never literal
+`(0,0)`), the same interpretation already documented above for G_PORING. Matching this project's
+"never exclude a generic/base template member merely because a request is scoped to one instance"
+convention, all five pinned `prt_fild08{,a,b,c,d}` family rows are generated losslessly (`new_1-3`,
+an unrelated map sharing "Little Poring"'s display name, is the only excluded row).
+
+Mob definitions are generated once, stateless/deterministic, into the shared global
+`GeneratedMobs` (`internal static partial class`, split across
+`Generated/GameData/Mobs/GeneratedMobs.Monsters.cs` for ordinary monsters — the only populated
+category today; a future `GeneratedMobs.Mvps.cs`/etc. would only be added once real MVP-flagged
+mobs are generated, never as an empty placeholder). One invocation regenerates the complete file
+for the full requested mob set — it never reads back or merges the previous output:
+
+```bash
+dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- compile-mob-definitions \
+  --rathena-root legacy/rathena --rathena-commit e985006171d2eb320ee512a653f4c83aea3d81b6 \
+  --mob-id 2401 --constant-name GPoring \
+  --mob-id 1002 --constant-name Poring \
+  --mob-id 1063 --constant-name Lunatic \
+  --mob-id 1007 --constant-name Fabre \
+  --mob-id 2398 --constant-name LittlePoring \
+  --class-name GeneratedMobs \
+  --output src/MapServer/Generated/GameData/Mobs/GeneratedMobs.Monsters.cs
+```
+
+Map-scoped placement (`MobSpawnDefinition`: which map, how many, how often) stays a completely
+separate concern, generated into `Generated/World/PrtFild08d/PrtFild08dMobSpawns.cs` and
+referencing the global `GeneratedMobs.*` constants — never a map-local copy of a mob's stats:
+
+```bash
+dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- compile-mob-spawn \
+  --rathena-root legacy/rathena --rathena-commit e985006171d2eb320ee512a653f4c83aea3d81b6 \
+  --mob-id 1002 --name Poring --constant-name Poring --spawn-array-name PoringSpawns \
+  --mob-id 1063 --name Lunatic --constant-name Lunatic --spawn-array-name LunaticSpawns \
+  --mob-id 1007 --name Fabre --constant-name Fabre --spawn-array-name FabreSpawns \
+  --mob-id 2398 --name "Little Poring" --constant-name LittlePoring --spawn-array-name LittlePoringSpawns \
+  --spawn-file npc/re/mobs/academy.txt --exclude-map new_1-3 \
+  --definition-class GeneratedMobs --spawn-class-name PrtFild08dMobSpawns \
+  --namespace Athena.Net.MapServer.Generated.World.PrtFild08d \
+  --output-spawns src/MapServer/Generated/World/PrtFild08d/PrtFild08dMobSpawns.cs
+```
+
+`compile-mob-spawn` was narrowed to spawn-only (it previously also emitted a mob-definition file,
+which risked one map's spawn command silently owning/overwriting the shared global definition
+class — corrected before that shape was ever composed into the live world). `compile-mob-spawn`
+and `compile-mob-definitions` both accept repeated `--mob-id`/`--name`/`--constant-name`/(spawn
+array name) flags, so one invocation covers an arbitrary number of mobs; N=1 is byte-identical to
+the original single-mob command shape (verified by `CompilerTests`).
+
+`GeneratedMobs.cs` (a single non-`partial` file) is now `GeneratedMobs.Monsters.cs`
+(`internal static partial class GeneratedMobs`) — existing call sites (`GeneratedMobs.GPoring`,
+etc.) are unaffected; file layout is purely organizational, matching the same pattern
+`GeneratedItems` is expected to use as more categories are imported.
+
+#### Hosting scope: `servedMaps`
+
+A real pre-existing gap surfaced once `prt_fild08d`'s spawns were composed into the live world:
+pinned `legacy/rathena/db/map_cache.dat` has collision data for `prt_fild08a/b/c/d` but **not**
+for the plain/generic `prt_fild08` family member (confirmed by direct binary search) — a genuine
+upstream data gap, not something this project can fabricate a fix for.
+
+"Reachable via a warp" and "served by this MapServer build" are different concepts (a character
+start_point, a persisted reconnect position, or a save point can make a map served with zero
+static warps at all), so hosting scope is a new, explicit, hand-declared
+`MapServerHostingScope.ServedMaps` (`src/MapServer/World/MapServerHostingScope.cs`) — never
+inferred from the warp graph (`WorldMapRegistry.ReachableMaps` remains a diagnostic-only view, not
+a hosting-scope source) and never inferred from collision-data availability. `MapServerWorld.Build`
+gained an optional `servedMaps` parameter (`IReadOnlySet<string>?`, default `null` = no filtering,
+preserving every existing test's behavior); when supplied, a generated `MobSpawnDefinition` whose
+map is not in the set is excluded before `MonsterRegistry` construction — generated source data is
+untouched either way, only runtime instantiation is filtered. `MapServerApp.RunAsync` (the
+production composition root) always passes `MapServerHostingScope.ServedMaps` explicitly.
+
+Semantics, with no per-map special case anywhere in `MonsterRegistry`:
+
+- generated spawn map **not** in `ServedMaps` → generated source data retained, nothing
+  instantiated, no error (`prt_fild08` today).
+- generated spawn map **in** `ServedMaps`, collision data present → instantiated normally
+  (`prt_fild08d`, `int_land*`, etc. today).
+- generated spawn map **in** `ServedMaps`, collision data missing → fails loudly via the existing
+  `RathenaCompatibleMobSpawnCellSelector` contract (a world-data/configuration error, never a
+  silent gap).
+
+Current `ServedMaps`: the tutorial `int_land`/`iz_int` families (base + 01-04) and the travel
+corridor (`izlude_d`, `prt_fild08d`, `prontera`) — see `MapServerHostingScope`'s own doc comment.
+
 ## Still missing
 
 The complete `iz_int`/`int_land` tutorial family (generic base maps plus all four instanced duplicates) includes compiler-generated navigation targets, both Wounded Swordsman actor states/scripts, and generated behavior for Captain Carocc and Lumin — not only the `iz_int03`/`int_land03` instanced variant. Captain Carocc's pinned dialogue/quest/heal/status/EXP script and Lumin's pinned dialogue/quest/cutin/cloak script are registered and executable on every map in the family. Lumin's `strcharinfo(0)` resolves the active character name carried through the authenticated CharServer map handoff; it is never sourced from a client dialogue packet or capture constant.

@@ -25,6 +25,7 @@ internal static class WorldDataImporterCli
                 "compile-navigation" => await CompileNavigationAsync(args[1..]),
                 "compile-character-data" => await CompileCharacterDataAsync(args[1..]),
                 "compile-progression" => await CompileProgressionAsync(args[1..]),
+                "compile-mob-definitions" => await CompileMobDefinitionsAsync(args[1..]),
                 "compile-mob-spawn" => await CompileMobSpawnAsync(args[1..]),
                 "compile-quest-drop" => await CompileQuestDropAsync(args[1..]),
                 "compile-item" => await CompileItemAsync(args[1..]),
@@ -342,39 +343,87 @@ internal static class WorldDataImporterCli
             await File.ReadAllTextAsync(Path.Combine(root, required[8]))), commit);
     }
 
+    // Stateless/deterministic: fully regenerates the shared global GeneratedMobs.cs from pinned
+    // mob_db.yml for exactly the --mob-id/--constant-name pairs given on THIS invocation - it never
+    // reads back or merges the existing output file. Extending coverage (a new map's mobs) means
+    // adding that mob's --mob-id/--constant-name to the invocation, not editing generated output.
+    // Mob definitions are global game data ("what is mob <id>") shared by every map that spawns it;
+    // this command owns that concern exclusively. Map-specific placement (where/how many/how often)
+    // is a completely separate concern owned by compile-mob-spawn below.
+    private static async Task<int> CompileMobDefinitionsAsync(string[] args)
+    {
+        var options = CliOptions.Parse(args);
+        var root = Path.GetFullPath(options.Required("rathena-root"));
+        var mobIds = options.All("mob-id").Select(value => int.Parse(value, CultureInfo.InvariantCulture)).ToArray();
+        var constantNames = options.All("constant-name");
+        if (mobIds.Length == 0) throw new ArgumentException("compile-mob-definitions requires at least one --mob-id.");
+        if (constantNames.Count != mobIds.Length) throw new ArgumentException("compile-mob-definitions requires the same number of --mob-id and --constant-name flags (one pair per mob, in order).");
+        var commit = options.Required("rathena-commit");
+        var className = options.Required("class-name");
+
+        var mobDbYaml = await File.ReadAllTextAsync(Path.Combine(root, "db/re/mob_db.yml"));
+        var definitions = mobIds.Zip(constantNames, (id, constantName) => (Mob: MobDataCompiler.ReadMobDefinition(mobDbYaml, id), ConstantName: constantName)).ToArray();
+
+        var output = Path.GetFullPath(options.Required("output"));
+        Directory.CreateDirectory(Path.GetDirectoryName(output)!);
+        await File.WriteAllTextAsync(output,
+            MobDataCompiler.GenerateMobDefinitions(definitions, commit, className, CanonicalSourceFile(Path.Combine(root, "db/re/mob_db.yml")), 0),
+            new System.Text.UTF8Encoding(false));
+
+        Console.WriteLine($"Generated {definitions.Length} mob definition(s): {string.Join(", ", definitions.Select(d => $"{d.Mob.AegisName} ({d.Mob.Id})"))}.");
+        return 0;
+    }
+
+    // Spawn-only: references an ALREADY-generated global mob-definition class (via
+    // --definition-class, e.g. "GeneratedMobs") rather than generating one itself - keeps this
+    // command's sole responsibility "where/how many/how often does mob X spawn", matching
+    // MobSpawnDefinition's own map-scoped shape. Supports one-or-many mobs per invocation via
+    // repeated --mob-id/--name/--constant-name/--spawn-array-name (parallel, position-matched
+    // lists - CliOptions.All preserves the order flags were passed in), so one file (e.g.
+    // PrtFild08dMobSpawns.cs) can hold every mob spawning on that map.
     private static async Task<int> CompileMobSpawnAsync(string[] args)
     {
         var options = CliOptions.Parse(args);
         var root = Path.GetFullPath(options.Required("rathena-root"));
         var spawnFile = options.Required("spawn-file");
-        var mobName = options.Required("name");
-        var mobId = int.Parse(options.Required("mob-id"), CultureInfo.InvariantCulture);
+        var mobNames = options.All("name");
+        var mobIds = options.All("mob-id").Select(value => int.Parse(value, CultureInfo.InvariantCulture)).ToArray();
+        var constantNames = options.All("constant-name");
+        var spawnArrayNames = options.All("spawn-array-name");
+        if (mobNames.Count == 0) throw new ArgumentException("compile-mob-spawn requires at least one --name.");
+        if (mobIds.Length != mobNames.Count || constantNames.Count != mobNames.Count || spawnArrayNames.Count != mobNames.Count)
+            throw new ArgumentException("compile-mob-spawn requires the same number of --mob-id, --name, --constant-name, and --spawn-array-name flags (one set per mob, in order).");
         var commit = options.Required("rathena-commit");
-
-        var mobDbYaml = await File.ReadAllTextAsync(Path.Combine(root, "db/re/mob_db.yml"));
-        var mob = MobDataCompiler.ReadMobDefinition(mobDbYaml, mobId);
+        var definitionClassName = options.Required("definition-class");
 
         var spawnPath = Path.Combine(root, spawnFile);
         var spawnText = await File.ReadAllTextAsync(spawnPath);
         var excludedMaps = options.All("exclude-map").ToHashSet(StringComparer.Ordinal);
-        var spawns = MobDataCompiler.ReadMobSpawns(spawnText, CanonicalSourceFile(spawnPath), mobName, excludedMaps);
-        var mismatched = spawns.Where(spawn => spawn.MobId != mobId).ToArray();
-        if (mismatched.Length > 0) throw new ArgumentException($"Spawn declaration for '{mobName}' at line {mismatched[0].SourceLine} uses mob id {mismatched[0].MobId}, expected {mobId}.");
+        var spawnClassName = options.Required("spawn-class-name");
+        var spawnNamespace = options.Optional("namespace");
 
-        var definitionOutput = Path.GetFullPath(options.Required("output-definition"));
-        Directory.CreateDirectory(Path.GetDirectoryName(definitionOutput)!);
-        await File.WriteAllTextAsync(definitionOutput,
-            MobDataCompiler.GenerateMobDefinition(mob, commit, options.Required("class-name"), options.Required("constant-name"), CanonicalSourceFile(Path.Combine(root, "db/re/mob_db.yml")), 0),
-            new System.Text.UTF8Encoding(false));
+        var spawnGroups = new List<(IReadOnlyList<MobDataCompiler.MobSpawnData> Spawns, string MobDefinitionExpression, string ArrayName)>();
+        var totalSpawnDeclarations = 0;
+        for (var index = 0; index < mobNames.Count; index++)
+        {
+            var mobId = mobIds[index];
+            var mobName = mobNames[index];
+            var spawns = MobDataCompiler.ReadMobSpawns(spawnText, CanonicalSourceFile(spawnPath), mobName, excludedMaps);
+            var mismatched = spawns.Where(spawn => spawn.MobId != mobId).ToArray();
+            if (mismatched.Length > 0) throw new ArgumentException($"Spawn declaration for '{mobName}' at line {mismatched[0].SourceLine} uses mob id {mismatched[0].MobId}, expected {mobId}.");
+            spawnGroups.Add((spawns, $"{definitionClassName}.{constantNames[index]}", spawnArrayNames[index]));
+            totalSpawnDeclarations += spawns.Count;
+        }
 
         var spawnOutput = Path.GetFullPath(options.Required("output-spawns"));
         Directory.CreateDirectory(Path.GetDirectoryName(spawnOutput)!);
-        var mobExpression = $"{options.Required("class-name")}.{options.Required("constant-name")}";
         await File.WriteAllTextAsync(spawnOutput,
-            MobDataCompiler.GenerateMobSpawns(spawns, mobExpression, commit, options.Required("spawn-class-name"), options.Required("spawn-array-name")),
+            spawnNamespace is null
+                ? MobDataCompiler.GenerateMobSpawnGroups(spawnGroups, commit, spawnClassName)
+                : MobDataCompiler.GenerateMobSpawnGroups(spawnGroups, commit, spawnClassName, spawnNamespace),
             new System.Text.UTF8Encoding(false));
 
-        Console.WriteLine($"Generated mob definition '{mob.AegisName}' ({mob.Id}) and {spawns.Count} spawn declarations.");
+        Console.WriteLine($"Generated {totalSpawnDeclarations} total spawn declarations for {mobNames.Count} mob(s).");
         return 0;
     }
 

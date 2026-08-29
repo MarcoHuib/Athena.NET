@@ -81,7 +81,28 @@ public sealed record MapServerWorld(WorldMapRegistry Maps, MonsterRegistry Monst
     // never by mutating GeneratedScriptRegistry's own static Result. Defaults to false so every
     // existing caller (including every test that doesn't pass it) keeps building a customs-free
     // world exactly as before.
-    public static MapServerWorld Build(GameplayRuleServices gameplayRules, IMobSpawnCellSelector? cellSelector = null, TimeProvider? timeProvider = null, IMapCollisionProvider? collisionProvider = null, GameplayRateOptions? rates = null, bool customsEnabled = false)
+    // `servedMaps`: explicit runtime/deployment HOSTING SCOPE - which maps this MapServer build
+    // actually serves - supplied by the caller, never inferred from warp graphs, collision data, or
+    // any other generated-content signal. "Reachable via a warp" and "served" are different
+    // concepts: a map can be served with no static warp at all (a character start_point, a
+    // persisted reconnect position, a save point, or a future non-warp entry mechanism), and a map
+    // could theoretically appear warp-reachable without this build actually intending to host it.
+    // Deliberately INDEPENDENT of collision-data availability too - a missing collision entry for a
+    // served map must still fail loudly (via the existing RathenaCompatibleMobSpawnCellSelector
+    // below), never be silently indistinguishable from a map this build never intended to serve at
+    // all. `null` (every existing caller/test) means "do not filter" - every generated spawn is
+    // instantiated exactly as before this parameter existed. When supplied, a generated
+    // MobSpawnDefinition whose Map is NOT in the set is silently excluded before MonsterRegistry
+    // construction (generated source data is untouched either way - see
+    // GeneratedScriptRegistry.MobSpawns/PrtFild08dMobSpawns.cs, which still losslessly includes
+    // every pinned prt_fild08* family member); a spawn whose Map IS in the set flows through
+    // normally and still hits the existing fail-loud missing-collision-data check. The production
+    // composition root (MapServerApp.RunAsync) always passes an explicit literal set
+    // (MapServerHostingScope.ServedMaps) declaring what Athena.NET genuinely hosts today, never
+    // relies on this default and never derives it from WorldMapRegistry.ReachableMaps (that
+    // property remains a purely diagnostic/navigation view of the warp graph - see its own doc
+    // comment - not a hosting-scope source).
+    public static MapServerWorld Build(GameplayRuleServices gameplayRules, IMobSpawnCellSelector? cellSelector = null, TimeProvider? timeProvider = null, IMapCollisionProvider? collisionProvider = null, GameplayRateOptions? rates = null, bool customsEnabled = false, IReadOnlySet<string>? servedMaps = null)
     {
         var resolvedCollisionProvider = collisionProvider ?? EmptyMapCollisionProvider.Instance;
         var allocator = new WorldActorIdAllocator();
@@ -95,8 +116,9 @@ public sealed record MapServerWorld(WorldMapRegistry Maps, MonsterRegistry Monst
         IMobSpawnCellSelector defaultCellSelector = ReferenceEquals(resolvedCollisionProvider, EmptyMapCollisionProvider.Instance)
             ? new UnverifiedFallbackMobSpawnCellSelector()
             : new RathenaCompatibleMobSpawnCellSelector(resolvedCollisionProvider);
+        var servedMobSpawns = servedMaps is null ? world.MobSpawns : world.MobSpawns.Where(spawn => servedMaps.Contains(spawn.Map)).ToArray();
         var monsters = new MonsterRegistry(
-            world.MobSpawns,
+            servedMobSpawns,
             allocator,
             cellSelector ?? defaultCellSelector,
             timeProvider ?? TimeProvider.System);

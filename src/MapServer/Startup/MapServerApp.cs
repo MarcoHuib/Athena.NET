@@ -64,7 +64,10 @@ public static class MapServerApp
         MapLogger.Status(
             $"Monster spawn positioning: {(ReferenceEquals(collisionProvider, EmptyMapCollisionProvider.Instance) ? "none configured (no generated monster spawns)" : "rAthena collision-backed")}");
         MapLogger.Status($"Customs (handwritten Athena.NET development content): {(mergedConfig.CustomsEnabled ? "enabled" : "disabled")}");
-        var world = MapServerWorld.Build(gameplayRules, collisionProvider: collisionProvider, rates: mergedConfig.GameplayRates, customsEnabled: mergedConfig.CustomsEnabled);
+        // Explicit runtime/deployment hosting scope for MapServerWorld.Build's servedMaps parameter
+        // - see MapServerHostingScope's own doc comment for why this is a hand-declared set, never
+        // derived from the warp graph or collision-data availability.
+        var world = MapServerWorld.Build(gameplayRules, collisionProvider: collisionProvider, rates: mergedConfig.GameplayRates, customsEnabled: mergedConfig.CustomsEnabled, servedMaps: MapServerHostingScope.ServedMaps);
         var connector = new CharServerConnector(configStore);
         var mapServer = new MapTcpServer(configStore, connector, world);
 

@@ -59,6 +59,16 @@ public sealed class WorldMapRegistry
     public static WorldMapRegistry Tutorial { get; } = LoadGenerated();
     public int MapCount => _warps.Select(warp => warp.SourceMap).Distinct(StringComparer.OrdinalIgnoreCase).Count();
     public int StaticWarpCount => _warps.Count;
+    // DIAGNOSTIC/NAVIGATION VIEW ONLY - every map reachable through this build's STATIC WarpDefinition
+    // graph (a warp's own source map, since the player is already standing there, or its
+    // destination). This is deliberately NOT a hosting-scope/"which maps does this build serve"
+    // signal: it only sees plain declarative warps, not scripted/OnTouch WarpTrigger transitions
+    // (e.g. int_land*'s #intro_to_izlude_d, a runtime WarpAsync call - see
+    // IntroToIzludeOnTouchScript), and has no concept of a character start_point/reconnect map with
+    // no warp at all. MapServerWorld.Build's `servedMaps` parameter (hosting scope) is supplied
+    // explicitly by the composition root (MapServerHostingScope.ServedMaps) and must never be
+    // derived from this property.
+    public IReadOnlySet<string> ReachableMaps => _warps.SelectMany(warp => new[] { warp.SourceMap, warp.DestinationMap }).ToHashSet(StringComparer.OrdinalIgnoreCase);
     public int EntityCount => _entitiesById.Count;
     public int DynamicWarpActorCount => _dynamicWarpActorCount;
     public IReadOnlyDictionary<string, WorldEntityDefinition> EntitiesById => _entitiesById;

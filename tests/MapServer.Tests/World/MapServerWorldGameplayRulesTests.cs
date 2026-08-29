@@ -2,6 +2,7 @@ using Athena.Net.MapServer.Gameplay.Rules;
 using Athena.Net.MapServer.Gameplay.Rules.Renewal;
 using Athena.Net.MapServer.Gameplay.Rates;
 using Athena.Net.MapServer.World;
+using Athena.Net.MapServer.World.GeneratedScripts;
 
 namespace Athena.Net.MapServer.Tests.World;
 
@@ -46,15 +47,21 @@ public sealed class MapServerWorldGameplayRulesTests
     {
         // A real (non-Empty) provider makes Build compose RathenaCompatibleMobSpawnCellSelector
         // (see MapServerWorld.Build's own doc comment on the explicit either/or selector choice),
-        // which throws for any generated spawn map the provider doesn't cover - so this provider
-        // must supply every map the real composed AcademyMobSpawns.GPoringSpawns reference
-        // (int_land/01/02/03/04 - the FULL family, not just the *0N instanced duplicates), each
-        // large enough to satisfy the pinned map-edge margin.
-        var maps = new[] { "int_land", "int_land01", "int_land02", "int_land03", "int_land04" }
+        // which throws for any SERVED generated spawn map the provider doesn't cover - so this
+        // provider must supply every map MapServerHostingScope.ServedMaps declares (both
+        // AcademyMobSpawns.GPoringSpawns' int_land/01/02/03/04 - the FULL family, not just the *0N
+        // instanced duplicates - and PrtFild08dMobSpawns' prt_fild08d - see ai/world-data.md), each
+        // large enough to satisfy the pinned map-edge margin. Plain prt_fild08 (generated but NOT
+        // served) is deliberately excluded from both this provider and servedMaps below.
+        var maps = new[]
+            {
+                "int_land", "int_land01", "int_land02", "int_land03", "int_land04",
+                "prt_fild08d",
+            }
             .Select(name => new MapCollisionMap(name, 100, 100, Enumerable.Repeat(MapCellFlags.Walkable, 100 * 100).ToArray()));
         var provider = new MapCollisionProvider(maps);
 
-        var world = MapServerWorld.Build(new GameplayRuleServices(new RenewalBasicAttackRules()), collisionProvider: provider);
+        var world = MapServerWorld.Build(new GameplayRuleServices(new RenewalBasicAttackRules()), collisionProvider: provider, servedMaps: MapServerHostingScope.ServedMaps);
 
         Assert.True(world.Collision.TryGetMap("int_land03", out var resolved));
         Assert.True(resolved.IsWalkable(0, 0));
@@ -192,7 +199,12 @@ public sealed class MapServerWorldProductionCollisionCompositionTests
         var maps = RathenaMapCacheReader.ReadAllFromFile(mapCachePath);
         var provider = new MapCollisionProvider(maps);
 
-        var world = MapServerWorld.Build(new GameplayRuleServices(new RenewalBasicAttackRules()), collisionProvider: provider);
+        // servedMaps: pinned map_cache.dat genuinely has no collision data for plain prt_fild08
+        // (only its a/b/c/d instanced duplicates - see MapServerHostingScope's own doc comment), so
+        // this uses the real production hosting scope rather than every generated spawn map
+        // unfiltered - matching exactly what MapServerApp.RunAsync composes against this same real
+        // map cache.
+        var world = MapServerWorld.Build(new GameplayRuleServices(new RenewalBasicAttackRules()), collisionProvider: provider, servedMaps: MapServerHostingScope.ServedMaps);
 
         var intLandFamily = new[] { "int_land", "int_land01", "int_land02", "int_land03", "int_land04" };
         var gPorings = world.Monsters.AllInstances.Where(instance => intLandFamily.Contains(instance.Map)).ToArray();
@@ -214,5 +226,107 @@ public sealed class MapServerWorldProductionCollisionCompositionTests
             .Select(i => ((ushort)(50 + (i % 10) * 2), (ushort)(50 + (i / 10) * 2)))
             .ToArray();
         Assert.NotEqual(fallbackRaster, firstMapPositions);
+    }
+}
+
+// Proves MapServerWorld.Build's `servedMaps` hosting-scope filter (MapServerHostingScope) does
+// exactly what it claims: an unserved map's generated content is retained as source truth but
+// never instantiated; a served map instantiates normally and fails loudly if collision data is
+// missing - regardless of WHICH mechanism made that map reachable (static warp, scripted/OnTouch
+// warp, or a character start_point with no warp at all). See MapServerHostingScope's own doc
+// comment for why this is a hand-declared set, never derived from the warp graph.
+public sealed class MapServerWorldServedMapsTests
+{
+    private static MapCollisionProvider CollisionProviderFor(params string[] mapNames) =>
+        new(mapNames.Select(name => new MapCollisionMap(name, 100, 100, Enumerable.Repeat(MapCellFlags.Walkable, 100 * 100).ToArray())));
+
+    // int_land (the generic/base tutorial map) has no static WarpDefinition leading to it at all -
+    // it is only reachable through #intro_to_izlude_d's runtime WarpAsync script call. A served
+    // start map with no static warp must still be retained/instantiated normally.
+    [Fact]
+    public void ServedStartMapWithNoStaticWarp_IsInstantiatedNormally()
+    {
+        var provider = CollisionProviderFor("int_land", "int_land01", "int_land02", "int_land03", "int_land04", "prt_fild08d");
+
+        var world = MapServerWorld.Build(new GameplayRuleServices(new RenewalBasicAttackRules()), collisionProvider: provider, servedMaps: MapServerHostingScope.ServedMaps);
+
+        Assert.Equal(40, world.Monsters.AllInstances.Count(instance => instance.Map == "int_land"));
+    }
+
+    // izlude_d is reached exclusively via #intro_to_izlude_d's scripted WarpAsync call (see
+    // IntroToIzludeOnTouchScript) - it has no static WarpDefinition pointing AT it either. Served
+    // scripted-warp-destination maps must be retained/instantiated normally the same way. izlude_d
+    // itself has no generated mob spawns, so this proves the map is accepted into the served set
+    // without throwing, using prt_fild08d (reached via a real static WarpDefinition FROM izlude_d)
+    // as the observable instantiation signal for the same collision-backed composition pass.
+    [Fact]
+    public void ServedScriptedWarpMap_DoesNotBlockCompositionOfTheRestOfTheWorld()
+    {
+        var provider = CollisionProviderFor("int_land", "int_land01", "int_land02", "int_land03", "int_land04", "prt_fild08d");
+
+        var world = MapServerWorld.Build(new GameplayRuleServices(new RenewalBasicAttackRules()), collisionProvider: provider, servedMaps: MapServerHostingScope.ServedMaps);
+
+        Assert.Contains("izlude_d", MapServerHostingScope.ServedMaps);
+        Assert.True(world.Monsters.AllInstances.Count > 0);
+    }
+
+    // Plain prt_fild08 (generic/base family member) is NOT in MapServerHostingScope.ServedMaps -
+    // its generated PrtFild08dMobSpawns.PoringSpawns/etc. rows for that map must be silently
+    // excluded before MonsterRegistry construction, never instantiated, and never throw even
+    // though no collision data is supplied for it at all.
+    [Fact]
+    public void UnservedMapWithGeneratedMobs_IsNotInstantiated()
+    {
+        var provider = CollisionProviderFor("int_land", "int_land01", "int_land02", "int_land03", "int_land04", "prt_fild08d");
+
+        var world = MapServerWorld.Build(new GameplayRuleServices(new RenewalBasicAttackRules()), collisionProvider: provider, servedMaps: MapServerHostingScope.ServedMaps);
+
+        Assert.DoesNotContain(world.Monsters.AllInstances, instance => instance.Map == "prt_fild08");
+    }
+
+    // Plain prt_fild08's generated definitions remain complete/source-backed regardless of hosting
+    // scope - servedMaps filters RUNTIME instantiation only, never generated source truth.
+    [Fact]
+    public void UnservedMap_GeneratedSpawnDefinitionsRemainPresent()
+    {
+        var allGeneratedSpawnMaps = GeneratedScriptRegistry.MobSpawns.Select(spawn => spawn.Map).ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        Assert.Contains("prt_fild08", allGeneratedSpawnMaps);
+        Assert.DoesNotContain("prt_fild08", MapServerHostingScope.ServedMaps);
+    }
+
+    // A served map with missing collision data must still fail loudly (matching
+    // RathenaCompatibleMobSpawnCellSelector's own documented "world-data/configuration error, not
+    // a transient search failure" contract) - servedMaps must never mask a genuine collision-data
+    // gap for a map this build actually intends to host.
+    [Fact]
+    public void ServedMapWithMissingCollisionData_FailsLoudly()
+    {
+        // prt_fild08d IS served but deliberately not covered by this provider.
+        var provider = CollisionProviderFor("int_land", "int_land01", "int_land02", "int_land03", "int_land04");
+
+        var exception = Assert.Throws<InvalidOperationException>(() =>
+            MapServerWorld.Build(new GameplayRuleServices(new RenewalBasicAttackRules()), collisionProvider: provider, servedMaps: MapServerHostingScope.ServedMaps));
+
+        Assert.Contains("prt_fild08d", exception.Message);
+    }
+
+    // prt_fild08d IS served and IS covered by collision data - its full source-backed population
+    // (110 Poring + 100 Lunatic + 100 Fabre + 30 Little Poring = 340, matching
+    // izlude-prontera-travel-trace.txt/legacy/rathena/npc/re/mobs/academy.txt) must instantiate.
+    [Fact]
+    public void PrtFild08d_ServedAndCollisionBacked_InstantiatesFullSourceBackedPopulation()
+    {
+        var provider = CollisionProviderFor("int_land", "int_land01", "int_land02", "int_land03", "int_land04", "prt_fild08d");
+
+        var world = MapServerWorld.Build(new GameplayRuleServices(new RenewalBasicAttackRules()), collisionProvider: provider, servedMaps: MapServerHostingScope.ServedMaps);
+
+        var onPrtFild08d = world.Monsters.AllInstances.Where(instance => instance.Map == "prt_fild08d").ToArray();
+        Assert.Equal(340, onPrtFild08d.Length);
+        Assert.Equal(110, onPrtFild08d.Count(instance => instance.Spawn.Mob.AegisName == "PORING"));
+        Assert.Equal(100, onPrtFild08d.Count(instance => instance.Spawn.Mob.AegisName == "LUNATIC"));
+        Assert.Equal(100, onPrtFild08d.Count(instance => instance.Spawn.Mob.AegisName == "FABRE"));
+        Assert.Equal(30, onPrtFild08d.Count(instance => instance.Spawn.Mob.AegisName == "LITTLE_PORING"));
+        Assert.All(onPrtFild08d, instance => Assert.True(instance.IsAlive));
     }
 }
