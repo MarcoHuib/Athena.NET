@@ -1452,49 +1452,69 @@ doc comment states for keeping protocol constants out of the pure gameplay layer
 **This method sends NO client-facing packet.** It returns the committed result and stops - see
 the capture-gated wire item below.
 
-### Stock iRO client stat-up wire - CAPTURE-BLOCKED, not implemented
+### Stock iRO client stat-up wire (0x00BB → 0x0141 + 0x00B0 + 0x00BC) - successful path implemented and verified
 
-A real stock-iRO client was live-tested against Athena.NET immediately after the verified
-skill-up acceptance flow (starting state: `class=Novice base_level=2 job_level=2 STR..LUK=1
-status_point=51 skill_point=0`). Clicking `+` on a base stat produced:
+Closes the capture gap the section above left open. Verified via a dedicated capture
+(`statsonly.pcapng`) - full field-level evidence and confidence ratings live in
+`ai/iro-2026-wire.md`'s "Verified stock-iRO base-stat allocation client protocol" section; this
+section covers only the MapServer-side flow and its architectural placement.
 
 ```text
-Unsupported map client packet=0x00BB len=2
+0x00BB base-stat-up request (StatusId + Amount, one opaque trailing byte, capture-verified)
+        ↓
+IroStatusUpRequestPacket.TryParse (pure, structural only - resolves StatusId to
+CharacterBaseStat via a small explicit mapping, or null for an unrecognized id)
+        ↓
+MapClientSession.HandleIroStatusUpRequestAsync (thin parse-and-call; drops the request here if
+Stat resolved to null)
+        ↓
+CharacterGameplayStateSession.IncreaseStatAsync (UNCHANGED from the domain/persistence slice -
+the same CharacterStatService.ValidateIncrease → ICharacterGameplayStatePersistence.UpdateAsync
+→ atomic CharServer MSSQL persistence → replace State pipeline)
+        ↓
+on success: 0x0141 ZC_COUPLESTATUS (new base-stat value, plusValue=0 - see below) →
+0x00B0 ZC_PAR_CHANGE (varID 9, post-commit StatusPoints, reused unchanged from the existing
+progression serializer) → 0x00BC ZC_STATUS_CHANGE_ACK (final success ack, capture-verified byte
+layout)
+        ↓
+on any rejection (unrecognized StatusId, insufficient StatusPoints, stat at generated per-job
+cap, stale version, persistence failure, etc.): IncreaseStatAsync returns null, handler sends
+nothing and State is left unchanged - a gameplay rejection, never a malformed-packet disconnect
 ```
 
-`len=2` here is proof only that Athena currently has no `0x00BB` case registered and therefore
-reaches the unsupported-packet boundary immediately after identifying the opcode - it is NOT
-proof that stock iRO's real `0x00BB` request is 2 bytes. PR #16's own `0x0112` finding (rAthena
-generic length 4, real stock-iRO length 5, because the current client adds one opaque trailing
-byte) is the exact precedent for why this log line cannot be trusted as real framing evidence.
+The handler adds no new domain logic: `CharacterStatService`/`CharacterGameplayStateSession` are
+exactly as the domain/persistence slice left them. `IroStatusUpRequestPacket` and
+`IroStatusUpAckPacket` are the only new wire-boundary types, mirroring the existing
+`IroSkillLevelUpRequestPacket`/`IroSkillLevelUpdatePackets` split between pure parsing/
+serialization and session orchestration. `IroStatusUpRequestPacket.WireStatusId` is the single
+source for the `CharacterBaseStat ↔` wire-`StatusId` mapping in both directions (request parsing
+and response serialization), so the two can never silently drift apart.
 
-Pinned rAthena registers `0x00BB` as `parseable_packet(0x00bb,5,clif_parse_StatusUp,2,4)` -
-`clif_parse_StatusUp` reads a stat identifier at offset 2 and an increase amount at offset 4,
-calling `pc_statusup(sd, statId, increaseAmount)`. This is Reference-backed only, not Verified:
-per the same evidence-priority rule PR #16 established, a generic rAthena length is never
-sufficient to register a live packet case, invent an opaque byte, or guess a response sequence
-for the current stock-iRO client.
+**Partial derived-status parity, by design** (see `ai/iro-2026-wire.md`'s "Response ordering and
+derived status" section for the full capture evidence): the capture's server response burst also
+contains additional stat-specific combat packets (ATK/DEF/FLEE/HIT/ASPD-related) this project
+does not send, because Athena.NET has no derived-combat-stat engine anywhere in the codebase
+(no ATK/DEF/FLEE/HIT/ASPD calculation exists at all) and MaxHP/MaxSP recalculation only exists
+for the level-up formula path, not a live stat-up. Porting `status_calc_pc_`'s full
+recalculation is explicitly out of scope for this slice - see task section 16's original
+scoping, which this respects. Athena sends only the two derived values it already owns
+correctly: `0x0141` (base-stat sync) and `0x00B0` (`StatusPoints`). The `0x0141` `plusValue` is
+always `0`: `CharacterStatusEffectState`'s own base/plus resync path (`RunStatusExpirationLoopAsync`
+in `MapClientSession.cs`, the ONE existing canonical source for a non-zero plus-value, used for
+temporary buff/debuff expiry) is not invoked from the stat-up handler, since a stat allocation
+introduces no temporary bonus of its own - `0` reflects the currently-modeled state honestly
+rather than fabricating a value this project does not track.
+`MapClientSessionStatUpTests.NoviceAcceptanceCase_IncreasesStrength_EmitsVerifiedResponseSequence`
+asserts this explicitly (`plus = 0`) as proof no unowned derived value is fabricated. Full
+capture parity (the remaining combat-stat packets) is a future source-backed derived-stat
+recalculation/projection slice.
 
-**Therefore, per this project's evidence rules, the following remain explicitly NOT
-implemented pending an official current-iRO capture:**
-
-- No `PacketConstants.IroCzStatusUpLength` and no `case 0x00BB` in `MapClientSession` - adding
-  either from rAthena's generic length alone would repeat the exact mistake `0x0112`'s framing
-  already proved is unsafe for this client generation.
-- No `IroStatusUpRequestPacket` parser, no response packet/serializer, no guessed opaque-byte
-  layout.
-- No assumption about which field(s) accompany a successful response (new stat value,
-  remaining `StatusPoints`, next-cost indicator, or a full status refresh) - pinned
-  `ZC_STATUS_CHANGE_ACK = 0x00BC`'s `packetType/sp/ok/value` shape is Reference-backed only.
-
-**Required official capture** (see `ai/iro-2026-wire.md` for the exact capture procedure this
-project uses): a character with `STR=1 AGI=1 StatusPoints>0`, three transitions
-(`STR 1→2`, `AGI 1→2`, ideally `STR 2→3` to distinguish per-request semantics from
-per-character-state semantics), each preceded/followed by 2-3 seconds of idle time, both
-directions captured. Until that capture exists, `CharacterStatService`/
-`CharacterGameplayStateSession.IncreaseStatAsync` are the complete, tested, capture-independent
-foundation this wire work will be built on top of - no runtime code in this slice depends on any
-guessed `0x00BB` framing.
+Still open (see `ai/iro-2026-wire.md`'s evidence-boundary note for detail): the official
+rejection-response behavior (no capture exists; Athena sends no packet, which is
+Reference-backed, not Verified) and multi-step (`Amount > 1`) client-controlled requests (every
+captured request used `Amount=1`; `CharacterStatService` already supports a generic
+`increaseAmount` server-side, but no capture proves stock iRO ever sends more than 1 on this
+wire).
 
 ## Handwritten custom world content
 

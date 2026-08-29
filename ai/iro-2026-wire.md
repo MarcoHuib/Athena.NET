@@ -634,39 +634,130 @@ in this document (`0x00B0 param 12 = 1` for the character's initial SkillPoints)
 authoritative mutation path this handler calls into - see `MapClientSession.
 HandleIroSkillLevelUpRequestAsync` for the thin parse-and-call wiring.
 
-## Open: stock-iRO base-stat allocation client protocol (0x00BB) - capture-blocked
+## Verified stock-iRO base-stat allocation client protocol (0x00BB request / 0x00BC response)
 
-Live Athena observation, immediately following the verified `0x0112` skill-up acceptance flow
-above (same session, same character: `class=Novice base_level=2 job_level=2 STR..LUK=1
-status_point=51`): clicking `+` on a base stat causes the stock iRO client to send opcode
-`0x00BB`, which Athena currently does not have registered:
+Source: dedicated capture `statsonly.pcapng` (SHA-256
+`7ff17b414ef65f5783ed9ab520aa5eea26fab9501bf650d3b085c188b0385f34`), captured 2026-08-29
+09:20:30–09:20:49 +02:00, MapServer TCP flow `192.168.178.55:57207` → `128.241.92.42:4501`. The
+capture contains six isolated successful base-stat upgrades (one 2→3 transition per stat:
+STR/AGI/VIT/INT/DEX/LUK). This evidence was supplied to Athena as a sanitized capture
+extraction, not independently re-parsed from the raw `.pcapng` in this environment - treated as
+supplied verified capture evidence per the same evidence-priority rule used throughout this
+document, matching the `0x0112` section's own citation convention.
+
+This immediately follows the verified `0x0112` skill-up acceptance flow: an earlier Athena
+observation on the same live session/character logged
+`Unsupported map client packet=0x00BB len=2` when a base stat's `+` was clicked, before
+`0x00BB` was registered. That `len=2` was proof only that Athena's unsupported-packet boundary
+was reached immediately after identifying the 2-byte opcode header - never proof of the real
+frame length, exactly as this document already established for `0x0112`'s own 4-vs-5-byte
+history. This capture supersedes that log line as the actual wire authority.
+
+### Client → server: `0x00BB` (frames 157, 279, 304, 321, 335, 353)
 
 ```text
-Unsupported map client packet=0x00BB len=2
-Client disconnected
+STR: BB 00 0D 00 01 1E
+AGI: BB 00 0E 00 01 80
+VIT: BB 00 0F 00 01 4F
+INT: BB 00 10 00 01 CB
+DEX: BB 00 11 00 01 C0
+LUK: BB 00 12 00 01 B8
 ```
 
-`len=2` is proof only that Athena's unsupported-packet boundary is reached immediately after
-identifying the 2-byte opcode header - it is explicitly NOT proof that the real stock-iRO
-`0x00BB` request is 2 bytes long. The `0x0112` finding directly above this section (rAthena
-generic length 4 vs. real stock-iRO length 5, due to one added opaque trailing byte) is the
-exact precedent for why an Athena "unsupported packet" log line can never be trusted as real
-wire framing evidence for the CURRENT client generation.
+| Offset | Type | Field | Evidence status |
+|---:|---|---|---|
+| 0 | `uint16` LE | PacketId = `0x00BB` | **Verified** (stock-iRO capture) |
+| 2 | `uint16` LE | StatusId (`13`=STR, `14`=AGI, `15`=VIT, `16`=INT, `17`=DEX, `18`=LUK) | **Verified** - matches pinned `_sp` enum (`map.hpp:500-501`) and is independently confirmed by the six captured requests themselves |
+| 4 | `uint8` | Amount = `1` in every captured request (single-step increase) | **Verified** for the single-step case; a multi-step client-controlled amount is untested |
+| 5 | `uint8` | opaque trailing byte | **Verified NOT a fixed constant** - the six captures observed six different values (`0x1E`/`0x80`/`0x4F`/`0xCB`/`0xC0`/`0xB8`). Structurally required (fixed 6-byte length) but semantically **Unknown**, matching the same "+1 opaque trailing byte" pattern already proven for `0x0112`/`0x0360`/`0x0368`/`0x0361`/`0x0090`/`0x0437`/`0x00A7` |
 
-Pinned rAthena registers `0x00BB` as `parseable_packet(0x00bb,5,clif_parse_StatusUp,2,4)` -
-offset 2 a stat identifier, offset 4 a signed increase amount, calling
-`pc_statusup(sd, statId, increaseAmount)`. This is **Reference-backed only, not Verified** - per
-this document's own evidence-priority rule, a generic rAthena `PACKETVER` length is never
-sufficient on its own to register a live packet case for stock iRO. Likewise, pinned
-`ZC_STATUS_CHANGE_ACK = 0x00BC` (`packetType/sp/ok/value`) is Reference-backed only for the
-success-response shape.
+Fixed length **6** bytes - NOT pinned rAthena's generic 5-byte
+`parseable_packet(0x00bb,5,clif_parse_StatusUp,2,4)` framing, which is Reference-backed only
+(same evidence-priority rule as every other iRO client packet in this document: pinned rAthena
+never overrides a verified capture). Does not carry a client-supplied target/current stat
+value - the request means "increase this stat by this amount", never "set this stat to
+value N".
 
-**Not implemented pending capture**: no `0x00BB` case in `MapClientSession`, no request parser,
-no response serializer, no assumed opaque byte, no assumed response field layout. See
-`ai/map-server.md`'s "Stock iRO client stat-up wire" section for the complete list of what this
-blocks and the exact capture this project needs (`STR 1→2`, `AGI 1→2`, ideally `STR 2→3`, each
-transition idled and captured in both directions) before any of it can move from Reference-backed
-to Verified.
+### Server → client: `0x00BC` success ack (all six captured upgrades)
+
+```text
+STR: BC 00 0D 00 01 03
+AGI: BC 00 0E 00 01 03
+VIT: BC 00 0F 00 01 03
+INT: BC 00 10 00 01 03
+DEX: BC 00 11 00 01 03
+LUK: BC 00 12 00 01 03
+```
+
+| Offset | Type | Field | Evidence status |
+|---:|---|---|---|
+| 0 | `uint16` LE | PacketId = `0x00BC` | **Verified** |
+| 2 | `uint16` LE | StatusId (same `_sp` values as the request) | **Verified** |
+| 4 | `uint8` | Result = `1` (success) in every captured upgrade | **Verified for success only** - no rejection was ever captured, see the open item below |
+| 5 | `uint8` | new base-stat value (`3` in every captured upgrade, since every capture was a 2→3 transition) | **Verified** |
+
+Fixed length **6** bytes. Matches pinned `ZC_STATUS_CHANGE_ACK = 0x00BC`'s field count
+(`packetType/sp/ok/value`) but the exact byte widths/positions above are capture-verified, not
+merely inferred from the pinned struct.
+
+### Response ordering and derived status (frames surrounding each 0x00BC)
+
+Verified ordering: the server does not reply with `0x00BB → 0x00BC` alone. Before the final ack,
+it sends derived-status packets - `0x00B0 ZC_PAR_CHANGE` (`varID=9` for the resulting
+`StatusPoints`, matching the varID this project already uses for `StatusPoints` on level-up) and
+`0x0141 ZC_COUPLESTATUS` (the new base-stat value) - followed LAST by `0x00BC`:
+
+```text
+0x00BB request
+  -> validate / calculate cost / persist stat+StatusPoints mutation
+  -> derived status updates (0x00B0 StatusPoints, 0x0141 base-stat sync, and - per the capture -
+     additional stat-specific packets this project does not yet compute, see below)
+  -> 0x00BC final success ack
+```
+
+Observed `StatusPoints` sequence across the six sequential 2→3 upgrades in this capture: `34,
+32, 30, 28, 26, 24` - each upgrade cost exactly 2 points. This is the pinned Renewal
+`PC_STATUS_POINT_COST(2) = 2 + (2-1)/10 = 2` formula's OWN result for a 2→3 transition, not a
+universal hardcoded cost - `CharacterStatService.CumulativeCost` (unchanged by this capture)
+remains the sole cost authority for every other stat value/amount.
+
+**Partial derived-status parity, not full capture parity**: the capture's full burst also
+contains additional stat-specific packets (ATK/DEF/FLEE/HIT/ASPD-related, depending on which
+stat changed) that this project does not implement, because Athena.NET has no derived-combat-
+stat engine at all yet (no ATK/DEF/FLEE/HIT/ASPD calculation exists anywhere in the codebase,
+and MaxHP/MaxSP are only recalculated on level-up via a different formula path than a live
+VIT/INT stat-up would need - see `ai/map-server.md` section 16's original scoping). Implementing
+`status_calc_pc_`'s full recalculation is explicitly out of scope for this slice. Athena
+therefore sends only `0x0141` (base-stat sync, `plusValue=0` since no live temporary-bonus
+projection affecting base stats exists to source a non-zero value from - never a fabricated
+bonus) and `0x00B0` (`StatusPoints`, the one derived value this project already computes
+correctly) before `0x00BC`. This is a deliberate, documented boundary, not an oversight - full
+capture parity (the remaining combat-stat packets) is a future source-backed derived-stat
+recalculation/projection slice.
+
+### Evidence boundary
+
+- **Verified**: the six successful 2→3 request/response byte sequences and their surrounding
+  `0x0141`/`0x00B0`/`0x00BC` ordering above.
+- **Verified NOT constant**: the request's trailing byte (offset 5) - six different observed
+  values across the six captures.
+- **Not captured**: rejection/failure wire behavior (insufficient `StatusPoints`, stat already
+  at cap, invalid/unsupported StatusId, malformed amount). No official failure capture exists.
+  Athena's handler currently sends NO response packet on rejection (silently drops the request,
+  matching the general "gameplay rejection, not malformed packet" policy already established for
+  `0x0112`) - this is **Reference-backed only** (pinned `clif_statusupack(..., false)` was not
+  independently traced to a captured byte sequence either), not Verified. Do NOT call a
+  `0x00BC Result=0` response Verified.
+- **Not captured**: multi-step (`Amount > 1`) client-controlled requests - every captured
+  request used `Amount=1`. `CharacterStatService.ValidateIncrease`/`CumulativeCost` already
+  support a generic `increaseAmount` server-side (task-required from the domain slice), but no
+  capture proves stock iRO ever actually sends `Amount > 1` on this wire.
+- **Not implemented**: the remaining derived-status packets (ATK/DEF/FLEE/HIT/ASPD-related) the
+  capture's full burst shows - see the "partial derived-status parity" note above.
+
+`CharacterGameplayStateSession.IncreaseStatAsync` remains the sole authoritative mutation path
+this handler calls into - see `MapClientSession.HandleIroStatusUpRequestAsync` for the thin
+parse-and-call wiring.
 
 ## Capture handling
 Official captures can contain credentials, account/session identifiers, bearer/JWT-like tokens, and other sensitive authentication material. Never commit unsanitized PCAPs or raw token dumps to the repository.

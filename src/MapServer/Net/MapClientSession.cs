@@ -37,6 +37,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
         [PacketConstants.IroCzReqTakeoffEquip] = PacketConstants.IroCzReqTakeoffEquipLength,
         [PacketConstants.IroCzUseItem] = PacketConstants.IroCzUseItemLength,
         [PacketConstants.IroCzSkillLevelUp] = PacketConstants.IroCzSkillLevelUpLength,
+        [PacketConstants.IroCzStatusUp] = PacketConstants.IroCzStatusUpLength,
     };
 
     private readonly TcpClient _client;
@@ -924,6 +925,9 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
                 break;
             case PacketConstants.IroCzSkillLevelUp when _iroAuthRequested:
                 await HandleIroSkillLevelUpRequestAsync(packet, cancellationToken);
+                break;
+            case PacketConstants.IroCzStatusUp when _iroAuthRequested:
+                await HandleIroStatusUpRequestAsync(packet, cancellationToken);
                 break;
             default:
                 LogUnsupportedPacket(packetType, packet);
@@ -1828,6 +1832,64 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
 
         MapLogger.Info($"[iRO MAP DEBUG] Sending 0x00B0 param 12 (SkillPoints) = {gameplayState.State.SkillPoints}");
         await WriteAsync(IroCharacterProgressionPackets.Parameter(12, gameplayState.State.SkillPoints), cancellationToken);
+    }
+
+    // Verified stock-iRO base-stat allocation wire (statsonly.pcapng - see ai/iro-2026-wire.md
+    // for the full evidence trace). An unrecognized StatusId (Stat is null - e.g. a fourth-job
+    // trait-stat id this project never wires, or a forged value) or a structurally invalid
+    // packet is dropped here, before ever reaching CharacterGameplayStateSession.
+    // IncreaseStatAsync/CharacterStatService - the SAME authoritative mutation path proven by
+    // CharacterGameplayStateSessionTests. The verified wire carries only single-step requests
+    // (every captured Amount byte was 1); this handler forwards Amount as-is and lets
+    // CharacterStatService's existing cost/cap validation reject anything it cannot afford or
+    // that would exceed the generated per-job cap - no separate "amount must be 1" gate is
+    // added here, since that would duplicate a check the domain layer already performs
+    // correctly for any amount.
+    //
+    // A structurally valid but semantically illegal request (unaffordable, at cap, etc.) simply
+    // returns null from IncreaseStatAsync and is silently dropped - a gameplay rejection, never
+    // a malformed-packet disconnect, matching HandleIroSkillLevelUpRequestAsync's own policy.
+    // Stock-iRO failure-wire behavior is not captured (ai/iro-2026-wire.md's open item), so no
+    // failure packet is fabricated here.
+    private async Task HandleIroStatusUpRequestAsync(byte[] packet, CancellationToken cancellationToken)
+    {
+        if (!IroStatusUpRequestPacket.TryParse(packet, out var request) || request.Stat is not { } stat) return;
+        if (_gameplayState is not { } gameplayState) return;
+
+        MapLogger.Info($"[iRO STAT] Received stat-up request charId={_charId} stat={stat} amount={request.Amount} currentStatusPoints={gameplayState.State.StatPoints}");
+
+        var result = await gameplayState.IncreaseStatAsync(stat, request.Amount, cancellationToken);
+        if (result is null)
+        {
+            MapLogger.Info($"[iRO STAT] Rejected stat-up charId={_charId} stat={stat}");
+            return;
+        }
+
+        // Response fields are derived from the POST-COMMIT state - never reconstructed from
+        // what the client requested or from the pre-mutation snapshot. gameplayState.State
+        // already reflects the committed result at this point (IncreaseStatAsync replaces
+        // State under its own lock before returning non-null).
+        MapLogger.Info($"[iRO STAT] Increased stat={stat} newValue={result.NewValue} remainingStatusPoints={gameplayState.State.StatPoints} newVersion={gameplayState.State.Version}");
+
+        var wireStatusId = IroStatusUpRequestPacket.WireStatusId(stat);
+
+        // 0x0141 ZC_COUPLESTATUS: base = the new persisted value, plus = 0. Athena.NET has no
+        // live temporary-bonus projection affecting base stats at the time of a stat-up (see
+        // CharacterStatusEffectState's OWN resync path in RunStatusExpirationLoopAsync above,
+        // which is for buff/debuff expiry, not stat allocation, and is not invoked from here) -
+        // plus=0 reflects the currently-modeled state honestly rather than fabricating a bonus
+        // this project does not track. This is an explicit, documented PARTIAL match of the
+        // capture's full derived-status burst - the capture also shows additional combat-stat
+        // packets (ATK/DEF/FLEE/HIT/ASPD-related) this project does not yet compute anywhere
+        // (no derived-combat-stat engine exists), so those are deliberately NOT sent here rather
+        // than fabricated. See ai/iro-2026-wire.md for the full scope note.
+        await WriteAsync(IroStatusEffectPackets.BuildCoupleStatus(wireStatusId, result.NewValue, 0), cancellationToken);
+
+        MapLogger.Info($"[iRO MAP DEBUG] Sending 0x00B0 param 9 (StatusPoints) = {gameplayState.State.StatPoints}");
+        await WriteAsync(IroCharacterProgressionPackets.Parameter(9, gameplayState.State.StatPoints), cancellationToken);
+
+        MapLogger.Info($"[iRO MAP DEBUG] Sending 0x00BC stat={stat} newValue={result.NewValue}");
+        await WriteAsync(IroStatusUpAckPacket.BuildSuccess(wireStatusId, (byte)result.NewValue), cancellationToken);
     }
 
     // Pinned clif_parse_EquipItem (clif.cpp:12113-12159): index = server_index(p->index)

@@ -103,6 +103,28 @@ public static class PacketConstants
     public const short IroCzSkillLevelUp = 0x0112;
     public const int IroCzSkillLevelUpLength = 5;
 
+    // VERIFIED via dedicated stock-iRO base-stat-allocation capture (statsonly.pcapng,
+    // SHA-256 7ff17b414ef65f5783ed9ab520aa5eea26fab9501bf650d3b085c188b0385f34 - see
+    // ai/iro-2026-wire.md for the full evidence trace). Six isolated STR/AGI/VIT/INT/DEX/LUK
+    // 2->3 upgrades. Observed bytes e.g. BB 00 0D 00 01 1E: opcode.W(2) statusId.W(2)
+    // amount.B(1) + one opaque trailing byte(1) = 6 - NOT pinned rAthena's generic 5-byte
+    // parseable_packet(0x00bb,5,...) framing (same "current stock-iRO adds one opaque
+    // trailing byte beyond the generic pinned length" pattern already proven for
+    // IroCzSkillLevelUp/0x0112 above). The six captured requests have six DIFFERENT trailing-
+    // byte values (0x1E/0x80/0x4F/0xCB/0xC0/0xB8) - conclusive proof this byte is not a fixed
+    // constant and must be parsed opaquely, never validated against a specific value.
+    public const short IroCzStatusUp = 0x00bb;
+    public const int IroCzStatusUpLength = 6;
+
+    // VERIFIED via the same base-stat-allocation capture as IroCzStatusUp above. Every
+    // successful upgrade ends with this ack: opcode.W(2) statusId.W(2) result.B(1)
+    // newValue.B(1) = 6. Observed success value: Result=1. Example: BC 00 0D 00 01 03 (STR ack,
+    // new value 3). Failure-response behavior (Result=0 or otherwise) is NOT captured - see
+    // ai/iro-2026-wire.md's explicit open item; this project never fabricates an unverified
+    // failure packet.
+    public const short ZcStatusUpAck = 0x00bc;
+    public const int ZcStatusUpAckLength = 6;
+
     // ZC_USE_ITEM_ACK2 (clif.cpp:4468-4497, packets_struct.hpp:2577-2589) - pinned-source
     // layout for the current PACKETVER_RE_NUM >= 20180704 branch; not yet independently
     // capture-verified on the response side (see IroUseItemPackets.BuildUseItemAck).
