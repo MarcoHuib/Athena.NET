@@ -43,7 +43,7 @@ internal static partial class CharacterDataCompiler
     {
         internal StatBonus Add(StatBonus value) => new(Str + value.Str, Agi + value.Agi, Vit + value.Vit, Int + value.Int, Dex + value.Dex, Luk + value.Luk);
     }
-    private sealed record Progression(JobIdentity Job, ushort MaxBaseLevel, ushort MaxJobLevel, ulong[] BaseExperience, ulong[] JobExperience, uint[] BaseHp, uint[] BaseSp, uint[] StatPoints, uint[] Str, uint[] Agi, uint[] Vit, uint[] Int, uint[] Dex, uint[] Luk, string DataKey);
+    private sealed record Progression(JobIdentity Job, ushort MaxBaseLevel, ushort MaxJobLevel, ulong[] BaseExperience, ulong[] JobExperience, uint[] BaseHp, uint[] BaseSp, uint[] StatPoints, uint[] Str, uint[] Agi, uint[] Vit, uint[] Int, uint[] Dex, uint[] Luk, ushort MaxBaseStat, string DataKey);
     private sealed record Skill(ushort Id, string Name, ushort MaxLevel, IReadOnlyList<uint> SpCostByLevel, IReadOnlyList<short> RangeByLevel, bool IsQuest, bool IsWedding, bool IsSpirit, ushort Inf, bool AlterRangeVulture, bool AlterRangeSnakeEye, bool AlterRangeShadowJump, bool AlterRangeRadius, bool AlterRangeResearchTrap);
     private sealed record Requirement(ushort SkillId, ushort Level);
     private sealed record TreeEntry(ushort SkillId, ushort MaxLevel, ushort BaseLevel, ushort JobLevel, IReadOnlyList<Requirement> Requirements, bool Exclude);
@@ -261,8 +261,9 @@ internal static partial class CharacterDataCompiler
                 cumulative = cumulative.Add(builder.Bonuses.GetValueOrDefault(level));
                 stats[0][level] = checked((uint)cumulative.Str); stats[1][level] = checked((uint)cumulative.Agi); stats[2][level] = checked((uint)cumulative.Vit); stats[3][level] = checked((uint)cumulative.Int); stats[4][level] = checked((uint)cumulative.Dex); stats[5][level] = checked((uint)cumulative.Luk);
             }
-            var key = HashKey(maxBase, maxJob, baseExp, jobExp, hp, sp, statPoints, stats);
-            result.Add(new(builder.Job, maxBase, maxJob, baseExp, jobExp, hp, sp, statPoints, stats[0], stats[1], stats[2], stats[3], stats[4], stats[5], key));
+            var maxBaseStat = JobParameterCategoryMaxStat(ResolveJobParameterCategory(builder.Job.Id));
+            var key = HashKey(maxBase, maxJob, baseExp, jobExp, hp, sp, statPoints, stats, maxBaseStat);
+            result.Add(new(builder.Job, maxBase, maxJob, baseExp, jobExp, hp, sp, statPoints, stats[0], stats[1], stats[2], stats[3], stats[4], stats[5], maxBaseStat, key));
         }
         return result;
     }
@@ -274,6 +275,137 @@ internal static partial class CharacterDataCompiler
         return result;
     }
     private enum MapidCategory { None, Summoner, SuperNovice }
+
+    // Pinned pc_maxparameter's job-category classification (src/map/pc.cpp:14335-14407),
+    // driven entirely by pc_jobid2mapid's JOBL_BABY/JOBL_THIRD/JOBL_UPPER/JOBL_FOURTH bits and
+    // the three special-cased mapid ranges (Summoner, Kagerou/Oboro/Rebellion "Extended",
+    // pc_is_trait_job's primary-4th/upper-expanded-2nd "Fourth"). This project does not model
+    // rAthena's full uint64 JOBL_*/MAPID_* bitmask machinery at runtime (it has no other
+    // consumer), so the classification is ported once, offline, as this fixed table keyed by
+    // the exact pinned numeric Job ID (src/common/mmo.hpp e_job) - never inferred from a job's
+    // display/enum name (e.g. a "Baby_"/"_High"/"2" naming heuristic), because name patterns
+    // are not the actual source authority and could silently diverge from pc_jobid2mapid's
+    // real switch. An id with no entry here means pc_jobid2mapid has no case for it (falls to
+    // its `default: return -1`) and must fail generation loudly rather than default to Normal.
+    //
+    // The "2" gender/appearance-variant job IDs (Knight2, RuneKnightT2, DragonKnight2, ...)
+    // are NOT reachable through pc_jobid2mapid's switch at all - pinned job_name (pc.cpp)
+    // confirms they render the identical job name as their base id and job_stats.yml's Jobs
+    // blocks always flag them alongside their base (e.g. "Knight: true" / "Knight2: true" in
+    // the very same block, db/re/job_stats.yml:368-369), so they share their base job's every
+    // stat rule including MaxStats. Each is therefore keyed here to its base id's category,
+    // not given an independent pc_jobid2mapid resolution that does not exist in pinned source.
+    private enum JobParameterCategory { Normal, Trans, Third, ThirdTrans, Baby, BabyThird, Extended, Fourth, Summoner }
+
+    // Pinned conf/battle/player.conf max_*_parameter values as shipped for this pinned rAthena
+    // snapshot (the effective runtime config, not src/map/battle.cpp's compiled-in fallback
+    // defaults, which player.conf overrides at load time) - see conf/battle/player.conf:113-121.
+    private static ushort JobParameterCategoryMaxStat(JobParameterCategory category) => category switch
+    {
+        JobParameterCategory.Normal => 99,
+        JobParameterCategory.Trans => 99,
+        JobParameterCategory.Third => 130,
+        JobParameterCategory.ThirdTrans => 130,
+        JobParameterCategory.Baby => 80,
+        JobParameterCategory.BabyThird => 117,
+        JobParameterCategory.Extended => 130,
+        JobParameterCategory.Fourth => 130,
+        JobParameterCategory.Summoner => 130,
+        _ => throw new NotSupportedException($"Unhandled job parameter category {category}."),
+    };
+
+    private static JobParameterCategory ResolveJobParameterCategory(ushort jobId) => jobId switch
+    {
+        // Novice And 1-1 Jobs / 2-1 Jobs / 2-2 Jobs (MAPID_FIRSTMASK..MAPID_SECONDMASK, no
+        // JOBL_BABY/THIRD/UPPER bit, not Summoner/Kagerou/Oboro/Rebellion) => max_parameter.
+        0 or 1 or 2 or 3 or 4 or 5 or 6 or 7 or 8 or 9 or 10 or 11 or 12 or 13 or 14 or 15 or 16 or 17 or 18 or 19 or 20 or 21 or 23 or 24 or 25
+            => JobParameterCategory.Normal,
+        // Trans Novice/1-1/2-1/2-2 (JOBL_UPPER, no JOBL_THIRD) => max_trans_parameter.
+        >= 4001 and <= 4022 => JobParameterCategory.Trans,
+        // Baby Novice/1-1/2-1/2-2 (JOBL_BABY, no JOBL_THIRD) => max_baby_parameter.
+        >= 4023 and <= 4045 => JobParameterCategory.Baby,
+        // Taekwon/StarGladiator/StarGladiator2/SoulLinker/Gangsi/DeathKnight/DarkCollector -
+        // ordinary MAPID_FIRSTMASK/SECONDMASK/2-2 ids with none of the special bits/ranges
+        // above => max_parameter.
+        >= 4046 and <= 4052 => JobParameterCategory.Normal,
+        // Rune_Knight..Guillotine_Cross (3-1, JOBL_THIRD only - pc_is_primary_third's first
+        // MAPID_THIRDMASK range) => max_third_parameter.
+        >= 4054 and <= 4059 => JobParameterCategory.Third,
+        // Rune_Knight_T..Guillotine_Cross_T (3-1 trans: JOBL_THIRD|JOBL_UPPER) =>
+        // max_third_trans_parameter.
+        >= 4060 and <= 4065 => JobParameterCategory.ThirdTrans,
+        // Royal_Guard..Shadow_Chaser (3-2, JOBL_THIRD only - pc_is_primary_third's second
+        // MAPID_THIRDMASK range) => max_third_parameter.
+        >= 4066 and <= 4072 => JobParameterCategory.Third,
+        // Royal_Guard_T..Shadow_Chaser_T (3-2 trans) => max_third_trans_parameter.
+        >= 4073 and <= 4079 => JobParameterCategory.ThirdTrans,
+        // Rune_Knight2/Royal_Guard2/Ranger2/Mechanic2 (3rd non-trans "2" variant; base id
+        // shares job_stats.yml Jobs-block membership with the plain 3rd id - see this
+        // classifier's own doc comment) => max_third_parameter.
+        4080 or 4082 or 4084 or 4086 => JobParameterCategory.Third,
+        // Rune_Knight_T2/Royal_Guard_T2/Ranger_T2/Mechanic_T2 ("2" variant of the 3rd-trans
+        // id) => max_third_trans_parameter.
+        4081 or 4083 or 4085 or 4087 => JobParameterCategory.ThirdTrans,
+        // Baby_Rune_Knight..Baby_Shadow_Chaser / Baby_Rune_Knight2../Super_Baby_E (JOBL_BABY|
+        // JOBL_THIRD) => max_baby_third_parameter.
+        >= 4096 and <= 4112 => JobParameterCategory.BabyThird,
+        // Super_Novice_E (JOBL_THIRD only, MAPID_SUPER_NOVICE_E) => max_third_parameter.
+        4190 => JobParameterCategory.Third,
+        // Super_Baby_E (JOBL_BABY|JOBL_THIRD) => max_baby_third_parameter.
+        4191 => JobParameterCategory.BabyThird,
+        // Kagerou/Oboro (MAPID_SECONDMASK == MAPID_KAGEROUOBORO special case) =>
+        // max_extended_parameter.
+        4211 or 4212 => JobParameterCategory.Extended,
+        // Rebellion (MAPID_SECONDMASK == MAPID_REBELLION special case) =>
+        // max_extended_parameter.
+        4215 => JobParameterCategory.Extended,
+        // Summoner (MAPID_FIRSTMASK == MAPID_SUMMONER special case, checked before the baby
+        // branch only matters when JOBL_BABY is also set - see Baby_Summoner below) =>
+        // max_summoner_parameter.
+        4218 => JobParameterCategory.Summoner,
+        // Baby_Summoner: JOBL_BABY is checked FIRST in pinned pc.cpp:14340-14350 ("Always
+        // check babies first"), so this is max_baby_parameter, NOT max_summoner_parameter,
+        // even though its mapid also matches MAPID_SUMMONER under MAPID_FIRSTMASK.
+        4220 => JobParameterCategory.Baby,
+        // Baby_Ninja/Baby_Kagerou/Baby_Oboro/Baby_Taekwon/Baby_StarGladiator/
+        // Baby_SoulLinker/Baby_Gunslinger/Baby_Rebellion (JOBL_BABY; the underlying
+        // Kagerou/Oboro/Rebellion Extended special-case only applies without JOBL_BABY, same
+        // "babies first" rule as Baby_Summoner) => max_baby_parameter.
+        >= 4222 and <= 4229 => JobParameterCategory.Baby,
+        // Baby_StarGladiator2 (JOBL_BABY) => max_baby_parameter.
+        4238 => JobParameterCategory.Baby,
+        // Star_Emperor/Soul_Reaper (3-1/3-2, JOBL_THIRD only) => max_third_parameter.
+        4239 or 4240 => JobParameterCategory.Third,
+        // Baby_Star_Emperor/Baby_Soul_Reaper (JOBL_BABY|JOBL_THIRD) =>
+        // max_baby_third_parameter.
+        4241 or 4242 => JobParameterCategory.BabyThird,
+        // Star_Emperor2 ("2" variant of Star_Emperor) => max_third_parameter.
+        4243 => JobParameterCategory.Third,
+        // Baby_Star_Emperor2 ("2" variant of Baby_Star_Emperor) => max_baby_third_parameter.
+        4244 => JobParameterCategory.BabyThird,
+        // Dragon_Knight..Trouvere (4-1/4-2, pc_is_primary_fourth's two MAPID_FOURTHMASK
+        // ranges) => max_fourth_parameter.
+        >= 4252 and <= 4264 => JobParameterCategory.Fourth,
+        // Windhawk2/Meister2/DragonKnight2/ImperialGuard2 ("2" variants of 4-1/4-2 ids) =>
+        // max_fourth_parameter.
+        >= 4278 and <= 4281 => JobParameterCategory.Fourth,
+        // Sky_Emperor/Soul_Ascetic (pc_is_upper_expanded_second's FOURTHMASK==SKY_EMPEROR/
+        // SOUL_ASCETIC case) => max_fourth_parameter.
+        4302 or 4303 => JobParameterCategory.Fourth,
+        // Shinkiro/Shiranui/Night_Watch (pc_is_upper_expanded_second's
+        // THIRDMASK==SHINKIROSHIRANUI/NIGHT_WATCH case, NOT primary-4th) =>
+        // max_extended_parameter.
+        4304 or 4305 or 4306 => JobParameterCategory.Extended,
+        // Hyper_Novice (pc_is_upper_expanded_second's FOURTHMASK==HYPER_NOVICE case) =>
+        // max_fourth_parameter.
+        4307 => JobParameterCategory.Fourth,
+        // Spirit_Handler (pc_is_upper_expanded_second's SECONDMASK==SPIRIT_HANDLER case) =>
+        // max_fourth_parameter (pc_is_trait_job = primary_fourth || upper_expanded_second).
+        4308 => JobParameterCategory.Fourth,
+        // Sky_Emperor2 ("2" variant of Sky_Emperor) => max_fourth_parameter.
+        4316 => JobParameterCategory.Fourth,
+        _ => throw new ArgumentException($"Job id {jobId} has no pinned pc_jobid2mapid classification for a Status Point cap. Extend ResolveJobParameterCategory with its exact pc_jobid2mapid case before generating progression data for this job."),
+    };
 
     // Matches pinned JobDatabase::loadingFinished (src/map/pc.cpp): for every base level,
     // an explicit table row wins; a level the table never set (job->base_hp[j] == 0) is
@@ -627,7 +759,7 @@ internal static partial class CharacterDataCompiler
     private static string EmitProgressions(IReadOnlyList<Progression> progressions, string commit)
     {
         var output = new StringBuilder(Header(commit, "db/re/job_exp.yml", "db/re/job_basepoints.yml", "db/re/job_stats.yml", "db/re/statpoint.yml")).AppendLine("using Athena.Net.MapServer.Generated.Jobs;").AppendLine("using Athena.Net.MapServer.World;").AppendLine("namespace Athena.Net.MapServer.Generated.Progression;").AppendLine("internal static class GeneratedProgressionData").AppendLine("{");
-        foreach (var item in progressions) output.Append("    internal static readonly CharacterProgressionDefinition ").Append(item.Job.CSharpIdentifier).Append(" = new(JobClass.").Append(item.Job.CSharpIdentifier).Append(", ").Append(item.MaxBaseLevel).Append(", ").Append(item.MaxJobLevel).Append(", ").Append(Array(item.BaseExperience)).Append(", ").Append(Array(item.JobExperience)).Append(", ").Append(Array(item.BaseHp)).Append(", ").Append(Array(item.BaseSp)).Append(", ").Append(Array(item.StatPoints)).Append(", ").Append(Array(item.Str)).Append(", ").Append(Array(item.Agi)).Append(", ").Append(Array(item.Vit)).Append(", ").Append(Array(item.Int)).Append(", ").Append(Array(item.Dex)).Append(", ").Append(Array(item.Luk)).AppendLine(");");
+        foreach (var item in progressions) output.Append("    internal static readonly CharacterProgressionDefinition ").Append(item.Job.CSharpIdentifier).Append(" = new(JobClass.").Append(item.Job.CSharpIdentifier).Append(", ").Append(item.MaxBaseLevel).Append(", ").Append(item.MaxJobLevel).Append(", ").Append(Array(item.BaseExperience)).Append(", ").Append(Array(item.JobExperience)).Append(", ").Append(Array(item.BaseHp)).Append(", ").Append(Array(item.BaseSp)).Append(", ").Append(Array(item.StatPoints)).Append(", ").Append(Array(item.Str)).Append(", ").Append(Array(item.Agi)).Append(", ").Append(Array(item.Vit)).Append(", ").Append(Array(item.Int)).Append(", ").Append(Array(item.Dex)).Append(", ").Append(Array(item.Luk)).Append(", ").Append(item.MaxBaseStat).AppendLine(");");
         return output.AppendLine("}").ToString();
     }
 

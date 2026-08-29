@@ -1290,6 +1290,169 @@ This PR does not implement skill EXECUTION - a persisted, wire-synchronized
 `NV_BASIC`/`SM_BASH`/etc. level does not mean that skill can be cast, deals damage, consumes SP,
 applies a status, or has a cooldown. That remains fully out of scope for a future slice.
 
+## Base stat allocation (STR/AGI/VIT/INT/DEX/LUK)
+
+Follows directly after the verified skill-up work above. Split into two explicit layers, same
+as skill-up: a domain/persistence layer buildable now from pinned-source behavior, and a
+client-facing wire layer that remains capture-gated (see below).
+
+### CharacterBaseStat / CharacterStatService (pure domain layer)
+
+`CharacterBaseStat` (`src/MapServer/World/CharacterBaseStat.cs`) is a small strongly-typed enum
+(`Strength`/`Agility`/`Vitality`/`Intelligence`/`Dexterity`/`Luck`) kept deliberately separate
+from pinned rAthena's raw `_sp` protocol IDs (`SP_STR`/`SP_AGI`/...) - protocol constants stay
+at the wire boundary, never spread through the gameplay domain, mirroring
+`CharacterBaseStat`'s own doc comment and the project's existing `IroSkillInfoEntry`/domain
+split. It deliberately excludes the pinned fourth-job trait stats (`POW`/`STA`/`WIS`/`SPL`/
+`CON`/`CRT`) - those spend a separate trait-point pool through `pc_traitstatusup2`, not Status
+Points, and are an explicit future slice.
+
+`CharacterStatService` (`src/MapServer/World/CharacterStatService.cs`) is static/pure - no
+constructor, no I/O, no session state - exactly like `CharacterSkillService`.
+`ValidateIncrease(gameplay, stat, increaseAmount)` derives everything from server-side truth
+only (current stat, generated per-job max, current `StatPoints`) and never trusts a
+caller-supplied target value or point balance:
+
+- Rejects `UnknownStat` (an out-of-range enum value), `InvalidIncreaseAmount` (`<= 0`),
+  `MaxValueReached` (current value already at cap, OR the requested amount would land above
+  it - checked via `long` arithmetic so an absurd `increaseAmount` such as `int.MaxValue`
+  cannot overflow `int` and is cleanly rejected rather than thrown), and
+  `InsufficientStatusPoints`.
+- Unlike pinned `pc_statusup`, an increase that would exceed the cap or the available points is
+  rejected OUTRIGHT, never silently clamped down to the affordable/allowed maximum (pinned
+  `pc_maxparameterincrease` clamping is intentionally not ported) - matches task requirement
+  that an out-of-range client request must never create partial authoritative state.
+- `CumulativeCost(currentValue, increaseAmount)` ports pinned `pc_need_status_point`'s Renewal
+  formula exactly: `PC_STATUS_POINT_COST(low) = 2 + (low-1)/10` for `low < 100`, else
+  `16 + 4*((low-100)/5)` (`#ifdef RENEWAL_STAT` branch only - Athena.NET targets Renewal, so the
+  pre-Renewal formula is not ported), summed over every intermediate stat value in the
+  requested range - NOT a flat "N points per level" cost. A multi-point request (e.g.
+  `STR 10 → 15`) sums the cost of each individual step, so a request that crosses one of the
+  formula's decade boundaries costs more than the same step count would elsewhere (see
+  `CharacterStatServiceTests`' boundary-fixture and cross-boundary tests).
+- The per-job stat cap comes from generated data (`GeneratedProgressionDefinition.MaxBaseStat`,
+  looked up by the character's current `JobClass` from `GeneratedProgressionRegistry`) - never
+  a hardcoded `99`. See "Source-backed per-job stat cap" below for how that field is generated.
+
+### Source-backed per-job stat cap (`CharacterProgressionDefinition.MaxBaseStat`)
+
+Pinned `pc_maxparameter` (`src/map/pc.cpp:15234`) returns a per-job cap sourced from
+`job_db.max_param[param]`, which `JobDatabase::loadingFinished` (`pc.cpp:14335-14407`) resolves
+for any stat a `job_stats.yml` block did not explicitly override (verified: NO job in the
+pinned snapshot's `db/re/job_stats.yml` actually sets a `MaxStats` block - it is documented but
+unused) via a job-category classification driven entirely by `pc_jobid2mapid`'s `JOBL_BABY`/
+`JOBL_THIRD`/`JOBL_UPPER`/`JOBL_FOURTH` bits plus three special-cased mapid ranges (Summoner;
+Kagerou/Oboro/Rebellion "Extended"; `pc_is_trait_job`'s primary-4th/upper-expanded-2nd
+"Fourth"). Category → cap uses `conf/battle/player.conf`'s shipped values (the actual runtime
+config, not `src/map/battle.cpp`'s compiled-in fallback defaults, which the conf file overrides
+at load time): `max_parameter=99` (Normal), `max_trans_parameter=99` (Trans),
+`max_third_parameter=130` (Third), `max_third_trans_parameter=130` (ThirdTrans),
+`max_baby_parameter=80` (Baby), `max_baby_third_parameter=117` (BabyThird),
+`max_extended_parameter=130` (Extended), `max_summoner_parameter=130` (Summoner),
+`max_fourth_parameter=130` (Fourth).
+
+Athena.NET does not model rAthena's full `uint64` `JOBL_*`/`MAPID_*` bitmask machinery at
+runtime (nothing else consumes it), so `CharacterDataCompiler.ResolveJobParameterCategory`
+(`tools/WorldDataImporter/Compiler/CharacterDataCompiler.cs`) ports the classification ONCE,
+offline, as a fixed table keyed by the exact pinned numeric Job ID
+(`src/common/mmo.hpp` `enum e_job`) - never inferred from a job's display/enum name (no
+`"Baby_"`/`"_High"`/`"_T"`/`"2"` suffix heuristic), because pinned `pc_jobid2mapid` is the real
+authority and a name-pattern guess could silently diverge from it. An id with no case in this
+table throws during generation rather than defaulting to `Normal` - every one of the 175
+currently-generated jobs has an explicit resolution (`CharacterDataCompiler_
+EveryGeneratedJobResolvesAMaxBaseStat` proves this by construction: `Compile()` would throw
+first). The one non-obvious rule ported faithfully: `Baby_Summoner` resolves to `Baby` (80), NOT
+`Summoner` (130), because pinned `pc.cpp:14340-14350` checks `JOBL_BABY` before the Summoner
+mapid-range check ("Always check babies first") - see
+`CharacterDataCompiler_BabySummonerPrefersBabyCategoryOverSummoner`.
+
+The "2" gender/appearance-variant job IDs (`Knight2`, `RuneKnightT2`, `DragonKnight2`, ...) are
+NOT reachable through pinned `pc_jobid2mapid`'s switch at all (it has no case for them); pinned
+`job_name` (`pc.cpp:7894`) confirms `JOB_KNIGHT2` renders the identical job name as `JOB_KNIGHT`,
+and `db/re/job_stats.yml` always flags a "2" id alongside its base in the same block (e.g.
+`Knight: true` / `Knight2: true` in the same `Jobs:` block, `job_stats.yml:368-369`) - so each is
+keyed here to its base id's resolved category, not given an independent (nonexistent) pinned
+resolution.
+
+`CharacterProgressionDefinition.MaxBaseStat` (the generated field this classifier feeds) is a
+single `ushort` shared by all six base stats for a job - matching pinned `pc_maxparameter`'s own
+per-stat-category (not per-individual-stat) resolution for STR/AGI/VIT/INT/DEX/LUK. Adding this
+field changed `CharacterDataCounts.UniqueProgressionDefinitions` from 89 to 134 (jobs that
+previously hashed identically on HP/SP/stat-point/job-bonus curves alone now also differ
+whenever their pinned stat caps differ) - see `CompilerTests.
+CharacterDataCompiler_CompilesRealPinnedCoverageAndNoviceFacts`'s updated regression comment.
+
+### CharacterGameplayStateSession.IncreaseStatAsync (reuses existing persistence, no second lock)
+
+Unlike skill learning, a base-stat increase mutates ONLY fields already inside
+`CharacterGameplayState` (the target stat, `StatPoints`, `Version`) - so it does NOT need a
+second persistence interface or snapshot type the way `LearnSkillAsync`/
+`CharacterSkillSnapshot` did. `IncreaseStatAsync(stat, increaseAmount, cancellationToken)` takes
+the SAME `SemaphoreSlim(1,1)` mutation lock `MutateAsync`/`LearnSkillAsync` already use, calls
+the pure `CharacterStatService.ValidateIncrease`, and on success sends ONE
+`ICharacterGameplayStatePersistence.UpdateAsync` call (the existing optimistic-concurrency path
+- reused exactly as-is, no new CharServer transaction type) before replacing `State` and
+releasing the lock. Returns `null` on validation rejection OR persistence failure (including a
+stale `GameplayStateVersion`); in both cases `State` is left completely unchanged and no Status
+Points are spent - proven by `CharacterGameplayStateSessionTests.
+IncreaseStatAsync_TwoConcurrentCallsAgainstSameSession_CannotOverspendStatusPoints` (two
+concurrent calls against a balance that can only afford one increase: exactly one succeeds, the
+loser observes the winner's already-updated `State` and is rejected as
+`InsufficientStatusPoints`, matching `LearnSkillAsync`'s own concurrency proof).
+
+`CharacterStatIncreaseResult` (`Before`/`After` full post-commit `CharacterGameplayState`,
+`Stat`, `PreviousValue`/`NewValue`, `StatusPointsSpent`) mirrors `CharacterProgressionResult`'s
+own Before/After convention and carries no packet-specific fields - a future wire boundary
+projects a response from this result, never the reverse (same rule `CharacterStatService`'s own
+doc comment states for keeping protocol constants out of the pure gameplay layer).
+
+**This method sends NO client-facing packet.** It returns the committed result and stops - see
+the capture-gated wire item below.
+
+### Stock iRO client stat-up wire - CAPTURE-BLOCKED, not implemented
+
+A real stock-iRO client was live-tested against Athena.NET immediately after the verified
+skill-up acceptance flow (starting state: `class=Novice base_level=2 job_level=2 STR..LUK=1
+status_point=51 skill_point=0`). Clicking `+` on a base stat produced:
+
+```text
+Unsupported map client packet=0x00BB len=2
+```
+
+`len=2` here is proof only that Athena currently has no `0x00BB` case registered and therefore
+reaches the unsupported-packet boundary immediately after identifying the opcode - it is NOT
+proof that stock iRO's real `0x00BB` request is 2 bytes. PR #16's own `0x0112` finding (rAthena
+generic length 4, real stock-iRO length 5, because the current client adds one opaque trailing
+byte) is the exact precedent for why this log line cannot be trusted as real framing evidence.
+
+Pinned rAthena registers `0x00BB` as `parseable_packet(0x00bb,5,clif_parse_StatusUp,2,4)` -
+`clif_parse_StatusUp` reads a stat identifier at offset 2 and an increase amount at offset 4,
+calling `pc_statusup(sd, statId, increaseAmount)`. This is Reference-backed only, not Verified:
+per the same evidence-priority rule PR #16 established, a generic rAthena length is never
+sufficient to register a live packet case, invent an opaque byte, or guess a response sequence
+for the current stock-iRO client.
+
+**Therefore, per this project's evidence rules, the following remain explicitly NOT
+implemented pending an official current-iRO capture:**
+
+- No `PacketConstants.IroCzStatusUpLength` and no `case 0x00BB` in `MapClientSession` - adding
+  either from rAthena's generic length alone would repeat the exact mistake `0x0112`'s framing
+  already proved is unsafe for this client generation.
+- No `IroStatusUpRequestPacket` parser, no response packet/serializer, no guessed opaque-byte
+  layout.
+- No assumption about which field(s) accompany a successful response (new stat value,
+  remaining `StatusPoints`, next-cost indicator, or a full status refresh) - pinned
+  `ZC_STATUS_CHANGE_ACK = 0x00BC`'s `packetType/sp/ok/value` shape is Reference-backed only.
+
+**Required official capture** (see `ai/iro-2026-wire.md` for the exact capture procedure this
+project uses): a character with `STR=1 AGI=1 StatusPoints>0`, three transitions
+(`STR 1→2`, `AGI 1→2`, ideally `STR 2→3` to distinguish per-request semantics from
+per-character-state semantics), each preceded/followed by 2-3 seconds of idle time, both
+directions captured. Until that capture exists, `CharacterStatService`/
+`CharacterGameplayStateSession.IncreaseStatAsync` are the complete, tested, capture-independent
+foundation this wire work will be built on top of - no runtime code in this slice depends on any
+guessed `0x00BB` framing.
+
 ## Handwritten custom world content
 
 `src/MapServer/Generated/` is rAthena-derived: it is produced by `WorldDataImporter` and must

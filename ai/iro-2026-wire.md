@@ -634,5 +634,39 @@ in this document (`0x00B0 param 12 = 1` for the character's initial SkillPoints)
 authoritative mutation path this handler calls into - see `MapClientSession.
 HandleIroSkillLevelUpRequestAsync` for the thin parse-and-call wiring.
 
+## Open: stock-iRO base-stat allocation client protocol (0x00BB) - capture-blocked
+
+Live Athena observation, immediately following the verified `0x0112` skill-up acceptance flow
+above (same session, same character: `class=Novice base_level=2 job_level=2 STR..LUK=1
+status_point=51`): clicking `+` on a base stat causes the stock iRO client to send opcode
+`0x00BB`, which Athena currently does not have registered:
+
+```text
+Unsupported map client packet=0x00BB len=2
+Client disconnected
+```
+
+`len=2` is proof only that Athena's unsupported-packet boundary is reached immediately after
+identifying the 2-byte opcode header - it is explicitly NOT proof that the real stock-iRO
+`0x00BB` request is 2 bytes long. The `0x0112` finding directly above this section (rAthena
+generic length 4 vs. real stock-iRO length 5, due to one added opaque trailing byte) is the
+exact precedent for why an Athena "unsupported packet" log line can never be trusted as real
+wire framing evidence for the CURRENT client generation.
+
+Pinned rAthena registers `0x00BB` as `parseable_packet(0x00bb,5,clif_parse_StatusUp,2,4)` -
+offset 2 a stat identifier, offset 4 a signed increase amount, calling
+`pc_statusup(sd, statId, increaseAmount)`. This is **Reference-backed only, not Verified** - per
+this document's own evidence-priority rule, a generic rAthena `PACKETVER` length is never
+sufficient on its own to register a live packet case for stock iRO. Likewise, pinned
+`ZC_STATUS_CHANGE_ACK = 0x00BC` (`packetType/sp/ok/value`) is Reference-backed only for the
+success-response shape.
+
+**Not implemented pending capture**: no `0x00BB` case in `MapClientSession`, no request parser,
+no response serializer, no assumed opaque byte, no assumed response field layout. See
+`ai/map-server.md`'s "Stock iRO client stat-up wire" section for the complete list of what this
+blocks and the exact capture this project needs (`STR 1→2`, `AGI 1→2`, ideally `STR 2→3`, each
+transition idled and captured in both directions) before any of it can move from Reference-backed
+to Verified.
+
 ## Capture handling
 Official captures can contain credentials, account/session identifiers, bearer/JWT-like tokens, and other sensitive authentication material. Never commit unsanitized PCAPs or raw token dumps to the repository.

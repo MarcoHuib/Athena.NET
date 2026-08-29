@@ -446,13 +446,25 @@ public sealed class CompilerTests
         // of leaving it absent; all 175 generated jobs now get complete progression data
         // (previously only 147 did, because the compiler required non-null BaseHp/BaseSp
         // tables instead of falling back to the formula). Unique value sets rose from 67 to
-        // 89 because these newly-resolved HP/SP curves are genuinely distinct per job.
-        Assert.Equal(new CharacterDataCounts(194, 175, 175, 89, 1635, 175, 175), generated.Counts);
+        // 89 because these newly-resolved HP/SP curves are genuinely distinct per job, then to
+        // 134 once MaxBaseStat (ResolveJobParameterCategory's ported pc_maxparameter job-
+        // category cap - src/map/pc.cpp:14335-14407) joined the HashKey: jobs that previously
+        // hashed identically on HP/SP/stat-point/job-bonus curves alone (e.g. an ordinary 2-1
+        // job and its "2" gender-variant id) now also differ whenever their pinned stat caps
+        // differ, which is the common case across the Normal/Trans/Third/ThirdTrans/Baby/
+        // BabyThird/Extended/Fourth/Summoner categories.
+        Assert.Equal(new CharacterDataCounts(194, 175, 175, 134, 1635, 175, 175), generated.Counts);
         var progression = generated.Artifacts.Single(item => item.RelativePath == "Progression/GeneratedProgressionData.cs").Source;
         Assert.Contains("Novice = new(JobClass.Novice, 99, 10, [0, 548, 894, 1486", progression);
         Assert.Contains("[0, 10, 18, 28", progression);
         Assert.Contains("[0, 40, 45, 50", progression);
         Assert.Contains("rAthena commit: e985006171d2eb320ee512a653f4c83aea3d81b6", progression);
+
+        // Novice (0) is JobParameterCategory.Normal (ordinary MAPID_NOVICE, no JOBL_BABY/
+        // THIRD/UPPER bit and not one of the Summoner/Kagerou/Oboro/Rebellion special mapid
+        // ranges) => conf/battle/player.conf's max_parameter = 99, the trailing MaxBaseStat arg.
+        var noviceLine = progression.Split('\n').Single(line => line.Contains("Novice = new(JobClass.Novice, ", StringComparison.Ordinal));
+        Assert.EndsWith(", 99);", noviceLine.TrimEnd());
 
         // Dragon_Knight (4252) regression anchor for the HP/SP formula fix: its job_stats.yml
         // block declares HpFactor 68, HpIncrease 5828, SpFactor 7, SpIncrease 14 with no
@@ -461,6 +473,72 @@ public sealed class CompilerTests
         Assert.Contains("DragonKnight = new(JobClass.DragonKnight, ", progression);
         var dragonKnightLine = progression.Split('\n').Single(line => line.Contains("DragonKnight = new(JobClass.DragonKnight, ", StringComparison.Ordinal));
         Assert.Contains("[0, 93, 152, 212, ", dragonKnightLine);
+
+        // Dragon_Knight is JobParameterCategory.Fourth (pc_is_primary_fourth's
+        // MAPID_DRAGON_KNIGHT..MAPID_SHADOW_CROSS range) => max_fourth_parameter = 130.
+        Assert.EndsWith(", 130);", dragonKnightLine.TrimEnd());
+    }
+
+    // Parity fixtures for CharacterDataCompiler.ResolveJobParameterCategory/
+    // JobParameterCategoryMaxStat - one representative generated job per distinct pinned
+    // pc_maxparameter category (src/map/pc.cpp:14335-14407), verified against
+    // conf/battle/player.conf's shipped max_*_parameter values. Job/category pairing:
+    //   Novice        -> Normal      (ordinary MAPID_NOVICE)                  -> 99
+    //   NoviceHigh     -> Trans       (JOBL_UPPER, no JOBL_THIRD)              -> 99
+    //   RuneKnight     -> Third       (JOBL_THIRD, primary 3-1 range)          -> 130
+    //   RuneKnightT    -> ThirdTrans  (JOBL_THIRD|JOBL_UPPER)                  -> 130
+    //   Baby           -> Baby        (JOBL_BABY, no JOBL_THIRD)               -> 80
+    //   BabyRuneKnight -> BabyThird   (JOBL_BABY|JOBL_THIRD)                   -> 117
+    //   Kagerou        -> Extended    (MAPID_SECONDMASK == MAPID_KAGEROUOBORO) -> 130
+    //   Summoner       -> Summoner    (MAPID_FIRSTMASK == MAPID_SUMMONER)      -> 130
+    //   DragonKnight   -> Fourth      (pc_is_primary_fourth)                   -> 130
+    [Theory]
+    [InlineData("Novice", 99)]
+    [InlineData("NoviceHigh", 99)]
+    [InlineData("RuneKnight", 130)]
+    [InlineData("RuneKnightT", 130)]
+    [InlineData("Baby", 80)]
+    [InlineData("BabyRuneKnight", 117)]
+    [InlineData("Kagerou", 130)]
+    [InlineData("Summoner", 130)]
+    [InlineData("DragonKnight", 130)]
+    public void CharacterDataCompiler_ResolvesPinnedMaxBaseStatPerJobParameterCategory(string jobIdentifier, ushort expectedMaxBaseStat)
+    {
+        var root = Path.Combine(FindRepositoryRoot(), "legacy/rathena");
+        var progression = CompileCharacterData(root).Artifacts.Single(item => item.RelativePath == "Progression/GeneratedProgressionData.cs").Source;
+        var line = progression.Split('\n').Single(entry => entry.Contains($" {jobIdentifier} = new(JobClass.{jobIdentifier}, ", StringComparison.Ordinal));
+        Assert.EndsWith($", {expectedMaxBaseStat});", line.TrimEnd());
+    }
+
+    // Baby_Summoner is the one pinned edge case where two of ResolveJobParameterCategory's
+    // special-cased mapid ranges could both apply (JOBL_BABY is set AND MAPID_FIRSTMASK ==
+    // MAPID_SUMMONER) - pinned pc.cpp:14340-14350 checks JOBL_BABY first ("Always check
+    // babies first"), so this must resolve to max_baby_parameter (80), never
+    // max_summoner_parameter (130).
+    [Fact]
+    public void CharacterDataCompiler_BabySummonerPrefersBabyCategoryOverSummoner()
+    {
+        var root = Path.Combine(FindRepositoryRoot(), "legacy/rathena");
+        var progression = CompileCharacterData(root).Artifacts.Single(item => item.RelativePath == "Progression/GeneratedProgressionData.cs").Source;
+        var line = progression.Split('\n').Single(entry => entry.Contains(" BabySummoner = new(JobClass.BabySummoner, ", StringComparison.Ordinal));
+        Assert.EndsWith(", 80);", line.TrimEnd());
+    }
+
+    // Every generated JobClass must resolve a MaxBaseStat deterministically -
+    // ResolveJobParameterCategory throws for an id with no pinned pc_jobid2mapid case rather
+    // than silently defaulting, so simply completing Compile() without throwing already
+    // proves full coverage of the 175 generated jobs; this test additionally confirms every
+    // emitted definition line actually carries a trailing numeric MaxBaseStat argument.
+    [Fact]
+    public void CharacterDataCompiler_EveryGeneratedJobResolvesAMaxBaseStat()
+    {
+        var root = Path.Combine(FindRepositoryRoot(), "legacy/rathena");
+        var generated = CompileCharacterData(root);
+        var progression = generated.Artifacts.Single(item => item.RelativePath == "Progression/GeneratedProgressionData.cs").Source;
+        var definitionLines = progression.Split('\n').Where(line => line.Contains("internal static readonly CharacterProgressionDefinition ", StringComparison.Ordinal)).ToArray();
+        Assert.Equal(175, definitionLines.Length);
+        foreach (var line in definitionLines)
+            Assert.Matches(@", \d+\);\s*$", line);
     }
 
     [Fact]
