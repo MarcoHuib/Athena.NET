@@ -1244,13 +1244,48 @@ exercises this EXACT production sequence (not a manually-constructed wire entry)
 caught the historical Range=0 production bug - see this file's own PR-review-correction report for
 why the earlier serializer-only test could not.
 
-### CURRENT OPEN WIRE ITEM
+### Stock iRO client skill-up wire (0x0112 → 0x0B33 + 0x00B0)
 
-Stock iRO client → MapServer skill-level-up request: not yet captured/verified. Do not implement
-from rAthena packet tables alone. Required capture: a character with an available skill point opens
-the stock skill window and clicks + on a skill; record the exact client→server bytes. No guessed
-packet ID, layout, or response sequence exists anywhere in this codebase. When that capture lands,
-the future handler is expected to be a thin parse-and-call: parse the verified SkillId, call
-`CharacterGameplayStateSession.LearnSkillAsync`, send the verified response bytes - every domain
-rule already lives in `CharacterSkillService`/`CharacterGameplayStateSession`, never in networking
-code.
+Closes the loop the section above left open. Verified via a dedicated capture
+(`iro-skill-up-nv-basic-0-to-1.pcapng`) - full field-level evidence and confidence ratings live in
+`ai/iro-2026-wire.md`'s "Verified stock-iRO skill-up client protocol" section; this section covers
+only the MapServer-side flow and its architectural placement.
+
+```text
+0x0B32 bootstrap
+        ↓
+client 0x0112 skill-up request (SkillId + 1 opaque byte, task-verified)
+        ↓
+IroSkillLevelUpRequestPacket.TryParse (pure, structural only)
+        ↓
+MapClientSession.HandleIroSkillLevelUpRequestAsync (thin parse-and-call)
+        ↓
+CharacterGameplayStateSession.LearnSkillAsync (UNCHANGED from PR #15 - the same
+generic CharacterSkillService.ValidateUpgrade → ICharacterSkillPersistence.LearnSkillAsync
+→ atomic CharServer MSSQL transaction → replace State+Skills together pipeline)
+        ↓
+on success: CharacterSkillService.CalculateEffectiveState + IroSkillInfoEntry.From
+projected from the POST-COMMIT state → IroSkillLevelUpdatePackets.Build (0x0B33, 17 bytes,
+same SKILLDATA entry layout as one 0x0B32 row) → IroCharacterProgressionPackets.Parameter(12, …)
+(0x00B0, reused unchanged from the existing progression serializer)
+        ↓
+on any rejection (unknown skill, out-of-tree, no points, MaxLevel, prerequisite, stale
+version, DB failure, etc.): LearnSkillAsync returns null, handler sends nothing and neither
+State nor Skills is mutated - a gameplay rejection, never a malformed-packet disconnect
+```
+
+The handler adds no new domain logic: `CharacterSkillService`/`CharacterGameplayStateSession`
+are exactly as PR #15 left them. `IroSkillLevelUpRequestPacket` and `IroSkillLevelUpdatePackets`
+are the only new wire-boundary types, mirroring the existing `IroUseItemRequestPacket`/
+`IroSkillInfoListPackets` split between pure parsing/serialization and session orchestration.
+
+Still open (see `ai/iro-2026-wire.md`'s evidence-boundary note for detail): the official
+rejection-response behavior (no capture exists; Athena sends no packet, which is
+Reference-backed, not Verified) and incremental prerequisite-unlock synchronization (learning a
+skill that unlocks another visible skill is only reflected on the next reconnect's `0x0B32`, not
+incrementally - no capture of that transition exists yet). Neither gap blocks the acceptance case
+(`NV_BASIC` has no dependents in the current generated Novice tree).
+
+This PR does not implement skill EXECUTION - a persisted, wire-synchronized
+`NV_BASIC`/`SM_BASH`/etc. level does not mean that skill can be cast, deals damage, consumes SP,
+applies a status, or has a cooldown. That remains fully out of scope for a future slice.

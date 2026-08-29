@@ -36,6 +36,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
         [PacketConstants.IroCzReqWearEquip] = PacketConstants.IroCzReqWearEquipLength,
         [PacketConstants.IroCzReqTakeoffEquip] = PacketConstants.IroCzReqTakeoffEquipLength,
         [PacketConstants.IroCzUseItem] = PacketConstants.IroCzUseItemLength,
+        [PacketConstants.IroCzSkillLevelUp] = PacketConstants.IroCzSkillLevelUpLength,
     };
 
     private readonly TcpClient _client;
@@ -921,6 +922,9 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
             case PacketConstants.IroCzUseItem when _iroAuthRequested:
                 await HandleIroUseItemRequestAsync(packet, cancellationToken);
                 break;
+            case PacketConstants.IroCzSkillLevelUp when _iroAuthRequested:
+                await HandleIroSkillLevelUpRequestAsync(packet, cancellationToken);
+                break;
             default:
                 LogUnsupportedPacket(packetType, packet);
                 RequestClose();
@@ -1782,6 +1786,48 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
             MapLogger.Info($"[iRO MAP DEBUG] Sending 0x0B41 for item-use grant itemId={grant.ItemId} count={grant.Amount} clientIndex={grantClientIndex}");
             await WriteAsync(grantPickupPacket, cancellationToken);
         }
+    }
+
+    // Thin parse-and-call handler (task section 16) for the verified stock-iRO skill-up request
+    // (see IroSkillLevelUpRequestPacket, ai/iro-2026-wire.md). Deliberately does NOT itself check
+    // SkillPoints/MaxLevel/BaseLevel/JobLevel/prerequisites/acquisition gates/CharSkillFlag - all
+    // of that already lives in CharacterSkillService.ValidateUpgrade, reached exclusively through
+    // CharacterGameplayStateSession.LearnSkillAsync (the SAME authoritative mutation path proven
+    // by CharacterSkillLearnIntegrationTests). A structurally valid but semantically illegal
+    // request (unknown skill, out-of-tree, no points, etc.) simply returns null from
+    // LearnSkillAsync here and is silently dropped - a gameplay rejection, never a malformed-
+    // packet disconnect (task section 79).
+    private async Task HandleIroSkillLevelUpRequestAsync(byte[] packet, CancellationToken cancellationToken)
+    {
+        if (!IroSkillLevelUpRequestPacket.TryParse(packet, out var request)) return;
+        if (_gameplayState is not { } gameplayState) return;
+
+        MapLogger.Info($"[iRO SKILL] Received skill-up request charId={_charId} skillId={request.SkillId} currentSkillPoints={gameplayState.State.SkillPoints}");
+
+        var tree = Athena.Net.MapServer.Generated.Skills.GeneratedSkillTreeRegistry.Get(gameplayState.State.JobClass);
+        var result = await gameplayState.LearnSkillAsync(tree, request.SkillId, cancellationToken);
+        if (result is null)
+        {
+            MapLogger.Info($"[iRO SKILL] Rejected skill-up charId={_charId} skillId={request.SkillId}");
+            return;
+        }
+
+        // Response fields are derived from the POST-COMMIT state (task section 25/50) - never
+        // reconstructed from what the client requested or from the pre-mutation snapshot.
+        // gameplayState.State/Skills already reflect the committed result at this point
+        // (LearnSkillAsync replaces both under its own lock before returning non-null).
+        MapLogger.Info($"[iRO SKILL] Learned skillId={result.SkillId} newLevel={result.NewSkillLevel} remainingSkillPoints={gameplayState.State.SkillPoints} newVersion={gameplayState.State.Version}");
+
+        var canonical = Athena.Net.MapServer.Generated.Skills.GeneratedSkillRegistry.GetById(result.SkillId);
+        var effective = CharacterSkillService.CalculateEffectiveState(gameplayState.State, gameplayState.Skills, tree, out _);
+        var learnedState = effective.First(s => s.SkillId == result.SkillId);
+        var entry = IroSkillInfoEntry.From(learnedState, canonical, gameplayState.Skills);
+
+        MapLogger.Info($"[iRO MAP DEBUG] Sending 0x0B33 skillId={entry.SkillId} newLevel={entry.CurrentLevel}");
+        await WriteAsync(IroSkillLevelUpdatePackets.Build(entry), cancellationToken);
+
+        MapLogger.Info($"[iRO MAP DEBUG] Sending 0x00B0 param 12 (SkillPoints) = {gameplayState.State.SkillPoints}");
+        await WriteAsync(IroCharacterProgressionPackets.Parameter(12, gameplayState.State.SkillPoints), cancellationToken);
     }
 
     // Pinned clif_parse_EquipItem (clif.cpp:12113-12159): index = server_index(p->index)
