@@ -654,11 +654,27 @@ convention, all five pinned `prt_fild08{,a,b,c,d}` family rows are generated los
 an unrelated map sharing "Little Poring"'s display name, is the only excluded row).
 
 Mob definitions are generated once, stateless/deterministic, into the shared global
-`GeneratedMobs` (`internal static partial class`, split across
-`Generated/GameData/Mobs/GeneratedMobs.Monsters.cs` for ordinary monsters — the only populated
-category today; a future `GeneratedMobs.Mvps.cs`/etc. would only be added once real MVP-flagged
-mobs are generated, never as an empty placeholder). One invocation regenerates the complete file
-for the full requested mob set — it never reads back or merges the previous output:
+`GeneratedMobs` (`internal static partial class`). Output is sharded by pinned-source-derived
+category AND a fixed 1000-MobId range grid within that category — a FIXED grid (1000-1999,
+2000-2999, ...), never item-count-based chunking, so a mob's file membership never shifts merely
+because unrelated IDs are added/removed elsewhere in the same category. Only non-empty
+category+range combinations are ever written — an empty bucket produces no file. Today's five mobs
+(1002, 1007, 1063, 2398, 2401) all fall in the one populated category ("Monsters" — the only
+category populated today; a future "Mvps"/etc. would only appear once real MVP-flagged mobs are
+generated), landing in two files:
+
+```text
+Generated/GameData/Mobs/GeneratedMobs.Monsters.1000-1999.cs   (Poring 1002, Fabre 1007, Lunatic 1063)
+Generated/GameData/Mobs/GeneratedMobs.Monsters.2000-2999.cs   (LittlePoring 2398, GPoring 2401)
+```
+
+Each `MobDefinition` is emitted as exactly one physical source line (still fully named-argument,
+never collapsed to positional/helper arguments) — generated data will eventually hold thousands of
+entries, where the original ~25-line-per-mob layout made large datasets hard to scan/grep/diff.
+One invocation regenerates every file for the full requested mob set; the output directory is
+treated as one generation unit (every `GeneratedMobs.<Category>.*.cs` already present is deleted
+before writing), so a bucket no longer covered by the current invocation does not silently survive
+from a previous run:
 
 ```bash
 dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- compile-mob-definitions \
@@ -668,38 +684,52 @@ dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- compile
   --mob-id 1063 --constant-name Lunatic \
   --mob-id 1007 --constant-name Fabre \
   --mob-id 2398 --constant-name LittlePoring \
-  --class-name GeneratedMobs \
-  --output src/MapServer/Generated/GameData/Mobs/GeneratedMobs.Monsters.cs
+  --class-name GeneratedMobs --category Monsters \
+  --output-dir src/MapServer/Generated/GameData/Mobs
 ```
 
 Map-scoped placement (`MobSpawnDefinition`: which map, how many, how often) stays a completely
-separate concern, generated into `Generated/World/PrtFild08d/PrtFild08dMobSpawns.cs` and
+separate concern, and is itself MAP-CENTRIC — one file per real pinned map, never bundled under one
+"primary"/currently-served map's folder merely because only that one is instantiated today. Each
+of the five pinned `prt_fild08{,a,b,c,d}` family members gets its own complete file exposing a
+single `MobSpawnDefinition[] All` (mixing whichever different mobs that one map spawns), all
 referencing the global `GeneratedMobs.*` constants — never a map-local copy of a mob's stats:
+
+```text
+Generated/World/PrtFild08/PrtFild08MobSpawns.cs      (all four mobs on prt_fild08)
+Generated/World/PrtFild08a/PrtFild08aMobSpawns.cs    (all four mobs on prt_fild08a)
+Generated/World/PrtFild08b/PrtFild08bMobSpawns.cs    (all four mobs on prt_fild08b)
+Generated/World/PrtFild08c/PrtFild08cMobSpawns.cs    (all four mobs on prt_fild08c)
+Generated/World/PrtFild08d/PrtFild08dMobSpawns.cs    (all four mobs on prt_fild08d)
+```
 
 ```bash
 dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- compile-mob-spawn \
   --rathena-root legacy/rathena --rathena-commit e985006171d2eb320ee512a653f4c83aea3d81b6 \
-  --mob-id 1002 --name Poring --constant-name Poring --spawn-array-name PoringSpawns \
-  --mob-id 1063 --name Lunatic --constant-name Lunatic --spawn-array-name LunaticSpawns \
-  --mob-id 1007 --name Fabre --constant-name Fabre --spawn-array-name FabreSpawns \
-  --mob-id 2398 --name "Little Poring" --constant-name LittlePoring --spawn-array-name LittlePoringSpawns \
+  --mob-id 1002 --name Poring --constant-name Poring \
+  --mob-id 1063 --name Lunatic --constant-name Lunatic \
+  --mob-id 1007 --name Fabre --constant-name Fabre \
+  --mob-id 2398 --name "Little Poring" --constant-name LittlePoring \
   --spawn-file npc/re/mobs/academy.txt --exclude-map new_1-3 \
-  --definition-class GeneratedMobs --spawn-class-name PrtFild08dMobSpawns \
-  --namespace Athena.Net.MapServer.Generated.World.PrtFild08d \
-  --output-spawns src/MapServer/Generated/World/PrtFild08d/PrtFild08dMobSpawns.cs
+  --definition-class GeneratedMobs \
+  --namespace-root Athena.Net.MapServer.Generated.World \
+  --output-root src/MapServer/Generated/World
 ```
 
+The output root is likewise treated as one generation unit for this invocation's mob set: every
+existing `<PascalMap>MobSpawns.cs` under any immediate subdirectory of `--output-root` is deleted
+before writing (Academy's own `Izlude/Academy/AcademyMobSpawns.cs` lives one level deeper and is
+untouched by this sweep). `--mob-id`/`--name`/`--constant-name` are repeated, position-matched
+lists — one invocation covers an arbitrary number of mobs sharing a spawn-declaration family; N=1
+is byte-identical to the original single-mob command shape (verified by `CompilerTests`).
 `compile-mob-spawn` was narrowed to spawn-only (it previously also emitted a mob-definition file,
 which risked one map's spawn command silently owning/overwriting the shared global definition
-class — corrected before that shape was ever composed into the live world). `compile-mob-spawn`
-and `compile-mob-definitions` both accept repeated `--mob-id`/`--name`/`--constant-name`/(spawn
-array name) flags, so one invocation covers an arbitrary number of mobs; N=1 is byte-identical to
-the original single-mob command shape (verified by `CompilerTests`).
+class — corrected before that shape was ever composed into the live world).
 
-`GeneratedMobs.cs` (a single non-`partial` file) is now `GeneratedMobs.Monsters.cs`
-(`internal static partial class GeneratedMobs`) — existing call sites (`GeneratedMobs.GPoring`,
-etc.) are unaffected; file layout is purely organizational, matching the same pattern
-`GeneratedItems` is expected to use as more categories are imported.
+File layout (category+range sharding, map-centric spawn files) is purely organizational —
+consumers always reference `GeneratedMobs.<Name>` / `<PascalMap>MobSpawns.All` regardless of which
+generated file actually declares it, matching the same pattern `GeneratedItems` is expected to use
+as more categories are imported.
 
 #### Hosting scope: `servedMaps`
 

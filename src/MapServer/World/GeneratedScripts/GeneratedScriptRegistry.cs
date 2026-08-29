@@ -2,7 +2,11 @@ using Athena.Net.MapServer.Generated.World.Izlude.Academy;
 using Athena.Net.MapServer.Generated.World.Izlude.IzludeCity;
 using Athena.Net.MapServer.Generated.World.Prontera;
 using Athena.Net.MapServer.Generated.World.PrtFild08d;
-using PrtFild08dMobs = Athena.Net.MapServer.Generated.World.PrtFild08d.PrtFild08dMobSpawns;
+using PrtFild08MobSpawns = Athena.Net.MapServer.Generated.World.PrtFild08.PrtFild08MobSpawns;
+using PrtFild08aMobSpawns = Athena.Net.MapServer.Generated.World.PrtFild08a.PrtFild08aMobSpawns;
+using PrtFild08bMobSpawns = Athena.Net.MapServer.Generated.World.PrtFild08b.PrtFild08bMobSpawns;
+using PrtFild08cMobSpawns = Athena.Net.MapServer.Generated.World.PrtFild08c.PrtFild08cMobSpawns;
+using PrtFild08dMobSpawns = Athena.Net.MapServer.Generated.World.PrtFild08d.PrtFild08dMobSpawns;
 
 namespace Athena.Net.MapServer.World.GeneratedScripts;
 
@@ -60,15 +64,20 @@ public static partial class GeneratedScriptRegistry
         // judged disproportionate for this one loop, so it lives here instead, alongside this file's
         // other hand-authored composition logic.
         foreach (var spawn in AcademyMobSpawns.GPoringSpawns) builder.AddMobSpawn(spawn);
-        // prt_fild08d field population (izlude-prontera-travel-trace.txt / ai/world-data.md's
+        // prt_fild08{,a,b,c,d} field population (izlude-prontera-travel-trace.txt / ai/world-data.md's
         // travel-corridor section): source-backed from legacy/rathena/npc/re/mobs/academy.txt via
-        // compile-mob-spawn, same composition pattern as AcademyMobSpawns.GPoringSpawns above - no
-        // MonsterRegistry/MobSpawnDefinition/IMobSpawnCellSelector changes were needed, since that
-        // runtime is already generic over whatever spawns are registered here.
-        foreach (var spawn in PrtFild08dMobs.PoringSpawns) builder.AddMobSpawn(spawn);
-        foreach (var spawn in PrtFild08dMobs.LunaticSpawns) builder.AddMobSpawn(spawn);
-        foreach (var spawn in PrtFild08dMobs.FabreSpawns) builder.AddMobSpawn(spawn);
-        foreach (var spawn in PrtFild08dMobs.LittlePoringSpawns) builder.AddMobSpawn(spawn);
+        // compile-mob-spawn, map-centric output (one file/class per real map, never bundled under
+        // one "primary" map's folder). All five pinned family members are registered here
+        // losslessly - MapServerHostingScope.ServedMaps (only prt_fild08d today) is a SEPARATE
+        // runtime-instantiation decision made later in MapServerWorld.Build, not a generation-time
+        // or registration-time exclusion. No MonsterRegistry/MobSpawnDefinition/
+        // IMobSpawnCellSelector changes were needed, since that runtime is already generic over
+        // whatever spawns are registered here.
+        foreach (var spawn in PrtFild08MobSpawns.All) builder.AddMobSpawn(spawn);
+        foreach (var spawn in PrtFild08aMobSpawns.All) builder.AddMobSpawn(spawn);
+        foreach (var spawn in PrtFild08bMobSpawns.All) builder.AddMobSpawn(spawn);
+        foreach (var spawn in PrtFild08cMobSpawns.All) builder.AddMobSpawn(spawn);
+        foreach (var spawn in PrtFild08dMobSpawns.All) builder.AddMobSpawn(spawn);
     }
 
     private static WorldRegistryBuildResult BuildRegistry()

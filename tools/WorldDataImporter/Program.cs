@@ -343,15 +343,25 @@ internal static class WorldDataImporterCli
             await File.ReadAllTextAsync(Path.Combine(root, required[8]))), commit);
     }
 
-    // Stateless/deterministic: fully regenerates the shared global GeneratedMobs.cs from pinned
-    // mob_db.yml for exactly the --mob-id/--constant-name pairs given on THIS invocation - it never
-    // reads back or merges the existing output file. Extending coverage (a new map's mobs) means
-    // adding that mob's --mob-id/--constant-name to the invocation, not editing generated output.
-    // Mob definitions are global game data ("what is mob <id>") shared by every map that spawns it;
-    // this command owns that concern exclusively. Map-specific placement (where/how many/how often)
-    // is a completely separate concern owned by compile-mob-spawn below.
+    // Stateless/deterministic: fully regenerates the shared global GeneratedMobs partial class from
+    // pinned mob_db.yml for exactly the --mob-id/--constant-name pairs given on THIS invocation - it
+    // never reads back or merges any existing output file. Extending coverage (a new map's mobs)
+    // means adding that mob's --mob-id/--constant-name to the invocation, not editing generated
+    // output. Mob definitions are global game data ("what is mob <id>") shared by every map that
+    // spawns it; this command owns that concern exclusively. Map-specific placement (where/how
+    // many/how often) is a completely separate concern owned by compile-mob-spawn below.
+    //
+    // Output is sharded by fixed 1000-MobId buckets within the given --category (e.g.
+    // "Monsters"), one file per NON-EMPTY bucket: GeneratedMobs.<Category>.<lo>-<hi>.cs (lo/hi are
+    // the bucket's own fixed boundaries, e.g. 1000-1999, never derived from which IDs happen to be
+    // present) - a fixed range grid, not item-count chunking, so a mob's file membership never
+    // shifts as unrelated IDs are added/removed elsewhere in the same category. The full output
+    // directory is treated as one generation unit for this category: every GeneratedMobs.<Category>.*.cs
+    // file already in --output-dir is deleted before writing, so a bucket that no longer has any
+    // selected mob does not silently survive from a previous run.
     private static async Task<int> CompileMobDefinitionsAsync(string[] args)
     {
+        const int BucketSize = 1000;
         var options = CliOptions.Parse(args);
         var root = Path.GetFullPath(options.Required("rathena-root"));
         var mobIds = options.All("mob-id").Select(value => int.Parse(value, CultureInfo.InvariantCulture)).ToArray();
@@ -360,17 +370,30 @@ internal static class WorldDataImporterCli
         if (constantNames.Count != mobIds.Length) throw new ArgumentException("compile-mob-definitions requires the same number of --mob-id and --constant-name flags (one pair per mob, in order).");
         var commit = options.Required("rathena-commit");
         var className = options.Required("class-name");
+        var category = options.Required("category");
+        var outputDir = Path.GetFullPath(options.Required("output-dir"));
 
         var mobDbYaml = await File.ReadAllTextAsync(Path.Combine(root, "db/re/mob_db.yml"));
         var definitions = mobIds.Zip(constantNames, (id, constantName) => (Mob: MobDataCompiler.ReadMobDefinition(mobDbYaml, id), ConstantName: constantName)).ToArray();
+        var sourceFile = CanonicalSourceFile(Path.Combine(root, "db/re/mob_db.yml"));
 
-        var output = Path.GetFullPath(options.Required("output"));
-        Directory.CreateDirectory(Path.GetDirectoryName(output)!);
-        await File.WriteAllTextAsync(output,
-            MobDataCompiler.GenerateMobDefinitions(definitions, commit, className, CanonicalSourceFile(Path.Combine(root, "db/re/mob_db.yml")), 0),
-            new System.Text.UTF8Encoding(false));
+        Directory.CreateDirectory(outputDir);
+        var stalePrefix = $"{className}.{category}.";
+        foreach (var stale in Directory.EnumerateFiles(outputDir, $"{stalePrefix}*.cs")) File.Delete(stale);
 
-        Console.WriteLine($"Generated {definitions.Length} mob definition(s): {string.Join(", ", definitions.Select(d => $"{d.Mob.AegisName} ({d.Mob.Id})"))}.");
+        var buckets = definitions.GroupBy(item => item.Mob.Id / BucketSize).OrderBy(group => group.Key);
+        var encoding = new System.Text.UTF8Encoding(false);
+        var fileCount = 0;
+        foreach (var bucket in buckets)
+        {
+            var lo = bucket.Key * BucketSize;
+            var hi = lo + BucketSize - 1;
+            var path = Path.Combine(outputDir, $"{className}.{category}.{lo}-{hi}.cs");
+            await File.WriteAllTextAsync(path, MobDataCompiler.GenerateMobDefinitions(bucket.ToArray(), commit, className, sourceFile, 0), encoding);
+            fileCount++;
+        }
+
+        Console.WriteLine($"Generated {definitions.Length} mob definition(s) across {fileCount} range-sharded file(s): {string.Join(", ", definitions.Select(d => $"{d.Mob.AegisName} ({d.Mob.Id})"))}.");
         return 0;
     }
 
@@ -378,9 +401,18 @@ internal static class WorldDataImporterCli
     // --definition-class, e.g. "GeneratedMobs") rather than generating one itself - keeps this
     // command's sole responsibility "where/how many/how often does mob X spawn", matching
     // MobSpawnDefinition's own map-scoped shape. Supports one-or-many mobs per invocation via
-    // repeated --mob-id/--name/--constant-name/--spawn-array-name (parallel, position-matched
-    // lists - CliOptions.All preserves the order flags were passed in), so one file (e.g.
-    // PrtFild08dMobSpawns.cs) can hold every mob spawning on that map.
+    // repeated --mob-id/--name (parallel lists), so one invocation can cover every mob a pinned
+    // spawn-declaration family shares.
+    //
+    // Output is MAP-CENTRIC, one file per real source map (never bundled under one "primary" map's
+    // folder merely because only that map is currently served): --output-root/<PascalMap>/
+    // <PascalMap>MobSpawns.cs, each exposing a single `MobSpawnDefinition[] All` covering every
+    // requested mob's rows for that one map. A pinned family's other instanced duplicates (e.g.
+    // prt_fild08/a/b/c alongside prt_fild08d) still get their own complete, source-backed file even
+    // though MapServerHostingScope.ServedMaps may not instantiate them yet - that's a separate
+    // runtime decision, not a generation-time exclusion. The output root is treated as one
+    // generation unit: every existing <PascalMap>MobSpawns.cs under it is deleted before writing,
+    // so a map no longer covered by this invocation's mob set does not silently survive.
     private static async Task<int> CompileMobSpawnAsync(string[] args)
     {
         var options = CliOptions.Parse(args);
@@ -389,21 +421,19 @@ internal static class WorldDataImporterCli
         var mobNames = options.All("name");
         var mobIds = options.All("mob-id").Select(value => int.Parse(value, CultureInfo.InvariantCulture)).ToArray();
         var constantNames = options.All("constant-name");
-        var spawnArrayNames = options.All("spawn-array-name");
         if (mobNames.Count == 0) throw new ArgumentException("compile-mob-spawn requires at least one --name.");
-        if (mobIds.Length != mobNames.Count || constantNames.Count != mobNames.Count || spawnArrayNames.Count != mobNames.Count)
-            throw new ArgumentException("compile-mob-spawn requires the same number of --mob-id, --name, --constant-name, and --spawn-array-name flags (one set per mob, in order).");
+        if (mobIds.Length != mobNames.Count || constantNames.Count != mobNames.Count)
+            throw new ArgumentException("compile-mob-spawn requires the same number of --mob-id, --name, and --constant-name flags (one set per mob, in order).");
         var commit = options.Required("rathena-commit");
         var definitionClassName = options.Required("definition-class");
 
         var spawnPath = Path.Combine(root, spawnFile);
         var spawnText = await File.ReadAllTextAsync(spawnPath);
         var excludedMaps = options.All("exclude-map").ToHashSet(StringComparer.Ordinal);
-        var spawnClassName = options.Required("spawn-class-name");
-        var spawnNamespace = options.Optional("namespace");
+        var namespaceRoot = options.Required("namespace-root");
+        var outputRoot = Path.GetFullPath(options.Required("output-root"));
 
-        var spawnGroups = new List<(IReadOnlyList<MobDataCompiler.MobSpawnData> Spawns, string MobDefinitionExpression, string ArrayName)>();
-        var totalSpawnDeclarations = 0;
+        var allSpawns = new List<(MobDataCompiler.MobSpawnData Spawn, string MobDefinitionExpression)>();
         for (var index = 0; index < mobNames.Count; index++)
         {
             var mobId = mobIds[index];
@@ -411,21 +441,39 @@ internal static class WorldDataImporterCli
             var spawns = MobDataCompiler.ReadMobSpawns(spawnText, CanonicalSourceFile(spawnPath), mobName, excludedMaps);
             var mismatched = spawns.Where(spawn => spawn.MobId != mobId).ToArray();
             if (mismatched.Length > 0) throw new ArgumentException($"Spawn declaration for '{mobName}' at line {mismatched[0].SourceLine} uses mob id {mismatched[0].MobId}, expected {mobId}.");
-            spawnGroups.Add((spawns, $"{definitionClassName}.{constantNames[index]}", spawnArrayNames[index]));
-            totalSpawnDeclarations += spawns.Count;
+            foreach (var spawn in spawns) allSpawns.Add((spawn, $"{definitionClassName}.{constantNames[index]}"));
         }
 
-        var spawnOutput = Path.GetFullPath(options.Required("output-spawns"));
-        Directory.CreateDirectory(Path.GetDirectoryName(spawnOutput)!);
-        await File.WriteAllTextAsync(spawnOutput,
-            spawnNamespace is null
-                ? MobDataCompiler.GenerateMobSpawnGroups(spawnGroups, commit, spawnClassName)
-                : MobDataCompiler.GenerateMobSpawnGroups(spawnGroups, commit, spawnClassName, spawnNamespace),
-            new System.Text.UTF8Encoding(false));
+        Directory.CreateDirectory(outputRoot);
+        foreach (var staleDir in Directory.EnumerateDirectories(outputRoot))
+        foreach (var stale in Directory.EnumerateFiles(staleDir, "*MobSpawns.cs"))
+            File.Delete(stale);
 
-        Console.WriteLine($"Generated {totalSpawnDeclarations} total spawn declarations for {mobNames.Count} mob(s).");
+        var encoding = new System.Text.UTF8Encoding(false);
+        var byMap = allSpawns.GroupBy(item => item.Spawn.Map, StringComparer.Ordinal).OrderBy(group => group.Key, StringComparer.Ordinal);
+        var fileCount = 0;
+        foreach (var mapGroup in byMap)
+        {
+            var pascalMap = PascalCaseMapName(mapGroup.Key);
+            var mapNamespace = $"{namespaceRoot}.{pascalMap}";
+            var className = $"{pascalMap}MobSpawns";
+            var source = MobDataCompiler.GenerateMobSpawnsForMap(mapGroup.Select(item => (item.Spawn, item.MobDefinitionExpression)).ToArray(), commit, className, mapNamespace);
+            var mapDir = Path.Combine(outputRoot, pascalMap);
+            Directory.CreateDirectory(mapDir);
+            await File.WriteAllTextAsync(Path.Combine(mapDir, $"{className}.cs"), source, encoding);
+            fileCount++;
+        }
+
+        Console.WriteLine($"Generated {allSpawns.Count} total spawn declarations for {mobNames.Count} mob(s) across {fileCount} map file(s).");
         return 0;
     }
+
+    // Deterministic PascalCase from a rAthena map name (e.g. "prt_fild08d" -> "PrtFild08d",
+    // "int_land03" -> "IntLand03") - splits on '_' only, since rAthena map names never contain
+    // other separators; a numeric suffix glued to the preceding word (e.g. "fild08") is NOT
+    // further split, matching how "prt_fild08d" is one logical instanced-duplicate token.
+    private static string PascalCaseMapName(string mapName) =>
+        string.Concat(mapName.Split('_', StringSplitOptions.RemoveEmptyEntries).Select(part => char.ToUpperInvariant(part[0]) + part[1..]));
 
     private static async Task<int> CompileQuestDropAsync(string[] args)
     {
