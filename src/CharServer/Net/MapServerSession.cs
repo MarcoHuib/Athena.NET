@@ -866,6 +866,19 @@ public sealed class MapServerSession : IDisposable, ISession
         BinaryPrimitives.WriteUInt16LittleEndian(buffer.AsSpan(50, 2), node.Font);
         buffer[52] = node.Sex;
         WriteFixedString(buffer.AsSpan(53, PacketConstants.NameLength), node.CharacterName);
+        BinaryPrimitives.WriteUInt16LittleEndian(buffer.AsSpan(77), node.HairStyle);
+        BinaryPrimitives.WriteUInt16LittleEndian(buffer.AsSpan(79), node.HairColor);
+        BinaryPrimitives.WriteUInt16LittleEndian(buffer.AsSpan(81), node.ClothesColor);
+        BinaryPrimitives.WriteUInt16LittleEndian(buffer.AsSpan(83), node.BodyStyle);
+        BinaryPrimitives.WriteUInt32LittleEndian(buffer.AsSpan(85), node.WeaponAppearance);
+        BinaryPrimitives.WriteUInt32LittleEndian(buffer.AsSpan(89), node.ShieldAppearance);
+        BinaryPrimitives.WriteUInt16LittleEndian(buffer.AsSpan(93), node.HeadBottomAppearance);
+        BinaryPrimitives.WriteUInt16LittleEndian(buffer.AsSpan(95), node.HeadTopAppearance);
+        BinaryPrimitives.WriteUInt16LittleEndian(buffer.AsSpan(97), node.HeadMidAppearance);
+        BinaryPrimitives.WriteUInt16LittleEndian(buffer.AsSpan(99), node.RobeAppearance);
+        BinaryPrimitives.WriteUInt32LittleEndian(buffer.AsSpan(101), node.Option);
+        buffer[105] = node.Karma;
+        BinaryPrimitives.WriteInt16LittleEndian(buffer.AsSpan(106), node.Manner);
 
         return buffer;
     }
@@ -995,5 +1008,5 @@ public sealed class MapServerSession : IDisposable, ISession
         bytes.AsSpan(0, length).CopyTo(buffer);
     }
 
-    private static int MapAuthOkLength => 2 + 2 + 4 + 4 + 4 + 4 + 4 + 1 + 4 + PacketConstants.MapNameLength + 2 + 2 + 1 + 2 + 1 + PacketConstants.NameLength;
+    private static int MapAuthOkLength => 108;
 }

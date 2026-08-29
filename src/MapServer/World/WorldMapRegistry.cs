@@ -60,7 +60,7 @@ public sealed class WorldMapRegistry
     public int EntityCount => _entitiesById.Count;
     public int DynamicWarpActorCount => _dynamicWarpActorCount;
     public IReadOnlyDictionary<string, WorldEntityDefinition> EntitiesById => _entitiesById;
-    public IEnumerable<WorldActor> GetVisibleWarpActors(string mapName, ushort x, ushort y, ushort range = 14) => _worldActors.Where(actor => string.Equals(actor.MapName, mapName, StringComparison.OrdinalIgnoreCase) && Math.Abs((int)actor.X - x) <= range && Math.Abs((int)actor.Y - y) <= range);
+    public IEnumerable<WorldActor> GetVisibleWarpActors(string mapName, ushort x, ushort y, ushort range = WorldVisibilityOptions.DefaultAreaSize) => _worldActors.Where(actor => string.Equals(actor.MapName, mapName, StringComparison.OrdinalIgnoreCase) && Math.Abs((int)actor.X - x) <= range && Math.Abs((int)actor.Y - y) <= range);
     public bool TryGetActor(string entityIdOrName, string mapName, out WorldActor actor)
     {
         actor = _worldActors.FirstOrDefault(candidate => string.Equals(candidate.MapName, mapName, StringComparison.OrdinalIgnoreCase) &&

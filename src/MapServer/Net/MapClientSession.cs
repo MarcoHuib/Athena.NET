@@ -11,7 +11,7 @@ using Athena.Net.MapServer.World.GeneratedScripts;
 
 namespace Athena.Net.MapServer.Net;
 
-public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
+public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayerPresenceObserver
 {
     private static readonly Dictionary<short, int> PacketLengths = new()
     {
@@ -79,6 +79,9 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
     // "collision-less means no real map is loaded" convention (MapServerWorld.Build's own default).
     private readonly IMapCollisionProvider _collisionProvider;
     private readonly GameplayRateOptions _rates;
+    private readonly PlayerPresenceRegistry _players;
+    private readonly PlayerVisibilityCoordinator _playerVisibility;
+    private readonly WorldVisibilityOptions _visibilityOptions;
     // Owns authoritative per-cell walk timing (see CharacterMovementState's own doc comment for the
     // rAthena unit_walktoxy_timer trace this replaces). _x/_y/_mapName remain the fields every other
     // handler in this class reads; SyncPositionFromMovement() is the one place that reconciles them
@@ -147,6 +150,17 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
     private ushort _x;
     private ushort _y;
     private byte _sex;
+    private byte _direction;
+    private byte _headDirection;
+    private PlayerPresence? _presence;
+    private PlayerSessionLifecycle _playerLifecycle = PlayerSessionLifecycle.Unauthenticated;
+    private readonly object _playerPresenceGate = new();
+    private PlayerAuthAppearance _authAppearance = new();
+    private sealed record PlayerAuthAppearance(
+        ushort HairStyle = 0, ushort HairColor = 0, ushort ClothesColor = 0, ushort BodyStyle = 0,
+        uint Weapon = 0, uint Shield = 0, ushort HeadBottom = 0, ushort HeadTop = 0,
+        ushort HeadMid = 0, ushort Robe = 0, uint Option = 0, byte Karma = 0, short Manner = 0,
+        ushort Font = 0);
     private bool _authRequested;
     private bool _iroAuthRequested;
     private bool _authenticated;
@@ -186,7 +200,8 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
     // namespace alongside the composed MonsterRegistry's shared one.
     public MapClientSession(int sessionId, TcpClient client, CharServerConnector charConnector, MapServerWorld world)
         : this(sessionId, client, charConnector, world.Maps, monsters: world.Monsters, combat: world.Combat, spatialInspector: world.SpatialInspector,
-               movementPathProvider: world.MovementPathProvider, monsterRuntime: world.MonsterRuntime, collisionProvider: world.Collision, rates: world.Rates)
+               movementPathProvider: world.MovementPathProvider, monsterRuntime: world.MonsterRuntime, collisionProvider: world.Collision, rates: world.Rates,
+               players: world.Players, playerVisibility: world.PlayerVisibility, visibilityOptions: world.Visibility)
     {
     }
 
@@ -208,7 +223,10 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
         MonsterSpatialInspector? spatialInspector = null,
         MonsterRuntime? monsterRuntime = null,
         IMapCollisionProvider? collisionProvider = null,
-        GameplayRateOptions? rates = null)
+        GameplayRateOptions? rates = null,
+        PlayerPresenceRegistry? players = null,
+        PlayerVisibilityCoordinator? playerVisibility = null,
+        WorldVisibilityOptions? visibilityOptions = null)
     {
         SessionId = sessionId;
         _client = client;
@@ -229,6 +247,9 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
         _movementPathProvider = movementPathProvider ?? new UnverifiedGridLineMovementPathProvider();
         _collisionProvider = collisionProvider ?? EmptyMapCollisionProvider.Instance;
         _rates = rates ?? new GameplayRateOptions();
+        _visibilityOptions = visibilityOptions ?? WorldVisibilityOptions.Default;
+        _players = players ?? new PlayerPresenceRegistry(_visibilityOptions);
+        _playerVisibility = playerVisibility ?? new PlayerVisibilityCoordinator(_players, _visibilityOptions);
         _statusEffects = new CharacterStatusEffectState(_timeProvider);
     }
 
@@ -260,7 +281,10 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
         MonsterSpatialInspector? spatialInspector = null,
         MonsterRuntime? monsterRuntime = null,
         IMapCollisionProvider? collisionProvider = null,
-        GameplayRateOptions? rates = null)
+        GameplayRateOptions? rates = null,
+        PlayerPresenceRegistry? players = null,
+        PlayerVisibilityCoordinator? playerVisibility = null,
+        WorldVisibilityOptions? visibilityOptions = null)
         : this(
             sessionId,
             client,
@@ -287,7 +311,10 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
             spatialInspector,
             monsterRuntime,
             collisionProvider,
-            rates)
+            rates,
+            players,
+            playerVisibility,
+            visibilityOptions)
     {
         _iroAuthRequested = iroAuthenticated;
         _authRequested = iroAuthenticated;
@@ -297,6 +324,9 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
         _authenticated = iroAuthenticated;
         _accountId = accountId;
         _charId = charId;
+        _playerLifecycle = iroAuthenticated
+            ? PlayerSessionLifecycle.AuthenticatedButNotWorldVisible
+            : PlayerSessionLifecycle.Unauthenticated;
     }
 
     public int SessionId { get; }
@@ -306,6 +336,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
     // session is registered in MapTcpServer's _sessions - see that dictionary's own doc comment for
     // why a session is only ever discoverable there after authentication is complete).
     internal uint AccountId => _accountId;
+    uint IPlayerPresenceObserver.ActorId => _accountId;
     internal string CurrentMapName => _mapName;
     // Syncs against real elapsed walking time on every read (no background timer - mirrors
     // CharacterStatusEffectState's lazy-on-read expiration model), so any caller (tests, a future
@@ -443,6 +474,11 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
             HandleAuthFail(); return;
         }
 
+        _accountId = authOk.AccountId;
+        _charId = authOk.CharId;
+        _mapName = authOk.MapName;
+        _x = authOk.X;
+        _y = authOk.Y;
         _gameplayState = new CharacterGameplayStateSession(authOk.AccountId, state, _gameplayStatePersistence, skillRead.Snapshot!, _skillPersistence);
 
         // Invariant: an authenticated session always has gameplay state AND inventory state
@@ -455,7 +491,16 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
         _inventory = inventoryRead.Snapshot;
         _equipment = CharacterEquipmentSnapshot.FromInventory(_inventory!);
         _characterName = authOk.CharacterName;
+        _sex = authOk.Sex;
+        _direction = authOk.Direction;
+        _headDirection = 0;
+        _authAppearance = new PlayerAuthAppearance(
+            authOk.HairStyle, authOk.HairColor, authOk.ClothesColor, authOk.BodyStyle,
+            authOk.WeaponAppearance, authOk.ShieldAppearance, authOk.HeadBottomAppearance,
+            authOk.HeadTopAppearance, authOk.HeadMidAppearance, authOk.RobeAppearance,
+            authOk.Option, authOk.Karma, authOk.Manner, authOk.Font);
         _authenticated = true; _positionDirty = false;
+        lock (_playerPresenceGate) _playerLifecycle = PlayerSessionLifecycle.AuthenticatedButNotWorldVisible;
         MapLogger.Info($"[iRO MAP DEBUG] 0x0C1F MapAuthNode authentication succeeded accountId={authOk.AccountId} charId={authOk.CharId} sessionMatch=true gameplayStateVersion={state.Version}");
         EnsureRuntimeLoopsStarted();
         await SendIroInitialBootstrapAsync(authOk, _sessionCancellation.Token);
@@ -607,6 +652,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
         IReadOnlyList<(ushort X, ushort Y)> crossed;
         PendingMovementArrival? arrival;
         string mapAtAdvance;
+        (ushort X, ushort Y)? movementDestinationAfterAdvance;
         // Set only when a deferred retarget (HandleIroMovementAsync's own "mid-walk" branch) was
         // actually consumed and applied THIS call - used purely to decide whether to send a fresh
         // 0x0087 + visibility refresh below, after the gate is released (see this method's own
@@ -647,18 +693,23 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
 
             arrival = movement.IsMoving ? null : _pendingArrival; // Only relevant once the walk actually finished.
             mapAtAdvance = _mapName;
+            movementDestinationAfterAdvance = movement.IsMoving ? movement.Destination : null;
         }
         finally { _movementGate.Release(); }
+
+        await UpdatePresenceForCrossedCellsAsync(crossed, movementDestinationAfterAdvance, cancellationToken);
 
         if (appliedRetarget is { } applied)
         {
             MapLogger.Info(
                 $"[iRO MAP DEBUG] Movement retarget applied from=({applied.FromX},{applied.FromY}) target=({applied.Resolved.TargetX},{applied.Resolved.TargetY})");
+            var retargetTick = unchecked((uint)Environment.TickCount);
             var retargetResponse = IroMovementPackets.BuildResponse(
-                unchecked((uint)Environment.TickCount), applied.FromX, applied.FromY, applied.Resolved.TargetX, applied.Resolved.TargetY);
+                retargetTick, applied.FromX, applied.FromY, applied.Resolved.TargetX, applied.Resolved.TargetY);
             MapLogger.Info(
                 $"[iRO MAP DEBUG] Sending 0x0087 len=12 from=({applied.FromX},{applied.FromY}) to=({applied.Resolved.TargetX},{applied.Resolved.TargetY}) (mid-walk retarget)");
             await WriteAsync(retargetResponse, cancellationToken);
+            await StartPresenceMovementAsync(applied.FromX, applied.FromY, applied.Resolved.TargetX, applied.Resolved.TargetY, retargetTick, cancellationToken);
             if (!applied.Resolved.IntersectsWarp && !applied.Resolved.IntersectsScript)
             {
                 await SendVisibleWarpActorsAsync(cancellationToken);
@@ -785,6 +836,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
             try { SyncPositionToNow(); }
             finally { _movementGate.Release(); }
 
+            await LeavePlayerWorldAsync(PlayerSessionLifecycle.Closed, CancellationToken.None);
             await PersistPositionIfDirtyAsync(CancellationToken.None);
         }
         catch (Exception ex) when (firstError is null)
@@ -834,6 +886,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
                     await SendSelfWeaponAppearanceAsync(cancellationToken);
                     await SendSelfInventoryAsync(cancellationToken);
                     _visibleActorIds.Clear();
+                    await EnterPlayerWorldAsync(cancellationToken);
                     await SendVisibleWarpActorsAsync(cancellationToken);
                     await SendVisibleMonsterActorsAsync(cancellationToken);
                     foreach (var navigation in _worldMapRegistry.GetNavigationAt(_mapName, _x, _y))
@@ -872,7 +925,11 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
                 MapLogger.Info(
                     $"[iRO MAP DEBUG] Received stock iRO actor-info request packet=0x{packetType:X4} len={packet.Length}");
                 var requestedActorId = BinaryPrimitives.ReadUInt32LittleEndian(packet.AsSpan(2));
-                if (_visibleActorIds.IsActorVisible(requestedActorId) && _worldMapRegistry.TryGetActorName(requestedActorId, _mapName, out var actorName))
+                if ((requestedActorId == _accountId || _visibleActorIds.IsActorVisible(requestedActorId)) && _players.TryGetByActorId(requestedActorId, out var playerPresence))
+                {
+                    await WriteAsync(IroPlayerActorPackets.BuildPlayerInfo(playerPresence), cancellationToken);
+                }
+                else if (_visibleActorIds.IsActorVisible(requestedActorId) && _worldMapRegistry.TryGetActorName(requestedActorId, _mapName, out var actorName))
                 {
                     MapLogger.Info($"[iRO MAP DEBUG] Sending 0x0ADF NPC name actorId={requestedActorId} name='{actorName}'");
                     await WriteAsync(IroWorldActorPackets.BuildNpcName(requestedActorId, actorName), cancellationToken);
@@ -889,6 +946,15 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
                 if (IroChangeDirectionPacket.TryParse(packet, out var direction))
                 {
                     MapLogger.Info($"[iRO MAP DEBUG] Received stock iRO change-direction packet=0x{packetType:X4} headDirection={direction.HeadDirection} bodyDirection={direction.BodyDirection}");
+                    _headDirection = direction.HeadDirection;
+                    _direction = direction.BodyDirection;
+                    var current = CurrentPresence();
+                    if (current is not null)
+                    {
+                        var changed = current with { HeadDirection = _headDirection, Direction = _direction };
+                        SetCurrentPresence(changed);
+                        await _playerVisibility.UpdateLookAsync(changed, cancellationToken);
+                    }
                 }
                 break;
             case PacketConstants.IroCzNpcInteraction when _iroAuthRequested:
@@ -1125,8 +1191,9 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
         _positionDirty = true;
         try { _movementSignal.Release(); } catch (SemaphoreFullException) { }
 
+        var movementTick = unchecked((uint)Environment.TickCount);
         var response = IroMovementPackets.BuildResponse(
-            unchecked((uint)Environment.TickCount),
+            movementTick,
             fromX,
             fromY,
             resolved.TargetX,
@@ -1134,6 +1201,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
         MapLogger.Info(
             $"[iRO MAP DEBUG] Sending 0x0087 len=12 from=({fromX},{fromY}) to=({resolved.TargetX},{resolved.TargetY})");
         await WriteAsync(response, cancellationToken);
+        await StartPresenceMovementAsync(fromX, fromY, resolved.TargetX, resolved.TargetY, movementTick, cancellationToken);
 
         if (resolved.IntersectsWarp)
         {
@@ -1182,6 +1250,8 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
     private async Task SendSameServerWarpAsync(WarpDefinition warp, CancellationToken cancellationToken)
     {
         _scriptExecutionSession = null;
+        await LeavePlayerWorldAsync(PlayerSessionLifecycle.AuthenticatedButNotWorldVisible, cancellationToken);
+        _visibleActorIds.Clear();
         foreach (var action in warp.OrderedActions)
         {
             if (action is SetSavePointAction savePoint)
@@ -1949,6 +2019,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
 
         _inventory = updated;
         _equipment = CharacterEquipmentSnapshot.FromInventory(updated);
+        await RefreshPresencePublicAppearanceAsync(cancellationToken);
         await SendSelfWeaponAppearanceAsync(cancellationToken);
     }
 
@@ -1979,6 +2050,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
         {
             _inventory = updated;
             _equipment = CharacterEquipmentSnapshot.FromInventory(updated);
+            await RefreshPresencePublicAppearanceAsync(cancellationToken);
             MapLogger.Info("[iRO MAP DEBUG] Sending 0x01D7 (post-unequip appearance update).");
             await SendSelfWeaponAppearanceAsync(cancellationToken);
         }
@@ -2257,6 +2329,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
         var map = execution.Evaluate(warp.Map);
         if (string.IsNullOrWhiteSpace(map)) throw new InvalidOperationException("Warp map expression evaluated to an empty value.");
         MapLogger.Info($"[iRO MAP DEBUG] Script warp entity='{execution.EntityId}' map='{_mapName}' -> map='{map}' x={warp.X} y={warp.Y}");
+        await LeavePlayerWorldAsync(PlayerSessionLifecycle.AuthenticatedButNotWorldVisible, cancellationToken);
         TeleportTo(map, warp.X, warp.Y); _positionDirty = true; _visibleActorIds.Clear();
         await WriteAsync(IroMapTransitionPackets.BuildSameServerMapChange(_mapName, _x, _y), cancellationToken);
         await PersistPositionIfDirtyAsync(cancellationToken);
@@ -2401,6 +2474,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
     async Task INpcScriptHost.WarpAsync(string map, ushort x, ushort y, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(map)) throw new InvalidOperationException("Generated script warp map is empty.");
+        await LeavePlayerWorldAsync(PlayerSessionLifecycle.AuthenticatedButNotWorldVisible, cancellationToken);
         TeleportTo(map, x, y); _positionDirty = true; _visibleActorIds.Clear();
         await WriteAsync(IroMapTransitionPackets.BuildSameServerMapChange(map, x, y), cancellationToken);
         await PersistPositionIfDirtyAsync(cancellationToken);
@@ -2726,6 +2800,138 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
         await WriteAsync(IroInventoryListPackets.BuildInventoryEnd(), cancellationToken);
     }
 
+    private async Task EnterPlayerWorldAsync(CancellationToken cancellationToken)
+    {
+        lock (_playerPresenceGate)
+        {
+            if (_playerLifecycle != PlayerSessionLifecycle.AuthenticatedButNotWorldVisible) return;
+        }
+
+        var presence = BuildCurrentPresence(movement: null);
+        // Some legacy focused tests authenticate with an intentionally empty character name.
+        // Production CharServer auth always supplies the authoritative name; only a complete
+        // public projection is eligible to become world-visible.
+        if (presence is null) return;
+
+        await _playerVisibility.RegisterAsync(presence, this, cancellationToken);
+        lock (_playerPresenceGate)
+        {
+            _presence = presence;
+            _playerLifecycle = PlayerSessionLifecycle.WorldVisible;
+        }
+    }
+
+    private PlayerPresence? BuildCurrentPresence(PlayerMovementPresence? movement)
+    {
+        var gameplay = _gameplayState?.State;
+        if (gameplay is null || _accountId == 0 || _charId == 0 || string.IsNullOrWhiteSpace(_characterName)) return null;
+
+        var weapon = ResolveEquippedView(EquipSlots.Bitmask[EquipSlot.HandRight], _authAppearance.Weapon);
+        var shield = ResolveEquippedView(EquipSlots.Bitmask[EquipSlot.HandLeft], _authAppearance.Shield);
+        var headBottom = ResolveEquippedView(EquipSlots.Bitmask[EquipSlot.HeadLow], _authAppearance.HeadBottom);
+        var headTop = ResolveEquippedView(EquipSlots.Bitmask[EquipSlot.HeadTop], _authAppearance.HeadTop);
+        var headMid = ResolveEquippedView(EquipSlots.Bitmask[EquipSlot.HeadMid], _authAppearance.HeadMid);
+
+        return new PlayerPresence(
+            _accountId, _charId, _characterName, _mapName, _x, _y, _direction, _headDirection,
+            movement, gameplay.JobClass, _sex, gameplay.BaseLevel, (ushort)CurrentCellDurationMs(),
+            _authAppearance.HairStyle, _authAppearance.HairColor, _authAppearance.ClothesColor,
+            _authAppearance.BodyStyle, weapon, shield,
+            ToUShortAppearance(headBottom, _authAppearance.HeadBottom),
+            ToUShortAppearance(headTop, _authAppearance.HeadTop),
+            ToUShortAppearance(headMid, _authAppearance.HeadMid),
+            _authAppearance.Robe, _authAppearance.Manner, _authAppearance.Karma,
+            _authAppearance.Option, _authAppearance.Font);
+    }
+
+    private uint ResolveEquippedView(uint equipMask, uint fallback)
+    {
+        var item = _inventory?.Items.FirstOrDefault(row => (row.Equip & equipMask) != 0);
+        return item is not null && GeneratedItems.ById.TryGetValue(item.ItemId, out var definition)
+            ? (uint)definition.ClientViewId
+            : fallback;
+    }
+
+    private static ushort ToUShortAppearance(uint value, ushort fallback) => value <= ushort.MaxValue ? (ushort)value : fallback;
+
+    private async Task LeavePlayerWorldAsync(PlayerSessionLifecycle after, CancellationToken cancellationToken)
+    {
+        uint actorId;
+        lock (_playerPresenceGate)
+        {
+            if (_playerLifecycle != PlayerSessionLifecycle.WorldVisible)
+            {
+                if (after == PlayerSessionLifecycle.Closed) _playerLifecycle = after;
+                return;
+            }
+            _playerLifecycle = PlayerSessionLifecycle.ChangingMapOrUnregistering;
+            actorId = _accountId;
+        }
+
+        await _playerVisibility.UnregisterAsync(actorId, cancellationToken);
+        lock (_playerPresenceGate)
+        {
+            _presence = null;
+            _playerLifecycle = after;
+        }
+    }
+
+    private PlayerPresence? CurrentPresence()
+    {
+        lock (_playerPresenceGate) return _presence;
+    }
+
+    private void SetCurrentPresence(PlayerPresence presence)
+    {
+        lock (_playerPresenceGate)
+        {
+            if (_playerLifecycle == PlayerSessionLifecycle.WorldVisible) _presence = presence;
+        }
+    }
+
+    private async Task RefreshPresencePublicAppearanceAsync(CancellationToken cancellationToken)
+    {
+        var current = CurrentPresence();
+        if (current is null) return;
+        var refreshed = BuildCurrentPresence(current.Movement);
+        if (refreshed is null) return;
+        SetCurrentPresence(refreshed);
+        await _playerVisibility.ReplacePublicStateAsync(refreshed, cancellationToken);
+    }
+
+    private async Task StartPresenceMovementAsync(ushort fromX, ushort fromY, ushort destinationX, ushort destinationY, uint startTick, CancellationToken cancellationToken)
+    {
+        var current = CurrentPresence();
+        if (current is null) return;
+        var changed = current with
+        {
+            X = fromX,
+            Y = fromY,
+            WalkSpeed = (ushort)CurrentCellDurationMs(),
+            Movement = new PlayerMovementPresence(fromX, fromY, destinationX, destinationY, startTick),
+        };
+        SetCurrentPresence(changed);
+        await _playerVisibility.UpdateMovementAsync(changed, broadcastMovement: true, cancellationToken);
+    }
+
+    private async Task UpdatePresenceForCrossedCellsAsync(
+        IReadOnlyList<(ushort X, ushort Y)> crossed,
+        (ushort X, ushort Y)? destination,
+        CancellationToken cancellationToken)
+    {
+        foreach (var cell in crossed)
+        {
+            var current = CurrentPresence();
+            if (current is null) return;
+            PlayerMovementPresence? movement = null;
+            if (destination is not null && current.Movement is { } active)
+                movement = active with { DestinationX = destination.Value.X, DestinationY = destination.Value.Y };
+            var changed = current with { X = cell.X, Y = cell.Y, Movement = movement };
+            SetCurrentPresence(changed);
+            await _playerVisibility.UpdateMovementAsync(changed, broadcastMovement: false, cancellationToken);
+        }
+    }
+
     private async Task SendVisibleWarpActorsAsync(CancellationToken cancellationToken)
     {
         foreach (var actor in _worldMapRegistry.GetVisibleWarpActors(_mapName, _x, _y))
@@ -2833,7 +3039,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
 
         if (!_visibleActorIds.IsActorVisible(instance.ActorId))
         {
-            if (Math.Abs(position.X - _x) > 14 || Math.Abs(position.Y - _y) > 14) return;
+            if (!_visibilityOptions.IsVisible(_mapName, _x, _y, instance.Map, position.X, position.Y)) return;
             if (!_visibleActorIds.TryMarkVisible(instance.ActorId)) return;
 
             if (instance.IsWalking)
@@ -3203,6 +3409,37 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
             $"[iRO MAP DEBUG] Unsupported map client packet=0x{packetType:X4} len={packet.Length}");
     }
 
+    public Task PlayerEnteredViewAsync(PlayerPresence presence, PlayerEntryKind kind, CancellationToken cancellationToken)
+    {
+        if (presence.ActorId == _accountId || !_visibleActorIds.TryMarkVisible(presence.ActorId)) return Task.CompletedTask;
+        var packet = kind == PlayerEntryKind.NewlySpawned
+            ? IroPlayerActorPackets.BuildSpawnEntry(presence)
+            : presence.Movement is null
+                ? IroPlayerActorPackets.BuildStandEntry(presence)
+                : IroPlayerActorPackets.BuildWalkEntry(presence);
+        return WriteAsync(packet, cancellationToken);
+    }
+
+    public Task PlayerMovementChangedAsync(PlayerPresence presence, CancellationToken cancellationToken)
+    {
+        if (presence.ActorId == _accountId || !_visibleActorIds.IsActorVisible(presence.ActorId) || presence.Movement is null) return Task.CompletedTask;
+        return WriteAsync(IroPlayerActorPackets.BuildWalkEntry(presence), cancellationToken);
+    }
+
+    public Task PlayerLookChangedAsync(PlayerPresence presence, CancellationToken cancellationToken)
+    {
+        if (presence.ActorId == _accountId || !_visibleActorIds.IsActorVisible(presence.ActorId)) return Task.CompletedTask;
+        return WriteAsync(IroPlayerActorPackets.BuildDirection(presence.ActorId, presence.HeadDirection, presence.Direction), cancellationToken);
+    }
+
+    public Task PlayerLeftViewAsync(uint actorId, CancellationToken cancellationToken)
+    {
+        if (actorId == _accountId || !_visibleActorIds.TryMarkNotVisible(actorId)) return Task.CompletedTask;
+        return WriteAsync(IroPlayerActorPackets.BuildVanish(actorId), cancellationToken);
+    }
+
+    public void ForgetPlayer(uint actorId) => _visibleActorIds.MarkNotVisible(actorId);
+
 
     private async Task WriteAsync(byte[] payload, CancellationToken cancellationToken)
     {
@@ -3227,9 +3464,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
 
     private static void WritePackedPosition(Span<byte> buffer, ushort x, ushort y, byte direction)
     {
-        buffer[0] = (byte)(x >> 2);
-        buffer[1] = (byte)((x << 6) | ((y >> 4) & 0x3f));
-        buffer[2] = (byte)((y << 4) | (direction & 0x0f));
+        IroCoordinatePacking.WritePosition(buffer, x, y, direction);
     }
 
     // Test-only default for the internal test-facing constructor (see its

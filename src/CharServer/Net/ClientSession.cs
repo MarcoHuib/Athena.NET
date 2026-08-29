@@ -359,7 +359,20 @@ public sealed class ClientSession : IDisposable, ISession
             0,
             0,
             false,
-            character.Name);
+            character.Name,
+            character.Hair,
+            character.HairColor,
+            character.ClothesColor,
+            character.Body,
+            character.Weapon,
+            character.Shield,
+            character.HeadBottom,
+            character.HeadTop,
+            character.HeadMid,
+            character.Robe,
+            character.Option,
+            character.Karma,
+            character.Manner);
 
         _mapAuthManager.Add(node);
         await SendZoneServerAsync(character.CharId, location.MapName, mapServer, cancellationToken);

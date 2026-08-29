@@ -17,8 +17,35 @@ namespace Athena.Net.MapServer.World;
 // fall back to WorldMapRegistry.Tutorial once this exists; that static
 // singleton remains only for existing tests/legacy standalone callers that
 // don't combine world data with a monster runtime.
-public sealed record MapServerWorld(WorldMapRegistry Maps, MonsterRegistry Monsters, MonsterCombatCoordinator Combat, IMapCollisionProvider Collision, MonsterSpatialInspector SpatialInspector, IMovementPathProvider MovementPathProvider, MonsterRuntime MonsterRuntime, GameplayRateOptions? Rates = null)
+public sealed record MapServerWorld(WorldMapRegistry Maps, MonsterRegistry Monsters, MonsterCombatCoordinator Combat, IMapCollisionProvider Collision, MonsterSpatialInspector SpatialInspector, IMovementPathProvider MovementPathProvider, MonsterRuntime MonsterRuntime, PlayerPresenceRegistry Players, PlayerVisibilityCoordinator PlayerVisibility, WorldVisibilityOptions Visibility, GameplayRateOptions? Rates = null)
 {
+    // Compatibility constructor for focused monster/world tests that compose the record directly.
+    // It still creates one coherent player-world bundle; it never leaves the new live components null.
+    public MapServerWorld(WorldMapRegistry maps, MonsterRegistry monsters, MonsterCombatCoordinator combat,
+        IMapCollisionProvider collision, MonsterSpatialInspector spatialInspector,
+        IMovementPathProvider movementPathProvider, MonsterRuntime monsterRuntime,
+        GameplayRateOptions? rates = null)
+        : this(maps, monsters, combat, collision, spatialInspector, movementPathProvider, monsterRuntime, CreatePlayerWorld(), rates)
+    {
+    }
+
+    private MapServerWorld(WorldMapRegistry maps, MonsterRegistry monsters, MonsterCombatCoordinator combat,
+        IMapCollisionProvider collision, MonsterSpatialInspector spatialInspector,
+        IMovementPathProvider movementPathProvider, MonsterRuntime monsterRuntime,
+        (PlayerPresenceRegistry Players, PlayerVisibilityCoordinator Coordinator, WorldVisibilityOptions Options) playerWorld,
+        GameplayRateOptions? rates)
+        : this(maps, monsters, combat, collision, spatialInspector, movementPathProvider, monsterRuntime,
+            playerWorld.Players, playerWorld.Coordinator, playerWorld.Options, rates)
+    {
+    }
+
+    private static (PlayerPresenceRegistry Players, PlayerVisibilityCoordinator Coordinator, WorldVisibilityOptions Options) CreatePlayerWorld()
+    {
+        var options = WorldVisibilityOptions.Default;
+        var players = new PlayerPresenceRegistry(options);
+        return (players, new PlayerVisibilityCoordinator(players, options), options);
+    }
+
     // `cellSelector` defaults to null, which means "explicitly choose ONE of the two selectors
     // based on `collisionProvider`'s identity, right here at composition time" - never an internal
     // fallback INSIDE a selector (see RathenaCompatibleMobSpawnCellSelector's own doc comment for
@@ -84,7 +111,10 @@ public sealed record MapServerWorld(WorldMapRegistry Maps, MonsterRegistry Monst
             ? new UnverifiedGridLineMovementPathProvider()
             : new RathenaCompatibleMovementPathProvider(resolvedCollisionProvider);
         var monsterRuntime = new MonsterRuntime(monsters, resolvedCollisionProvider, movementPathProvider, timeProvider ?? TimeProvider.System);
-        return new MapServerWorld(maps, monsters, combat, resolvedCollisionProvider, spatialInspector, movementPathProvider, monsterRuntime, rates ?? new GameplayRateOptions());
+        var visibility = WorldVisibilityOptions.Default;
+        var players = new PlayerPresenceRegistry(visibility);
+        var playerVisibility = new PlayerVisibilityCoordinator(players, visibility);
+        return new MapServerWorld(maps, monsters, combat, resolvedCollisionProvider, spatialInspector, movementPathProvider, monsterRuntime, players, playerVisibility, visibility, rates ?? new GameplayRateOptions());
     }
 
     // Production fail-closed guard: called explicitly by MapServerApp.RunAsync (the live

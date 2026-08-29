@@ -43,7 +43,7 @@ public sealed class MonsterRegistry
 
     public IReadOnlyList<MobInstance> AllInstances => _instances;
 
-    public IEnumerable<MobInstance> GetVisibleInstances(string mapName, ushort x, ushort y, ushort range = 14) =>
+    public IEnumerable<MobInstance> GetVisibleInstances(string mapName, ushort x, ushort y, ushort range = WorldVisibilityOptions.DefaultAreaSize) =>
         _instances.Where(instance =>
         {
             if (!instance.IsAlive || !string.Equals(instance.Map, mapName, StringComparison.OrdinalIgnoreCase)) return false;

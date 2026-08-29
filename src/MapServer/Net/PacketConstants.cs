@@ -182,7 +182,13 @@ public static class PacketConstants
     // type=1 is explicitly "died" per pinned source comment.
     public const short ZcNotifyVanish = 0x0080;
     public const int ZcNotifyVanishLength = 7;
+    public const byte ZcNotifyVanishReasonOutOfSight = 0;
     public const byte ZcNotifyVanishReasonDied = 1;
+    public const short ZcNotifyNewEntry = 0x09fe;
+    public const short ZcChangeDirection = 0x009c;
+    public const int ZcChangeDirectionLength = 9;
+    public const short ZcPlayerInfo = 0x0a30;
+    public const int ZcPlayerInfoLength = 106;
     // Verified capture frame 699: exact 70-byte match to pinned PACKET_ZC_ITEM_PICKUP_ACK
     // (packets_struct.hpp:540) under the pinned RE PACKETVER branch.
     public const short ZcItemPickupAck = 0x0b41;
