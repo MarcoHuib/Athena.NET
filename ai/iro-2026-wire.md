@@ -766,5 +766,134 @@ the handler special-cases them.
 this handler calls into - see `MapClientSession.HandleIroStatusUpRequestAsync` for the thin
 parse-and-call wiring.
 
+## Verified multiplayer player-presence/AOI wire evidence (Prontera capture)
+
+Source: `prontera-walking.pcapng` (SHA-256
+`be06f244719c702d81d09ba9e595bb2e04ec5f8bd0248db70b4dbc43f23198ad`), captured 2026-08-29
+10:39:16-10:41:40 +02:00. Client `192.168.178.55`; official MapServer flow
+`192.168.178.55:62963 <-> 128.241.92.42:4502`. This trace was supplied to Athena as a sanitized
+extraction (`prontera-multiplayer-trace.txt`), not independently re-parsed from the raw `.pcapng`
+in this environment - treated as supplied verified capture evidence per the same convention as
+the `0x0112`/`0x00BB` sections above.
+
+### Map handoff and identity
+
+- `0x0092/28` (`MAP SERVER CHANGED`) proves `prontera.gat`, spawn `(156,34)`, and MapServer
+  endpoint `128.241.92.42:4502` - the same layout already verified in the walking-capture section
+  above (map[16], x/y, IPv4, port), now confirmed for a second official endpoint/map pair.
+- The local player carries two distinct **Verified** IDs across the whole session:
+  Actor/AccountId `6270779` and CharacterId `39602866`. Every other captured `0x09FF`/`0x09FD`
+  player entry likewise carries separate ActorId (offset 5) and CharacterId (offset 9) fields.
+  Athena's `PlayerPresence` record (`src/MapServer/World/PlayerPresence.cs`) preserves both as
+  distinct first-class fields; player wire ActorId is the authenticated account actor identity,
+  never allocated from `WorldActorIdAllocator` (that allocator remains the separate NPC/monster
+  domain starting at 110,000,000 - `PlayerPresenceRegistry.Validate` rejects any player ActorId
+  `>= 110_000_000` as a defensive domain-separation check).
+
+### AOI: square/Chebyshev visibility, area_size 14
+
+Before the local player's first movement, exactly 38 distinct player `0x09FF` entries were sent
+(Appendix A of the source trace), and all 38 satisfy
+`max(abs(dx), abs(dy)) <= 14` from spawn `(156,34)`. Two entries independently disprove a
+circular/Euclidean rule:
+
+| Actor | Position | dx | dy | Chebyshev | Euclidean | Visible? |
+|---|---|---:|---:|---:|---:|---|
+| NobelKP1231 | `(143,43)` | 13 | 9 | 13 | ~15.81 | yes |
+| ManyForZeny | `(159,48)` | 3 | 14 | 14 | ~14.32 | yes |
+
+A hypothetical `(171,34)` (Chebyshev 15) is the boundary regression case - not itself captured
+sitting just outside range, but consistent with the pinned `area_size` cutoff below. Independent
+confirmation of the discovery rule being movement-driven AOI reconciliation (not "send every
+player on the map") comes from `VeryManyMoney` (ActorId `6256659`), which starts outside range
+(Chebyshev 15 from spawn) and is only projected via `0x09FF` after the local player's first
+`0x035F`/current-movement request brings it inside range.
+
+Pinned `legacy/rathena/conf/battle/client.conf` sets `area_size: 14`. Combined with the capture,
+the AOI rule is: **same map AND `max(abs(dx), abs(dy)) <= 14`** (Chebyshev/square, matching
+rAthena's own map range iteration, never Euclidean). Implemented as
+`WorldVisibilityOptions.Default` (`AreaSize=14`) in `src/MapServer/World/WorldVisibilityOptions.cs`
+- the single canonical setting; the literal `14` is not scattered elsewhere in runtime code.
+`PlayerPresenceRegistryTests.IsVisible_UsesCaptureBackedSquareBoundary` covers exactly this
+boundary set, including the `(156,34)->(171,34)` not-visible regression case.
+
+### 0x09FF (current player stand/existing-entry)
+
+284 valid player (`objectType=0`) entries, 254 unique player ActorIds, all satisfying
+`totalLength == 84 + encodedNameByteLength`. Verified/capture-correlated fields: `ObjectType`
+at offset 4, `ActorId` at 5, `CharacterId` at 9, walk-speed at 13 (Reference-backed/capture-
+consistent), `JobClass` at 23 (35 distinct values observed), packed standing position at 63, name
+at offset 84 with no extra padding. Implemented by `IroPlayerActorPackets.BuildStandEntry`
+(`src/MapServer/Net/IroPlayerActorPackets.cs`), which also serializes the full public-appearance
+projection (hair/clothes/weapon/shield/headgear/robe/manner/karma/sex/level/body-style) from
+`PlayerPresence`, not merely name/X/Y.
+
+### 0x09FD (real player moving entry)
+
+22 valid player moving entries, 5 unique moving players, all satisfying
+`totalLength == 90 + encodedNameByteLength`. Same header shape as `0x09FF` plus `moveStartTime`
+at offset 37 and a 6-byte packed src/dst/subcell field at offset 67 in place of the idle variant's
+static position - matching the already-verified `G_PORING` `0x09FD` layout in the monster-combat
+section above. Example: `assin_moster` (ActorId `6222682`), `(142,75) -> (149,76)`. Implemented by
+`IroPlayerActorPackets.BuildWalkEntry`.
+
+### 0x0080 (leaving client-visible world)
+
+265 verified player removals, **every one `reason=0`** (`ZC_NOTIFY_VANISH` type 0, "out of
+sight" - distinct from the already-verified `type=1`="died" in the `G_PORING` section above).
+Confirms this is the general AOI/visibility-leave path, not restricted to disconnects. Implemented
+by `IroPlayerActorPackets.BuildVanish`, sent exactly once per visible->not-visible transition via
+`PlayerVisibilityCoordinator.UnregisterAsync`/`UpdateMovementAsync` and each session's own
+`VisibleActorTracker.TryMarkNotVisible` (which returns `false`, suppressing a duplicate send, on
+a second reconciliation of an already-invisible actor).
+
+### 0x009C (player direction/look change)
+
+9-byte packet, verified structure: `ActorId.L` at offset 2, `headDir.W` at 6, `bodyDir.B` at 8.
+Two capture examples for the same actor (`assin_moster`, ActorId `6222682`) with different
+head/body direction pairs confirm the field boundaries. Implemented by
+`IroPlayerActorPackets.BuildDirection`, broadcast via `PlayerVisibilityCoordinator.UpdateLookAsync`
+to every current observer of the changed actor.
+
+### 0x0368 -> 0x0A30 (actor-info request/response)
+
+61 `0x0368/7` requests (already-verified generic layout: ID, ActorId, one opaque trailing byte)
+with 54 distinct trailing-byte values, confirming the trailing byte is not semantically validated.
+28 `0x0A30/106` responses, each matching a previously requested ActorId (27 other players, 1
+local player). Verified layout: `ActorId.L` at 2, `CharacterName[24]` at 6, `PartyName[24]` at 30,
+`GuildName[24]` at 54, `GuildPositionName[24]` at 78, a final `uint32` at 102 (all sampled `0`).
+Implemented by `IroPlayerActorPackets.BuildPlayerInfo`, resolving the requested ActorId against
+`PlayerPresenceRegistry` (`MapClientSession`'s `0x0368` handler checks self/visible-actor gating
+first, matching the existing NPC/monster actor-info branches). Athena has no party/guild system
+yet, so `PartyName`/`GuildName`/`GuildPositionName` are correctly empty (`PlayerPresence`'s default
+values) - not a fabricated capture replay of the other 27 players' real social state.
+
+### 0x09FE (newly-introduced player) - evidence boundary, not resolved by this capture alone
+
+This Prontera capture is not a clean authority for the `0x09FE` selection rule: it is rich in
+`0x09FF`/`0x09FD`/`0x0080`/`0x009C` evidence but does not itself isolate a genuinely
+newly-connected-and-introduced-to-existing-viewers player case. Per the existing Izlude-capture
+evidence and pinned `clif_spawn`/`LoadEndAck` behavior (already the reference the rest of this
+project's `0x09FE`-vs-`0x09FF` boundary work has been deferring to), Athena implements the
+existing-viewer/newcomer split as: a session entering the world for the first time discovers
+already-present nearby players via `0x09FF`/`0x09FD` (its own perspective is "existing" data), while
+every observer already in the world receives `0x09FE` for that newcomer
+(`PlayerVisibilityCoordinator.RegisterAsync`, `PlayerEntryKind.NewlySpawned`). This selection rule
+is **Reference-backed**, not independently proven by the Prontera capture's own bytes - a future
+capture isolating a real 0x09FE frame end-to-end (offsets, not just packet ID) would strengthen
+this to Verified. Do not collapse `0x09FE`/`0x09FF`/`0x09FD` into one guessed rule; they remain
+three distinct, separately-selected serializers (`BuildSpawnEntry`/`BuildStandEntry`/
+`BuildWalkEntry`).
+
+### Architecture implemented from this evidence
+
+Player presence, AOI, and visibility fan-out are implemented as a shared authoritative registry
+plus spatial index, not per-session state or a global session scan - see
+`ai/map-server.md`'s player-presence section for the full architecture, lifecycle, and known-gap
+list. Scale context: the capture's single short walk observed 258 unique player ActorIds and a
+peak of 94 simultaneously-visible players, which is the concrete evidence motivating the spatial
+bucket design (`PlayerPresenceRegistry`'s per-map uniform grid, bucket size 16) over any per-cell
+scan of all connected sessions.
+
 ## Capture handling
 Official captures can contain credentials, account/session identifiers, bearer/JWT-like tokens, and other sensitive authentication material. Never commit unsanitized PCAPs or raw token dumps to the repository.

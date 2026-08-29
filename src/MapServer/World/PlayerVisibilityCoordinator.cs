@@ -70,10 +70,22 @@ public sealed class PlayerVisibilityCoordinator
             if (!_players.TryReplace(replacement, out var previous)) return false;
             if (!_observers.TryGetValue(replacement.ActorId, out var moverObserver)) return false;
 
-            var affected = _players.QueryNearby(previous.MapName, previous.X, previous.Y)
-                .Concat(_players.QueryNearby(replacement.MapName, replacement.X, replacement.Y))
-                .GroupBy(player => player.ActorId)
-                .Select(group => group.Last());
+            // Plain dedup loop instead of Concat/GroupBy/Select: this runs on every player
+            // movement cell, and the two candidate lists overlap heavily whenever a walk stays
+            // within one AOI neighborhood. Querying the destination side FIRST and letting
+            // HashSet.Add's "already present" result skip the origin-side duplicate reproduces the
+            // prior GroupBy(...).Select(group => group.Last()) behavior (previous+replacement
+            // concatenated in that order, last-wins) without allocating a lookup/grouping.
+            var seen = new HashSet<uint>();
+            var affected = new List<PlayerPresence>();
+            foreach (var candidate in _players.QueryNearby(replacement.MapName, replacement.X, replacement.Y))
+            {
+                if (seen.Add(candidate.ActorId)) affected.Add(candidate);
+            }
+            foreach (var candidate in _players.QueryNearby(previous.MapName, previous.X, previous.Y))
+            {
+                if (seen.Add(candidate.ActorId)) affected.Add(candidate);
+            }
 
             foreach (var other in affected)
             {

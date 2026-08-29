@@ -2854,6 +2854,14 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
 
     private static ushort ToUShortAppearance(uint value, ushort fallback) => value <= ushort.MaxValue ? (ushort)value : fallback;
 
+    // Deliberately ignores the caller's cancellationToken for the actual unregister: this method's
+    // whole contract is "never leave a ghost presence registered under a wedged
+    // ChangingMapOrUnregistering lifecycle" (see the type's remarks on ghost-presence prevention).
+    // A warp/script-warp/disconnect can race a session-cancellation exactly here (SendSameServerWarpAsync,
+    // ExecuteScriptWarpAsync, and INpcScriptHost.WarpAsync all forward the live session token), and
+    // PlayerVisibilityCoordinator.UnregisterAsync's very first await is a cancellable gate wait - an
+    // OperationCanceledException thrown there before TryUnregister runs would otherwise strand the
+    // presence in the registry/old map's spatial index forever with no lifecycle path back out.
     private async Task LeavePlayerWorldAsync(PlayerSessionLifecycle after, CancellationToken cancellationToken)
     {
         uint actorId;
@@ -2868,11 +2876,17 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
             actorId = _accountId;
         }
 
-        await _playerVisibility.UnregisterAsync(actorId, cancellationToken);
-        lock (_playerPresenceGate)
+        try
         {
-            _presence = null;
-            _playerLifecycle = after;
+            await _playerVisibility.UnregisterAsync(actorId, CancellationToken.None);
+        }
+        finally
+        {
+            lock (_playerPresenceGate)
+            {
+                _presence = null;
+                _playerLifecycle = after;
+            }
         }
     }
 

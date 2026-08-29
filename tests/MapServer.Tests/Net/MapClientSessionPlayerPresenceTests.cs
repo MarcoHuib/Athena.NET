@@ -17,9 +17,17 @@ public sealed class MapClientSessionPlayerPresenceTests
         var coordinator = new PlayerVisibilityCoordinator(players);
         await using var a = await ConnectAsync(1, 101, "Alice", 100, 100, players, coordinator);
         await EnterWorldAsync(a);
+        // EnterWorldAsync only waits for the self-weapon/inventory packets HandlePacketAsync
+        // sends BEFORE calling EnterPlayerWorldAsync (the actual PlayerPresenceRegistry insert) -
+        // see the pinned ordering comment at that 0x007D handler. Without this, connecting B can
+        // race ahead of A's own registration, and whichever session's insert wins the race becomes
+        // the "existing" side (0x09FF) while the other becomes "newly spawned" (0x09FE) - flipping
+        // the two assertions below nondeterministically instead of a real production bug.
+        await WaitForRegistrationAsync(players, 1);
 
         await using var b = await ConnectAsync(2, 102, "Bob", 105, 105, players, coordinator);
         await EnterWorldAsync(b);
+        await WaitForRegistrationAsync(players, 2);
 
         var aSeesB = await ReadVariablePacketAsync(a.Stream);
         Assert.Equal((short)0x09fe, BinaryPrimitives.ReadInt16LittleEndian(aSeesB));
@@ -63,6 +71,16 @@ public sealed class MapClientSessionPlayerPresenceTests
         await ReadExactAsync(session.Stream, 4);  // inventory end
     }
 
+    private static async Task WaitForRegistrationAsync(PlayerPresenceRegistry players, uint actorId)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (!players.TryGetByActorId(actorId, out _))
+        {
+            timeout.Token.ThrowIfCancellationRequested();
+            await Task.Delay(5, timeout.Token);
+        }
+    }
+
     private static async Task<TestSession> ConnectAsync(uint accountId, uint charId, string name, ushort x, ushort y,
         PlayerPresenceRegistry players, PlayerVisibilityCoordinator coordinator)
     {
@@ -75,8 +93,15 @@ public sealed class MapClientSessionPlayerPresenceTests
         await connecting;
 
         var state = new CharacterGameplayState(charId, 1, 0, 10, 5, 0, 0, 100, 20, 100, 20, 0, 0, 9, 9, 9, 9, 9, 9);
+        // iroAuthenticated: true is required here (not just "already authenticated"): it also
+        // flips the internal _iroAuthRequested flag, which HandlePacketAsync's 0x007D branch
+        // gates on to choose the iRO bootstrap path (0x01D7 self weapon + inventory list) over
+        // the legacy CZ_ENTER path. In production that flag is set by HandleIroMapAuthAsync
+        // before HandleAuthOk ever calls CompleteIroAuthenticationAsync; this test instead calls
+        // CompleteIroAuthenticationAsync directly, so the constructor is the only place left to
+        // set it.
         var session = new MapClientSession((int)accountId, server,
-            new CharServerConnector(new MapConfigStore(new MapConfig(), "unused")), false,
+            new CharServerConnector(new MapConfigStore(new MapConfig(), "unused")), true,
             gameplayStatePersistence: new FixedGameplayStatePersistence(state),
             players: players, playerVisibility: coordinator,
             visibilityOptions: WorldVisibilityOptions.Default);
