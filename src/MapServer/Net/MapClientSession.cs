@@ -134,6 +134,14 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     private readonly SemaphoreSlim _attackSignal = new(0, 1);
     private Task? _attackLoop;
     private readonly SemaphoreSlim _writeLock = new(1, 1);
+    // Diagnostic-only, read solely by RunAsync's own finally block to log the last packet
+    // successfully written before this session's socket loop exits (task requirement: a
+    // disconnect/crash investigation needs to know exactly what the client had already received
+    // immediately beforehand). Set only AFTER the underlying stream write completes without
+    // throwing - never before - so a write that itself fails/throws (e.g. because the client had
+    // already disconnected) correctly leaves the PREVIOUS successful packet as "last written",
+    // not the one that failed.
+    private volatile string _lastPacketWrittenDescription = "<none>";
     private readonly CancellationTokenSource _sessionCancellation = new();
     private readonly VisibleActorTracker _visibleActorIds = new();
     private ScriptExecutionSession? _scriptExecutionSession;
@@ -388,6 +396,12 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         }
         finally
         {
+            // Disconnect/crash diagnostics (task requirement): whatever caused this loop to exit -
+            // clean disconnect, cancellation, or an unhandled exception - the LAST packet this
+            // session actually finished writing to the client is exactly what the client had
+            // already received immediately beforehand. Logged unconditionally, before StopAsync's
+            // own cleanup runs, so it is never lost if StopAsync itself throws.
+            MapLogger.Info($"[iRO MAP DEBUG] Session ending map='{_mapName}' x={_x} y={_y} lastPacketWritten={_lastPacketWrittenDescription}");
             // StopAsync is idempotent and shared: whichever of RunAsync/DisposeAsync/an explicit
             // StopAsync call reaches it first performs the ONE shutdown sequence (cancel -> join both
             // runtime loops -> sync position -> persist once -> dispose resources); every other
@@ -686,7 +700,13 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
                 var fromX = _x;
                 var fromY = _y;
                 var resolved = ResolveMovementTarget(fromX, fromY, retarget.X, retarget.Y);
-                movement.StartWalk(resolved.Path, CurrentCellDurationMs(), _timeProvider.GetUtcNow());
+                // CurrentCellReachedAt (the exact boundary AdvanceTo just crossed to), NEVER a
+                // second independent _timeProvider.GetUtcNow() sample here - re-sampling wall-clock
+                // time between the AdvanceTo call above and this StartWalk silently gifts the
+                // replacement step a few extra milliseconds every retarget, observed live as a
+                // small compounding speed-up/hop on repeated mid-walk retargets. See
+                // CharacterMovementState.CurrentCellReachedAt's own doc comment.
+                movement.StartWalk(resolved.Path, CurrentCellDurationMs(), movement.CurrentCellReachedAt);
                 _pendingArrival = resolved.Arrival;
                 appliedRetarget = (fromX, fromY, resolved);
             }
@@ -1264,14 +1284,30 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
 
             if (action is WarpAction warpAction)
             {
-                MapLogger.Info($"[iRO MAP DEBUG] Warp triggered map='{_mapName}' at=({_x},{_y}) -> map='{warpAction.Map}' x={warpAction.X} y={warpAction.Y}");
-                TeleportTo(warpAction.Map, warpAction.X, warpAction.Y);
+                var sourceMap = _mapName;
+                var sourceX = _x;
+                var sourceY = _y;
+                MapLogger.Info($"[iRO MAP DEBUG] Warp triggered map='{sourceMap}' at=({sourceX},{sourceY}) -> map='{warpAction.Map}' x={warpAction.X} y={warpAction.Y} (pinned rAthena source value)");
+                // Verified stock-iRO capture compatibility override (IroWireCompatibility - see its
+                // own doc comment): the field->Prontera transition captured in
+                // prontera-walking.pcapng frame 3246 lands at (156,34), diverging from pinned
+                // legacy/rathena's own computed (156,26) for this exact door. The generated
+                // WarpDefinition/warpAction values above stay an untouched, faithful reproduction
+                // of pinned source; only the actually-executed transition below is compatibility-
+                // resolved, and that resolution is itself logged so a live crash investigation can
+                // see both the pinned value and the value actually used.
+                var (resolvedX, resolvedY) = IroWireCompatibility.ResolveVerifiedWarpDestinationOverride(sourceMap, warpAction.Map, warpAction.X, warpAction.Y);
+                if (resolvedX != warpAction.X || resolvedY != warpAction.Y)
+                {
+                    MapLogger.Info($"[iRO MAP DEBUG] Warp destination compatibility-resolved map='{warpAction.Map}' pinned=({warpAction.X},{warpAction.Y}) -> effective=({resolvedX},{resolvedY})");
+                }
+                TeleportTo(warpAction.Map, resolvedX, resolvedY);
             }
         }
 
         var response = IroMapTransitionPackets.BuildSameServerMapChange(_mapName, _x, _y);
         MapLogger.Info(
-            $"[iRO MAP DEBUG] Sending 0x0091 len={response.Length} map='{IroMapTransitionPackets.NormalizeWireMapName(_mapName)}' x={_x} y={_y}");
+            $"[iRO MAP DEBUG] Sending 0x0091 len={response.Length} map='{IroMapTransitionPackets.NormalizeWireMapName(_mapName)}' x={_x} y={_y} bytes={Convert.ToHexString(response)}");
         await WriteAsync(response, cancellationToken);
         await PersistPositionIfDirtyAsync(cancellationToken);
     }
@@ -1465,6 +1501,13 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
                 $"[iRO MAP DEBUG] Attack range rejected player=({_x},{_y}) targetActorId={expected.TargetActorId} target=({targetPositionForRangeCheck.X},{targetPositionForRangeCheck.Y}) weapon={(equippedWeapon is null ? "unarmed" : $"{equippedWeapon.AegisName}/{equippedWeapon.Id}")} range={effectiveRangeForRangeCheck} clientDistance={clientDistance}");
             var failurePacket = IroCombatDistancePackets.BuildAttackFailureForDistance(
                 expected.TargetActorId, targetPositionForRangeCheck.X, targetPositionForRangeCheck.Y, _x, _y, (ushort)effectiveRangeForRangeCheck);
+            // Live acceptance instrumentation (task requirement): 0x0139's exact outgoing bytes.
+            // IroCombatDistancePackets is PINNED-SOURCE-BACKED ONLY - no verified stock-iRO capture
+            // of ZC_ATTACK_FAILURE_FOR_DISTANCE exists in this project's evidence base
+            // (ai/iro-2026-wire.md has no 0x0139 entry) - see that type's own doc comment. This log
+            // line exists so a live PACKETVER 20220406 capture, once obtained, can be diffed
+            // byte-for-byte against what Athena actually sent.
+            MapLogger.Info($"[iRO MAP DEBUG] Sending 0x0139 (PINNED-SOURCE-BACKED, NOT capture-verified) len={failurePacket.Length} bytes={Convert.ToHexString(failurePacket)}");
             await WriteAsync(failurePacket, cancellationToken);
             // Pinned unit_attack_timer_sub's far-away branch never re-arms ud->attacktimer - only
             // the tail AFTER a real hit lands does that (unit.cpp:3333, "if (attack_continue &&
@@ -3461,6 +3504,9 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         try
         {
             await _stream.WriteAsync(payload, cancellationToken);
+            // Only reached if the write above did not throw - see this field's own doc comment.
+            var packetId = payload.Length >= 2 ? BinaryPrimitives.ReadInt16LittleEndian(payload) : (short)-1;
+            _lastPacketWrittenDescription = $"0x{packetId:X4} len={payload.Length}";
         }
         finally
         {

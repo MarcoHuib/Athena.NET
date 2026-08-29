@@ -763,10 +763,22 @@ public sealed class MapClientSessionMonsterCombatTests
     // advance fires the ALREADY-armed one first (a real chicken-and-egg deadlock, not a flaky
     // race). The very first call after an immediate (non-scheduled) hit is the one exception
     // this helper is not used for - callers read that hit directly via ReadExact instead.
+    // Deadlock/hang safety bound only, not part of the asserted combat behavior. Wider than this
+    // project's usual 5s bound (see MapClientSessionCombatRangeTests.SocketReadTimeout for the
+    // same reasoning and an earlier reproduction): this method's real-socket read races a
+    // genuinely contended CI runner - reproduced flaky under a 2-CPU-constrained Linux run of the
+    // full Release suite (never in isolation), matching this class's own doc comment already
+    // flagging "spurious 5-second WaitAsync timeouts" as a known symptom of this file's
+    // real-socket/real-background-loop integration tests. Scoped to ONLY this packet-read/wait
+    // path - the one call site that actually reproduced the flake; run.WaitAsync,
+    // DisposeAsync().WaitAsync, and this file's other 5s lifecycle bounds are untouched since none
+    // of those have independently failed.
+    private static readonly TimeSpan SocketReadTimeout = TimeSpan.FromSeconds(15);
+
     private static async Task<byte[]> WaitForNextDamagePacketAsync(Stream stream, ControllableTimeProvider clock, int delayMs)
     {
         await clock.AdvanceAsync(TimeSpan.FromMilliseconds(delayMs));
-        return await ReadExact(stream, PacketConstants.ZcNotifyAct3Length).WaitAsync(TimeSpan.FromSeconds(5));
+        return await ReadExact(stream, PacketConstants.ZcNotifyAct3Length).WaitAsync(SocketReadTimeout);
     }
 
     [Fact]

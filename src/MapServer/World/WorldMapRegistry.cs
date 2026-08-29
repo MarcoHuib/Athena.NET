@@ -1,5 +1,7 @@
 using Athena.Net.MapServer.Generated.World.Izlude.Academy;
 using Athena.Net.MapServer.World.GeneratedScripts;
+using IzludeCityWarps = Athena.Net.MapServer.Generated.World.Izlude.IzludeCity.GeneratedWarps;
+using PrtFild08Warps = Athena.Net.MapServer.Generated.World.PrtFild08.GeneratedWarps;
 
 namespace Athena.Net.MapServer.World;
 
@@ -57,6 +59,16 @@ public sealed class WorldMapRegistry
     public static WorldMapRegistry Tutorial { get; } = LoadGenerated();
     public int MapCount => _warps.Select(warp => warp.SourceMap).Distinct(StringComparer.OrdinalIgnoreCase).Count();
     public int StaticWarpCount => _warps.Count;
+    // DIAGNOSTIC/NAVIGATION VIEW ONLY - every map reachable through this build's STATIC WarpDefinition
+    // graph (a warp's own source map, since the player is already standing there, or its
+    // destination). This is deliberately NOT a hosting-scope/"which maps does this build serve"
+    // signal: it only sees plain declarative warps, not scripted/OnTouch WarpTrigger transitions
+    // (e.g. int_land*'s #intro_to_izlude_d, a runtime WarpAsync call - see
+    // IntroToIzludeOnTouchScript), and has no concept of a character start_point/reconnect map with
+    // no warp at all. MapServerWorld.Build's `servedMaps` parameter (hosting scope) is supplied
+    // explicitly by the composition root (MapServerHostingScope.ServedMaps) and must never be
+    // derived from this property.
+    public IReadOnlySet<string> ReachableMaps => _warps.SelectMany(warp => new[] { warp.SourceMap, warp.DestinationMap }).ToHashSet(StringComparer.OrdinalIgnoreCase);
     public int EntityCount => _entitiesById.Count;
     public int DynamicWarpActorCount => _dynamicWarpActorCount;
     public IReadOnlyDictionary<string, WorldEntityDefinition> EntitiesById => _entitiesById;
@@ -120,13 +132,18 @@ public sealed class WorldMapRegistry
             : null;
     }
     private static string SemanticKey(string map, string name) => $"{map}:{name}";
-    private static WorldMapRegistry LoadGenerated() => new(GeneratedWarps.All, GeneratedScriptRegistry.Entities, scripts: GeneratedScriptRegistry.Registry);
+    // Academy's static-door warps plus the route-critical Izlude<->prt_fild08d and
+    // prt_fild08d->prontera doors (ai/world-data.md's travel-corridor content); each area's
+    // GeneratedWarps class is compiled independently (see tools/WorldDataImporter), so the
+    // composed set is a plain concatenation rather than one area owning every WarpDefinition.
+    private static IEnumerable<WarpDefinition> AllGeneratedWarps => GeneratedWarps.All.Concat(IzludeCityWarps.All).Concat(PrtFild08Warps.All);
+    private static WorldMapRegistry LoadGenerated() => new(AllGeneratedWarps, GeneratedScriptRegistry.Entities, scripts: GeneratedScriptRegistry.Registry);
 
     // Same generated data as Tutorial/LoadGenerated(), but taking an externally supplied allocator
     // so MapServerWorld.Build() can hand WorldMapRegistry and MonsterRegistry the SAME
     // WorldActorIdAllocator instance instead of Tutorial's own private one.
     internal static WorldMapRegistry LoadGenerated(WorldActorIdAllocator allocator) =>
-        new(GeneratedWarps.All, GeneratedScriptRegistry.Entities, scripts: GeneratedScriptRegistry.Registry, allocator: allocator);
+        new(AllGeneratedWarps, GeneratedScriptRegistry.Entities, scripts: GeneratedScriptRegistry.Registry, allocator: allocator);
 }
 
 public readonly record struct WarpIntersection(WarpDefinition Warp, ushort X, ushort Y);

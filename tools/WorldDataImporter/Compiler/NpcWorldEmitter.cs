@@ -49,7 +49,8 @@ internal static class NpcWorldEmitter
         string scriptsNamespace,
         string sourceCommit,
         WarpTriggerConversionResult? warpConversion = null,
-        WarpTriggerEmissionSelection? warpSelection = null)
+        WarpTriggerEmissionSelection? warpSelection = null,
+        string prefix = "Academy")
     {
         var placementsByDefinition = conversion.Placements
             .Where(placement => selection.IncludesPlacement(placement.PlacementId))
@@ -97,7 +98,7 @@ internal static class NpcWorldEmitter
             npcFieldsByDefinition[definition.DefinitionId] = (fieldName, EmitDefinitionField(fieldName, definition, triggerFactories, scriptsNamespace, sourceCommit));
 
             var placements = placementsByDefinition[definition.DefinitionId];
-            registerCalls.Add(EmitNpcRegisterCall(fieldName, placements, sourceCommit));
+            registerCalls.Add(EmitNpcRegisterCall(fieldName, placements, sourceCommit, prefix));
         }
 
         string? academyWarpTriggersSource = null;
@@ -132,18 +133,18 @@ internal static class NpcWorldEmitter
                 scriptSources[className] = NpcScriptEmitter.EmitScriptClass(lowered, definitionMetadata, triggerMetadata, className);
 
                 var fieldName = WarpDisambiguatedBaseName(warpByBaseName, definition);
-                warpFieldsByDefinition[definition.DefinitionId] = (fieldName, EmitWarpTriggerDefinitionField(fieldName, definition, className, scriptsNamespace, sourceCommit));
+                warpFieldsByDefinition[definition.DefinitionId] = (fieldName, EmitWarpTriggerDefinitionField(fieldName, definition, className, scriptsNamespace, sourceCommit, prefix));
 
                 var placements = warpPlacementsByDefinition[definition.DefinitionId];
-                registerCalls.Add(EmitWarpTriggerRegisterCall(fieldName, placements));
+                registerCalls.Add(EmitWarpTriggerRegisterCall(fieldName, placements, prefix));
             }
 
-            academyWarpTriggersSource = EmitAcademyWarpTriggers(worldNamespace, warpFieldsByDefinition.Values.Select(v => v.Literal));
+            academyWarpTriggersSource = EmitAcademyWarpTriggers(worldNamespace, warpFieldsByDefinition.Values.Select(v => v.Literal), prefix);
         }
 
         return new(
-            EmitAcademyWorld(worldNamespace, registerCalls),
-            EmitAcademyNpcs(worldNamespace, npcFieldsByDefinition.Values.Select(v => v.Literal)),
+            EmitAcademyWorld(worldNamespace, registerCalls, prefix),
+            EmitAcademyNpcs(worldNamespace, npcFieldsByDefinition.Values.Select(v => v.Literal), prefix),
             academyWarpTriggersSource,
             scriptSources);
     }
@@ -191,13 +192,13 @@ internal static class NpcWorldEmitter
         return output.ToString();
     }
 
-    private static string EmitNpcRegisterCall(string fieldName, IReadOnlyList<NpcPlacement> placements, string sourceCommit)
+    private static string EmitNpcRegisterCall(string fieldName, IReadOnlyList<NpcPlacement> placements, string sourceCommit, string prefix)
     {
         var output = new StringBuilder();
-        output.Append("        world.AddNpc(AcademyNpcs.").Append(fieldName).Append(",\n        [\n");
+        output.Append("        world.AddNpc(").Append(prefix).Append("Npcs.").Append(fieldName).Append(",\n        [\n");
         foreach (var placement in placements)
         {
-            output.Append("            new(\"").Append(E(placement.PlacementId)).Append("\", AcademyNpcs.").Append(fieldName).Append(".DefinitionId, \"")
+            output.Append("            new(\"").Append(E(placement.PlacementId)).Append("\", ").Append(prefix).Append("Npcs.").Append(fieldName).Append(".DefinitionId, \"")
                 .Append(E(placement.NpcName)).Append("\", \"").Append(E(placement.Map)).Append("\", ")
                 .Append(placement.X).Append(", ").Append(placement.Y).Append(", ").Append(placement.Direction).Append(", ").Append(placement.Class).Append(", ")
                 .Append(placement.RadiusX).Append(", ").Append(placement.RadiusY).Append(", ").Append(placement.InitialEffectState ?? 0).Append("),\n");
@@ -206,7 +207,7 @@ internal static class NpcWorldEmitter
         return output.ToString();
     }
 
-    private static string EmitWarpTriggerDefinitionField(string fieldName, WarpTriggerDefinition definition, string className, string scriptsNamespace, string sourceCommit)
+    private static string EmitWarpTriggerDefinitionField(string fieldName, WarpTriggerDefinition definition, string className, string scriptsNamespace, string sourceCommit, string prefix)
     {
         var output = new StringBuilder();
         output.Append("    internal static readonly WarpTriggerDefinition ").Append(fieldName).Append(" = new(\n");
@@ -216,13 +217,13 @@ internal static class NpcWorldEmitter
         return output.ToString();
     }
 
-    private static string EmitWarpTriggerRegisterCall(string fieldName, IReadOnlyList<WarpTriggerPlacement> placements)
+    private static string EmitWarpTriggerRegisterCall(string fieldName, IReadOnlyList<WarpTriggerPlacement> placements, string prefix)
     {
         var output = new StringBuilder();
-        output.Append("        world.AddWarpTrigger(AcademyWarpTriggers.").Append(fieldName).Append(",\n        [\n");
+        output.Append("        world.AddWarpTrigger(").Append(prefix).Append("WarpTriggers.").Append(fieldName).Append(",\n        [\n");
         foreach (var placement in placements)
         {
-            output.Append("            new(\"").Append(E(placement.PlacementId)).Append("\", AcademyWarpTriggers.").Append(fieldName).Append(".DefinitionId, \"")
+            output.Append("            new(\"").Append(E(placement.PlacementId)).Append("\", ").Append(prefix).Append("WarpTriggers.").Append(fieldName).Append(".DefinitionId, \"")
                 .Append(E(placement.NpcName)).Append("\", \"").Append(E(placement.Map)).Append("\", ")
                 .Append(placement.X).Append(", ").Append(placement.Y).Append(", ").Append(placement.Direction).Append(", ")
                 .Append(placement.RadiusX).Append(", ").Append(placement.RadiusY).Append("),\n");
@@ -231,7 +232,7 @@ internal static class NpcWorldEmitter
         return output.ToString();
     }
 
-    private static string EmitAcademyWarpTriggers(string worldNamespace, IEnumerable<string> fields)
+    private static string EmitAcademyWarpTriggers(string worldNamespace, IEnumerable<string> fields, string prefix)
     {
         var output = new StringBuilder();
         output.AppendLine("// <auto-generated>");
@@ -242,14 +243,14 @@ internal static class NpcWorldEmitter
         output.AppendLine();
         output.Append("namespace ").Append(worldNamespace).AppendLine(";");
         output.AppendLine();
-        output.AppendLine("internal static class AcademyWarpTriggers");
+        output.Append("internal static class ").Append(prefix).AppendLine("WarpTriggers");
         output.AppendLine("{");
         foreach (var field in fields) output.Append(field);
         output.AppendLine("}");
         return output.ToString();
     }
 
-    private static string EmitAcademyNpcs(string worldNamespace, IEnumerable<string> fields)
+    private static string EmitAcademyNpcs(string worldNamespace, IEnumerable<string> fields, string prefix)
     {
         var output = new StringBuilder();
         output.AppendLine("// <auto-generated>");
@@ -260,14 +261,14 @@ internal static class NpcWorldEmitter
         output.AppendLine();
         output.Append("namespace ").Append(worldNamespace).AppendLine(";");
         output.AppendLine();
-        output.AppendLine("internal static class AcademyNpcs");
+        output.Append("internal static class ").Append(prefix).AppendLine("Npcs");
         output.AppendLine("{");
         foreach (var field in fields) output.Append(field);
         output.AppendLine("}");
         return output.ToString();
     }
 
-    private static string EmitAcademyWorld(string worldNamespace, IEnumerable<string> registerCalls)
+    private static string EmitAcademyWorld(string worldNamespace, IEnumerable<string> registerCalls, string prefix)
     {
         var output = new StringBuilder();
         output.AppendLine("// <auto-generated>");
@@ -278,7 +279,7 @@ internal static class NpcWorldEmitter
         output.AppendLine();
         output.Append("namespace ").Append(worldNamespace).AppendLine(";");
         output.AppendLine();
-        output.AppendLine("internal static class AcademyWorld");
+        output.Append("internal static class ").Append(prefix).AppendLine("World");
         output.AppendLine("{");
         output.AppendLine("    public static void Register(WorldRegistryBuilder world)");
         output.AppendLine("    {");

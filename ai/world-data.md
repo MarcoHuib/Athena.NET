@@ -496,6 +496,317 @@ dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- \
   --output src/MapServer/Generated
 ```
 
+## Travel corridor: Izlude -> prt_fild08d -> Prontera
+
+`izlude-prontera-travel-trace.txt` documents the capture evidence for the next slice beyond
+Academy: tutorial/ship -> `izlude_d` (196,209) -> free walk -> `prt_fild08d` (367,212) -> free
+walk -> `prontera` (156,34) -> free walk. Source captures: `Full-izlude.pcapng` (SHA-256
+`ee3bcbf2429d944c512d2ced10ce9c8db099dec79ad499f23b977462a0af2ec9`),
+`sail-newnpc-onlineplayers.pcapng` (SHA-256
+`558106a47492ce33d2304f047233de85bbad39d57d6e7be1fc9a7fa1d7d296bf`), and
+`prontera-walking.pcapng` (SHA-256
+`be06f244719c702d81d09ba9e595bb2e04ec5f8bd0248db70b4dbc43f23198ad`).
+
+A full gap audit (against `#intro04_to_izlude_d` OnTouch wiring, `Close2Async` continuation,
+quest completion, `WarpAsync`/`SetSavePointAsync`, `WorldMapRegistry`'s map-loading model,
+CharServer position/save-point persistence, and PR #19's `PlayerPresenceRegistry`/
+`PlayerVisibilityCoordinator`) found every one of those runtime capabilities already generic
+and map-name-agnostic — none take a map allowlist, and `TeleportTo`/`WarpAsync` accept any
+string. The entire gap was content generation: `izlude_d`, `prt_fild08d`, and `prontera` had
+zero compiled maps/warps/NPCs anywhere in `Generated/World/`.
+
+### Route-critical warps
+
+Two same-server doors, both plain declarative `warp` directives (not `duplicate()`/WARPNPC
+chains) — same shape as `#room_in`/`#room_out`:
+
+```bash
+dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- compile \
+  --source-root legacy/rathena/npc/re/warps/cities \
+  --source-file izlude.txt \
+  --name 'prtf005_d' --name 'iz001_d' --kind warp \
+  --rathena-commit e985006171d2eb320ee512a653f4c83aea3d81b6 \
+  --namespace Athena.Net.MapServer.Generated.World.Izlude.IzludeCity \
+  --class-name GeneratedWarps \
+  --output src/MapServer/Generated/World/Izlude/IzludeCity/IzludeCityWarps.cs
+
+dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- compile \
+  --source-root legacy/rathena/npc/re/warps/fields \
+  --source-file prontera_fild.txt \
+  --name 'prtf004_d' --kind warp \
+  --rathena-commit e985006171d2eb320ee512a653f4c83aea3d81b6 \
+  --namespace Athena.Net.MapServer.Generated.World.PrtFild08 \
+  --class-name GeneratedWarps \
+  --output src/MapServer/Generated/World/PrtFild08/PrtFild08Warps.cs
+```
+
+`izlude_d <-> prt_fild08d` is bidirectional (both doors exist in pinned source).
+`prt_fild08d -> prontera` is one-way in pinned source: `prontera_fild.txt` and
+`prontera.txt` contain no reverse `prontera,... -> prt_fild08*` warp anywhere — this was
+independently confirmed by exhaustive grep, not an omission on Athena's side. Both `compile`
+invocations use two new CLI options, `--namespace`/`--class-name`, added specifically for this
+slice (see "Tooling changes" below); omitting them keeps the original
+`Athena.Net.MapServer.Generated.World.Izlude`/`GeneratedWarps` default used by the existing
+`AcademyWarps.cs`-equivalent invocations.
+
+### Route-critical + low-cost static NPC presence
+
+Per the travel trace's own prioritization (not "implement every captured NPC"): the Izlude-side
+ferry Sailor, both Izlude Guides, one Prontera Guide family (including `Guide#04prontera` at the
+south entrance), the field's Resting Adventurer, and Karian (a nearby job-quest NPC, compiled
+actor-only — its `minstrel.txt` job-quest body is not lowered). Kafra Employee/Storage
+Keeper/Bulletin Board from the capture have no matching pinned-source entity at those exact
+cells (`legacy/rathena/db`/`npc` grep found nothing under those names near Prontera's south
+gate) and were deliberately not invented.
+
+```bash
+dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- compile-npc-world \
+  --source-root legacy/rathena/npc/cities --source-root legacy/rathena/npc/re/cities \
+  --name 'Sailor_izlude' \
+  --namespace Athena.Net.MapServer.Generated.World.Izlude.IzludeCity --prefix IzludeCity \
+  --rathena-commit e985006171d2eb320ee512a653f4c83aea3d81b6 \
+  --output-dir src/MapServer/Generated/World/Izlude/IzludeCity
+
+dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- compile-npc-world \
+  --source-root legacy/rathena/npc/re/guides --name 'GuideIzlude' \
+  --namespace Athena.Net.MapServer.Generated.World.Izlude.IzludeCity --prefix IzludeGuide \
+  --rathena-commit e985006171d2eb320ee512a653f4c83aea3d81b6 \
+  --output-dir src/MapServer/Generated/World/Izlude/IzludeCity
+
+dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- compile-npc-world \
+  --source-root legacy/rathena/npc/re/cities --name 'Resting Adventurer#iz' \
+  --namespace Athena.Net.MapServer.Generated.World.PrtFild08 --prefix PrtFild08 \
+  --rathena-commit e985006171d2eb320ee512a653f4c83aea3d81b6 \
+  --output-dir src/MapServer/Generated/World/PrtFild08
+
+dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- compile-npc-world \
+  --source-root legacy/rathena/npc/re/guides --name 'GuideProntera' \
+  --namespace Athena.Net.MapServer.Generated.World.Prontera --prefix PronteraCity \
+  --rathena-commit e985006171d2eb320ee512a653f4c83aea3d81b6 \
+  --output-dir src/MapServer/Generated/World/Prontera
+
+dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- compile-npc-world \
+  --source-root legacy/rathena/npc/re/jobs/3-2 --name 'Karian#cmd9' \
+  --namespace Athena.Net.MapServer.Generated.World.Prontera --prefix PronteraKarian \
+  --rathena-commit e985006171d2eb320ee512a653f4c83aea3d81b6 \
+  --output-dir src/MapServer/Generated/World/Prontera
+```
+
+`Sailor_izlude`'s ferry-vendor `OnClick` body and `GuideIzlude`/`GuideProntera`'s navigation
+menus (`viewpoint`/`F_Navi`/`callsub`) are not lowerable with current generator capability
+(confirmed by the `capabilities` command before compiling — `set`/`viewpoint`/`f_navi` are
+PARSED, not FULLYSUPPORTED); both compile as safe actor-only presence (definition with `[]`
+behaviors), matching the trace's "unsupported service NPCs may be present as source-backed
+world actors without forcing a new subsystem into this PR" rule. Karian and the Resting
+Adventurer's trivial `end;`/`return;` OnClick bodies DO lower (their real job-quest/`OnTimer`
+bodies do not), so those two get a real (no-op) script class rather than `[]`.
+
+All six generated `*World.Register(builder)` calls are composed alongside `AcademyWorld.Register`
+in `GeneratedScriptRegistry.Register` (`src/MapServer/World/GeneratedScripts/GeneratedScriptRegistry.cs`),
+the same single composition point every other generated area uses. The new `GeneratedWarps.All`
+arrays are concatenated with Academy's in both `WorldMapRegistry.LoadGenerated` overloads and
+`MapServerWorld.Build` — `WorldMapRegistry` itself has no per-map allowlist to update; it was
+already built as a plain concatenation of whatever `WarpDefinition[]` it's constructed with.
+
+### Tooling changes (generic compiler capability, not route-specific)
+
+Three real, previously-latent `WorldDataImporter` gaps were found and fixed while compiling this
+content — all are generic parser/emitter capability, verified non-regressive against the
+existing Academy content (byte-identical regeneration re-checked after each fix) and covered by
+`tests/WorldDataImporter.Tests`:
+
+- **Floating (`-`) global-label scripts** (e.g. `-\tscript\t::Sailor_izlude\t-1,{...}` in
+  `legacy/rathena/npc/cities/izlude.txt:37`, referenced by `duplicate(Sailor_izlude)` elsewhere):
+  `RathenaSourceParser.TryPosition` previously required a real `map,x,y,direction` and silently
+  dropped these declarations entirely; it now recognizes a bare `-` map field. The floating
+  template's own declaration row (no real placement of its own) is excluded from placement
+  iteration in `WorldEntityConverter.ConvertNpcDefinitions` rather than misparsed as a placement.
+- **`Name::Alias` self-placed templates** (e.g. `Guide#01prontera::GuideProntera` in
+  `guides_prontera.txt:10`, referenced by `duplicate(GuideProntera)` — a different rAthena
+  convention from the floating-script `::Name` form above): the parser now splits `Name` from a
+  trailing `::Alias`, and `WorldEntityConverter.BuildTemplateIndex`/`ConversionFilter.Matches`
+  index/match on either the template's own name or its alias.
+- **Raw numeric NPC sprite IDs** (e.g. `Guide#01izlude,...,105` — a plain sprite ID, not a
+  `JT_*` symbolic constant): `NpcSpriteClassResolver.TryResolve` previously only looked up
+  `"JT_" + constant` in `npc.hpp`'s `e_job_types` enum; it now accepts a bare numeric string
+  directly. Not every rAthena NPC sprite is a `JT_*`-enum warp/monster-style constant.
+
+`compile`/`compile-npc-world` also gained optional `--namespace`/`--class-name`/`--prefix`
+overrides (all defaulting to the prior hardcoded `Athena.Net.MapServer.Generated.World.Izlude`/
+`GeneratedWarps`/`Academy` values) so a new area's generated classes are named for that area
+instead of every area's output being named `Academy*` regardless of its actual namespace.
+
+### prt_fild08d monster population
+
+The existing generic monster runtime (`MonsterRegistry`, `MobSpawnDefinition`,
+`IMobSpawnCellSelector`, movement, combat, death, respawn, EXP, and quest-drop pipeline) was
+**reused entirely unmodified**. This slice is pure content generation plus one small, generic
+hosting-scope addition (`MapServerHostingScope`, below) — no route-specific runtime logic exists
+anywhere in `MonsterRegistry` or the combat pipeline.
+
+Authoritative spawn source: `legacy/rathena/npc/re/mobs/academy.txt:32-35`
+(`prt_fild08d,0,0 monster {Poring 1002,110,5000 | Lunatic 1063,100,5000 | Fabre 1007,100,5000 |
+Little Poring 2398,30,50000}`) — the pinned `0,0` center with no `xs,ys` columns means the
+existing `IMobSpawnCellSelector` map-wide randomized-search semantics apply (never literal
+`(0,0)`), the same interpretation already documented above for G_PORING. Matching this project's
+"never exclude a generic/base template member merely because a request is scoped to one instance"
+convention, all five pinned `prt_fild08{,a,b,c,d}` family rows are generated losslessly (`new_1-3`,
+an unrelated map sharing "Little Poring"'s display name, is the only excluded row).
+
+Mob definitions are generated once, stateless/deterministic, into the shared global
+`GeneratedMobs` (`internal static partial class`). Output is sharded by pinned-source-derived
+category AND a fixed 1000-MobId range grid within that category — a FIXED grid (1000-1999,
+2000-2999, ...), never item-count-based chunking, so a mob's file membership never shifts merely
+because unrelated IDs are added/removed elsewhere in the same category. Only non-empty
+category+range combinations are ever written — an empty bucket produces no file. Today's five mobs
+(1002, 1007, 1063, 2398, 2401) all fall in the one populated category ("Monsters" — the only
+category populated today; a future "Mvps"/etc. would only appear once real MVP-flagged mobs are
+generated), landing in two files:
+
+```text
+Generated/GameData/Mobs/GeneratedMobs.Monsters.1000-1999.cs   (Poring 1002, Fabre 1007, Lunatic 1063)
+Generated/GameData/Mobs/GeneratedMobs.Monsters.2000-2999.cs   (LittlePoring 2398, GPoring 2401)
+```
+
+Each `MobDefinition` is emitted as exactly one physical source line (still fully named-argument,
+never collapsed to positional/helper arguments) — generated data will eventually hold thousands of
+entries, where the original ~25-line-per-mob layout made large datasets hard to scan/grep/diff.
+One invocation regenerates every file for the full requested mob set; the output directory is
+treated as one generation unit (every `GeneratedMobs.<Category>.*.cs` already present is deleted
+before writing), so a bucket no longer covered by the current invocation does not silently survive
+from a previous run:
+
+```bash
+dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- compile-mob-definitions \
+  --rathena-root legacy/rathena --rathena-commit e985006171d2eb320ee512a653f4c83aea3d81b6 \
+  --mob-id 2401 --constant-name GPoring \
+  --mob-id 1002 --constant-name Poring \
+  --mob-id 1063 --constant-name Lunatic \
+  --mob-id 1007 --constant-name Fabre \
+  --mob-id 2398 --constant-name LittlePoring \
+  --class-name GeneratedMobs --category Monsters \
+  --output-dir src/MapServer/Generated/GameData/Mobs
+```
+
+Map-scoped placement (`MobSpawnDefinition`: which map, how many, how often) stays a completely
+separate concern from mob identity, generated by `compile-mob-spawn` in one of two shapes:
+
+- **Map-centric** (the default, no `--family-name`): one file per real pinned map -
+  `--output-root/<PascalMap>/<PascalMap>MobSpawns.cs`, each exposing a single
+  `MobSpawnDefinition[] All`. Appropriate when a map has no sibling instanced duplicates worth
+  consolidating.
+- **Duplicate-family** (`--family-name`/`--family-map`/`--family-array-name`): for an EXPLICIT
+  pinned rAthena duplicate family sharing the same content pattern (e.g. `prt_fild08{,a,b,c,d}`),
+  consolidates every concrete map into ONE file with one array per concrete map plus a composed
+  `All` array — an organizational rule for genuine source-backed duplicate families only, never a
+  general "combine unrelated maps" mechanism. Every entry still carries its own exact map string
+  and source provenance; the five concrete maps are never collapsed into one runtime/template
+  identity. This is what `prt_fild08{,a,b,c,d}` actually uses, consolidated under the CANONICAL
+  family root `Generated/World/PrtFild08/` alongside that same family's NPC/warp/script content
+  (see "Route-critical + low-cost static NPC presence" above) — there is no separate
+  `Generated/World/PrtFild08d/` directory:
+
+```text
+Generated/World/PrtFild08/PrtFild08MobSpawns.cs
+    PrtFild08   (all four mobs on prt_fild08)
+    PrtFild08A  (all four mobs on prt_fild08a)
+    PrtFild08B  (all four mobs on prt_fild08b)
+    PrtFild08C  (all four mobs on prt_fild08c)
+    PrtFild08D  (all four mobs on prt_fild08d)
+    All         (composed: [.. PrtFild08, .. PrtFild08A, .. PrtFild08B, .. PrtFild08C, .. PrtFild08D])
+```
+
+```bash
+dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- compile-mob-spawn \
+  --rathena-root legacy/rathena --rathena-commit e985006171d2eb320ee512a653f4c83aea3d81b6 \
+  --mob-id 1002 --name Poring --constant-name Poring \
+  --mob-id 1063 --name Lunatic --constant-name Lunatic \
+  --mob-id 1007 --name Fabre --constant-name Fabre \
+  --mob-id 2398 --name "Little Poring" --constant-name LittlePoring \
+  --spawn-file npc/re/mobs/academy.txt --exclude-map new_1-3 \
+  --definition-class GeneratedMobs \
+  --family-name PrtFild08 \
+  --family-map prt_fild08 --family-array-name PrtFild08 \
+  --family-map prt_fild08a --family-array-name PrtFild08A \
+  --family-map prt_fild08b --family-array-name PrtFild08B \
+  --family-map prt_fild08c --family-array-name PrtFild08C \
+  --family-map prt_fild08d --family-array-name PrtFild08D \
+  --namespace-root Athena.Net.MapServer.Generated.World.PrtFild08 \
+  --output-root src/MapServer/Generated/World/PrtFild08
+```
+
+The `compile-npc-world`/`compile` warp commands above and this `compile-mob-spawn` invocation all
+target the SAME `Generated/World/PrtFild08/` directory and the same
+`Athena.Net.MapServer.Generated.World.PrtFild08` namespace, giving the canonical layout:
+
+```text
+Generated/World/PrtFild08/
+    PrtFild08MobSpawns.cs
+    PrtFild08Npcs.cs
+    PrtFild08Warps.cs
+    PrtFild08World.cs
+    Scripts/
+        RestingAdventurerOnClickScript.cs
+```
+
+The directory/class names describe the canonical `prt_fild08` source-map family; each generated
+NPC placement and `MobSpawnDefinition` entry within it still preserves its own exact concrete map
+identity (`prt_fild08`, `prt_fild08a`, `b`, `c`, `d`) in its data/provenance - only `d` is
+currently a real travel-corridor destination (has a pinned warp actually leading to it), so no
+warp/script content is fabricated for the other four beyond what pinned source and the current
+generation selection (`Resting Adventurer#iz`, the four mobs) already provide.
+
+All references the global `GeneratedMobs.*` constants — never a map-local copy of a mob's stats.
+In map-centric mode, the output root is treated as one generation unit: every existing
+`<PascalMap>MobSpawns.cs` under any immediate subdirectory of `--output-root` is deleted before
+writing (Academy's own `Izlude/Academy/AcademyMobSpawns.cs` lives one level deeper and is
+untouched by this sweep). `--mob-id`/`--name`/`--constant-name` are repeated, position-matched
+lists — one invocation covers an arbitrary number of mobs sharing a spawn-declaration family; N=1
+is byte-identical to the original single-mob command shape (verified by `CompilerTests`).
+`compile-mob-spawn` was narrowed to spawn-only (it previously also emitted a mob-definition file,
+which risked one map's spawn command silently owning/overwriting the shared global definition
+class — corrected before that shape was ever composed into the live world).
+
+`MapServerHostingScope.ServedMaps` remains the sole runtime decision for which concrete map
+populations are actually instantiated (only `prt_fild08d` today) — generation is never scoped by
+what is currently served; every pinned family member's data is generated and registered
+regardless. File layout (category+range sharding for definitions, map-centric or duplicate-family
+for spawns) is purely organizational — consumers always reference `GeneratedMobs.<Name>` /
+`<ClassName>.<ArrayName>` regardless of which generated file actually declares it, matching the
+same pattern `GeneratedItems` is expected to use as more categories are imported.
+
+#### Hosting scope: `servedMaps`
+
+A real pre-existing gap surfaced once `prt_fild08d`'s spawns were composed into the live world:
+pinned `legacy/rathena/db/map_cache.dat` has collision data for `prt_fild08a/b/c/d` but **not**
+for the plain/generic `prt_fild08` family member (confirmed by direct binary search) — a genuine
+upstream data gap, not something this project can fabricate a fix for.
+
+"Reachable via a warp" and "served by this MapServer build" are different concepts (a character
+start_point, a persisted reconnect position, or a save point can make a map served with zero
+static warps at all), so hosting scope is a new, explicit, hand-declared
+`MapServerHostingScope.ServedMaps` (`src/MapServer/World/MapServerHostingScope.cs`) — never
+inferred from the warp graph (`WorldMapRegistry.ReachableMaps` remains a diagnostic-only view, not
+a hosting-scope source) and never inferred from collision-data availability. `MapServerWorld.Build`
+gained an optional `servedMaps` parameter (`IReadOnlySet<string>?`, default `null` = no filtering,
+preserving every existing test's behavior); when supplied, a generated `MobSpawnDefinition` whose
+map is not in the set is excluded before `MonsterRegistry` construction — generated source data is
+untouched either way, only runtime instantiation is filtered. `MapServerApp.RunAsync` (the
+production composition root) always passes `MapServerHostingScope.ServedMaps` explicitly.
+
+Semantics, with no per-map special case anywhere in `MonsterRegistry`:
+
+- generated spawn map **not** in `ServedMaps` → generated source data retained, nothing
+  instantiated, no error (`prt_fild08` today).
+- generated spawn map **in** `ServedMaps`, collision data present → instantiated normally
+  (`prt_fild08d`, `int_land*`, etc. today).
+- generated spawn map **in** `ServedMaps`, collision data missing → fails loudly via the existing
+  `RathenaCompatibleMobSpawnCellSelector` contract (a world-data/configuration error, never a
+  silent gap).
+
+Current `ServedMaps`: the tutorial `int_land`/`iz_int` families (base + 01-04) and the travel
+corridor (`izlude_d`, `prt_fild08d`, `prontera`) — see `MapServerHostingScope`'s own doc comment.
+
 ## Still missing
 
 The complete `iz_int`/`int_land` tutorial family (generic base maps plus all four instanced duplicates) includes compiler-generated navigation targets, both Wounded Swordsman actor states/scripts, and generated behavior for Captain Carocc and Lumin — not only the `iz_int03`/`int_land03` instanced variant. Captain Carocc's pinned dialogue/quest/heal/status/EXP script and Lumin's pinned dialogue/quest/cutin/cloak script are registered and executable on every map in the family. Lumin's `strcharinfo(0)` resolves the active character name carried through the authenticated CharServer map handoff; it is never sourced from a client dialogue packet or capture constant.

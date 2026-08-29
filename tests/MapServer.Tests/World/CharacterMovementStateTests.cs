@@ -376,4 +376,45 @@ public sealed class CharacterMovementStateTests
 
         Assert.Equal(Epoch.AddMilliseconds(560 + 400), state.NextStepDueAt); // Second step is orthogonal.
     }
+
+    // Live stock-iRO acceptance (PR #20) reported a small visible speed-up/hop exactly on repeated
+    // mid-walk retargets. Root cause: MapClientSession.ProcessDueMovementAsync previously seeded the
+    // replacement step's StartWalk with a SECOND, independently-sampled TimeProvider.GetUtcNow()
+    // call rather than the exact cell-boundary timestamp AdvanceTo had just advanced to. Under a
+    // real (non-deterministic) clock those two reads are never exactly simultaneous, so whatever gap
+    // elapsed between them was silently gifted to the new step, shortening it below its full
+    // configured duration.
+    //
+    // CurrentCellReachedAt exists specifically so a caller applying a retarget at a cell boundary
+    // never needs to sample the clock a second time: it returns the exact instant AdvanceTo already
+    // established as "the current cell was reached", with NO clock read of its own (see its own doc
+    // comment - this test proves that by construction, not merely by value equality, since the
+    // property never touches TimeProvider at all).
+    [Fact]
+    public void CurrentCellReachedAt_MatchesTheExactBoundaryAdvanceToCrossed_NeverALaterResampledClockValue()
+    {
+        var state = new CharacterMovementState("iz_int01", 0, 0);
+        state.StartWalk([(0, 0), (1, 0), (1, 5)], orthogonalStepMs: 150, Epoch);
+
+        // Reach the first cell boundary at exactly 150ms.
+        var crossed = state.AdvanceTo(Epoch.AddMilliseconds(150));
+        Assert.Equal([((ushort)1, (ushort)0)], crossed);
+
+        // CurrentCellReachedAt must be EXACTLY the boundary just crossed (150ms), regardless of
+        // whatever wall-clock instant a caller might separately observe afterward.
+        Assert.Equal(Epoch.AddMilliseconds(150), state.CurrentCellReachedAt);
+
+        // Seeding a replacement step's StartWalk with this value (the fix's own contract) must make
+        // the new step due at exactly reachedAt + its own duration - never earlier, regardless of
+        // how much later in real time the caller happens to actually call StartWalk.
+        var reachedAt = state.CurrentCellReachedAt;
+        state.StartWalk([(1, 0), (1, 5)], orthogonalStepMs: 150, reachedAt);
+        Assert.Equal(reachedAt.AddMilliseconds(150), state.NextStepDueAt);
+
+        // 1ms short of that boundary must not yet cross, even measuring from a much later "now" -
+        // proving the step's full duration is anchored to reachedAt, not to whenever this call runs.
+        Assert.Empty(state.AdvanceTo(reachedAt.AddMilliseconds(149)));
+        Assert.Equal((ushort)1, state.CurrentX);
+        Assert.Equal((ushort)0, state.CurrentY);
+    }
 }

@@ -9,7 +9,11 @@ public sealed class WorldMapRegistryTests
     public void DefaultWorld_IsTheIntentionalGeneratedVerticalSlice()
     {
         var registry = WorldMapRegistry.Tutorial;
-        Assert.Equal(10, registry.StaticWarpCount);
+        // 13 = the original 10 Academy same-map doors (#room_in/#room_out x 5 iz_int variants) plus
+        // 3 travel-corridor doors (izlude-prontera-travel-trace.txt): izlude_d<->prt_fild08d (2,
+        // one per direction) and prt_fild08d->prontera (1, one-way in pinned source - see
+        // ai/world-data.md).
+        Assert.Equal(13, registry.StaticWarpCount);
         // 35 = the full 5-map tutorial family (base iz_int/int_land + 01..04), not just the 01..04
         // instanced variants: 2 Wounded Swordsman states x 5 maps (iz_int/01/02/03/04) + Captain
         // Carocc x 5 (int_land/01/02/03/04) + Lumin x 5 + Sailor x 5 (int_land/01/02/03/04) +
@@ -17,7 +21,11 @@ public sealed class WorldMapRegistryTests
         // 10+5+5+5+5+5 = 35. Every generic/base placement (iz_int/int_land, not just the *0N
         // instanced duplicates) must be present here - see WorldMapRegistryFamilyTests for the
         // per-suffix breakdown this count summarizes.
-        Assert.Equal(35, registry.EntityCount);
+        // 61 = the original 35 Academy entities plus 26 travel-corridor entities
+        // (izlude-prontera-travel-trace.txt, route-critical + low-cost presence only): Sailor x5
+        // (izlude/izlude_a/b/c/d) + Guide#01/02izlude x5 maps = 10 + Resting Adventurer x5
+        // (prt_fild08/a/b/c/d) + Guide#01..05prontera x5 + Karian#cmd9 x1 = 5+5+1 = 26.
+        Assert.Equal(61, registry.EntityCount);
         Assert.Equal(0, registry.DynamicWarpActorCount);
         Assert.Contains("npc:int_land03:captain carocc#intro_npc03_03", registry.EntitiesById.Keys);
         Assert.Contains("npc:int_land03:lumin#new_ship03", registry.EntitiesById.Keys);
@@ -34,6 +42,37 @@ public sealed class WorldMapRegistryTests
         Assert.Contains("warp:iz_int:ship_out", registry.EntitiesById.Keys);
         Assert.Contains("warp:int_land:intro_to_izlude", registry.EntitiesById.Keys);
         Assert.DoesNotContain("dev:int_land04:athena_test_npc", registry.EntitiesById.Keys);
+        // Travel-corridor NPC presence (izlude-prontera-travel-trace.txt): route-critical/low-cost
+        // static NPCs only, not every captured NPC - see ai/world-data.md.
+        Assert.Contains("npc:izlude_d:sailor#izlude_d", registry.EntitiesById.Keys);
+        Assert.Contains("npc:izlude_d:guide#01izlude_d", registry.EntitiesById.Keys);
+        Assert.Contains("npc:izlude_d:guide#02izlude_d", registry.EntitiesById.Keys);
+        Assert.Contains("npc:prt_fild08d:resting adventurer#izd", registry.EntitiesById.Keys);
+        Assert.Contains("npc:prontera:guide#04prontera", registry.EntitiesById.Keys);
+        Assert.Contains("npc:prontera:karian#cmd9", registry.EntitiesById.Keys);
+    }
+
+    [Fact]
+    public void TravelCorridorWarps_MatchGeneratedPinnedSourceValues()
+    {
+        // This test verifies the GENERATED (pinned legacy/rathena) WarpDefinition data only - the
+        // izlude_d<->prt_fild08d doors here are NOT known to diverge from any verified capture.
+        // prt_fild08d -> prontera's own pinned value (156,26) is a KNOWN, documented divergence
+        // from the verified stock-iRO capture (prontera-walking.pcapng frame 3246 proves (156,34))
+        // - see IroWireCompatibilityTests for the compatibility-resolved runtime value this test
+        // deliberately does NOT assert, and IroWireCompatibility's own doc comment for why the
+        // generated value here stays an untouched, faithful reproduction of pinned source.
+        var registry = WorldMapRegistry.Tutorial;
+        // izlude-prontera-travel-trace.txt sections H/J: izlude_d <-> prt_fild08d.
+        Assert.True(registry.TryFindWarp("izlude_d", 20, 98, out var izludeExit));
+        Assert.Equal(("prt_fild08d", (ushort)367, (ushort)212), (izludeExit.DestinationMap, izludeExit.DestinationX, izludeExit.DestinationY));
+        Assert.True(registry.TryFindWarp("prt_fild08d", 371, 212, out var fieldBackToIzlude));
+        Assert.Equal(("izlude_d", (ushort)24, (ushort)98), (fieldBackToIzlude.DestinationMap, fieldBackToIzlude.DestinationX, fieldBackToIzlude.DestinationY));
+        // Section J: prt_fild08d -> prontera (one-way in pinned source; no reverse door exists).
+        // (156,26) is the PINNED value, matching legacy/rathena/npc/re/warps/fields/
+        // prontera_fild.txt:105 exactly - it is deliberately NOT the capture-verified (156,34).
+        Assert.True(registry.TryFindWarp("prt_fild08d", 170, 378, out var fieldToProntera));
+        Assert.Equal(("prontera", (ushort)156, (ushort)26), (fieldToProntera.DestinationMap, fieldToProntera.DestinationX, fieldToProntera.DestinationY));
     }
 
     [Fact]

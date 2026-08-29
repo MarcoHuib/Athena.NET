@@ -66,6 +66,65 @@ public sealed class MapClientSessionWarpTests
         listener.Stop();
     }
 
+    // Live stock-iRO acceptance (PR #20) issue 3: prontera-walking.pcapng frame 3246 proves the
+    // real field->Prontera door lands the client at (156,34), diverging from pinned
+    // legacy/rathena/npc/re/warps/fields/prontera_fild.txt:105's own computed (156,26) - see
+    // IroWireCompatibility's own doc comment. This end-to-end test proves the REAL generated
+    // prt_fild08d warp trigger (WorldMapRegistry.Tutorial, not a hand-built fixture), when actually
+    // walked into via the normal movement path, produces a 0x0091 map-change AND a persisted
+    // position at the capture-verified (156,34) - never the pinned (156,26)
+    // WorldMapRegistryTests.TravelCorridorWarps_MatchGeneratedPinnedSourceValues separately (and
+    // correctly) asserts as the untouched GENERATED value.
+    [Fact]
+    public async Task MovementIntoPrtFild08dPronteraDoor_LandsAtCaptureVerified156_34_NeverPinned156_26()
+    {
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        using var client = new TcpClient();
+        var connectTask = client.ConnectAsync((IPEndPoint)listener.LocalEndpoint);
+        using var serverClient = await listener.AcceptTcpClientAsync();
+        await connectTask;
+        await using var clientStream = client.GetStream();
+        var connector = new CharServerConnector(new MapConfigStore(new MapConfig(), "unused.conf"));
+        var persistence = new RecordingPositionPersistence();
+        // prt_fild08d,170,378,0 warp prtf004_d 3,2,prontera,156,26 (pinned source) - starting
+        // adjacent to the door's own center so a short, direct movement request reaches it.
+        await using var session = new MapClientSession(
+            1,
+            serverClient,
+            connector,
+            iroAuthenticated: true,
+            mapName: "prt_fild08d",
+            x: 170,
+            y: 375,
+            positionPersistence: persistence);
+        var runTask = session.RunAsync(CancellationToken.None);
+
+        await clientStream.WriteAsync(BuildMovementRequest(170, 378));
+
+        var movement = new byte[12];
+        await clientStream.ReadExactlyAsync(movement);
+        Assert.Equal((short)0x0087, BinaryPrimitives.ReadInt16LittleEndian(movement));
+
+        var mapChange = new byte[22];
+        await clientStream.ReadExactlyAsync(mapChange);
+        Assert.Equal((short)0x0091, BinaryPrimitives.ReadInt16LittleEndian(mapChange));
+        Assert.Equal((ushort)156, BinaryPrimitives.ReadUInt16LittleEndian(mapChange.AsSpan(18)));
+        Assert.Equal((ushort)34, BinaryPrimitives.ReadUInt16LittleEndian(mapChange.AsSpan(20))); // NEVER 26.
+        Assert.Equal("prontera", session.CurrentMapName);
+        Assert.Equal((ushort)156, session.CurrentX);
+        Assert.Equal((ushort)34, session.CurrentY);
+
+        var persisted = await persistence.Saved.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal("prontera", persisted.MapName);
+        Assert.Equal((ushort)156, persisted.X);
+        Assert.Equal((ushort)34, persisted.Y); // Persisted destination must match the capture too.
+
+        client.Close();
+        await runTask.WaitAsync(TimeSpan.FromSeconds(5));
+        listener.Stop();
+    }
+
     // Regression for requirement 7 of the mid-walk-retarget fix: a retarget that steers AWAY from
     // a warp cell the ORIGINAL route would have crossed must fully replace the pending arrival - no
     // stale warp may fire just because the OLD path (computed at click time) once intersected one.

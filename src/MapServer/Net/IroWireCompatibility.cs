@@ -34,4 +34,27 @@ internal static class IroWireCompatibility
 
     internal static short ResolveVerifiedRangeOverride(ushort skillId, short pinnedResolvedRange) =>
         VerifiedRangeOverrides.TryGetValue(skillId, out var overrideValue) ? overrideValue : pinnedResolvedRange;
+
+    // Official stock-iRO capture prontera-walking.pcapng, frame 3246 (ai/world-data.md's "Travel
+    // corridor" section, izlude-prontera-travel-trace.txt section J), proves the field->Prontera
+    // transition lands the client at (156,34). Pinned legacy/rathena/npc/re/warps/fields/
+    // prontera_fild.txt:105 declares `prt_fild08d,170,378,0 warp prtf004_d 3,2,prontera,156,26` -
+    // i.e. pinned source unambiguously computes (156,26), not (156,34). This is the same class of
+    // genuine pinned-snapshot-vs-live-operator divergence as NV_BASIC's range override above, not a
+    // modeling bug in this project's compiler/importer: PrtFild08Warps.cs (generated output) stays
+    // an untouched, faithful reproduction of legacy/rathena; only the live current-iRO wire
+    // transition and the position persisted afterward use the capture-verified value, via
+    // SendSameServerWarpAsync's call to ResolveVerifiedWarpDestinationOverride below. Keyed by
+    // (SourceMap, DestinationMap) - the same pinned WarpDefinition family (SourceMap="prt_fild08d",
+    // DestinationMap="prontera") could theoretically have more than one distinct door in a future
+    // slice, so keying on destination map alone would risk silently mis-overriding an unrelated
+    // door; this table only ever grows by adding a new verified-divergence entry.
+    private static readonly IReadOnlyDictionary<(string SourceMap, string DestinationMap), (ushort X, ushort Y)> VerifiedWarpDestinationOverrides =
+        new Dictionary<(string, string), (ushort, ushort)>
+        {
+            [("prt_fild08d", "prontera")] = (156, 34), // prontera-walking.pcapng frame 3246 - see this type's own doc comment.
+        };
+
+    internal static (ushort X, ushort Y) ResolveVerifiedWarpDestinationOverride(string sourceMap, string destinationMap, ushort pinnedX, ushort pinnedY) =>
+        VerifiedWarpDestinationOverrides.TryGetValue((sourceMap, destinationMap), out var overrideValue) ? overrideValue : (pinnedX, pinnedY);
 }

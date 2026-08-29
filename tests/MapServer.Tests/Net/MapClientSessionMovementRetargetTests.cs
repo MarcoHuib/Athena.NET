@@ -226,4 +226,78 @@ public sealed class MapClientSessionMovementRetargetTests
         client.Close();
         await run.WaitAsync(TimeSpan.FromSeconds(5));
     }
+
+    // Multiple consecutive mid-walk retargets (a real chase scenario - the reported live PR #20
+    // symptom, a small visible speed-up/hop exactly on repeated retargets) must never let ANY
+    // authoritative cell arrive faster than elapsed walk time permits, across several
+    // retarget-application boundaries in a row. This is a wire-level end-to-end proof that
+    // CharacterMovementState.CurrentCellReachedAt (see CharacterMovementStateTests' own focused
+    // unit test for the mechanism itself) is actually wired correctly through
+    // MapClientSession.ProcessDueMovementAsync - using the SAME deterministic FakeTimeProvider
+    // (stable except for explicit Advance() calls) every other test in this file already uses, so
+    // this test's timing is exact and does not depend on how many times the background movement
+    // loop happens to poll the clock.
+    [Fact]
+    public async Task RepeatedMidWalkRetargets_NoAuthoritativeCellEverAdvancesFasterThanElapsedWalkTimePermits()
+    {
+        var (client, stream, session, run, clock, listener) = await SetupAsync();
+        using var _ = client;
+        listener.Stop();
+
+        await stream.WriteAsync(BuildMovementRequest(1, 0));
+        await ReadExact(stream, 12);
+        // The initial walk is a single 150ms orthogonal step (0,0)->(1,0). Its own boundary is
+        // reached inside the loop's first iteration (nothing has crossed it yet at this point).
+        var pendingBoundaryFromX = (ushort)0;
+        var pendingBoundaryFromY = (ushort)0;
+        var pendingBoundaryToX = (ushort)1;
+        var pendingBoundaryToY = (ushort)0;
+
+        // Each retarget targets (reachedX, reachedY+1) - i.e. exactly one cell straight "north" of
+        // wherever the character will actually be standing once the CURRENT in-flight step
+        // completes and the retarget is applied - so every replacement path is a single, purely
+        // orthogonal 150ms step (never a 210ms diagonal one), keeping this test's own timing math
+        // exact without needing to reproduce GridLineTraversal's Bresenham stepping order. Each
+        // retarget is requested 50ms after the previous boundary (100ms before the next 150ms
+        // boundary it will itself be deferred to), matching every other test in this file.
+        for (var retarget = 1; retarget <= 3; retarget++)
+        {
+            var targetX = pendingBoundaryToX;
+            var targetY = (ushort)(pendingBoundaryToY + 1);
+            clock.Advance(TimeSpan.FromMilliseconds(50));
+            await stream.WriteAsync(BuildMovementRequest(targetX, targetY));
+            await SyncAsync(stream);
+
+            // Must not yet have reached the pending boundary: still exactly at the previously
+            // reached cell (the CURRENT in-flight step has not completed yet).
+            Assert.Equal(pendingBoundaryFromX, session.CurrentX);
+            Assert.Equal(pendingBoundaryFromY, session.CurrentY);
+
+            // 1ms short of the 150ms boundary: the authoritative cell must not have advanced yet.
+            clock.Advance(TimeSpan.FromMilliseconds(99));
+            Assert.Equal(pendingBoundaryFromX, session.CurrentX);
+            Assert.Equal(pendingBoundaryFromY, session.CurrentY);
+
+            clock.Advance(TimeSpan.FromMilliseconds(1)); // Now at the true boundary.
+            var response = await ReadExact(stream, 12);
+            var move = DecodeMovement(response.AsSpan(6, 6));
+            // The retarget's own fresh 0x0087 is anchored at the cell the CURRENT (pre-retarget)
+            // step actually completes into - never the cell the retarget was requested from.
+            Assert.Equal(pendingBoundaryToX, move.FromX);
+            Assert.Equal(pendingBoundaryToY, move.FromY);
+            Assert.Equal(targetX, move.ToX);
+            Assert.Equal(targetY, move.ToY);
+            Assert.Equal(pendingBoundaryToX, session.CurrentX);
+            Assert.Equal(pendingBoundaryToY, session.CurrentY);
+
+            // The NEXT iteration's pending boundary is THIS retarget's own single-cell step.
+            pendingBoundaryFromX = pendingBoundaryToX;
+            pendingBoundaryFromY = pendingBoundaryToY;
+            pendingBoundaryToX = targetX;
+            pendingBoundaryToY = targetY;
+        }
+
+        client.Close();
+        await run.WaitAsync(TimeSpan.FromSeconds(5));
+    }
 }

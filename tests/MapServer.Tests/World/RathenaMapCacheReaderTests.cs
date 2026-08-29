@@ -329,6 +329,36 @@ public sealed class RathenaMapCacheReaderTests
         Assert.True(totalCells > 0);
     }
 
+    // Live acceptance regression (Prontera crash root cause, reproduced on head 57dc569):
+    // EXPLICITLY PROVES pinned map_cache.dat does NOT contain an exact extensionless "prontera"
+    // record - confirmed independently via a standalone Python parse of the same pinned file, not
+    // just this C# reader (ruling out an Athena-side parsing bug: the raw bytes on disk genuinely
+    // do not spell "prontera" anywhere). The only near match is "pprontera" (312x392) - a real,
+    // separately-declared rAthena map (legacy/rathena/db/map_index.txt:1014 and
+    // legacy/rathena/conf/maps_athena.conf:1291, DISTINCT from "prontera" at map_index.txt:204),
+    // with no NPC/db content referencing it anywhere in the pinned tree - almost certainly an
+    // unrelated parallel-dimension/debug map variant, not a typo'd or renamed copy of the real
+    // Prontera. This is a genuine pinned-source-DATA gap (task's own "Outcome B"), not something
+    // this project can fix by parsing/provider changes: aliasing "pprontera" to "prontera" would
+    // be exactly the kind of "alias another unrelated map" the task explicitly forbids without
+    // independent confirmation they are the same geometry, which nothing here establishes. See
+    // ai/map-server.md's "Live stock-iRO acceptance fixes" section for the full writeup and the
+    // still-open question of which authoritative source should supply real Prontera collision.
+    [Fact]
+    public void ReadAllFromFile_RealPinnedMapCache_ProperProntheraRecordIsGenuinelyAbsent_OnlyPprronteraExists()
+    {
+        var path = Path.Combine(FindRepositoryRoot(), "legacy/rathena/db/map_cache.dat");
+        var maps = RathenaMapCacheReader.ReadAllFromFile(path);
+
+        Assert.DoesNotContain(maps, m => string.Equals(m.MapName, "prontera", StringComparison.OrdinalIgnoreCase));
+
+        var nearMatches = maps.Where(m => m.MapName.Contains("prontera", StringComparison.OrdinalIgnoreCase)).ToArray();
+        var nearMatch = Assert.Single(nearMatches);
+        Assert.Equal("pprontera", nearMatch.MapName);
+        Assert.Equal(312, nearMatch.Width);
+        Assert.Equal(392, nearMatch.Height);
+    }
+
     private static string FindRepositoryRoot()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);

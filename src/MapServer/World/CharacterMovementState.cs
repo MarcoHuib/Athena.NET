@@ -68,6 +68,19 @@ public sealed class CharacterMovementState
     // when not moving.
     public DateTimeOffset? NextStepDueAt => IsMoving ? _stepStartedAt.AddMilliseconds(CurrentStepMs) : null;
 
+    // The exact instant the character's CURRENT cell (CurrentX/CurrentY) was reached - i.e. the
+    // real cell-boundary-crossing time AdvanceTo last advanced to (by exact multiples of a step's
+    // own duration), NEVER a freshly re-sampled TimeProvider.GetUtcNow() call. A caller applying a
+    // mid-walk retarget at this exact boundary (MapClientSession.ProcessDueMovementAsync) MUST seed
+    // the replacement step's StartWalk with THIS value, not a second independent "now" sample -
+    // re-sampling wall-clock time between AdvanceTo and StartWalk silently gifts the new step a few
+    // extra milliseconds of duration every single retarget (the two calls are never exactly
+    // simultaneous), which is real evidence of a slow, compounding speed-up/hop on repeated
+    // mid-walk retargets - not a client-side rendering artifact. Pinned unit_walktoxy_nextcell
+    // (unit.cpp:227-233) schedules its next timer from the SAME `tick` the per-cell timer callback
+    // itself already received, never a fresh gettick() call partway through retarget handling.
+    public DateTimeOffset CurrentCellReachedAt => _stepStartedAt;
+
     // status_get_speed(bl) for an orthogonal step (unit.cpp:1122-1123); a diagonal step scales it by
     // MOVE_DIAGONAL_COST/MOVE_COST (unit.cpp:1120-1121). Integer division matches pinned source's
     // own integer arithmetic (t_tick/uint16 fields, no floating point) - e.g. 400*14/10=560 exactly

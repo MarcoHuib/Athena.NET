@@ -1737,3 +1737,171 @@ look to observers already seeing that player), player death/respawn interaction 
 stealth/invisibility/GM-visibility filtering, and a capture-proven byte-for-byte `0x09FE` layout
 (currently Reference-backed via the shared idle-unit serializer, one byte shorter than `0x09FF`
 for its missing standing/alive-state byte - see `IroPlayerActorPackets.SpawnFixedLength`).
+
+## Izlude -> prt_fild08d -> Prontera travel corridor
+
+See `ai/world-data.md`'s "Travel corridor" section for the full content/tooling writeup
+(`izlude-prontera-travel-trace.txt`, warps, static NPC presence, the three generic
+`WorldDataImporter` capability fixes this slice required). This section records only the
+runtime-architecture decision specific to `ai/map-server.md`'s scope.
+
+Both new route doors (`izlude_d<->prt_fild08d`, `prt_fild08d->prontera`) use the existing
+same-server `0x0091` transition (`WorldMapRegistry`'s `WarpDefinition`/`TryFindFirstWarpAlongRoute`
+path, unchanged) rather than the still-unimplemented cross-process `0x0092` handoff. The official
+capture's endpoints for this corridor (`128.241.92.42:4501`/`:4502`, per
+`izlude-prontera-travel-trace.txt`) are Gravity's own multi-MapServer deployment topology
+evidence, not a requirement Athena.NET must reproduce: Athena currently hosts every map in one
+MapServer process, so every transition in this corridor is same-process by construction. `0x0092`
+remains reserved for a future explicitly-configured cross-endpoint ownership boundary (see the
+"Map transitions" section above) - this slice does not add one, and does not emit a fake
+self-handoff `0x0092` merely because the official capture used it for its own reasons.
+
+This slice reuses PR #19's `PlayerPresenceRegistry`/`PlayerVisibilityCoordinator` unmodified for
+the new maps: both key purely by the map-name string a session reports, with no static map
+allowlist (confirmed by direct code audit before any content was compiled - see
+`ai/world-data.md`), so presence/AOI on `izlude_d`/`prt_fild08d`/`prontera` works the same as on
+any other map without further changes.
+
+### Live stock-iRO acceptance fixes (PR #20 acceptance pass)
+
+Live acceptance on head `84a25d3` surfaced three issues, addressed as follows:
+
+**1. Mid-walk retarget visual speed-up/hop.** Traced to `MapClientSession.ProcessDueMovementAsync`
+seeding a mid-walk retarget's replacement step (`CharacterMovementState.StartWalk`) with a SECOND,
+independently-sampled `_timeProvider.GetUtcNow()` call rather than the exact cell-boundary
+timestamp `AdvanceTo` had just advanced to. Under a real (non-deterministic) clock, two
+`GetUtcNow()` calls are never exactly simultaneous, so whatever gap elapsed between them was
+silently gifted to the new step, shortening it - a real, compounding speed-up on repeated
+retargets, not a client-side rendering artifact. Fixed by adding
+`CharacterMovementState.CurrentCellReachedAt` (returns the exact boundary `AdvanceTo` already
+established, with no clock read of its own) and seeding `StartWalk` with that instead. Pinned
+`unit_walktoxy_nextcell`/`unit_walktoxy_sub` (`unit.cpp:180-320`) confirms this project's
+architecture was already correct on the bigger question the task raised - a fresh `0x0087` with a
+fresh tick, source=reached-cell, IS what the official server sends on a mid-walk retarget
+(`unit_walktoxy_timer`'s own `change_walk_target` branch calls `unit_walktoxy_sub`, which ends in
+`unit_walktoxy_nextcell(*bl, sendMove=true, gettick())`) - the bug was purely in which timestamp
+seeded the new step's duration, not whether/how the second `0x0087` itself was sent. Regression
+coverage: `CharacterMovementStateTests.CurrentCellReachedAt_...` (focused unit-level proof) and
+`MapClientSessionMovementRetargetTests.RepeatedMidWalkRetargets_...` (wire-level end-to-end proof
+that three consecutive retargets each still cost their full 150ms, never early).
+
+**2. Out-of-range attack / apparent relocation.** Confirmed as expected client move-to-attack
+behavior, not a server-side relocation bug: pinned `clif_movetoattack`'s own comment
+("Notifies the client that its attack target is too far") - the exact packet Athena's existing
+combat-range rejection path already sends - documents that the client autonomously issues its own
+`0x035F` in response. `IroCombatDistancePackets.BuildAttackFailureForDistance`'s `0x0139` layout
+remains pinned-source-backed only; **no verified stock-iRO capture of this packet exists anywhere
+in this project's evidence base** - see `ai/iro-2026-wire.md`'s new "Evidence gap: 0x0139" section
+for the full, explicitly-reported gap. `MapClientSession` now logs the complete outgoing `0x0139`
+bytes (marked `PINNED-SOURCE-BACKED, NOT capture-verified` in the log line itself) so a future real
+capture can be diffed against it.
+
+**3. Prontera transition mismatch / crash.** `prontera-walking.pcapng` frame 3246 proves the real
+field->Prontera door lands at `(156,34)`; pinned `prontera_fild.txt:105` computes `(156,26)` - a
+genuine pinned-snapshot-vs-live-operator divergence, the same class of finding as the existing
+NV_BASIC skill-range override. Fixed via a new, narrowly-scoped entry in `IroWireCompatibility`
+(`ResolveVerifiedWarpDestinationOverride`, keyed by `(SourceMap, DestinationMap)`), applied only at
+the point `SendSameServerWarpAsync` actually executes a warp - the generated
+`PrtFild08Warps.cs`/`GeneratedWarps.All` `WarpDefinition` data itself stays an untouched, faithful
+reproduction of pinned source (see `ai/world-data.md`). The separately-observed Prontera
+south-entry NPC divergence (`Guide#04prontera`: capture `(160,34)`, pinned source `(160,29)`) is
+noted here for completeness but was NOT folded into this fix - it is unrelated to the reported
+crash and out of this narrow bugfix's scope. Full transition logging was added to
+`SendSameServerWarpAsync` (triggering warp/source cell, pinned vs. compatibility-resolved
+destination, exact `0x0091` bytes) plus session-wide "last packet successfully written before
+disconnect" tracking (`RunAsync`'s own `finally` block) for future crash investigation; the
+coordinate mismatch itself is documented as a genuine capture-vs-pinned divergence, NOT claimed as
+the crash's proven root cause absent reproduction. Regression coverage:
+`IroWireCompatibilityTests` (the override resolves narrowly, keyed by both source and destination)
+and `MapClientSessionWarpTests.MovementIntoPrtFild08dPronteraDoor_...` (the real generated warp,
+walked into via normal movement, actually lands the session and its persisted position at
+`(156,34)`, never `(156,26)`).
+
+**4. Prontera "No collision data is loaded" crash on first movement.** Live reproduction on head
+`57dc569` proved this is a distinct crash from item 3 above: auth, `0x02EB`, bootstrap, and the
+`Guide#04prontera` NPC packet all succeed; the session only terminates on the character's FIRST
+`0x035F` movement request, with `InvalidOperationException: No collision data is loaded for map
+'prontera'`. Two separate gaps were found and fixed together:
+
+- **Startup validation gap.** `MapServerWorld.RequireRealCollisionSourceIfMobSpawnsExist` only
+  guards maps that have at least one generated monster spawn - "prontera" has zero
+  (`GeneratedScriptRegistry.MobSpawns` never targets it), so a missing collision source for it was
+  invisible to every existing startup check and only surfaced live, on the player's first movement
+  packet. Fixed with a new, broader invariant,
+  `MapServerHostingScope.RequireCollisionForAllServedMaps` (called from `MapServerApp.RunAsync`
+  immediately after the existing mob-spawn guard): every map in the hand-declared
+  `MapServerHostingScope.ServedMaps` set must resolve via `IMapCollisionProvider.TryGetMap`
+  regardless of whether it has any spawns, or MapServer refuses to start, naming every missing
+  served map at once. Deliberately NOT placed in `MonsterRegistry` (no concept of "declared hosting
+  scope" there) and deliberately does not derive `ServedMaps` from collision coverage or vice versa
+  - see that method's own doc comment for the exact semantics. Regression coverage:
+  `MapServerHostingScopeStartupValidationTests`, including
+  `RequireCollisionForAllServedMaps_ProponentServedMapWithZeroMobSpawns_StillFailsWhenCollisionAbsent`,
+  which reproduces the exact "served map, zero mob spawns, collision absent" gap using real
+  `prontera`.
+
+- **Root cause: wrong collision source file, not missing data.** Diagnostic inspection of pinned
+  `legacy/rathena/db/map_cache.dat` via `RathenaMapCacheReader` (not a raw grep) proved this file
+  genuinely has no exact `prontera` record (1288 maps total; the only near match is the unrelated
+  `pprontera`, 312x392 - see `RathenaMapCacheReaderTests.
+  ReadAllFromFile_RealPinnedMapCache_ProperProntheraRecordIsGenuinelyAbsent_OnlyPprronteraExists`).
+  However, pinned rAthena's own `doc/map_cache.txt` and `map_readallmaps`
+  (`src/map/map.cpp:3908-3943`) show the real map-server loads THREE cache files in order -
+  `db/import/map_cache.dat`, `db/DBPATH/map_cache.dat` (`DBPATH` is `"re/"` for Renewal builds,
+  `src/config/const.hpp`), then `db/map_cache.dat` - taking the FIRST match per map name, i.e. a
+  layered merge with the ruleset-specific file as highest priority, not a single flat file.
+  Athena.NET's `MapCollisionStartupLoader` was only ever loading the last, most-generic file.
+  Confirmed via `RathenaMapCacheReader` against the real pinned files: `db/map_cache.dat` (1288
+  maps) lacks `prontera` but has `prt_fild08d`/`izlude_d`/`int_land04`/`iz_int04`; pinned
+  `db/re/map_cache.dat` (8 maps, the curated Renewal-specific set) has real `prontera` (312x392)
+  and, incidentally, `prt_fild08` (400x400, not currently in `ServedMaps` - see
+  `MapServerHostingScope`'s own doc comment on why that stays a separate scope decision), but does
+  NOT declare `prt_fild08d`/`izlude_d`/`int_land04`/`iz_int04` at all. Fixed generically (no
+  Prontera special-casing) by making `MapCollisionStartupLoader.Load` implement pinned
+  `map_readallmaps`' full THREE-layer, first-match-wins merge: `db/import/map_cache.dat` (highest
+  priority), then `db/{re|pre-re}/map_cache.dat` (selected from the already-composed
+  `RagnarokRuleSet`, matching pinned `DBPATH` exactly), then the configured `map_cache_path` as the
+  final fallback - exactly pinned source's own priority order, not an approximation of it. Both
+  higher-priority layers are independently optional: a deployment's `db/import/map_cache.dat` may
+  genuinely not exist at all (pinned rAthena's own checked-in tree ships none, only the
+  `db/import-tmpl/` template directory), and `db/{re|pre-re}/map_cache.dat` may likewise be absent
+  for a given deployment - neither absence is an error, but a PRESENT, malformed file at either
+  layer still fails startup loudly like every other collision-source failure mode in this loader.
+  A duplicate map name within one single layer's own file is still a hard failure; the same name
+  appearing in two different layers is normal layering, and the higher-priority layer silently
+  wins. Regression coverage: `MapCollisionStartupLoaderTests.
+  Load_RenewalRuleSet_RealPinnedMapCache_ResolvesProntheraViaRulesetOverlay`,
+  `..._StillResolvesGenericFallbackMapsNotInTheOverlay`,
+  `..._NoRuleSetArgumentGiven_DefaultsToRenewal_StillResolvesProntera`; the three-layer priority
+  proofs `Load_ImportLayerMap_OverridesRulesetAndRootForTheSameMapName`,
+  `Load_RulesetLayerMap_OverridesRootWhenImportHasNoMatchingMap`,
+  `Load_RootLayerMap_SuppliesMapsAbsentFromBothOverlays`,
+  `Load_MissingOptionalImportAndRulesetFiles_StillLoadsFromRootAlone`,
+  `Load_PresentButMalformedOptionalOverlayFile_ThrowsClearly`,
+  `Load_DuplicateMapNameWithinTheImportLayerFileItself_ThrowsClearly`; and the full end-to-end
+  acceptance proof `Load_RealPinnedMapCache_ThreeLayerMerge_ProductionStartupSequence_
+  AllServedMapsResolve` (loads the real pinned map cache exactly as `MapServerApp` does, with the
+  complete three-layer merge, then calls `MapServerHostingScope.RequireCollisionForAllServedMaps`
+  and asserts no exception).
+
+**5. GitHub Actions CI flake under contended runners.** A Linux CI run of the full Release suite
+(reproduced locally via a fresh clone under a 2-CPU-constrained Docker container, matching GitHub's
+runner shape - never reproduced in isolation or on an unconstrained run) intermittently failed
+`MapClientSessionCombatRangeTests.Attack_MovingTargetLeavesRangeBetweenRepeatedHits_
+LaterHitDoesNotOccurRemotely` with a real-socket read timeout. Root cause: this test drives the
+server's repeat-attack scheduling with a fake `ControllableTimeProvider` clock (`AdvanceAsync`),
+but its `ReadExact` helper bounded the resulting real-socket read with a real 5-second wall-clock
+`CancellationTokenSource` - the project's ordinary bound elsewhere - which a genuinely contended
+2-core runner can exceed before the scheduled hit gets real thread time to fire and write to the
+socket. Unrelated to the collision-source fix; not a scheduling regression (isolated and
+unconstrained runs never reproduced it). Fixed narrowly: `MapClientSessionCombatRangeTests` alone
+now uses a named `SocketReadTimeout = TimeSpan.FromSeconds(15)` constant (a hang-safety bound only,
+not part of the asserted combat-range behavior) instead of the project's usual 5s, applied via
+`ReadExact`/`ReadDynamic`. No other fixture's timeout was touched, and the class's existing
+`DisableParallelization = true` collection setting is unchanged. Verified by reproducing the full
+`MapServer.Tests` Release suite under the same 2-CPU Docker constraint four consecutive times with
+zero failures after the fix (previously flaky under the same constraint before it).
+
+No live stock-client acceptance is claimed for this fix - per this project's standing convention,
+that requires an actual retest against a stock client, which has not been performed in this
+session.
