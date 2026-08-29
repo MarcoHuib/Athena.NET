@@ -541,6 +541,58 @@ public sealed class CompilerTests
             Assert.Matches(@", \d+\);\s*$", line);
     }
 
+    // Proves MaxBaseStat genuinely comes from the SUPPLIED conf/battle/player.conf source, not
+    // a compiler-side constant: changing exactly one max_*_parameter value in a synthetic conf
+    // source (max_fourth_parameter 130 -> 135, DragonKnight's own category - see the parity
+    // Theory above) changes ONLY the generated jobs in that category, without touching
+    // CharacterDataCompiler.cs. This is the direct counter-test to PR #18's review finding: if
+    // the values were still hardcoded in the compiler, this edit would have no effect on the
+    // generated output.
+    [Fact]
+    public void CharacterDataCompiler_MaxBaseStatComesFromSuppliedPlayerConfig_NotCompilerConstants()
+    {
+        var root = Path.Combine(FindRepositoryRoot(), "legacy/rathena");
+        var sources = ReadCharacterData(root);
+        var mutatedConfig = ReplaceFirst(sources.PlayerConfig, "max_fourth_parameter: 130", "max_fourth_parameter: 135");
+
+        var baseline = CharacterDataCompiler.Compile(sources, "commit");
+        var mutated = CharacterDataCompiler.Compile(sources with { PlayerConfig = mutatedConfig }, "commit");
+
+        var baselineProgression = baseline.Artifacts.Single(item => item.RelativePath == "Progression/GeneratedProgressionData.cs").Source;
+        var mutatedProgression = mutated.Artifacts.Single(item => item.RelativePath == "Progression/GeneratedProgressionData.cs").Source;
+
+        // Fourth-job category (max_fourth_parameter): DragonKnight's cap changes 130 -> 135.
+        var baselineDragonKnight = baselineProgression.Split('\n').Single(line => line.Contains(" DragonKnight = new(JobClass.DragonKnight, ", StringComparison.Ordinal));
+        var mutatedDragonKnight = mutatedProgression.Split('\n').Single(line => line.Contains(" DragonKnight = new(JobClass.DragonKnight, ", StringComparison.Ordinal));
+        Assert.EndsWith(", 130);", baselineDragonKnight.TrimEnd());
+        Assert.EndsWith(", 135);", mutatedDragonKnight.TrimEnd());
+
+        // A job in an untouched category (Normal, max_parameter) must be completely unaffected.
+        var baselineNovice = baselineProgression.Split('\n').Single(line => line.Contains(" Novice = new(JobClass.Novice, ", StringComparison.Ordinal));
+        var mutatedNovice = mutatedProgression.Split('\n').Single(line => line.Contains(" Novice = new(JobClass.Novice, ", StringComparison.Ordinal));
+        Assert.Equal(baselineNovice, mutatedNovice);
+
+        // Provenance: both the generated data and registry files now cite the conf source.
+        Assert.Contains("conf/battle/player.conf", mutatedProgression);
+    }
+
+    // ParsePlayerConfigMaxParameters must fail generation loudly, not silently default, for
+    // every malformed-config shape task section 35's "fail loudly" requirement covers.
+    [Theory]
+    [InlineData("max_parameter: 99\nmax_third_parameter: 130\nmax_third_trans_parameter: 130\nmax_baby_parameter: 80\nmax_baby_third_parameter: 117\nmax_extended_parameter: 130\nmax_summoner_parameter: 130\nmax_fourth_parameter: 130\n", "missing")] // max_trans_parameter entirely absent
+    [InlineData("max_parameter: 99\nmax_trans_parameter: 99\nmax_trans_parameter: 100\nmax_third_parameter: 130\nmax_third_trans_parameter: 130\nmax_baby_parameter: 80\nmax_baby_third_parameter: 117\nmax_extended_parameter: 130\nmax_summoner_parameter: 130\nmax_fourth_parameter: 130\n", "more than once")] // duplicated key
+    [InlineData("max_parameter: ninety-nine\nmax_trans_parameter: 99\nmax_third_parameter: 130\nmax_third_trans_parameter: 130\nmax_baby_parameter: 80\nmax_baby_third_parameter: 117\nmax_extended_parameter: 130\nmax_summoner_parameter: 130\nmax_fourth_parameter: 130\n", "malformed")] // non-numeric value
+    [InlineData("max_parameter: 0\nmax_trans_parameter: 99\nmax_third_parameter: 130\nmax_third_trans_parameter: 130\nmax_baby_parameter: 80\nmax_baby_third_parameter: 117\nmax_extended_parameter: 130\nmax_summoner_parameter: 130\nmax_fourth_parameter: 130\n", "malformed")] // zero value
+    [InlineData("max_parameter: 99999999\nmax_trans_parameter: 99\nmax_third_parameter: 130\nmax_third_trans_parameter: 130\nmax_baby_parameter: 80\nmax_baby_third_parameter: 117\nmax_extended_parameter: 130\nmax_summoner_parameter: 130\nmax_fourth_parameter: 130\n", "malformed")] // outside ushort range
+    public void CharacterDataCompiler_MalformedPlayerConfig_FailsGenerationLoudly(string malformedConfig, string expectedMessageFragment)
+    {
+        var root = Path.Combine(FindRepositoryRoot(), "legacy/rathena");
+        var sources = ReadCharacterData(root) with { PlayerConfig = malformedConfig };
+        var error = Assert.Throws<ArgumentException>(() => CharacterDataCompiler.Compile(sources, "commit"));
+        Assert.Contains(expectedMessageFragment, error.Message, StringComparison.Ordinal);
+        Assert.Contains("conf/battle/player.conf", error.Message, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void CharacterDataCompiler_GeneratesRealPinnedPerLevelAndScalarRange()
     {
@@ -689,7 +741,8 @@ public sealed class CompilerTests
         File.ReadAllText(Path.Combine(root, "src/common/mmo.hpp")), File.ReadAllText(Path.Combine(root, "src/map/script_constants.hpp")),
         File.ReadAllText(Path.Combine(root, "db/re/job_exp.yml")), File.ReadAllText(Path.Combine(root, "db/re/job_basepoints.yml")),
         File.ReadAllText(Path.Combine(root, "db/re/job_stats.yml")), File.ReadAllText(Path.Combine(root, "db/re/statpoint.yml")),
-        File.ReadAllText(Path.Combine(root, "db/re/skill_db.yml")), File.ReadAllText(Path.Combine(root, "db/re/skill_tree.yml")));
+        File.ReadAllText(Path.Combine(root, "db/re/skill_db.yml")), File.ReadAllText(Path.Combine(root, "db/re/skill_tree.yml")),
+        File.ReadAllText(Path.Combine(root, "conf/battle/player.conf")));
     private static string ReplaceFirst(string source, string oldValue, string newValue)
     {
         var index = source.IndexOf(oldValue, StringComparison.Ordinal);

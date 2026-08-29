@@ -1343,13 +1343,48 @@ pinned snapshot's `db/re/job_stats.yml` actually sets a `MaxStats` block - it is
 unused) via a job-category classification driven entirely by `pc_jobid2mapid`'s `JOBL_BABY`/
 `JOBL_THIRD`/`JOBL_UPPER`/`JOBL_FOURTH` bits plus three special-cased mapid ranges (Summoner;
 Kagerou/Oboro/Rebellion "Extended"; `pc_is_trait_job`'s primary-4th/upper-expanded-2nd
-"Fourth"). Category → cap uses `conf/battle/player.conf`'s shipped values (the actual runtime
-config, not `src/map/battle.cpp`'s compiled-in fallback defaults, which the conf file overrides
-at load time): `max_parameter=99` (Normal), `max_trans_parameter=99` (Trans),
-`max_third_parameter=130` (Third), `max_third_trans_parameter=130` (ThirdTrans),
-`max_baby_parameter=80` (Baby), `max_baby_third_parameter=117` (BabyThird),
-`max_extended_parameter=130` (Extended), `max_summoner_parameter=130` (Summoner),
-`max_fourth_parameter=130` (Fourth).
+"Fourth"). This is split into two independent boundaries that must not be conflated (PR #18
+review correction - an earlier revision hardcoded the category → cap VALUES as compiler
+constants, which this section now describes as fixed):
+
+```text
+pc_jobid2mapid semantics (fixed source-code logic)
+        ↓
+CharacterDataCompiler.ResolveJobParameterCategory (per-job-id → JobParameterCategory)
+        ↓
+conf/battle/player.conf (an actual pinned DATA FILE, parsed at compile time)
+        ↓
+CharacterDataCompiler.ParsePlayerConfigMaxParameters (JobParameterCategory → ushort cap)
+        ↓
+CharacterProgressionDefinition.MaxBaseStat (generated, per JobClass)
+```
+
+`ResolveJobParameterCategory` (`pc_jobid2mapid`'s classification) is the fixed CLASSIFICATION
+logic - it is legitimately compiler code, because it mirrors a fixed C++ switch/bitmask that has
+no separate config file of its own. The category → cap VALUES are a different kind of fact
+entirely: pinned `conf/battle/player.conf` is itself a real pinned data file (the actual runtime
+config `JobDatabase::loadingFinished` loads, not `src/map/battle.cpp`'s compiled-in fallback
+defaults, which the conf file overrides at load time), so those nine numbers
+(`max_parameter=99`, `max_trans_parameter=99`, `max_third_parameter=130`,
+`max_third_trans_parameter=130`, `max_baby_parameter=80`, `max_baby_third_parameter=117`,
+`max_extended_parameter=130`, `max_summoner_parameter=130`, `max_fourth_parameter=130` in this
+pinned snapshot) are PARSED from `sources.PlayerConfig` by
+`CharacterDataCompiler.ParsePlayerConfigMaxParameters`, not written as C# literals anywhere.
+`JobParameterCategoryConfigKey` is the one small piece of genuinely fixed structural knowledge
+connecting the two (which config KEY backs which category - a mapping, not a value), analogous
+to how `ApplyJobDatabase` already knows which YAML field name backs which `ProgressionBuilder`
+property without hardcoding the field's VALUE.
+
+`ParsePlayerConfigMaxParameters` reads pinned `conf/battle/player.conf`'s plain
+`key: value` / `// comment` line format and extracts only the nine `max_*_parameter` keys
+`JobParameterCategoryConfigKey` requires - it deliberately does not attempt to be a general
+`.conf` parser (task section 36's "do not introduce runtime parsing of rAthena config" - this
+parsing happens ONLY inside `WorldDataImporter` at generation time, never at MapServer
+runtime). A missing, duplicated, non-numeric, zero, or out-of-`ushort`-range value for any
+required key throws with the exact key name and `conf/battle/player.conf` in the message,
+failing generation loudly rather than silently defaulting - see
+`CharacterDataCompiler_MalformedPlayerConfig_FailsGenerationLoudly`'s five fixtures (one per
+failure mode).
 
 Athena.NET does not model rAthena's full `uint64` `JOBL_*`/`MAPID_*` bitmask machinery at
 runtime (nothing else consumes it), so `CharacterDataCompiler.ResolveJobParameterCategory`
@@ -1365,6 +1400,14 @@ first). The one non-obvious rule ported faithfully: `Baby_Summoner` resolves to 
 `Summoner` (130), because pinned `pc.cpp:14340-14350` checks `JOBL_BABY` before the Summoner
 mapid-range check ("Always check babies first") - see
 `CharacterDataCompiler_BabySummonerPrefersBabyCategoryOverSummoner`.
+
+`CharacterDataCompiler_MaxBaseStatComesFromSuppliedPlayerConfig_NotCompilerConstants` is the
+direct counter-proof for the review finding this section documents: it compiles the same pinned
+sources twice, once with the real `conf/battle/player.conf` and once with a synthetic copy where
+`max_fourth_parameter` is changed from `130` to `135`, and asserts `DragonKnight` (Fourth
+category)'s generated `MaxBaseStat` changes accordingly while `Novice` (Normal category, an
+untouched key) does not - proving the value genuinely flows from the supplied source file rather
+than a compiler-side constant that a config edit could no longer affect.
 
 The "2" gender/appearance-variant job IDs (`Knight2`, `RuneKnightT2`, `DragonKnight2`, ...) are
 NOT reachable through pinned `pc_jobid2mapid`'s switch at all (it has no case for them); pinned
