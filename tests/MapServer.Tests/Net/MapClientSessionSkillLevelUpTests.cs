@@ -28,7 +28,7 @@ public sealed class MapClientSessionSkillLevelUpTests
             await StartAuthenticatedSessionAsync(NoviceState(skillPoints: 1), CharacterSkillSnapshot.Empty);
         using var _ = client;
 
-        await SkipBootstrapAsync(stream, skillEntryCount: 1);
+        await SkipBootstrapAsync(stream);
 
         // Captured request bytes (frame 3604): 12 01 01 00 1D.
         await stream.WriteAsync(new byte[] { 0x12, 0x01, 0x01, 0x00, 0x1D });
@@ -52,6 +52,41 @@ public sealed class MapClientSessionSkillLevelUpTests
         await run.WaitAsync(TimeSpan.FromSeconds(5));
     }
 
+    // Byte-for-byte PRODUCTION regression: proves the REAL domain/generated-data -> wire
+    // projection (CharacterGameplayStateSession.LearnSkillAsync's post-commit state ->
+    // CharacterSkillService.CalculateEffectiveState -> GeneratedSkillRegistry ->
+    // IroSkillInfoEntry.From -> IroSkillLevelUpdatePackets.Build), NOT a manually constructed
+    // IroSkillInfoEntry, matches the captured successful response exactly. The pure-serializer
+    // test (IroSkillLevelUpdatePacketsTests.Build_NvBasicLevelOne_MatchesCapturedBytesExactly)
+    // already proves the serializer is correct for a given entry; this test is the one that would
+    // catch a wrong projection (e.g. a Range/Inf/SpCost resolution regression) feeding a correct
+    // serializer, mirroring the blind spot found and fixed for 0x0B32 in PR #15
+    // (IroSkillInfoProductionProjectionTests).
+    [Fact]
+    public async Task NoviceAcceptanceCase_ProductionResponseBytes_MatchCapturedBytesExactly()
+    {
+        var (client, stream, gameplayPersistence, skillPersistence, session, run) =
+            await StartAuthenticatedSessionAsync(NoviceState(skillPoints: 1), CharacterSkillSnapshot.Empty);
+        using var _ = client;
+
+        await SkipBootstrapAsync(stream);
+
+        // Captured request bytes (frame 3604): 12 01 01 00 1D.
+        await stream.WriteAsync(new byte[] { 0x12, 0x01, 0x01, 0x00, 0x1D });
+
+        // Captured response bytes (frames 3623 + 3625) - see ai/iro-2026-wire.md.
+        byte[] expected =
+        [
+            0x33, 0x0B, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x01, 0x00,
+            0xB0, 0x00, 0x0C, 0x00, 0x00, 0x00, 0x00, 0x00,
+        ];
+        var actual = await ReadExact(stream, expected.Length);
+        Assert.Equal(expected, actual);
+
+        client.Close();
+        await run.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
     [Fact]
     public async Task NoSkillPoints_RejectsWithoutMutatingStateOrSendingSuccessResponse()
     {
@@ -59,7 +94,7 @@ public sealed class MapClientSessionSkillLevelUpTests
             await StartAuthenticatedSessionAsync(NoviceState(skillPoints: 0), CharacterSkillSnapshot.Empty);
         using var _ = client;
 
-        await SkipBootstrapAsync(stream, skillEntryCount: 1);
+        await SkipBootstrapAsync(stream);
         await stream.WriteAsync(new byte[] { 0x12, 0x01, 0x01, 0x00, 0x1D });
 
         // No success response should ever arrive - prove the connection stays open and quiet by
@@ -82,7 +117,7 @@ public sealed class MapClientSessionSkillLevelUpTests
             await StartAuthenticatedSessionAsync(NoviceState(skillPoints: 1), CharacterSkillSnapshot.Empty);
         using var _ = client;
 
-        await SkipBootstrapAsync(stream, skillEntryCount: 1);
+        await SkipBootstrapAsync(stream);
         // SkillId = 65535, structurally valid, semantically unknown.
         await stream.WriteAsync(new byte[] { 0x12, 0x01, 0xFF, 0xFF, 0x1D });
 
@@ -103,7 +138,7 @@ public sealed class MapClientSessionSkillLevelUpTests
             await StartAuthenticatedSessionAsync(NoviceState(skillPoints: 1), CharacterSkillSnapshot.Empty);
         using var _ = client;
 
-        await SkipBootstrapAsync(stream, skillEntryCount: 1);
+        await SkipBootstrapAsync(stream);
         // GD_APPROVAL (10000): real canonical skill, not in the Novice tree. SkillId LE = 10000 = 0x2710.
         await stream.WriteAsync(new byte[] { 0x12, 0x01, 0x10, 0x27, 0x1D });
 
@@ -124,7 +159,7 @@ public sealed class MapClientSessionSkillLevelUpTests
             await StartAuthenticatedSessionAsync(NoviceState(skillPoints: 1), CharacterSkillSnapshot.Empty);
         using var _ = client;
 
-        await SkipBootstrapAsync(stream, skillEntryCount: 1);
+        await SkipBootstrapAsync(stream);
 
         var request = new byte[] { 0x12, 0x01, 0x01, 0x00, 0x1D };
         await stream.WriteAsync(request);
@@ -153,7 +188,7 @@ public sealed class MapClientSessionSkillLevelUpTests
             await StartAuthenticatedSessionAsync(NoviceState(skillPoints: 2), CharacterSkillSnapshot.Empty);
         using var _ = client;
 
-        await SkipBootstrapAsync(stream, skillEntryCount: 1);
+        await SkipBootstrapAsync(stream);
 
         var request = new byte[] { 0x12, 0x01, 0x01, 0x00, 0x1D };
         await stream.WriteAsync(request);
@@ -174,22 +209,35 @@ public sealed class MapClientSessionSkillLevelUpTests
         await run.WaitAsync(TimeSpan.FromSeconds(5));
     }
 
+    // TCP has no message boundaries: a real client write can legitimately arrive split across
+    // multiple reads on the server side. This proves the fixed 5-byte 0x0112 framing tolerates a
+    // split write - the first 4 bytes alone must not be dispatched as a (nonexistent) 4-byte
+    // packet, and the handler must still fire correctly once the final opaque byte arrives
+    // (task section 31/78: no byte-alignment corruption from this new opcode).
     [Fact]
-    public async Task MalformedSkillPacket_TruncatedLength_DoesNotDesyncFraming()
+    public async Task SkillLevelUpPacket_FragmentedAcrossTcpWrites_WaitsForCompleteFiveBytePacket()
     {
-        // The framing layer only dispatches once a length-registered packet is fully buffered, so
-        // a genuinely truncated 0x0112 never reaches the handler as a short packet - this proves
-        // a well-formed packet sent immediately afterward on the same stream still parses
-        // correctly (task section 31/78: no byte-alignment corruption from this new opcode).
         var (client, stream, gameplayPersistence, skillPersistence, session, run) =
             await StartAuthenticatedSessionAsync(NoviceState(skillPoints: 1), CharacterSkillSnapshot.Empty);
         using var _ = client;
 
-        await SkipBootstrapAsync(stream, skillEntryCount: 1);
+        await SkipBootstrapAsync(stream);
 
-        await stream.WriteAsync(new byte[] { 0x12, 0x01, 0x01, 0x00, 0x1D });
+        // First 4 bytes of the captured request only - opcode + SkillId, missing the trailing byte.
+        await stream.WriteAsync(new byte[] { 0x12, 0x01, 0x01, 0x00 });
+        // Final opaque byte, written separately to force a genuine split read on the server side.
+        await stream.WriteAsync(new byte[] { 0x1D });
+
         var skillUpdate = await ReadExact(stream, 17);
         Assert.Equal((short)0x0b33, BinaryPrimitives.ReadInt16LittleEndian(skillUpdate));
+        Assert.Equal((ushort)1, BinaryPrimitives.ReadUInt16LittleEndian(skillUpdate.AsSpan(8))); // CurrentLevel = 1 (POST-commit)
+
+        var skillPointsUpdate = await ReadExact(stream, 8);
+        Assert.Equal((short)0x00b0, BinaryPrimitives.ReadInt16LittleEndian(skillPointsUpdate));
+        Assert.Equal(0u, BinaryPrimitives.ReadUInt32LittleEndian(skillPointsUpdate.AsSpan(4)));
+
+        Assert.Equal((byte)1, skillPersistence.State.CurrentLevel(1));
+        Assert.Equal(0u, skillPersistence.GameplayState.SkillPoints);
 
         client.Close();
         await run.WaitAsync(TimeSpan.FromSeconds(5));
@@ -202,7 +250,7 @@ public sealed class MapClientSessionSkillLevelUpTests
         return packet;
     }
 
-    private static async Task SkipBootstrapAsync(NetworkStream stream, int skillEntryCount)
+    private static async Task SkipBootstrapAsync(NetworkStream stream)
     {
         await ReadExact(stream, 4 + 6 + 6 + 13); // 0x0B18, 0x0283, 0x0ADE, 0x02EB
         var skillListHeader = await ReadExact(stream, 4);
