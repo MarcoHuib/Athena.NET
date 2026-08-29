@@ -1,5 +1,7 @@
 using Athena.Net.MapServer.Generated.World.Izlude.Academy;
 using Athena.Net.MapServer.World.GeneratedScripts;
+using IzludeCityWarps = Athena.Net.MapServer.Generated.World.Izlude.IzludeCity.GeneratedWarps;
+using PrtFild08dWarps = Athena.Net.MapServer.Generated.World.PrtFild08d.GeneratedWarps;
 
 namespace Athena.Net.MapServer.World;
 
@@ -120,13 +122,18 @@ public sealed class WorldMapRegistry
             : null;
     }
     private static string SemanticKey(string map, string name) => $"{map}:{name}";
-    private static WorldMapRegistry LoadGenerated() => new(GeneratedWarps.All, GeneratedScriptRegistry.Entities, scripts: GeneratedScriptRegistry.Registry);
+    // Academy's static-door warps plus the route-critical Izlude<->prt_fild08d and
+    // prt_fild08d->prontera doors (ai/world-data.md's travel-corridor content); each area's
+    // GeneratedWarps class is compiled independently (see tools/WorldDataImporter), so the
+    // composed set is a plain concatenation rather than one area owning every WarpDefinition.
+    private static IEnumerable<WarpDefinition> AllGeneratedWarps => GeneratedWarps.All.Concat(IzludeCityWarps.All).Concat(PrtFild08dWarps.All);
+    private static WorldMapRegistry LoadGenerated() => new(AllGeneratedWarps, GeneratedScriptRegistry.Entities, scripts: GeneratedScriptRegistry.Registry);
 
     // Same generated data as Tutorial/LoadGenerated(), but taking an externally supplied allocator
     // so MapServerWorld.Build() can hand WorldMapRegistry and MonsterRegistry the SAME
     // WorldActorIdAllocator instance instead of Tutorial's own private one.
     internal static WorldMapRegistry LoadGenerated(WorldActorIdAllocator allocator) =>
-        new(GeneratedWarps.All, GeneratedScriptRegistry.Entities, scripts: GeneratedScriptRegistry.Registry, allocator: allocator);
+        new(AllGeneratedWarps, GeneratedScriptRegistry.Entities, scripts: GeneratedScriptRegistry.Registry, allocator: allocator);
 }
 
 public readonly record struct WarpIntersection(WarpDefinition Warp, ushort X, ushort Y);

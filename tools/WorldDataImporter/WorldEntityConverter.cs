@@ -7,7 +7,7 @@ internal sealed record ConversionFilter(string? SourceFile, string? Map, string?
     public bool Matches(RathenaDeclaration value) =>
         (SourceFile is null || value.Source.File.EndsWith(SourceFile, StringComparison.OrdinalIgnoreCase)) &&
         (Map is null || string.Equals(value.Map, Map, StringComparison.OrdinalIgnoreCase)) &&
-        (Name is null || string.Equals(value.Name, Name, StringComparison.Ordinal)) &&
+        (Name is null || string.Equals(value.Name, Name, StringComparison.Ordinal) || string.Equals(value.Alias, Name, StringComparison.Ordinal)) &&
         (Kind is null || string.Equals(Kind, "warp", StringComparison.OrdinalIgnoreCase) ||
             (string.Equals(Kind, "npc", StringComparison.OrdinalIgnoreCase) &&
              (value.Directive == "script" || value.Directive.StartsWith("duplicate(", StringComparison.Ordinal)) &&
@@ -22,10 +22,24 @@ internal static partial class WorldEntityConverter
 {
     private const string Commit = "6e6bca69b8a2ee03cd744cbc7a78a054a6f376ca";
 
+    // Indexes "script" declarations by their own display Name, plus each declaration's optional
+    // "Name::Alias" Alias (e.g. "Guide#01prontera::GuideProntera" is findable as both), so
+    // duplicate(Alias) directives resolve the same as duplicate(Name) would.
+    private static Dictionary<string, RathenaDeclaration> BuildTemplateIndex(IEnumerable<RathenaDeclaration> declarations)
+    {
+        var templates = new Dictionary<string, RathenaDeclaration>(StringComparer.Ordinal);
+        foreach (var item in declarations.Where(item => item.Directive == "script"))
+        {
+            templates[item.Name] = item;
+            if (item.Alias is { } alias) templates[alias] = item;
+        }
+        return templates;
+    }
+
     public static ConversionResult Convert(IEnumerable<string> roots, ConversionFilter filter)
     {
         var declarations = RathenaSourceParser.Parse(roots);
-        var templates = declarations.Where(item => item.Directive == "script").ToDictionary(item => item.Name, StringComparer.Ordinal);
+        var templates = BuildTemplateIndex(declarations);
         var entities = new List<WorldEntityDefinition>();
         var unsupported = new List<UnsupportedConversion>();
         foreach (var declaration in declarations.Where(filter.Matches))
@@ -65,7 +79,7 @@ internal static partial class WorldEntityConverter
     {
         var rootList = roots as IReadOnlyList<string> ?? roots.ToArray();
         var declarations = RathenaSourceParser.Parse(rootList);
-        var templates = declarations.Where(item => item.Directive == "script").ToDictionary(item => item.Name, StringComparer.Ordinal);
+        var templates = BuildTemplateIndex(declarations);
         var definitions = new List<NpcDefinition>();
         var placements = new List<NpcPlacement>();
         var unsupported = new List<UnsupportedConversion>();
@@ -87,7 +101,11 @@ internal static partial class WorldEntityConverter
             // OnClick/OnTouch slices captured by NpcTriggerBehavior.NormalizedSource, so the initial-cloak signal
             // must be read from the template's full raw ScriptBody, computed once per group and applied uniformly.
             var initialEffectState = template.ScriptBody.Contains("cloakonnpc();", StringComparison.Ordinal) ? 4u : (uint?)null;
-            foreach (var (instance, _) in group)
+            // A floating template (map "-", e.g. "-\tscript\t::Name\t-1,{...") carries no placement of
+            // its own - it exists only to be referenced by duplicate() instances. Its own declaration
+            // row is excluded here rather than fed into TryBuildPlacement, which would otherwise try
+            // (and fail) to parse the script body's opening "-1,{" as if it were sprite/visual data.
+            foreach (var (instance, _) in group.Where(pair => pair.declaration.Map != "-"))
             {
                 if (!TryBuildPlacement(instance, definition, initialEffectState, rootList, out var placement)) { unsupported.Add(Unsupported(instance, "Malformed NPC duplicate placement")); continue; }
                 placements.Add(placement);
@@ -111,7 +129,7 @@ internal static partial class WorldEntityConverter
     public static WarpTriggerConversionResult ConvertWarpTriggers(IEnumerable<string> roots, ConversionFilter filter)
     {
         var declarations = RathenaSourceParser.Parse(roots);
-        var templates = declarations.Where(item => item.Directive == "script").ToDictionary(item => item.Name, StringComparer.Ordinal);
+        var templates = BuildTemplateIndex(declarations);
         var definitions = new List<WarpTriggerDefinition>();
         var placements = new List<WarpTriggerPlacement>();
         var unsupported = new List<UnsupportedConversion>();
@@ -288,7 +306,10 @@ internal static class NpcSpriteClassResolver
 {
     public static bool TryResolve(IEnumerable<string> roots, string constant, out ushort value)
     {
-        value = 0;
+        // Many rAthena NPC placements carry a raw numeric sprite ID directly (e.g. "105") rather than
+        // a symbolic JT_* class name - these are ordinary player-model-family sprites with no matching
+        // e_job_types enum member at all, not a subset that happens to be unresolvable.
+        if (ushort.TryParse(constant, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out value)) return true;
         var root = roots.Select(Path.GetFullPath).Select(FindRathenaRoot).FirstOrDefault(path => path is not null);
         var header = root is null ? null : Path.Combine(root, "src", "map", "npc.hpp");
         if (header is null || !File.Exists(header)) return false;

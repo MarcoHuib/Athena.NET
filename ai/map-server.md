@@ -1737,3 +1737,27 @@ look to observers already seeing that player), player death/respawn interaction 
 stealth/invisibility/GM-visibility filtering, and a capture-proven byte-for-byte `0x09FE` layout
 (currently Reference-backed via the shared idle-unit serializer, one byte shorter than `0x09FF`
 for its missing standing/alive-state byte - see `IroPlayerActorPackets.SpawnFixedLength`).
+
+## Izlude -> prt_fild08d -> Prontera travel corridor
+
+See `ai/world-data.md`'s "Travel corridor" section for the full content/tooling writeup
+(`izlude-prontera-travel-trace.txt`, warps, static NPC presence, the three generic
+`WorldDataImporter` capability fixes this slice required). This section records only the
+runtime-architecture decision specific to `ai/map-server.md`'s scope.
+
+Both new route doors (`izlude_d<->prt_fild08d`, `prt_fild08d->prontera`) use the existing
+same-server `0x0091` transition (`WorldMapRegistry`'s `WarpDefinition`/`TryFindFirstWarpAlongRoute`
+path, unchanged) rather than the still-unimplemented cross-process `0x0092` handoff. The official
+capture's endpoints for this corridor (`128.241.92.42:4501`/`:4502`, per
+`izlude-prontera-travel-trace.txt`) are Gravity's own multi-MapServer deployment topology
+evidence, not a requirement Athena.NET must reproduce: Athena currently hosts every map in one
+MapServer process, so every transition in this corridor is same-process by construction. `0x0092`
+remains reserved for a future explicitly-configured cross-endpoint ownership boundary (see the
+"Map transitions" section above) - this slice does not add one, and does not emit a fake
+self-handoff `0x0092` merely because the official capture used it for its own reasons.
+
+This slice reuses PR #19's `PlayerPresenceRegistry`/`PlayerVisibilityCoordinator` unmodified for
+the new maps: both key purely by the map-name string a session reports, with no static map
+allowlist (confirmed by direct code audit before any content was compiled - see
+`ai/world-data.md`), so presence/AOI on `izlude_d`/`prt_fild08d`/`prontera` works the same as on
+any other map without further changes.

@@ -89,7 +89,13 @@ internal static class WorldDataImporterCli
             ? [WorldEntityConverter.Convert(roots, filter)]
             : names.Select(name => WorldEntityConverter.Convert(roots, filter with { Name = name })).ToArray();
         var lowered=WorldLowerer.Lower(results.SelectMany(result => result.Entities));
-        var source=CSharpWorldEmitter.Emit(lowered,options.Required("rathena-commit"));
+        var compileNamespace = options.Optional("namespace");
+        var compileClassName = options.Optional("class-name");
+        var source = compileNamespace is null && compileClassName is null
+            ? CSharpWorldEmitter.Emit(lowered,options.Required("rathena-commit"))
+            : CSharpWorldEmitter.Emit(lowered,options.Required("rathena-commit"),
+                @namespace: compileNamespace ?? "Athena.Net.MapServer.Generated.World.Izlude",
+                className: compileClassName ?? "GeneratedWarps");
         var output=Path.GetFullPath(options.Required("output")); Directory.CreateDirectory(Path.GetDirectoryName(output)!); await File.WriteAllTextAsync(output,source,new System.Text.UTF8Encoding(false));
         Console.WriteLine($"Generated {lowered.Warps.Count} strongly typed warp definitions into {output}."); return results.All(result => result.Unsupported.Count == 0)?0:1;
     }
@@ -195,16 +201,17 @@ internal static class WorldDataImporterCli
             warpSelection = new WarpTriggerEmissionSelection(includedWarpPlacementIds);
         }
 
-        var emission = NpcWorldEmitter.Emit(conversion, selection, worldNamespace, scriptsNamespace, options.Required("rathena-commit"), warpConversion, warpSelection);
+        var prefix = options.Optional("prefix") ?? "Academy";
+        var emission = NpcWorldEmitter.Emit(conversion, selection, worldNamespace, scriptsNamespace, options.Required("rathena-commit"), warpConversion, warpSelection, prefix);
 
         Directory.CreateDirectory(outputDir);
         var scriptsDir = Path.Combine(outputDir, "Scripts");
         Directory.CreateDirectory(scriptsDir);
         var encoding = new System.Text.UTF8Encoding(false);
-        await File.WriteAllTextAsync(Path.Combine(outputDir, "AcademyWorld.cs"), emission.AcademyWorldSource, encoding);
-        await File.WriteAllTextAsync(Path.Combine(outputDir, "AcademyNpcs.cs"), emission.AcademyNpcsSource, encoding);
+        await File.WriteAllTextAsync(Path.Combine(outputDir, prefix + "World.cs"), emission.AcademyWorldSource, encoding);
+        await File.WriteAllTextAsync(Path.Combine(outputDir, prefix + "Npcs.cs"), emission.AcademyNpcsSource, encoding);
         if (emission.AcademyWarpTriggersSource is { } warpTriggersSource)
-            await File.WriteAllTextAsync(Path.Combine(outputDir, "AcademyWarpTriggers.cs"), warpTriggersSource, encoding);
+            await File.WriteAllTextAsync(Path.Combine(outputDir, prefix + "WarpTriggers.cs"), warpTriggersSource, encoding);
         foreach (var (className, source) in emission.ScriptSources)
             await File.WriteAllTextAsync(Path.Combine(scriptsDir, className + ".cs"), source, encoding);
 

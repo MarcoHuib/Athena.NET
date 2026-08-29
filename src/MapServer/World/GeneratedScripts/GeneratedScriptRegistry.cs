@@ -1,4 +1,7 @@
 using Athena.Net.MapServer.Generated.World.Izlude.Academy;
+using Athena.Net.MapServer.Generated.World.Izlude.IzludeCity;
+using Athena.Net.MapServer.Generated.World.Prontera;
+using Athena.Net.MapServer.Generated.World.PrtFild08d;
 
 namespace Athena.Net.MapServer.World.GeneratedScripts;
 
@@ -38,6 +41,16 @@ public static partial class GeneratedScriptRegistry
     public static void Register(WorldRegistryBuilder builder)
     {
         AcademyWorld.Register(builder);
+        // Izlude/prt_fild08d/Prontera travel-corridor content (ai/world-data.md,
+        // izlude-prontera-travel-trace.txt): route-critical warps live in each area's own
+        // GeneratedWarps.All (composed directly by WorldMapRegistry/MapServerWorld.Build, not
+        // through this NPC/warp-trigger builder), while these Register calls add the low-cost
+        // static NPC presence (Sailor, Guide, Resting Adventurer, Karian) compiled alongside them.
+        IzludeCityWorld.Register(builder);
+        IzludeGuideWorld.Register(builder);
+        ProntereCityWorld.Register(builder);
+        ProntereKarianWorld.Register(builder);
+        PrtFild08dWorld.Register(builder);
         // AcademyMobSpawns.GPoringSpawns registration is composed here (not inside AcademyWorld.cs)
         // because AcademyWorld.cs is `compile-npc-world` output, verified byte-for-byte reproducible
         // against the pinned source by WorldDataImporter.Tests.CompilerTests.

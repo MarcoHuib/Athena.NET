@@ -4,6 +4,8 @@ using Athena.Net.MapServer.Gameplay.Rates;
 using Athena.Net.MapServer.Generated.GameData.Quests;
 using Athena.Net.MapServer.Generated.World.Izlude.Academy;
 using Athena.Net.MapServer.World.GeneratedScripts;
+using IzludeCityWarps = Athena.Net.MapServer.Generated.World.Izlude.IzludeCity.GeneratedWarps;
+using PrtFild08dWarps = Athena.Net.MapServer.Generated.World.PrtFild08d.GeneratedWarps;
 
 namespace Athena.Net.MapServer.World;
 
@@ -87,7 +89,7 @@ public sealed record MapServerWorld(WorldMapRegistry Maps, MonsterRegistry Monst
         GeneratedScriptRegistry.Register(builder);
         if (customsEnabled) CustomWorldRegistry.Register(builder);
         var world = builder.Build();
-        var maps = new WorldMapRegistry(GeneratedWarps.All, world.Entities, scripts: world.Scripts, allocator: allocator);
+        var maps = new WorldMapRegistry(GeneratedWarps.All.Concat(IzludeCityWarps.All).Concat(PrtFild08dWarps.All), world.Entities, scripts: world.Scripts, allocator: allocator);
         // Explicit either/or choice, not a fallback: EmptyMapCollisionProvider.Instance IS the
         // collision-less/dev case; anything else is a real collision-backed world.
         IMobSpawnCellSelector defaultCellSelector = ReferenceEquals(resolvedCollisionProvider, EmptyMapCollisionProvider.Instance)

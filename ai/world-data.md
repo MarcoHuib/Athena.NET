@@ -496,6 +496,146 @@ dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- \
   --output src/MapServer/Generated
 ```
 
+## Travel corridor: Izlude -> prt_fild08d -> Prontera
+
+`izlude-prontera-travel-trace.txt` documents the capture evidence for the next slice beyond
+Academy: tutorial/ship -> `izlude_d` (196,209) -> free walk -> `prt_fild08d` (367,212) -> free
+walk -> `prontera` (156,34) -> free walk. Source captures: `Full-izlude.pcapng` (SHA-256
+`ee3bcbf2429d944c512d2ced10ce9c8db099dec79ad499f23b977462a0af2ec9`),
+`sail-newnpc-onlineplayers.pcapng` (SHA-256
+`558106a47492ce33d2304f047233de85bbad39d57d6e7be1fc9a7fa1d7d296bf`), and
+`prontera-walking.pcapng` (SHA-256
+`be06f244719c702d81d09ba9e595bb2e04ec5f8bd0248db70b4dbc43f23198ad`).
+
+A full gap audit (against `#intro04_to_izlude_d` OnTouch wiring, `Close2Async` continuation,
+quest completion, `WarpAsync`/`SetSavePointAsync`, `WorldMapRegistry`'s map-loading model,
+CharServer position/save-point persistence, and PR #19's `PlayerPresenceRegistry`/
+`PlayerVisibilityCoordinator`) found every one of those runtime capabilities already generic
+and map-name-agnostic — none take a map allowlist, and `TeleportTo`/`WarpAsync` accept any
+string. The entire gap was content generation: `izlude_d`, `prt_fild08d`, and `prontera` had
+zero compiled maps/warps/NPCs anywhere in `Generated/World/`.
+
+### Route-critical warps
+
+Two same-server doors, both plain declarative `warp` directives (not `duplicate()`/WARPNPC
+chains) — same shape as `#room_in`/`#room_out`:
+
+```bash
+dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- compile \
+  --source-root legacy/rathena/npc/re/warps/cities \
+  --source-file izlude.txt \
+  --name 'prtf005_d' --name 'iz001_d' --kind warp \
+  --rathena-commit e985006171d2eb320ee512a653f4c83aea3d81b6 \
+  --namespace Athena.Net.MapServer.Generated.World.Izlude.IzludeCity \
+  --class-name GeneratedWarps \
+  --output src/MapServer/Generated/World/Izlude/IzludeCity/IzludeCityWarps.cs
+
+dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- compile \
+  --source-root legacy/rathena/npc/re/warps/fields \
+  --source-file prontera_fild.txt \
+  --name 'prtf004_d' --kind warp \
+  --rathena-commit e985006171d2eb320ee512a653f4c83aea3d81b6 \
+  --namespace Athena.Net.MapServer.Generated.World.PrtFild08d \
+  --class-name GeneratedWarps \
+  --output src/MapServer/Generated/World/PrtFild08d/PrtFild08dWarps.cs
+```
+
+`izlude_d <-> prt_fild08d` is bidirectional (both doors exist in pinned source).
+`prt_fild08d -> prontera` is one-way in pinned source: `prontera_fild.txt` and
+`prontera.txt` contain no reverse `prontera,... -> prt_fild08*` warp anywhere — this was
+independently confirmed by exhaustive grep, not an omission on Athena's side. Both `compile`
+invocations use two new CLI options, `--namespace`/`--class-name`, added specifically for this
+slice (see "Tooling changes" below); omitting them keeps the original
+`Athena.Net.MapServer.Generated.World.Izlude`/`GeneratedWarps` default used by the existing
+`AcademyWarps.cs`-equivalent invocations.
+
+### Route-critical + low-cost static NPC presence
+
+Per the travel trace's own prioritization (not "implement every captured NPC"): the Izlude-side
+ferry Sailor, both Izlude Guides, one Prontera Guide family (including `Guide#04prontera` at the
+south entrance), the field's Resting Adventurer, and Karian (a nearby job-quest NPC, compiled
+actor-only — its `minstrel.txt` job-quest body is not lowered). Kafra Employee/Storage
+Keeper/Bulletin Board from the capture have no matching pinned-source entity at those exact
+cells (`legacy/rathena/db`/`npc` grep found nothing under those names near Prontera's south
+gate) and were deliberately not invented.
+
+```bash
+dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- compile-npc-world \
+  --source-root legacy/rathena/npc/cities --source-root legacy/rathena/npc/re/cities \
+  --name 'Sailor_izlude' \
+  --namespace Athena.Net.MapServer.Generated.World.Izlude.IzludeCity --prefix IzludeCity \
+  --rathena-commit e985006171d2eb320ee512a653f4c83aea3d81b6 \
+  --output-dir src/MapServer/Generated/World/Izlude/IzludeCity
+
+dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- compile-npc-world \
+  --source-root legacy/rathena/npc/re/guides --name 'GuideIzlude' \
+  --namespace Athena.Net.MapServer.Generated.World.Izlude.IzludeCity --prefix IzludeGuide \
+  --rathena-commit e985006171d2eb320ee512a653f4c83aea3d81b6 \
+  --output-dir src/MapServer/Generated/World/Izlude/IzludeCity
+
+dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- compile-npc-world \
+  --source-root legacy/rathena/npc/re/cities --name 'Resting Adventurer#iz' \
+  --namespace Athena.Net.MapServer.Generated.World.PrtFild08d --prefix PrtFild08d \
+  --rathena-commit e985006171d2eb320ee512a653f4c83aea3d81b6 \
+  --output-dir src/MapServer/Generated/World/PrtFild08d
+
+dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- compile-npc-world \
+  --source-root legacy/rathena/npc/re/guides --name 'GuideProntera' \
+  --namespace Athena.Net.MapServer.Generated.World.Prontera --prefix ProntereCity \
+  --rathena-commit e985006171d2eb320ee512a653f4c83aea3d81b6 \
+  --output-dir src/MapServer/Generated/World/Prontera
+
+dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- compile-npc-world \
+  --source-root legacy/rathena/npc/re/jobs/3-2 --name 'Karian#cmd9' \
+  --namespace Athena.Net.MapServer.Generated.World.Prontera --prefix ProntereKarian \
+  --rathena-commit e985006171d2eb320ee512a653f4c83aea3d81b6 \
+  --output-dir src/MapServer/Generated/World/Prontera
+```
+
+`Sailor_izlude`'s ferry-vendor `OnClick` body and `GuideIzlude`/`GuideProntera`'s navigation
+menus (`viewpoint`/`F_Navi`/`callsub`) are not lowerable with current generator capability
+(confirmed by the `capabilities` command before compiling — `set`/`viewpoint`/`f_navi` are
+PARSED, not FULLYSUPPORTED); both compile as safe actor-only presence (definition with `[]`
+behaviors), matching the trace's "unsupported service NPCs may be present as source-backed
+world actors without forcing a new subsystem into this PR" rule. Karian and the Resting
+Adventurer's trivial `end;`/`return;` OnClick bodies DO lower (their real job-quest/`OnTimer`
+bodies do not), so those two get a real (no-op) script class rather than `[]`.
+
+All six generated `*World.Register(builder)` calls are composed alongside `AcademyWorld.Register`
+in `GeneratedScriptRegistry.Register` (`src/MapServer/World/GeneratedScripts/GeneratedScriptRegistry.cs`),
+the same single composition point every other generated area uses. The new `GeneratedWarps.All`
+arrays are concatenated with Academy's in both `WorldMapRegistry.LoadGenerated` overloads and
+`MapServerWorld.Build` — `WorldMapRegistry` itself has no per-map allowlist to update; it was
+already built as a plain concatenation of whatever `WarpDefinition[]` it's constructed with.
+
+### Tooling changes (generic compiler capability, not route-specific)
+
+Three real, previously-latent `WorldDataImporter` gaps were found and fixed while compiling this
+content — all are generic parser/emitter capability, verified non-regressive against the
+existing Academy content (byte-identical regeneration re-checked after each fix) and covered by
+`tests/WorldDataImporter.Tests`:
+
+- **Floating (`-`) global-label scripts** (e.g. `-\tscript\t::Sailor_izlude\t-1,{...}` in
+  `legacy/rathena/npc/cities/izlude.txt:37`, referenced by `duplicate(Sailor_izlude)` elsewhere):
+  `RathenaSourceParser.TryPosition` previously required a real `map,x,y,direction` and silently
+  dropped these declarations entirely; it now recognizes a bare `-` map field. The floating
+  template's own declaration row (no real placement of its own) is excluded from placement
+  iteration in `WorldEntityConverter.ConvertNpcDefinitions` rather than misparsed as a placement.
+- **`Name::Alias` self-placed templates** (e.g. `Guide#01prontera::GuideProntera` in
+  `guides_prontera.txt:10`, referenced by `duplicate(GuideProntera)` — a different rAthena
+  convention from the floating-script `::Name` form above): the parser now splits `Name` from a
+  trailing `::Alias`, and `WorldEntityConverter.BuildTemplateIndex`/`ConversionFilter.Matches`
+  index/match on either the template's own name or its alias.
+- **Raw numeric NPC sprite IDs** (e.g. `Guide#01izlude,...,105` — a plain sprite ID, not a
+  `JT_*` symbolic constant): `NpcSpriteClassResolver.TryResolve` previously only looked up
+  `"JT_" + constant` in `npc.hpp`'s `e_job_types` enum; it now accepts a bare numeric string
+  directly. Not every rAthena NPC sprite is a `JT_*`-enum warp/monster-style constant.
+
+`compile`/`compile-npc-world` also gained optional `--namespace`/`--class-name`/`--prefix`
+overrides (all defaulting to the prior hardcoded `Athena.Net.MapServer.Generated.World.Izlude`/
+`GeneratedWarps`/`Academy` values) so a new area's generated classes are named for that area
+instead of every area's output being named `Academy*` regardless of its actual namespace.
+
 ## Still missing
 
 The complete `iz_int`/`int_land` tutorial family (generic base maps plus all four instanced duplicates) includes compiler-generated navigation targets, both Wounded Swordsman actor states/scripts, and generated behavior for Captain Carocc and Lumin — not only the `iz_int03`/`int_land03` instanced variant. Captain Carocc's pinned dialogue/quest/heal/status/EXP script and Lumin's pinned dialogue/quest/cutin/cloak script are registered and executable on every map in the family. Lumin's `strcharinfo(0)` resolves the active character name carried through the authenticated CharServer map handoff; it is never sourced from a client dialogue packet or capture constant.
