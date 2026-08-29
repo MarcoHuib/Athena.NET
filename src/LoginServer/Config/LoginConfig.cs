@@ -4,6 +4,10 @@ namespace Athena.Net.LoginServer.Config;
 
 public sealed class LoginConfig
 {
+    public IPAddress IroAdvertisedCharIp { get; init; } = ParseIpEnvironment(
+        "ATHENA_NET_LOGIN_IRO_CHAR_IP", "128.241.92.43");
+    public int IroAdvertisedCharPort { get; init; } = ParseIntEnvironment(
+        "ATHENA_NET_LOGIN_IRO_CHAR_PORT", 4500);
     public IPAddress BindIp { get; init; } = IPAddress.Any;
     public int LoginPort { get; init; } = 6900;
     public bool LogLogin { get; init; } = true;
@@ -45,6 +49,20 @@ public sealed class LoginConfig
     public int UsercountLow { get; init; } = 200;
     public int UsercountMedium { get; init; } = 500;
     public int UsercountHigh { get; init; } = 1000;
+
+    private static IPAddress ParseIpEnvironment(string name, string fallback)
+    {
+        return IPAddress.TryParse(Environment.GetEnvironmentVariable(name), out var value)
+            ? value
+            : IPAddress.Parse(fallback);
+    }
+
+    private static int ParseIntEnvironment(string name, int fallback)
+    {
+        return int.TryParse(Environment.GetEnvironmentVariable(name), out var value) && value is > 0 and <= ushort.MaxValue
+            ? value
+            : fallback;
+    }
 }
 
 public sealed class ClientHashRule

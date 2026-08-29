@@ -1790,13 +1790,13 @@ public sealed class ClientSession : IDisposable
         var offset = 47 + PacketConstants.WebAuthTokenLength;
         foreach (var server in servers)
         {
-            var ip = IPAddress.Parse("128.241.92.43");
+            var ip = Config.IroAdvertisedCharIp;
 
-            LoginLogger.Info($"[iRO DEBUG] Server entry: name='{server.Name}' ip={ip} port={server.Port} users={server.Users} type={server.Type} new={server.IsNew}");
+            LoginLogger.Info($"[iRO DEBUG] Server entry: name='{server.Name}' ip={ip} port={Config.IroAdvertisedCharPort} users={server.Users} type={server.Type} new={server.IsNew}");
 
             var ipBytes = ip.GetAddressBytes();
             Buffer.BlockCopy(ipBytes, 0, buffer, offset, 4);
-            BinaryPrimitives.WriteUInt16LittleEndian(buffer.AsSpan(offset + 4, 2), 4500);
+            BinaryPrimitives.WriteUInt16LittleEndian(buffer.AsSpan(offset + 4, 2), (ushort)Config.IroAdvertisedCharPort);
             WriteFixedString(buffer, offset + 6, 20, "Chaos");
             BinaryPrimitives.WriteUInt16LittleEndian(buffer.AsSpan(offset + 26, 2), MapUserCount(server.Users));
             BinaryPrimitives.WriteUInt16LittleEndian(buffer.AsSpan(offset + 28, 2), server.Type);
