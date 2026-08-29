@@ -57,8 +57,19 @@ From a Windows machine with the .NET 10 SDK:
 dotnet restore .\tools\launcher\src\Athena.Launcher\Athena.Launcher.csproj
 dotnet test .\tools\launcher\tests\Athena.Launcher.Core.Tests\Athena.Launcher.Core.Tests.csproj
 dotnet test .\tools\launcher\tests\Athena.Launcher.Networking.Tests\Athena.Launcher.Networking.Tests.csproj
-dotnet publish .\tools\launcher\src\Athena.Launcher\Athena.Launcher.csproj -c Release -r win-x64 --self-contained false
+dotnet publish .\tools\launcher\src\Athena.Launcher\Athena.Launcher.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:PublishTrimmed=false -o .\artifacts\launcher
+dotnet publish .\tools\launcher\src\Athena.Launcher.Watchdog\Athena.Launcher.Watchdog.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:PublishTrimmed=false -o .\artifacts\watchdog
 ```
+
+Copy `Athena.Launcher.exe`, `Athena.Launcher.Watchdog.exe`, and `launcher.settings.json` into the same distribution directory. The watchdog lookup is intentionally relative to the launcher executable.
+
+### Development builds
+
+Open the GitHub repository, choose **Actions → Windows Launcher**, open a successful run, and download the **Athena.NET-Launcher-win-x64** artifact. Extract the ZIP before running it.
+
+### Official releases
+
+Open **GitHub → Releases**, select the launcher version, and download `Athena.NET-Launcher-vX.Y.Z-win-x64.zip`. Extract it and run `Athena.Launcher.exe`. Windows requests administrator/UAC permission because the launcher creates temporary local network aliases; no manual PowerShell step is required.
 
 Set `RagnarokPath` in the published `launcher.settings.json` only if registry/common-path discovery cannot find the client. Set `UpdaterExecutable` to a path relative to the installation only when metadata-based updater discovery is ambiguous. Start `Athena.Launcher.exe`; do not start it from PowerShell.
 

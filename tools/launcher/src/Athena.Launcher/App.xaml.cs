@@ -30,7 +30,11 @@ public partial class App : Application
         try
         {
             _log = new JsonLineLauncherLog();
-            _log.Information("launcher.startup", "Athena.NET Launcher starting.", new Dictionary<string, object?> { ["version"] = Assembly.GetExecutingAssembly().GetName().Version?.ToString() });
+            var assembly = Assembly.GetExecutingAssembly();
+            var buildVersion = assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
+                ?? assembly.GetName().Version?.ToString()
+                ?? "unknown";
+            _log.Information("launcher.startup", "Athena.NET Launcher starting.", new Dictionary<string, object?> { ["version"] = buildVersion });
             var basePath = AppContext.BaseDirectory;
             var options = LauncherOptions.Load(Path.Combine(basePath, "launcher.settings.json"));
             var ipManager = new WindowsTemporaryIpManager(new PowerShellNetworkCommandRunner(), _log);

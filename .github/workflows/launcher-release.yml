@@ -1,0 +1,233 @@
+name: Windows Launcher
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ "launcher-v*" ]
+    paths:
+      - "tools/launcher/**"
+      - "Directory.Build.*"
+      - "Athena.NET.sln"
+      - "Athena.NET.slnx"
+      - ".github/workflows/launcher-release.yml"
+  pull_request:
+    paths:
+      - "tools/launcher/**"
+      - "Directory.Build.*"
+      - "Athena.NET.sln"
+      - "Athena.NET.slnx"
+      - ".github/workflows/launcher-release.yml"
+  workflow_dispatch:
+
+jobs:
+  build-test-package:
+    name: Build, test, and package
+    runs-on: windows-latest
+    env:
+      LAUNCHER_PROJECT: tools/launcher/src/Athena.Launcher/Athena.Launcher.csproj
+      WATCHDOG_PROJECT: tools/launcher/src/Athena.Launcher.Watchdog/Athena.Launcher.Watchdog.csproj
+      CORE_TEST_PROJECT: tools/launcher/tests/Athena.Launcher.Core.Tests/Athena.Launcher.Core.Tests.csproj
+      NETWORKING_TEST_PROJECT: tools/launcher/tests/Athena.Launcher.Networking.Tests/Athena.Launcher.Networking.Tests.csproj
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+          cache: true
+          cache-dependency-path: "tools/launcher/**/packages.lock.json"
+
+      - name: Derive build version and package name
+        id: version
+        shell: pwsh
+        run: |
+          $shortSha = $env:GITHUB_SHA.Substring(0, 7)
+
+          if ($env:GITHUB_REF_TYPE -eq "tag") {
+            if ($env:GITHUB_REF_NAME -notmatch '^launcher-v(?<version>\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)$') {
+              throw "Launcher tag '$env:GITHUB_REF_NAME' is not a supported semantic version tag."
+            }
+
+            $version = $Matches.version
+            $numericVersion = $version.Split('-')[0]
+            $packageFile = "Athena.NET-Launcher-v$version-win-x64.zip"
+            $releaseName = "Athena.NET Launcher v$version"
+          }
+          else {
+            $version = "0.0.0-dev.$env:GITHUB_RUN_NUMBER"
+            $numericVersion = "0.0.0"
+            $packageFile = "Athena.NET-Launcher-win-x64-$shortSha.zip"
+            $releaseName = ""
+          }
+
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "assembly_version=$numericVersion.0" >> $env:GITHUB_OUTPUT
+          "informational_version=$version+$shortSha" >> $env:GITHUB_OUTPUT
+          "package_file=$packageFile" >> $env:GITHUB_OUTPUT
+          "release_name=$releaseName" >> $env:GITHUB_OUTPUT
+
+      - name: Restore launcher projects
+        shell: pwsh
+        run: |
+          dotnet restore $env:LAUNCHER_PROJECT --runtime win-x64 --locked-mode
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet restore $env:CORE_TEST_PROJECT --locked-mode
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet restore $env:NETWORKING_TEST_PROJECT --locked-mode
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build launcher
+        shell: pwsh
+        run: >-
+          dotnet build $env:LAUNCHER_PROJECT
+          --configuration Release
+          --runtime win-x64
+          --self-contained true
+          --no-restore
+          -p:Version=${{ steps.version.outputs.version }}
+          -p:AssemblyVersion=${{ steps.version.outputs.assembly_version }}
+          -p:FileVersion=${{ steps.version.outputs.assembly_version }}
+          -p:InformationalVersion=${{ steps.version.outputs.informational_version }}
+
+      - name: Test launcher core
+        shell: pwsh
+        run: dotnet test $env:CORE_TEST_PROJECT --configuration Release --no-restore --no-build --logger "trx;LogFileName=launcher-core.trx"
+
+      - name: Test launcher networking
+        shell: pwsh
+        run: dotnet test $env:NETWORKING_TEST_PROJECT --configuration Release --no-restore --no-build --logger "trx;LogFileName=launcher-networking.trx"
+
+      - name: Publish self-contained launcher
+        shell: pwsh
+        run: >-
+          dotnet publish $env:LAUNCHER_PROJECT
+          --configuration Release
+          --runtime win-x64
+          --self-contained true
+          --no-restore
+          --output publish/launcher
+          -p:PublishSingleFile=true
+          -p:IncludeNativeLibrariesForSelfExtract=true
+          -p:PublishTrimmed=false
+          -p:DebugType=None
+          -p:DebugSymbols=false
+          -p:Version=${{ steps.version.outputs.version }}
+          -p:AssemblyVersion=${{ steps.version.outputs.assembly_version }}
+          -p:FileVersion=${{ steps.version.outputs.assembly_version }}
+          -p:InformationalVersion=${{ steps.version.outputs.informational_version }}
+
+      - name: Publish self-contained watchdog
+        shell: pwsh
+        run: >-
+          dotnet publish $env:WATCHDOG_PROJECT
+          --configuration Release
+          --runtime win-x64
+          --self-contained true
+          --no-restore
+          --output publish/watchdog
+          -p:PublishSingleFile=true
+          -p:IncludeNativeLibrariesForSelfExtract=true
+          -p:PublishTrimmed=false
+          -p:DebugType=None
+          -p:DebugSymbols=false
+          -p:Version=${{ steps.version.outputs.version }}
+          -p:AssemblyVersion=${{ steps.version.outputs.assembly_version }}
+          -p:FileVersion=${{ steps.version.outputs.assembly_version }}
+          -p:InformationalVersion=${{ steps.version.outputs.informational_version }}
+
+      - name: Assemble and validate package
+        shell: pwsh
+        run: |
+          $packageRoot = Join-Path $PWD "package/Athena.Launcher"
+          New-Item -ItemType Directory -Path $packageRoot -Force | Out-Null
+
+          Copy-Item "publish/launcher/Athena.Launcher.exe" $packageRoot
+          Copy-Item "publish/watchdog/Athena.Launcher.Watchdog.exe" $packageRoot
+          Copy-Item "tools/launcher/src/Athena.Launcher/launcher.settings.json" $packageRoot
+
+          $required = @(
+            (Join-Path $packageRoot "Athena.Launcher.exe"),
+            (Join-Path $packageRoot "Athena.Launcher.Watchdog.exe"),
+            (Join-Path $packageRoot "launcher.settings.json")
+          )
+          foreach ($path in $required) {
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+              throw "Required package file is missing: $path"
+            }
+          }
+
+          $files = @(Get-ChildItem -LiteralPath $packageRoot -File)
+          if ($files.Count -ne $required.Count) {
+            throw "The package contains unexpected runtime files: $($files.Name -join ', ')"
+          }
+
+          New-Item -ItemType Directory -Path artifacts -Force | Out-Null
+          Compress-Archive -Path "package/Athena.Launcher" -DestinationPath "artifacts/${{ steps.version.outputs.package_file }}" -CompressionLevel Optimal
+
+      - name: Create SHA-256 checksum
+        if: startsWith(github.ref, 'refs/tags/launcher-v')
+        shell: pwsh
+        run: |
+          $fileName = "${{ steps.version.outputs.package_file }}"
+          $zipPath = Join-Path $PWD "artifacts/$fileName"
+          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $zipPath).Hash.ToLowerInvariant()
+          "$hash  $fileName" | Set-Content -Encoding ascii -NoNewline "$zipPath.sha256"
+
+      - name: Upload launcher artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Athena.NET-Launcher-win-x64
+          path: artifacts/*
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Create GitHub Release
+    if: startsWith(github.ref, 'refs/tags/launcher-v')
+    needs: build-test-package
+    runs-on: windows-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download packaged launcher
+        uses: actions/download-artifact@v4
+        with:
+          name: Athena.NET-Launcher-win-x64
+          path: artifacts
+
+      - name: Derive release metadata
+        id: release
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF_NAME -notmatch '^launcher-v(?<version>\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)$') {
+            throw "Launcher tag '$env:GITHUB_REF_NAME' is not a supported semantic version tag."
+          }
+          "version=$($Matches.version)" >> $env:GITHUB_OUTPUT
+
+      - name: Create or update launcher release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          $version = "${{ steps.release.outputs.version }}"
+          $tag = $env:GITHUB_REF_NAME
+          $zip = "artifacts/Athena.NET-Launcher-v$version-win-x64.zip"
+          $checksum = "$zip.sha256"
+          $title = "Athena.NET Launcher v$version"
+
+          if (gh release view $tag 2>$null) {
+            gh release edit $tag --title $title
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            gh release upload $tag $zip $checksum --clobber
+          }
+          else {
+            gh release create $tag $zip $checksum --title $title --generate-notes --verify-tag
+          }
