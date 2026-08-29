@@ -7,7 +7,7 @@
 using Athena.Net.MapServer.World;
 using Athena.Net.MapServer.World.GeneratedScripts;
 
-namespace Athena.Net.MapServer.Generated.World.PrtFild08d.Scripts
+namespace Athena.Net.MapServer.Generated.World.PrtFild08.Scripts
 {
 internal sealed class RestingAdventurerOnClickScript : INpcScript
 {

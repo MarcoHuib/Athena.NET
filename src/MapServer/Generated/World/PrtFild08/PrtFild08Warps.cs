@@ -4,7 +4,7 @@
 // </auto-generated>
 using Athena.Net.MapServer.World;
 
-namespace Athena.Net.MapServer.Generated.World.PrtFild08d;
+namespace Athena.Net.MapServer.Generated.World.PrtFild08;
 
 internal static class GeneratedWarps
 {
@@ -18,5 +18,5 @@ internal static class WorldBuildInfo
 {
     internal const string RathenaCommit = "e985006171d2eb320ee512a653f4c83aea3d81b6";
     internal const string CompilerVersion = "1";
-    internal const string WorldHash = "63012a5985bc35fd19a6c7a4e43b982ae14dfb3249d9fc9d84f1d0f2eb169545";
+    internal const string WorldHash = "2c0baff09309af140c39ad38c1046f4aa0076716e86afcc39fe592ff816ef4a9";
 }

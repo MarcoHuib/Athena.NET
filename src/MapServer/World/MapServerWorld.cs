@@ -5,7 +5,7 @@ using Athena.Net.MapServer.Generated.GameData.Quests;
 using Athena.Net.MapServer.Generated.World.Izlude.Academy;
 using Athena.Net.MapServer.World.GeneratedScripts;
 using IzludeCityWarps = Athena.Net.MapServer.Generated.World.Izlude.IzludeCity.GeneratedWarps;
-using PrtFild08dWarps = Athena.Net.MapServer.Generated.World.PrtFild08d.GeneratedWarps;
+using PrtFild08Warps = Athena.Net.MapServer.Generated.World.PrtFild08.GeneratedWarps;
 
 namespace Athena.Net.MapServer.World;
 
@@ -94,7 +94,7 @@ public sealed record MapServerWorld(WorldMapRegistry Maps, MonsterRegistry Monst
     // instantiated exactly as before this parameter existed. When supplied, a generated
     // MobSpawnDefinition whose Map is NOT in the set is silently excluded before MonsterRegistry
     // construction (generated source data is untouched either way - see
-    // GeneratedScriptRegistry.MobSpawns/PrtFild08dMobSpawns.cs, which still losslessly includes
+    // GeneratedScriptRegistry.MobSpawns/PrtFild08MobSpawns.cs, which still losslessly includes
     // every pinned prt_fild08* family member); a spawn whose Map IS in the set flows through
     // normally and still hits the existing fail-loud missing-collision-data check. The production
     // composition root (MapServerApp.RunAsync) always passes an explicit literal set
@@ -110,7 +110,7 @@ public sealed record MapServerWorld(WorldMapRegistry Maps, MonsterRegistry Monst
         GeneratedScriptRegistry.Register(builder);
         if (customsEnabled) CustomWorldRegistry.Register(builder);
         var world = builder.Build();
-        var maps = new WorldMapRegistry(GeneratedWarps.All.Concat(IzludeCityWarps.All).Concat(PrtFild08dWarps.All), world.Entities, scripts: world.Scripts, allocator: allocator);
+        var maps = new WorldMapRegistry(GeneratedWarps.All.Concat(IzludeCityWarps.All).Concat(PrtFild08Warps.All), world.Entities, scripts: world.Scripts, allocator: allocator);
         // Explicit either/or choice, not a fallback: EmptyMapCollisionProvider.Instance IS the
         // collision-less/dev case; anything else is a real collision-backed world.
         IMobSpawnCellSelector defaultCellSelector = ReferenceEquals(resolvedCollisionProvider, EmptyMapCollisionProvider.Instance)

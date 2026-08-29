@@ -11,11 +11,41 @@ namespace Athena.Net.MapServer.Generated.World.PrtFild08;
 
 internal static class PrtFild08MobSpawns
 {
-    internal static readonly MobSpawnDefinition[] All =
+    internal static readonly MobSpawnDefinition[] PrtFild08 =
     [
         new(GeneratedMobs.Poring, "prt_fild08", 110, 5000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/academy.txt", 16), X: 0, Y: 0, Xs: 0, Ys: 0),
         new(GeneratedMobs.Lunatic, "prt_fild08", 100, 5000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/academy.txt", 17), X: 0, Y: 0, Xs: 0, Ys: 0),
         new(GeneratedMobs.Fabre, "prt_fild08", 100, 5000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/academy.txt", 18), X: 0, Y: 0, Xs: 0, Ys: 0),
         new(GeneratedMobs.LittlePoring, "prt_fild08", 30, 50000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/academy.txt", 19), X: 0, Y: 0, Xs: 0, Ys: 0),
     ];
+    internal static readonly MobSpawnDefinition[] PrtFild08A =
+    [
+        new(GeneratedMobs.Poring, "prt_fild08a", 110, 5000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/academy.txt", 20), X: 0, Y: 0, Xs: 0, Ys: 0),
+        new(GeneratedMobs.Lunatic, "prt_fild08a", 100, 5000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/academy.txt", 21), X: 0, Y: 0, Xs: 0, Ys: 0),
+        new(GeneratedMobs.Fabre, "prt_fild08a", 100, 5000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/academy.txt", 22), X: 0, Y: 0, Xs: 0, Ys: 0),
+        new(GeneratedMobs.LittlePoring, "prt_fild08a", 30, 50000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/academy.txt", 23), X: 0, Y: 0, Xs: 0, Ys: 0),
+    ];
+    internal static readonly MobSpawnDefinition[] PrtFild08B =
+    [
+        new(GeneratedMobs.Poring, "prt_fild08b", 110, 5000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/academy.txt", 24), X: 0, Y: 0, Xs: 0, Ys: 0),
+        new(GeneratedMobs.Lunatic, "prt_fild08b", 100, 5000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/academy.txt", 25), X: 0, Y: 0, Xs: 0, Ys: 0),
+        new(GeneratedMobs.Fabre, "prt_fild08b", 100, 5000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/academy.txt", 26), X: 0, Y: 0, Xs: 0, Ys: 0),
+        new(GeneratedMobs.LittlePoring, "prt_fild08b", 30, 50000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/academy.txt", 27), X: 0, Y: 0, Xs: 0, Ys: 0),
+    ];
+    internal static readonly MobSpawnDefinition[] PrtFild08C =
+    [
+        new(GeneratedMobs.Poring, "prt_fild08c", 110, 5000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/academy.txt", 28), X: 0, Y: 0, Xs: 0, Ys: 0),
+        new(GeneratedMobs.Lunatic, "prt_fild08c", 100, 5000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/academy.txt", 29), X: 0, Y: 0, Xs: 0, Ys: 0),
+        new(GeneratedMobs.Fabre, "prt_fild08c", 100, 5000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/academy.txt", 30), X: 0, Y: 0, Xs: 0, Ys: 0),
+        new(GeneratedMobs.LittlePoring, "prt_fild08c", 30, 50000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/academy.txt", 31), X: 0, Y: 0, Xs: 0, Ys: 0),
+    ];
+    internal static readonly MobSpawnDefinition[] PrtFild08D =
+    [
+        new(GeneratedMobs.Poring, "prt_fild08d", 110, 5000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/academy.txt", 32), X: 0, Y: 0, Xs: 0, Ys: 0),
+        new(GeneratedMobs.Lunatic, "prt_fild08d", 100, 5000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/academy.txt", 33), X: 0, Y: 0, Xs: 0, Ys: 0),
+        new(GeneratedMobs.Fabre, "prt_fild08d", 100, 5000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/academy.txt", 34), X: 0, Y: 0, Xs: 0, Ys: 0),
+        new(GeneratedMobs.LittlePoring, "prt_fild08d", 30, 50000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/academy.txt", 35), X: 0, Y: 0, Xs: 0, Ys: 0),
+    ];
+    internal static readonly MobSpawnDefinition[] All =
+        [.. PrtFild08, .. PrtFild08A, .. PrtFild08B, .. PrtFild08C, .. PrtFild08D];
 }

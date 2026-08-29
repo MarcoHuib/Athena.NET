@@ -18,7 +18,7 @@ namespace Athena.Net.MapServer.World;
 // EXCLUDED: pinned `legacy/rathena/db/map_cache.dat` has no collision data for that specific
 // generic/base family member (only its `a`/`b`/`c`/`d` instanced duplicates), so this build does
 // not yet serve it - its generated mob definitions/spawns remain complete and source-backed (see
-// PrtFild08dMobSpawns.cs), they are simply not instantiated until real collision data exists.
+// PrtFild08MobSpawns.cs), they are simply not instantiated until real collision data exists.
 public static class MapServerHostingScope
 {
     public static readonly IReadOnlySet<string> ServedMaps = new HashSet<string>(StringComparer.OrdinalIgnoreCase)

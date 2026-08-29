@@ -1,7 +1,7 @@
 using Athena.Net.MapServer.Generated.World.Izlude.Academy;
 using Athena.Net.MapServer.World.GeneratedScripts;
 using IzludeCityWarps = Athena.Net.MapServer.Generated.World.Izlude.IzludeCity.GeneratedWarps;
-using PrtFild08dWarps = Athena.Net.MapServer.Generated.World.PrtFild08d.GeneratedWarps;
+using PrtFild08Warps = Athena.Net.MapServer.Generated.World.PrtFild08.GeneratedWarps;
 
 namespace Athena.Net.MapServer.World;
 
@@ -136,7 +136,7 @@ public sealed class WorldMapRegistry
     // prt_fild08d->prontera doors (ai/world-data.md's travel-corridor content); each area's
     // GeneratedWarps class is compiled independently (see tools/WorldDataImporter), so the
     // composed set is a plain concatenation rather than one area owning every WarpDefinition.
-    private static IEnumerable<WarpDefinition> AllGeneratedWarps => GeneratedWarps.All.Concat(IzludeCityWarps.All).Concat(PrtFild08dWarps.All);
+    private static IEnumerable<WarpDefinition> AllGeneratedWarps => GeneratedWarps.All.Concat(IzludeCityWarps.All).Concat(PrtFild08Warps.All);
     private static WorldMapRegistry LoadGenerated() => new(AllGeneratedWarps, GeneratedScriptRegistry.Entities, scripts: GeneratedScriptRegistry.Registry);
 
     // Same generated data as Tutorial/LoadGenerated(), but taking an externally supplied allocator

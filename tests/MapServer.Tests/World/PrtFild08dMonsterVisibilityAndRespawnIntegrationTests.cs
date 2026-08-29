@@ -4,7 +4,7 @@ using System.Net.Sockets;
 using Athena.Net.MapServer.Config;
 using Athena.Net.MapServer.Gameplay.Rules.Renewal;
 using Athena.Net.MapServer.Generated.GameData.Mobs;
-using Athena.Net.MapServer.Generated.World.PrtFild08d;
+using Athena.Net.MapServer.Generated.World.PrtFild08;
 using Athena.Net.MapServer.Net;
 using Athena.Net.MapServer.World;
 
@@ -13,8 +13,9 @@ namespace Athena.Net.MapServer.Tests.World;
 // Proves the travel-corridor's source-backed prt_fild08d field population (ai/world-data.md's
 // "Travel corridor" section, izlude-prontera-travel-trace.txt) flows through the EXISTING generic
 // visibility/combat/respawn pipeline exactly like every other generated map's monsters - no
-// prt_fild08d-specific runtime code exists anywhere in this path. Uses PrtFild08dMobSpawns.All
-// (real generated data, ordinary Poring/1002 - never the tutorial-only G_PORING/2401) and
+// prt_fild08d-specific runtime code exists anywhere in this path. Uses
+// PrtFild08MobSpawns.PrtFild08D (real generated data, ordinary Poring/1002 - never the
+// tutorial-only G_PORING/2401) and
 // MapClientSession's real socket path, the same pattern MapClientSessionMonsterCombatTests already
 // uses for the Academy slice.
 [CollectionDefinition(nameof(PrtFild08dMonsterVisibilityAndRespawnIntegrationTests), DisableParallelization = true)]
@@ -86,7 +87,7 @@ public sealed class PrtFild08dMonsterVisibilityAndRespawnIntegrationTests
         // ordinary Poring/1002, count 110, delay 5000 for prt_fild08d - ai/world-data.md), not a
         // hand-authored test fixture. Only the CELL SELECTOR is a test double (deterministic
         // placement), matching every other MapClientSession integration test's own convention.
-        var spawn = PrtFild08dMobSpawns.All.Single(s => s.Mob == GeneratedMobs.Poring);
+        var spawn = PrtFild08MobSpawns.PrtFild08D.Single(s => s.Mob == GeneratedMobs.Poring);
         Assert.Same(GeneratedMobs.Poring, spawn.Mob);
         Assert.Equal(110, spawn.Count);
         Assert.Equal(5000, spawn.RespawnDelayMs);

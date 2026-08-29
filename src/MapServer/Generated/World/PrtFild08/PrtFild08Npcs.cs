@@ -4,12 +4,12 @@
 // </auto-generated>
 using Athena.Net.MapServer.World;
 
-namespace Athena.Net.MapServer.Generated.World.PrtFild08d;
+namespace Athena.Net.MapServer.Generated.World.PrtFild08;
 
-internal static class PrtFild08dNpcs
+internal static class PrtFild08Npcs
 {
     internal static readonly NpcDefinition RestingAdventurer = new(
         "npcdef:legacy/rathena/npc/re/cities/izlude.txt:resting adventurer#iz", "Resting Adventurer#iz",
-        [new("OnClick", static () => new Athena.Net.MapServer.Generated.World.PrtFild08d.Scripts.RestingAdventurerOnClickScript())],
+        [new("OnClick", static () => new Athena.Net.MapServer.Generated.World.PrtFild08.Scripts.RestingAdventurerOnClickScript())],
         new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/cities/izlude.txt", 259));
 }

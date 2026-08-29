@@ -1,12 +1,7 @@
 using Athena.Net.MapServer.Generated.World.Izlude.Academy;
 using Athena.Net.MapServer.Generated.World.Izlude.IzludeCity;
 using Athena.Net.MapServer.Generated.World.Prontera;
-using Athena.Net.MapServer.Generated.World.PrtFild08d;
-using PrtFild08MobSpawns = Athena.Net.MapServer.Generated.World.PrtFild08.PrtFild08MobSpawns;
-using PrtFild08aMobSpawns = Athena.Net.MapServer.Generated.World.PrtFild08a.PrtFild08aMobSpawns;
-using PrtFild08bMobSpawns = Athena.Net.MapServer.Generated.World.PrtFild08b.PrtFild08bMobSpawns;
-using PrtFild08cMobSpawns = Athena.Net.MapServer.Generated.World.PrtFild08c.PrtFild08cMobSpawns;
-using PrtFild08dMobSpawns = Athena.Net.MapServer.Generated.World.PrtFild08d.PrtFild08dMobSpawns;
+using Athena.Net.MapServer.Generated.World.PrtFild08;
 
 namespace Athena.Net.MapServer.World.GeneratedScripts;
 
@@ -55,7 +50,7 @@ public static partial class GeneratedScriptRegistry
         IzludeGuideWorld.Register(builder);
         ProntereCityWorld.Register(builder);
         ProntereKarianWorld.Register(builder);
-        PrtFild08dWorld.Register(builder);
+        PrtFild08World.Register(builder);
         // AcademyMobSpawns.GPoringSpawns registration is composed here (not inside AcademyWorld.cs)
         // because AcademyWorld.cs is `compile-npc-world` output, verified byte-for-byte reproducible
         // against the pinned source by WorldDataImporter.Tests.CompilerTests.
@@ -66,18 +61,17 @@ public static partial class GeneratedScriptRegistry
         foreach (var spawn in AcademyMobSpawns.GPoringSpawns) builder.AddMobSpawn(spawn);
         // prt_fild08{,a,b,c,d} field population (izlude-prontera-travel-trace.txt / ai/world-data.md's
         // travel-corridor section): source-backed from legacy/rathena/npc/re/mobs/academy.txt via
-        // compile-mob-spawn, map-centric output (one file/class per real map, never bundled under
-        // one "primary" map's folder). All five pinned family members are registered here
+        // compile-mob-spawn, consolidated DUPLICATE-FAMILY output (one file for the whole pinned
+        // prt_fild08 family, since all five concrete maps share the same content pattern - never
+        // bundled under one "primary" served map's folder, and never collapsed into one runtime/
+        // template identity: PrtFild08MobSpawns.All still carries each entry's own exact map
+        // string and source provenance). All five pinned family members are registered here
         // losslessly - MapServerHostingScope.ServedMaps (only prt_fild08d today) is a SEPARATE
         // runtime-instantiation decision made later in MapServerWorld.Build, not a generation-time
         // or registration-time exclusion. No MonsterRegistry/MobSpawnDefinition/
         // IMobSpawnCellSelector changes were needed, since that runtime is already generic over
         // whatever spawns are registered here.
         foreach (var spawn in PrtFild08MobSpawns.All) builder.AddMobSpawn(spawn);
-        foreach (var spawn in PrtFild08aMobSpawns.All) builder.AddMobSpawn(spawn);
-        foreach (var spawn in PrtFild08bMobSpawns.All) builder.AddMobSpawn(spawn);
-        foreach (var spawn in PrtFild08cMobSpawns.All) builder.AddMobSpawn(spawn);
-        foreach (var spawn in PrtFild08dMobSpawns.All) builder.AddMobSpawn(spawn);
     }
 
     private static WorldRegistryBuildResult BuildRegistry()

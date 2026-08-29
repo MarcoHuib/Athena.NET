@@ -404,15 +404,28 @@ internal static class WorldDataImporterCli
     // repeated --mob-id/--name (parallel lists), so one invocation can cover every mob a pinned
     // spawn-declaration family shares.
     //
-    // Output is MAP-CENTRIC, one file per real source map (never bundled under one "primary" map's
-    // folder merely because only that map is currently served): --output-root/<PascalMap>/
-    // <PascalMap>MobSpawns.cs, each exposing a single `MobSpawnDefinition[] All` covering every
-    // requested mob's rows for that one map. A pinned family's other instanced duplicates (e.g.
-    // prt_fild08/a/b/c alongside prt_fild08d) still get their own complete, source-backed file even
-    // though MapServerHostingScope.ServedMaps may not instantiate them yet - that's a separate
-    // runtime decision, not a generation-time exclusion. The output root is treated as one
-    // generation unit: every existing <PascalMap>MobSpawns.cs under it is deleted before writing,
-    // so a map no longer covered by this invocation's mob set does not silently survive.
+    // Two output shapes, chosen by whether --family-name is supplied:
+    //
+    // MAP-CENTRIC (default, no --family-name): one file per real source map, never bundled under
+    // one "primary" map's folder merely because only that map is currently served -
+    // --output-root/<PascalMap>/<PascalMap>MobSpawns.cs, each exposing a single
+    // `MobSpawnDefinition[] All` covering every requested mob's rows for that one map. The output
+    // root is treated as one generation unit: every existing <PascalMap>MobSpawns.cs under it is
+    // deleted before writing.
+    //
+    // DUPLICATE-FAMILY (--family-name/--family-array-name given, one pair per concrete map in
+    // order): for an EXPLICIT pinned rAthena duplicate family (e.g. prt_fild08/a/b/c/d - same
+    // content pattern repeated per instanced duplicate), consolidates every concrete map into ONE
+    // file (--output-root/<FamilyName>MobSpawns.cs) with one array per concrete map (named by
+    // --family-array-name, e.g. "PrtFild08"/"PrtFild08A"/...) plus a composed `All` array
+    // concatenating them - never collapsing the concrete maps into one runtime/template identity,
+    // every entry still carries its own exact map string and source provenance. This is an
+    // organizational rule for EXPLICIT source-backed duplicate families only, never a general
+    // "combine unrelated maps" mechanism - callers choose it deliberately per invocation.
+    //
+    // Either shape: MapServerHostingScope.ServedMaps remains the sole runtime decision for which
+    // concrete map populations are actually instantiated - generation never excludes a pinned
+    // family member merely because it is not currently served.
     private static async Task<int> CompileMobSpawnAsync(string[] args)
     {
         var options = CliOptions.Parse(args);
@@ -430,7 +443,6 @@ internal static class WorldDataImporterCli
         var spawnPath = Path.Combine(root, spawnFile);
         var spawnText = await File.ReadAllTextAsync(spawnPath);
         var excludedMaps = options.All("exclude-map").ToHashSet(StringComparer.Ordinal);
-        var namespaceRoot = options.Required("namespace-root");
         var outputRoot = Path.GetFullPath(options.Required("output-root"));
 
         var allSpawns = new List<(MobDataCompiler.MobSpawnData Spawn, string MobDefinitionExpression)>();
@@ -444,13 +456,38 @@ internal static class WorldDataImporterCli
             foreach (var spawn in spawns) allSpawns.Add((spawn, $"{definitionClassName}.{constantNames[index]}"));
         }
 
+        var encoding = new System.Text.UTF8Encoding(false);
+        var byMap = allSpawns.GroupBy(item => item.Spawn.Map, StringComparer.Ordinal).OrderBy(group => group.Key, StringComparer.Ordinal).ToArray();
+
+        var familyName = options.Optional("family-name");
+        if (familyName is not null)
+        {
+            var familyMaps = options.All("family-map");
+            var familyArrayNames = options.All("family-array-name");
+            if (familyMaps.Count == 0 || familyArrayNames.Count != familyMaps.Count)
+                throw new ArgumentException("--family-name requires matching --family-map/--family-array-name pairs (one per concrete map, in order).");
+            var mapEntries = new List<(string ArrayName, IReadOnlyList<(MobDataCompiler.MobSpawnData Spawn, string MobDefinitionExpression)> Entries)>();
+            for (var index = 0; index < familyMaps.Count; index++)
+            {
+                var group = byMap.FirstOrDefault(g => string.Equals(g.Key, familyMaps[index], StringComparison.Ordinal))
+                    ?? throw new ArgumentException($"--family-map '{familyMaps[index]}' has no spawn declarations among the requested mobs.");
+                mapEntries.Add((familyArrayNames[index], group.Select(item => (item.Spawn, item.MobDefinitionExpression)).ToArray()));
+            }
+            var familyNamespace = options.Required("namespace-root");
+            var familyClassName = $"{familyName}MobSpawns";
+            var familySource = MobDataCompiler.GenerateMobSpawnFamily(mapEntries, commit, familyClassName, familyNamespace);
+            Directory.CreateDirectory(outputRoot);
+            await File.WriteAllTextAsync(Path.Combine(outputRoot, $"{familyClassName}.cs"), familySource, encoding);
+            Console.WriteLine($"Generated {allSpawns.Count} total spawn declarations for {mobNames.Count} mob(s) across {familyMaps.Count} family map(s) into one consolidated file.");
+            return 0;
+        }
+
+        var namespaceRoot = options.Required("namespace-root");
         Directory.CreateDirectory(outputRoot);
         foreach (var staleDir in Directory.EnumerateDirectories(outputRoot))
         foreach (var stale in Directory.EnumerateFiles(staleDir, "*MobSpawns.cs"))
             File.Delete(stale);
 
-        var encoding = new System.Text.UTF8Encoding(false);
-        var byMap = allSpawns.GroupBy(item => item.Spawn.Map, StringComparer.Ordinal).OrderBy(group => group.Key, StringComparer.Ordinal);
         var fileCount = 0;
         foreach (var mapGroup in byMap)
         {
