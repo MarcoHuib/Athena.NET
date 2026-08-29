@@ -1,30 +1,27 @@
-name: Windows Launcher
+name: Windows Launcher Release
 
 permissions:
   contents: read
 
 on:
-  push:
-    branches: [ main ]
-    tags: [ "launcher-v*" ]
-    paths:
-      - "tools/launcher/**"
-      - "Directory.Build.*"
-      - "Athena.NET.sln"
-      - "Athena.NET.slnx"
-      - ".github/workflows/launcher-release.yml"
   pull_request:
+    types: [ closed ]
+    branches: [ main ]
     paths:
       - "tools/launcher/**"
       - "Directory.Build.*"
       - "Athena.NET.sln"
       - "Athena.NET.slnx"
       - ".github/workflows/launcher-release.yml"
-  workflow_dispatch:
 
 jobs:
   build-test-package:
     name: Build, test, and package
+    # Only a merged PR into main publishes a release. A closed-but-not-merged
+    # PR (declined/abandoned) must not trigger anything below. Manually
+    # pushing a tag or pushing directly to main are not triggers at all,
+    # since this workflow only listens for pull_request events.
+    if: github.event.pull_request.merged == true
     runs-on: windows-latest
     env:
       LAUNCHER_PROJECT: tools/launcher/src/Athena.Launcher/Athena.Launcher.csproj
@@ -33,8 +30,13 @@ jobs:
       NETWORKING_TEST_PROJECT: tools/launcher/tests/Athena.Launcher.Networking.Tests/Athena.Launcher.Networking.Tests.csproj
 
     steps:
-      - name: Checkout
+      - name: Checkout main
         uses: actions/checkout@v4
+        with:
+          # The PR's merge commit lands on main as a regular commit; check out
+          # that resulting main commit (not the PR head) so the release is
+          # built from what actually merged.
+          ref: main
 
       - name: Setup .NET 10
         uses: actions/setup-dotnet@v4
@@ -47,24 +49,14 @@ jobs:
         id: version
         shell: pwsh
         run: |
-          $shortSha = $env:GITHUB_SHA.Substring(0, 7)
-
-          if ($env:GITHUB_REF_TYPE -eq "tag") {
-            if ($env:GITHUB_REF_NAME -notmatch '^launcher-v(?<version>\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)$') {
-              throw "Launcher tag '$env:GITHUB_REF_NAME' is not a supported semantic version tag."
-            }
-
-            $version = $Matches.version
-            $numericVersion = $version.Split('-')[0]
-            $packageFile = "Athena.NET-Launcher-v$version-win-x64.zip"
-            $releaseName = "Athena.NET Launcher v$version"
-          }
-          else {
-            $version = "0.0.0-dev.$env:GITHUB_RUN_NUMBER"
-            $numericVersion = "0.0.0"
-            $packageFile = "Athena.NET-Launcher-win-x64-$shortSha.zip"
-            $releaseName = ""
-          }
+          # Use the checked-out main HEAD, not $env:GITHUB_SHA — for a
+          # pull_request:closed event GITHUB_SHA is a synthetic merge ref,
+          # not necessarily the commit that actually landed on main.
+          $shortSha = (git rev-parse HEAD).Substring(0, 7)
+          $version = "0.0.0-dev.$env:GITHUB_RUN_NUMBER"
+          $numericVersion = "0.0.0"
+          $packageFile = "Athena.NET-Launcher-win-x64-$shortSha.zip"
+          $releaseName = ""
 
           "version=$version" >> $env:GITHUB_OUTPUT
           "assembly_version=$numericVersion.0" >> $env:GITHUB_OUTPUT
@@ -72,14 +64,42 @@ jobs:
           "package_file=$packageFile" >> $env:GITHUB_OUTPUT
           "release_name=$releaseName" >> $env:GITHUB_OUTPUT
 
-      - name: Restore launcher projects
+      # Tests are portable (net10.0, no RuntimeIdentifier) and are never
+      # published, so they restore with no RID, matching the RID-less
+      # packages.lock.json committed for Athena.Launcher.Core and
+      # Athena.Launcher.Networking. Mixing a win-x64 restore into these two
+      # projects' shared lock files here would break --locked-mode for the
+      # next PR CI run that restores them without a RID (this is the root
+      # cause of the original NU1004 failure).
+      - name: Restore and test launcher core
         shell: pwsh
         run: |
-          dotnet restore $env:LAUNCHER_PROJECT --runtime win-x64 --locked-mode
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           dotnet restore $env:CORE_TEST_PROJECT --locked-mode
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet test $env:CORE_TEST_PROJECT --configuration Release --logger "trx;LogFileName=launcher-core.trx"
+
+      - name: Restore and test launcher networking
+        shell: pwsh
+        run: |
           dotnet restore $env:NETWORKING_TEST_PROJECT --locked-mode
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet test $env:NETWORKING_TEST_PROJECT --configuration Release --logger "trx;LogFileName=launcher-networking.trx"
+
+      # The publish graph (launcher + watchdog, and transitively Core and
+      # Networking) is restored for win-x64 here. This is intentionally NOT
+      # --locked-mode: Athena.Launcher.Core/Networking's committed lock files
+      # are RID-less (see above), so a --locked-mode win-x64 restore would
+      # fail with NU1004 the same way the RID-less test restore would if it
+      # saw a win-x64 section. A plain restore still resolves against the
+      # exact package versions pinned in the lock file (no version drift),
+      # it just also computes the win-x64-specific asset selection that the
+      # lock file doesn't need to persist.
+      - name: Restore launcher publish graph (win-x64)
+        shell: pwsh
+        run: |
+          dotnet restore $env:LAUNCHER_PROJECT --runtime win-x64
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet restore $env:WATCHDOG_PROJECT --runtime win-x64
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Build launcher
@@ -94,14 +114,6 @@ jobs:
           -p:AssemblyVersion=${{ steps.version.outputs.assembly_version }}
           -p:FileVersion=${{ steps.version.outputs.assembly_version }}
           -p:InformationalVersion=${{ steps.version.outputs.informational_version }}
-
-      - name: Test launcher core
-        shell: pwsh
-        run: dotnet test $env:CORE_TEST_PROJECT --configuration Release --no-restore --no-build --logger "trx;LogFileName=launcher-core.trx"
-
-      - name: Test launcher networking
-        shell: pwsh
-        run: dotnet test $env:NETWORKING_TEST_PROJECT --configuration Release --no-restore --no-build --logger "trx;LogFileName=launcher-networking.trx"
 
       - name: Publish self-contained launcher
         shell: pwsh
@@ -171,7 +183,6 @@ jobs:
           Compress-Archive -Path "package/Athena.Launcher" -DestinationPath "artifacts/${{ steps.version.outputs.package_file }}" -CompressionLevel Optimal
 
       - name: Create SHA-256 checksum
-        if: startsWith(github.ref, 'refs/tags/launcher-v')
         shell: pwsh
         run: |
           $fileName = "${{ steps.version.outputs.package_file }}"
@@ -188,46 +199,94 @@ jobs:
           retention-days: 14
 
   release:
-    name: Create GitHub Release
-    if: startsWith(github.ref, 'refs/tags/launcher-v')
+    name: Derive version, tag, and create GitHub Release
+    if: github.event.pull_request.merged == true
     needs: build-test-package
     runs-on: windows-latest
     permissions:
       contents: write
 
     steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
       - name: Download packaged launcher
         uses: actions/download-artifact@v4
         with:
           name: Athena.NET-Launcher-win-x64
           path: artifacts
 
-      - name: Derive release metadata
+      # The version is derived from existing launcher-v* tags reachable on
+      # main: bump the patch component of the highest one found. This keeps
+      # tag creation automatic and prevents a manually-created tag from being
+      # required (or accepted) as the release trigger — the trigger is always
+      # "PR merged into main" (see the job-level `if` above), never a tag
+      # push, since this workflow only listens for pull_request events.
+      - name: Derive next launcher version and tag
         id: release
         shell: pwsh
         run: |
-          if ($env:GITHUB_REF_NAME -notmatch '^launcher-v(?<version>\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)$') {
-            throw "Launcher tag '$env:GITHUB_REF_NAME' is not a supported semantic version tag."
-          }
-          "version=$($Matches.version)" >> $env:GITHUB_OUTPUT
+          git fetch --tags --quiet
+          $tags = git tag --list 'launcher-v*'
+          $latest = $null
+          $latestVersion = [Version]"0.0.0"
 
-      - name: Create or update launcher release
+          foreach ($tag in $tags) {
+            if ($tag -match '^launcher-v(?<version>\d+\.\d+\.\d+)$') {
+              $candidate = [Version]$Matches.version
+              if ($candidate -gt $latestVersion) {
+                $latestVersion = $candidate
+                $latest = $tag
+              }
+            }
+          }
+
+          $nextVersion = "{0}.{1}.{2}" -f $latestVersion.Major, $latestVersion.Minor, ($latestVersion.Build + 1)
+          $tag = "launcher-v$nextVersion"
+
+          "version=$nextVersion" >> $env:GITHUB_OUTPUT
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+
+      - name: Create launcher tag
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "${{ steps.release.outputs.tag }}"
+          # Tag the checked-out main HEAD, not $env:GITHUB_SHA — for a
+          # pull_request:closed event GITHUB_SHA is a synthetic merge ref,
+          # not necessarily the commit that actually landed on main.
+          git tag $tag HEAD
+          git push origin $tag
+
+      - name: Rename package for release version
+        shell: pwsh
+        run: |
+          $version = "${{ steps.release.outputs.version }}"
+          $zip = Get-ChildItem -Path artifacts -Filter "*.zip" | Select-Object -First 1
+          $checksum = Get-ChildItem -Path artifacts -Filter "*.sha256" | Select-Object -First 1
+
+          $newZipName = "Athena.NET-Launcher-v$version-win-x64.zip"
+          $newChecksumName = "$newZipName.sha256"
+
+          Move-Item $zip.FullName (Join-Path "artifacts" $newZipName)
+          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path "artifacts" $newZipName)).Hash.ToLowerInvariant()
+          "$hash  $newZipName" | Set-Content -Encoding ascii -NoNewline (Join-Path "artifacts" $newChecksumName)
+          Remove-Item $checksum.FullName -ErrorAction SilentlyContinue
+
+      - name: Create GitHub Release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
           $version = "${{ steps.release.outputs.version }}"
-          $tag = $env:GITHUB_REF_NAME
+          $tag = "${{ steps.release.outputs.tag }}"
           $zip = "artifacts/Athena.NET-Launcher-v$version-win-x64.zip"
           $checksum = "$zip.sha256"
           $title = "Athena.NET Launcher v$version"
 
-          if (gh release view $tag 2>$null) {
-            gh release edit $tag --title $title
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-            gh release upload $tag $zip $checksum --clobber
-          }
-          else {
-            gh release create $tag $zip $checksum --title $title --generate-notes --verify-tag
-          }
+          gh release create $tag $zip $checksum --title $title --generate-notes --verify-tag
