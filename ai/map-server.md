@@ -1289,3 +1289,68 @@ incrementally - no capture of that transition exists yet). Neither gap blocks th
 This PR does not implement skill EXECUTION - a persisted, wire-synchronized
 `NV_BASIC`/`SM_BASH`/etc. level does not mean that skill can be cast, deals damage, consumes SP,
 applies a status, or has a cooldown. That remains fully out of scope for a future slice.
+
+## Handwritten custom world content
+
+`src/MapServer/Generated/` is rAthena-derived: it is produced by `WorldDataImporter` and must
+never be hand-edited (see `src/MapServer/Generated/README.md`). `src/MapServer/Customs/` is the
+parallel tree for handwritten Athena.NET development content - never generated, never touched by
+regeneration. Both trees compose the SAME runtime types (`NpcDefinition`, `NpcPlacement`,
+`INpcScript`, `ScriptContext`, `WorldEntityDefinition`, `WorldRegistryBuilder`); the difference
+between them is provenance, not runtime behavior.
+
+Composition boundary: `CustomWorldRegistry.Register(WorldRegistryBuilder)`
+(`src/MapServer/Customs/World/CustomWorldRegistry.cs`) mirrors `AcademyWorld.Register`'s exact
+shape (definitions + placements applied onto an externally supplied builder). `GeneratedScriptRegistry`
+was narrowly refactored to expose its own composition step the same way
+(`GeneratedScriptRegistry.Register(WorldRegistryBuilder)`, reused both by its own static `Result`
+field and by the live composed world) rather than exposing raw collections for re-adding.
+`MapServerWorld.Build(..., customsEnabled: bool = false)` builds ONE `WorldRegistryBuilder`,
+applies `GeneratedScriptRegistry.Register` unconditionally and `CustomWorldRegistry.Register`
+only when `customsEnabled` is true, then builds `WorldMapRegistry`/`MonsterRegistry` from that
+single combined result - generated and custom content share one entity/script registry, one
+`WorldActorIdAllocator`, and one collision-validation pass; there is no second, parallel world.
+`GeneratedScriptRegistry` itself stays entirely config-independent - it never knows whether
+Customs will also be applied to the builder it's handed, and there is no mutable static
+configuration flag anywhere in this path.
+
+Configuration: `customs.enabled: yes|no` in `map_athena.conf` (`MapConfig.CustomsEnabled`,
+`MapConfigLoader`), defaulting to `false`/disabled like every other boolean key in this loader
+(the `console` key's convention - see `MapConfigLoader.ParseBool`). `MapServerApp.RunAsync`
+threads `mergedConfig.CustomsEnabled` into `MapServerWorld.Build`. A fresh/unconfigured server
+never exposes development-only content; enabling it never removes or replaces generated content
+(`WorldRegistryBuilder.AddNpc`'s existing duplicate-identity check throws for a colliding
+`PlacementId`/`entityId:trigger` key unless `explicitlyOverrideGenerated: true` is passed, which
+Customs content does not use).
+
+**Athena Test NPC** (`src/MapServer/Customs/World/Izlude/AthenaTestNpc.cs` +
+`Scripts/AthenaTestNpcOnClickScript.cs`) is the one development NPC this slice adds: placed on
+`int_land04` at `(76,92)`. Originally placed on `iz_int03 (15,22)`; moved after live validation
+showed an authenticated persisted character's real `0x02EB` resolves to `int_land04`, not the
+`iz_int` spawn side - `iz_int03` is only where a brand-new character's `start_point` initially
+lands, not where a persisted/returning tutorial character's `LastMap` actually is. `(76,92)` is a
+cell a real live session actually walked through (that session's own `0x035F`/`0x0087` movement
+log recorded a walk from spawn `(77,89)` through `(74,94)`, proving it is reachable/rendered
+ground) and was independently re-validated against the real pinned
+`legacy/rathena/db/map_cache.dat` (`RathenaMapCacheReader`/`MapCollisionProvider`:
+`IsTraversalCell`/`IsWalkable` both true). It is comfortably clear of every existing `int_land04`
+actor/trigger (`AcademyWorld.cs`/`AcademyWarps.cs`): Captain Carocc#intro_npc03_04 `(78,103)`,
+Manhattan distance 13; Lumin#new_ship04 `(73,100)`, distance 11; Sailor#intro_npc04_04 `(58,69)`,
+distance 41; the `#intro_to_izlude_d` warp trigger `(49,57)` radius `2,2`, distance 62. Its
+`OnClick` menu (Give
+Base EXP / Give Job EXP / Give Base + Job EXP / Full Heal / Show Character State / Close) is
+ordinary compiled `INpcScript` C# using the same `ScriptContext` capabilities generated scripts
+use: `GrantExperienceAsync` (the same `getexp`-equivalent path `CaptainCaroccOnClickScript` and
+monster-kill EXP both use - raw amounts pass through the same configured
+`base_exp_rate`/`job_exp_rate`, never an "ignore rates" mode) and `HealAsync` (the same `heal`
+path). "Show Character State" reads a new general-purpose `ScriptContext.GetGameplayState()` /
+`INpcScriptHost.GetGameplayState()` capability - a synchronous read of the session's already
+in-memory `CharacterGameplayState` snapshot, no additional CharServer query - added because no
+existing script needed a read-only state accessor before this. The script contains no direct
+character-state mutation, DB access, or `BaseLevel =`/`JobLevel =`/`SkillPoints =`/`StatPoints =`
+assignment anywhere.
+
+Job Change and direct SkillPoints/StatPoints grants are deliberately NOT implemented here: there
+is no `CharacterJobChangeService`/supported job-change flow yet, and normal testing should
+exercise the full Job EXP -> Job Level -> SkillPoints chain rather than a shortcut. Both remain
+documented future menu extensions once their underlying production services exist.

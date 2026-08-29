@@ -13,9 +13,9 @@ public static partial class GeneratedScriptRegistry
     // of whether AddNpc's definition has any behaviors.
     public static IReadOnlyList<WorldEntityDefinition> Entities => Result.Entities;
 
-    // Same underlying WorldRegistryBuilder.Build() result WorldMapRegistry.Tutorial's
-    // Entities/Registry already come from - MapServerWorld.Build() reads this so the
-    // composed live world's MonsterRegistry spawns from the identical generated data
+    // Same underlying WorldRegistryBuildResult WorldMapRegistry.Tutorial's Entities/Registry
+    // already come from - MapServerWorld.Build() applies Register(builder) itself (see below)
+    // so the composed live world's MonsterRegistry spawns from the identical generated data
     // WorldMapRegistry.Tutorial itself would use, rather than reading AcademyMobSpawns
     // directly and bypassing the builder.
     public static IReadOnlyList<MobSpawnDefinition> MobSpawns => Result.MobSpawns;
@@ -27,9 +27,16 @@ public static partial class GeneratedScriptRegistry
         return Registry.TryCreate(entityId, trigger, out script);
     }
 
-    private static WorldRegistryBuildResult BuildRegistry()
+    // Applies every generated registration (Academy world + generated mob spawns) onto an
+    // externally supplied builder. This is the one place generated content is composed, reused
+    // both by this class's own static Result (a private builder, for every existing caller of
+    // Entities/Registry/MobSpawns/Tutorial) and by MapServerWorld.Build's live composed world,
+    // which additionally applies Customs.World.CustomWorldRegistry.Register on the SAME builder
+    // instance when customs are enabled - see ai/map-server.md's "Handwritten custom world
+    // content" section. GeneratedScriptRegistry itself stays entirely config-independent: it
+    // never knows whether customs will also be applied to the builder it's handed.
+    public static void Register(WorldRegistryBuilder builder)
     {
-        var builder = new WorldRegistryBuilder();
         AcademyWorld.Register(builder);
         // AcademyMobSpawns.GPoringSpawns registration is composed here (not inside AcademyWorld.cs)
         // because AcademyWorld.cs is `compile-npc-world` output, verified byte-for-byte reproducible
@@ -39,6 +46,12 @@ public static partial class GeneratedScriptRegistry
         // judged disproportionate for this one loop, so it lives here instead, alongside this file's
         // other hand-authored composition logic.
         foreach (var spawn in AcademyMobSpawns.GPoringSpawns) builder.AddMobSpawn(spawn);
+    }
+
+    private static WorldRegistryBuildResult BuildRegistry()
+    {
+        var builder = new WorldRegistryBuilder();
+        Register(builder);
         return builder.Build();
     }
 }

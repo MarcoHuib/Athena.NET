@@ -46,6 +46,13 @@ public interface INpcScriptHost
     Task SkillEffectAsync(int skillId, int level, CancellationToken cancellationToken);
     Task StartStatusAsync(int statusId, int durationMilliseconds, int val1, CancellationToken cancellationToken);
     string GetActiveCharacterName();
+    // Read-only snapshot of the authenticated session's already in-memory CharacterGameplayState
+    // (levels, EXP, HP/SP, stat/skill points, job class) - no additional CharServer/persistence
+    // query. Added for the Athena Test NPC's "Show Character State" diagnostic option (see
+    // ai/map-server.md's "Handwritten custom world content" section); general-purpose, so any
+    // future generated or custom script needing a read-only state snapshot can reuse it instead
+    // of a script-specific accessor.
+    CharacterGameplayState GetGameplayState();
     Task<uint> CountItemAsync(int itemId, CancellationToken cancellationToken);
     Task<bool> DeleteItemAsync(int itemId, uint amount, CancellationToken cancellationToken);
     Task<bool> GetItemAsync(int itemId, uint amount, CancellationToken cancellationToken);
@@ -104,6 +111,7 @@ public sealed class ScriptContext
     public Task SpecialEffectAsync(int effectId, CancellationToken cancellationToken) => _host.SpecialEffectAsync(effectId, cancellationToken);
     public Task SkillEffectAsync(int skillId, int level, CancellationToken cancellationToken) => _host.SkillEffectAsync(skillId, level, cancellationToken);
     public Task StartStatusAsync(int statusId, int durationMilliseconds, int val1, CancellationToken cancellationToken) => _host.StartStatusAsync(statusId, durationMilliseconds, val1, cancellationToken);
+    public CharacterGameplayState GetGameplayState() => _host.GetGameplayState();
     public Task<uint> CountItemAsync(int itemId, CancellationToken cancellationToken) => _host.CountItemAsync(itemId, cancellationToken);
 
     // Both delitem/getitem host methods have a genuinely fallible authoritative persistence step

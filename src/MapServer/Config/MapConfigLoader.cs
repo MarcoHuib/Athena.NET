@@ -27,6 +27,7 @@ public static class MapConfigLoader
         var gameplayRates = new GameplayRateOptions();
         var collisionArtifacts = new List<MapCollisionArtifactConfig>();
         string? mapCachePath = null;
+        var customsEnabled = false;
 
         if (!File.Exists(path))
         {
@@ -47,6 +48,7 @@ public static class MapConfigLoader
                 TimestampFormat = timestampFormat,
                 GameplayRuleSet = gameplayRuleSet,
                 GameplayRates = gameplayRates,
+                CustomsEnabled = customsEnabled,
             };
         }
 
@@ -183,6 +185,10 @@ public static class MapConfigLoader
             {
                 mapCachePath = value;
             }
+            else if (key.Equals("customs.enabled", StringComparison.OrdinalIgnoreCase))
+            {
+                customsEnabled = ParseBool(value, customsEnabled);
+            }
         }
 
         if (mapCachePath is { Length: > 0 } && collisionArtifacts.Count > 0)
@@ -209,6 +215,7 @@ public static class MapConfigLoader
             GameplayRates = gameplayRates,
             CollisionArtifacts = collisionArtifacts,
             MapCachePath = mapCachePath,
+            CustomsEnabled = customsEnabled,
         };
     }
 

@@ -2265,6 +2265,9 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
             ? _characterName
             : throw new InvalidOperationException("The active authenticated character name is not loaded.");
 
+    CharacterGameplayState INpcScriptHost.GetGameplayState() =>
+        _gameplayState?.State ?? throw new InvalidOperationException("Character gameplay state is not loaded.");
+
     async Task INpcScriptHost.NextAsync(uint actorId, CancellationToken cancellationToken)
     {
         var continuation = new GeneratedContinuation(GeneratedContinuationKind.Next, NewContinuation());
