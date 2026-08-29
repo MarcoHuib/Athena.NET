@@ -21,7 +21,7 @@ public sealed class CustomWorldRegistryTests
     {
         var world = MapServerWorld.Build(RenewalRules(), customsEnabled: false);
 
-        Assert.False(world.Maps.TryGetActor("custom:iz_int03:athena test npc", "iz_int03", out _));
+        Assert.False(world.Maps.TryGetActor("custom:int_land04:athena test npc", "int_land04", out _));
     }
 
     [Fact]
@@ -29,9 +29,11 @@ public sealed class CustomWorldRegistryTests
     {
         var world = MapServerWorld.Build(RenewalRules(), customsEnabled: true);
 
-        Assert.True(world.Maps.TryGetActor("custom:iz_int03:athena test npc", "iz_int03", out var actor));
+        Assert.True(world.Maps.TryGetActor("custom:int_land04:athena test npc", "int_land04", out var actor));
         Assert.Equal("Athena Test NPC", actor.Name);
-        Assert.True(world.Maps.TryGetInteraction(actor.ActorId, "iz_int03", out _, out var script));
+        Assert.Equal((ushort)76, actor.X);
+        Assert.Equal((ushort)92, actor.Y);
+        Assert.True(world.Maps.TryGetInteraction(actor.ActorId, "int_land04", out _, out var script));
         Assert.Equal("OnClick", script.Trigger);
     }
 
@@ -61,11 +63,12 @@ public sealed class CustomWorldRegistryTests
     }
 
     [Fact]
-    public void IzludeCustomWorld_DoesNotCollideWithGeneratedIzIntFamilyContent()
+    public void IzludeCustomWorld_DoesNotCollideWithGeneratedIntLand04Content()
     {
         // The Athena Test NPC's own placement must compose cleanly onto the real generated world
         // without needing explicitlyOverrideGenerated - i.e. it uses a genuinely distinct
-        // PlacementId/DefinitionId and does not overlap any existing generated iz_int03 actor.
+        // PlacementId/DefinitionId and does not overlap any existing generated int_land04 actor
+        // (Captain Carocc/Lumin/Sailor) or the #intro_to_izlude_d warp trigger.
         var builder = new WorldRegistryBuilder();
         GeneratedScriptRegistry.Register(builder);
 

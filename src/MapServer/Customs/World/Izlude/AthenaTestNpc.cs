@@ -12,11 +12,21 @@ namespace Athena.Net.MapServer.Customs.World.Izlude;
 // "customs.enabled: yes" is configured (see MapConfig.CustomsEnabled) - see
 // CustomWorldRegistry.Register/MapServerWorld.Build.
 //
-// Placed on iz_int03, the tutorial instance new characters actually spawn on (see
-// ai/map-server.md's "Map-state diagnosis" section: the configured start_point list resolves new
-// characters to iz_int03 (18,26)). (15,22) is a handful of cells from spawn, on open ground, and
-// does not overlap: the #room_out03/#room_in03 warp doors at (27,30)/(47,30) (radius 1,1 each,
-// see AcademyWarps.cs), or the Wounded Swordsman NPCs at (56,32) (radius 5,5, see AcademyWorld.cs).
+// Placed on int_land04, near the Academy's Captain Carocc/Lumin/Sailor cluster. int_land04 was
+// chosen over iz_int03 (this NPC's original placement) after a live authenticated client's real
+// 0x02EB confirmed a selected/persisted character's LastMap actually resolves to int_land04 - the
+// tutorial family's int_land side, not the iz_int spawn side - so an operator standing on their
+// live character could not previously reach this NPC without a same-map warp.
+//
+// (76,92) is a cell a real authenticated client actually walked through in a live session (that
+// session's own 0x035F/0x0087 movement log recorded a walk from spawn (77,89) through (74,94),
+// confirming it is reachable/rendered ground, not merely collision-flagged), and was independently
+// re-validated against the real pinned legacy/rathena/db/map_cache.dat through
+// RathenaMapCacheReader/MapCollisionProvider (both IsTraversalCell and IsWalkable return true
+// there). It is comfortably clear of every existing int_land04 actor and trigger (see
+// AcademyWorld.cs/AcademyWarps.cs): Captain Carocc#intro_npc03_04 (78,103, Manhattan distance 13),
+// Lumin#new_ship04 (73,100, distance 11), Sailor#intro_npc04_04 (58,69, distance 41), and the
+// #intro_to_izlude_d warp trigger (49,57, radius 2,2, distance 62).
 internal static class IzludeCustomWorld
 {
     private const string DefinitionId = "custom:izlude:athena_test_npc";
@@ -36,12 +46,12 @@ internal static class IzludeCustomWorld
         builder.AddNpc(AthenaTestNpc,
         [
             new NpcPlacement(
-                PlacementId: "custom:iz_int03:athena test npc",
+                PlacementId: "custom:int_land04:athena test npc",
                 DefinitionId: DefinitionId,
                 NpcName: NpcName,
-                Map: "iz_int03",
-                X: 15,
-                Y: 22,
+                Map: "int_land04",
+                X: 76,
+                Y: 92,
                 Direction: 0,
                 Class: SpriteClass,
                 RadiusX: 0,

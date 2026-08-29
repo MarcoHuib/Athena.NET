@@ -1325,8 +1325,19 @@ Customs content does not use).
 
 **Athena Test NPC** (`src/MapServer/Customs/World/Izlude/AthenaTestNpc.cs` +
 `Scripts/AthenaTestNpcOnClickScript.cs`) is the one development NPC this slice adds: placed on
-`iz_int03` (the tutorial instance new characters actually spawn on) at `(15,22)`, away from the
-`#room_out03`/`#room_in03` warp doors and the Wounded Swordsman actors. Its `OnClick` menu (Give
+`int_land04` at `(76,92)`. Originally placed on `iz_int03 (15,22)`; moved after live validation
+showed an authenticated persisted character's real `0x02EB` resolves to `int_land04`, not the
+`iz_int` spawn side - `iz_int03` is only where a brand-new character's `start_point` initially
+lands, not where a persisted/returning tutorial character's `LastMap` actually is. `(76,92)` is a
+cell a real live session actually walked through (that session's own `0x035F`/`0x0087` movement
+log recorded a walk from spawn `(77,89)` through `(74,94)`, proving it is reachable/rendered
+ground) and was independently re-validated against the real pinned
+`legacy/rathena/db/map_cache.dat` (`RathenaMapCacheReader`/`MapCollisionProvider`:
+`IsTraversalCell`/`IsWalkable` both true). It is comfortably clear of every existing `int_land04`
+actor/trigger (`AcademyWorld.cs`/`AcademyWarps.cs`): Captain Carocc#intro_npc03_04 `(78,103)`,
+Manhattan distance 13; Lumin#new_ship04 `(73,100)`, distance 11; Sailor#intro_npc04_04 `(58,69)`,
+distance 41; the `#intro_to_izlude_d` warp trigger `(49,57)` radius `2,2`, distance 62. Its
+`OnClick` menu (Give
 Base EXP / Give Job EXP / Give Base + Job EXP / Full Heal / Show Character State / Close) is
 ordinary compiled `INpcScript` C# using the same `ScriptContext` capabilities generated scripts
 use: `GrantExperienceAsync` (the same `getexp`-equivalent path `CaptainCaroccOnClickScript` and
