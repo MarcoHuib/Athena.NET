@@ -54,13 +54,25 @@ public static class MapServerApp
         // MapCollisionStartupLoader's own doc comment. An unconfigured server (neither key set) is
         // unaffected: Load returns EmptyMapCollisionProvider.Instance, the same default
         // MapServerWorld.Build already used.
-        var collisionProvider = MapCollisionStartupLoader.Load(mergedConfig.CollisionArtifacts, effectiveMapCachePath);
+        // ruleSet: MapCollisionStartupLoader merges pinned rAthena's own ruleset-specific overlay
+        // (db/re/map_cache.dat for Renewal) over the configured generic map_cache_path, matching
+        // pinned map_readallmaps' own load order exactly - see that loader's own doc comment for
+        // why this is required (real example: pinned "prontera" geometry exists ONLY in
+        // db/re/map_cache.dat, not the generic db/map_cache.dat this project was previously
+        // loading alone).
+        var collisionProvider = MapCollisionStartupLoader.Load(mergedConfig.CollisionArtifacts, effectiveMapCachePath, gameplayOptions.RuleSet);
         // Production-only fail-closed guard (never applied inside MapServerWorld.Build itself, so
         // tests can still freely compose a collision-less world on purpose) - see that method's own
         // doc comment. A live MapServer with generated monster spawns and no real collision source
         // must refuse to start rather than silently place monsters on
         // UnverifiedFallbackMobSpawnCellSelector's fabricated deterministic raster.
         MapServerWorld.RequireRealCollisionSourceIfMobSpawnsExist(GeneratedScriptRegistry.MobSpawns.Count > 0, collisionProvider);
+        // Broader than the mob-spawn guard above: a served map with NO monster spawns at all
+        // (e.g. "prontera") still needs real collision data for ordinary player movement - see
+        // MapServerHostingScope.RequireCollisionForAllServedMaps's own doc comment for the live
+        // crash this specifically catches (reproduced on head 57dc569: auth+bootstrap succeed,
+        // first player movement request throws with no collision data loaded).
+        MapServerHostingScope.RequireCollisionForAllServedMaps(collisionProvider);
         MapLogger.Status(
             $"Monster spawn positioning: {(ReferenceEquals(collisionProvider, EmptyMapCollisionProvider.Instance) ? "none configured (no generated monster spawns)" : "rAthena collision-backed")}");
         MapLogger.Status($"Customs (handwritten Athena.NET development content): {(mergedConfig.CustomsEnabled ? "enabled" : "disabled")}");

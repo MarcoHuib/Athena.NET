@@ -1816,3 +1816,60 @@ the crash's proven root cause absent reproduction. Regression coverage:
 and `MapClientSessionWarpTests.MovementIntoPrtFild08dPronteraDoor_...` (the real generated warp,
 walked into via normal movement, actually lands the session and its persisted position at
 `(156,34)`, never `(156,26)`).
+
+**4. Prontera "No collision data is loaded" crash on first movement.** Live reproduction on head
+`57dc569` proved this is a distinct crash from item 3 above: auth, `0x02EB`, bootstrap, and the
+`Guide#04prontera` NPC packet all succeed; the session only terminates on the character's FIRST
+`0x035F` movement request, with `InvalidOperationException: No collision data is loaded for map
+'prontera'`. Two separate gaps were found and fixed together:
+
+- **Startup validation gap.** `MapServerWorld.RequireRealCollisionSourceIfMobSpawnsExist` only
+  guards maps that have at least one generated monster spawn - "prontera" has zero
+  (`GeneratedScriptRegistry.MobSpawns` never targets it), so a missing collision source for it was
+  invisible to every existing startup check and only surfaced live, on the player's first movement
+  packet. Fixed with a new, broader invariant,
+  `MapServerHostingScope.RequireCollisionForAllServedMaps` (called from `MapServerApp.RunAsync`
+  immediately after the existing mob-spawn guard): every map in the hand-declared
+  `MapServerHostingScope.ServedMaps` set must resolve via `IMapCollisionProvider.TryGetMap`
+  regardless of whether it has any spawns, or MapServer refuses to start, naming every missing
+  served map at once. Deliberately NOT placed in `MonsterRegistry` (no concept of "declared hosting
+  scope" there) and deliberately does not derive `ServedMaps` from collision coverage or vice versa
+  - see that method's own doc comment for the exact semantics. Regression coverage:
+  `MapServerHostingScopeStartupValidationTests`, including
+  `RequireCollisionForAllServedMaps_ProponentServedMapWithZeroMobSpawns_StillFailsWhenCollisionAbsent`,
+  which reproduces the exact "served map, zero mob spawns, collision absent" gap using real
+  `prontera`.
+
+- **Root cause: wrong collision source file, not missing data.** Diagnostic inspection of pinned
+  `legacy/rathena/db/map_cache.dat` via `RathenaMapCacheReader` (not a raw grep) proved this file
+  genuinely has no exact `prontera` record (1288 maps total; the only near match is the unrelated
+  `pprontera`, 312x392 - see `RathenaMapCacheReaderTests.
+  ReadAllFromFile_RealPinnedMapCache_ProperProntheraRecordIsGenuinelyAbsent_OnlyPprronteraExists`).
+  However, pinned rAthena's own `doc/map_cache.txt` and `map_readallmaps`
+  (`src/map/map.cpp:3908-3943`) show the real map-server loads THREE cache files in order -
+  `db/import/map_cache.dat`, `db/DBPATH/map_cache.dat` (`DBPATH` is `"re/"` for Renewal builds,
+  `src/config/const.hpp`), then `db/map_cache.dat` - taking the FIRST match per map name, i.e. a
+  layered merge with the ruleset-specific file as highest priority, not a single flat file.
+  Athena.NET's `MapCollisionStartupLoader` was only ever loading the last, most-generic file.
+  Confirmed via `RathenaMapCacheReader` against the real pinned files: `db/map_cache.dat` (1288
+  maps) lacks `prontera` but has `prt_fild08d`/`izlude_d`/`int_land04`/`iz_int04`; pinned
+  `db/re/map_cache.dat` (8 maps, the curated Renewal-specific set) has real `prontera` (312x392)
+  and, incidentally, `prt_fild08` (400x400, not currently in `ServedMaps` - see
+  `MapServerHostingScope`'s own doc comment on why that stays a separate scope decision), but does
+  NOT declare `prt_fild08d`/`izlude_d`/`int_land04`/`iz_int04` at all. Fixed generically (no
+  Prontera special-casing) by making `MapCollisionStartupLoader.Load` ruleset-aware: it now merges
+  `db/{re|pre-re}/map_cache.dat` (selected from the already-composed `RagnarokRuleSet`, matching
+  pinned `DBPATH` exactly) over the configured `map_cache_path`, in the same priority order pinned
+  `map_readallmaps` uses. The overlay file's absence is not an error (some deployments may not have
+  it); a present-but-malformed overlay still fails startup loudly like every other collision-source
+  failure mode in this loader. Regression coverage: `MapCollisionStartupLoaderTests.
+  Load_RenewalRuleSet_RealPinnedMapCache_ResolvesProntheraViaRulesetOverlay`,
+  `..._StillResolvesGenericFallbackMapsNotInTheOverlay`,
+  `..._NoRuleSetArgumentGiven_DefaultsToRenewal_StillResolvesProntera`, and the full end-to-end
+  acceptance proof `Load_RealPinnedMapCache_ProductionStartupSequence_AllServedMapsResolve` (loads
+  the real pinned map cache exactly as `MapServerApp` does, then calls
+  `MapServerHostingScope.RequireCollisionForAllServedMaps` and asserts no exception).
+
+No live stock-client acceptance is claimed for this fix - per this project's standing convention,
+that requires an actual retest against a stock client, which has not been performed in this
+session.

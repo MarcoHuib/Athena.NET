@@ -177,6 +177,83 @@ public sealed class MapServerWorldProductionCollisionGuardTests
     }
 }
 
+// Live stock-iRO acceptance reproduced a real gap the guard above cannot catch: a served map with
+// ZERO generated monster spawns (real example: "prontera") still needs collision data for
+// ordinary player movement, but RequireRealCollisionSourceIfMobSpawnsExist only ever checks
+// collision existence indirectly through GeneratedScriptRegistry.MobSpawns. See
+// MapServerHostingScope.RequireCollisionForAllServedMaps's own doc comment for the full
+// architecture: this is a SEPARATE, broader hosting-scope invariant, deliberately not implemented
+// inside MonsterRegistry, and MapServerHostingScope.ServedMaps itself is never derived from
+// collision coverage (a hand-declared set - see that type's own doc comment).
+public sealed class MapServerHostingScopeStartupValidationTests
+{
+    private static MapCollisionProvider CollisionProviderFor(params string[] mapNames) =>
+        new(mapNames.Select(name => new MapCollisionMap(name, 100, 100, Enumerable.Repeat(MapCellFlags.Walkable, 100 * 100).ToArray())));
+
+    // The exact real regression: "prontera" is declared served (MapServerHostingScope.ServedMaps)
+    // but has zero generated MobSpawnDefinition rows anywhere - proving this validation catches a
+    // gap the mob-spawn-only guard genuinely cannot see. Every other served map is covered so this
+    // isolates prontera specifically as the missing one.
+    [Fact]
+    public void RequireCollisionForAllServedMaps_ProponentServedMapWithZeroMobSpawns_StillFailsWhenCollisionAbsent()
+    {
+        Assert.DoesNotContain(GeneratedScriptRegistry.MobSpawns, spawn => string.Equals(spawn.Map, "prontera", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains("prontera", MapServerHostingScope.ServedMaps);
+
+        var provider = CollisionProviderFor(
+            "int_land", "int_land01", "int_land02", "int_land03", "int_land04",
+            "iz_int", "iz_int01", "iz_int02", "iz_int03", "iz_int04",
+            "izlude_d", "prt_fild08d"); // prontera deliberately absent.
+
+        var exception = Assert.Throws<InvalidOperationException>(() =>
+            MapServerHostingScope.RequireCollisionForAllServedMaps(provider));
+        Assert.Contains("prontera", exception.Message);
+    }
+
+    [Fact]
+    public void RequireCollisionForAllServedMaps_AllServedMapsCovered_DoesNotThrow()
+    {
+        var provider = CollisionProviderFor(MapServerHostingScope.ServedMaps.ToArray());
+
+        MapServerHostingScope.RequireCollisionForAllServedMaps(provider);
+        // No exception - test passes by not throwing.
+    }
+
+    [Fact]
+    public void RequireCollisionForAllServedMaps_UnservedMapMissingCollision_IsAllowed()
+    {
+        // An unserved map (not in ServedMaps at all) having no collision data is explicitly fine -
+        // this validation says nothing about maps outside the declared hosting scope.
+        var provider = CollisionProviderFor(MapServerHostingScope.ServedMaps.ToArray());
+        Assert.False(provider.TryGetMap("some_unserved_map", out _));
+
+        MapServerHostingScope.RequireCollisionForAllServedMaps(provider);
+        // No exception - test passes by not throwing.
+    }
+
+    [Fact]
+    public void RequireCollisionForAllServedMaps_MultipleServedMapsMissing_NamesEveryOneOfThem()
+    {
+        var provider = CollisionProviderFor("int_land", "int_land01", "int_land02", "int_land03", "int_land04");
+
+        var exception = Assert.Throws<InvalidOperationException>(() =>
+            MapServerHostingScope.RequireCollisionForAllServedMaps(provider));
+
+        foreach (var missingMap in MapServerHostingScope.ServedMaps.Except(["int_land", "int_land01", "int_land02", "int_land03", "int_land04"]))
+            Assert.Contains(missingMap, exception.Message);
+    }
+
+    [Fact]
+    public void RequireCollisionForAllServedMaps_EmptyCollisionProvider_ThrowsNamingEveryServedMap()
+    {
+        var exception = Assert.Throws<InvalidOperationException>(() =>
+            MapServerHostingScope.RequireCollisionForAllServedMaps(EmptyMapCollisionProvider.Instance));
+
+        foreach (var servedMap in MapServerHostingScope.ServedMaps)
+            Assert.Contains(servedMap, exception.Message);
+    }
+}
+
 // End-to-end proof against the REAL pinned legacy/rathena/db/map_cache.dat that the exact
 // production composition path (MapServerWorld.Build with a real collision provider, matching what
 // MapServerApp.RunAsync actually builds once map_cache_path is configured) produces genuinely

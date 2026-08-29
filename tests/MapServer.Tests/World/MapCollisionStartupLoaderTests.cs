@@ -197,6 +197,91 @@ public sealed class MapCollisionStartupLoaderTests
         Assert.False(provider.TryGetMap("definitely_not_a_real_map", out _));
     }
 
+    // Live acceptance regression (Prontera crash root cause): pinned "prontera" geometry exists
+    // ONLY in db/re/map_cache.dat (312x392), never in the generic db/map_cache.dat this project
+    // was previously loading alone - confirmed independently via RathenaMapCacheReaderTests'
+    // ReadAllFromFile_RealPinnedMapCache_ProperProntheraRecordIsGenuinelyAbsent_OnlyPprronteraExists
+    // for the generic file. This proves the REAL production call shape (Renewal ruleset, the
+    // actual configured map_cache_path) now resolves "prontera" by merging in the ruleset-specific
+    // overlay, matching pinned rAthena's own map_readallmaps load order (map.cpp:3908-3943).
+    [Fact]
+    public void Load_RenewalRuleSet_RealPinnedMapCache_ResolvesProntheraViaRulesetOverlay()
+    {
+        var mapCachePath = Path.Combine(FindRepositoryRoot(), "legacy/rathena/db/map_cache.dat");
+
+        var provider = MapCollisionStartupLoader.Load([], mapCachePath, Athena.Net.MapServer.Gameplay.Rules.RagnarokRuleSet.Renewal);
+
+        Assert.True(provider.TryGetMap("prontera", out var map));
+        Assert.Equal(312, map.Width);
+        Assert.Equal(392, map.Height);
+    }
+
+    // The overlay must never shadow maps the generic file ALREADY correctly provides - db/re/
+    // map_cache.dat is a small, curated 8-map set (alberta, izlude, morocc, prontera, prt_church,
+    // prt_fild05, prt_fild08, prt_in per an independent parse), so every other real travel-corridor
+    // map (izlude_d, prt_fild08d, int_land04, etc., none of which db/re/map_cache.dat declares at
+    // all) must still resolve from the generic fallback exactly as before this fix.
+    [Fact]
+    public void Load_RenewalRuleSet_RealPinnedMapCache_StillResolvesGenericFallbackMapsNotInTheOverlay()
+    {
+        var mapCachePath = Path.Combine(FindRepositoryRoot(), "legacy/rathena/db/map_cache.dat");
+
+        var provider = MapCollisionStartupLoader.Load([], mapCachePath, Athena.Net.MapServer.Gameplay.Rules.RagnarokRuleSet.Renewal);
+
+        Assert.True(provider.TryGetMap("int_land", out _));
+        Assert.True(provider.TryGetMap("int_land04", out _));
+        Assert.True(provider.TryGetMap("izlude_d", out _));
+        Assert.True(provider.TryGetMap("prt_fild08d", out _));
+        Assert.True(provider.TryGetMap("iz_int04", out _));
+    }
+
+    // Without the ruleset-specific overlay (e.g. PreRenewal, which resolves to
+    // db/pre-re/map_cache.dat - a DIFFERENT file, not tested here, but the DEFAULT-parameter
+    // omission case below exercises the "no explicit ruleset passed" call shape existing callers
+    // still use) the loader must not regress to failing outright - it still returns a usable
+    // provider from the generic file alone.
+    [Fact]
+    public void Load_NoRuleSetArgumentGiven_DefaultsToRenewal_StillResolvesProntera()
+    {
+        var mapCachePath = Path.Combine(FindRepositoryRoot(), "legacy/rathena/db/map_cache.dat");
+
+        var provider = MapCollisionStartupLoader.Load([], mapCachePath); // ruleSet omitted - defaults to Renewal.
+
+        Assert.True(provider.TryGetMap("prontera", out _));
+    }
+
+    // Full end-to-end acceptance proof (task requirement 4: "MapServer startup must prove every
+    // declared served map has collision"): the EXACT production startup sequence
+    // (MapServerApp.RunAsync's own configured map_cache_path + Renewal ruleset, then
+    // MapServerHostingScope.RequireCollisionForAllServedMaps) must now succeed with the real
+    // pinned map_cache.dat - it previously would have thrown for "prontera" before this fix.
+    [Fact]
+    public void Load_RealPinnedMapCache_ProductionStartupSequence_AllServedMapsResolve()
+    {
+        var mapCachePath = Path.Combine(FindRepositoryRoot(), "legacy/rathena/db/map_cache.dat");
+
+        var provider = MapCollisionStartupLoader.Load([], mapCachePath, Athena.Net.MapServer.Gameplay.Rules.RagnarokRuleSet.Renewal);
+
+        MapServerHostingScope.RequireCollisionForAllServedMaps(provider); // No exception - every ServedMaps entry resolves.
+    }
+
+    // Incidental finding from this same fix: db/re/map_cache.dat's overlay ALSO happens to include
+    // the generic/base "prt_fild08" (400x400) - the exact map MapServerHostingScope's own doc
+    // comment previously documented as lacking collision data and therefore deliberately excluded
+    // from ServedMaps. This does NOT change ServedMaps itself (a scope decision, not made here) -
+    // only proves the underlying data now genuinely resolves, for whoever revisits that exclusion.
+    [Fact]
+    public void Load_RenewalRuleSet_RealPinnedMapCache_PrtFild08BaseMapNowResolvesViaOverlay()
+    {
+        var mapCachePath = Path.Combine(FindRepositoryRoot(), "legacy/rathena/db/map_cache.dat");
+
+        var provider = MapCollisionStartupLoader.Load([], mapCachePath, Athena.Net.MapServer.Gameplay.Rules.RagnarokRuleSet.Renewal);
+
+        Assert.True(provider.TryGetMap("prt_fild08", out var map));
+        Assert.Equal(400, map.Width);
+        Assert.Equal(400, map.Height);
+    }
+
     private static string FindRepositoryRoot()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);

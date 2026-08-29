@@ -14,11 +14,18 @@ namespace Athena.Net.MapServer.World;
 //
 // Current scope covers exactly what Athena.NET genuinely hosts today: the tutorial `int_land`
 // family (base + 01-04 instanced duplicates) and the Izlude -> prt_fild08d -> Prontera travel
-// corridor (ai/world-data.md's "Travel corridor" section). Plain `prt_fild08` is deliberately
-// EXCLUDED: pinned `legacy/rathena/db/map_cache.dat` has no collision data for that specific
-// generic/base family member (only its `a`/`b`/`c`/`d` instanced duplicates), so this build does
-// not yet serve it - its generated mob definitions/spawns remain complete and source-backed (see
-// PrtFild08MobSpawns.cs), they are simply not instantiated until real collision data exists.
+// corridor (ai/world-data.md's "Travel corridor" section). Plain `prt_fild08` is NOT included -
+// this remains a deliberate SCOPE decision (this build does not yet serve the generic/base field
+// map, only its instanced `d` duplicate the travel corridor actually routes players to), not a
+// collision-data limitation: an earlier version of this comment claimed pinned
+// `legacy/rathena/db/map_cache.dat` had no collision data for `prt_fild08` at all - that claim is
+// now KNOWN STALE. MapCollisionStartupLoader's ruleset-specific overlay merge (added to fix the
+// live Prontera collision crash - see ai/map-server.md's "Live stock-iRO acceptance fixes"
+// section) resolved this incidentally: pinned `legacy/rathena/db/re/map_cache.dat` genuinely
+// contains a real `prt_fild08` record (400x400) alongside its `a`/`b`/`c`/`d` instanced
+// duplicates. Adding `prt_fild08` to ServedMaps remains a separate, not-yet-made scope decision -
+// see `MapCollisionStartupLoaderTests.Load_RenewalRuleSet_RealPinnedMapCache_
+// PrtFild08BaseMapNowResolvesViaOverlay` for the regression proof this data now exists.
 public static class MapServerHostingScope
 {
     public static readonly IReadOnlySet<string> ServedMaps = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
@@ -29,4 +36,46 @@ public static class MapServerHostingScope
         "prt_fild08d",
         "prontera",
     };
+
+    // Live stock-iRO acceptance found a real gap this project's PREVIOUS collision guard
+    // (MapServerWorld.RequireRealCollisionSourceIfMobSpawnsExist) could not catch: a served map
+    // with ZERO generated monster spawns (e.g. "prontera" - no mob spawn declarations target it at
+    // all) still needs real collision data for ordinary PLAYER MOVEMENT, but that prior guard only
+    // ever checks collision existence indirectly through GeneratedScriptRegistry.MobSpawns. A
+    // player who reconnects (or transitions in) with no monster anywhere nearby could therefore
+    // reach RathenaCompatibleMovementPathProvider/RathenaCompatibleMobSpawnCellSelector with no
+    // collision data loaded for their own map at all, surfacing as a live
+    // "No collision data is loaded for map 'X'" crash on the FIRST movement request - exactly the
+    // Prontera crash reproduced on head 57dc569 (auth succeeds, bootstrap succeeds, first 0x035F
+    // throws).
+    //
+    // This is therefore a DIFFERENT, broader invariant than the mob-spawn guard: every map this
+    // build DECLARES it serves (MapServerHostingScope.ServedMaps, an explicit hand-declared set -
+    // see this type's own doc comment for why it is never derived from collision coverage) must
+    // have real collision data BEFORE MapServer starts listening for clients, regardless of
+    // whether any monster happens to spawn there. Deliberately NOT placed inside MonsterRegistry
+    // (which has no concept of "declared hosting scope" at all, only "which spawns was I actually
+    // given") - this is a pure hosting-scope/composition-root concern, checked once at startup by
+    // the SAME caller (MapServerApp.RunAsync) that already calls
+    // RequireRealCollisionSourceIfMobSpawnsExist, before MapServerWorld.Build ever runs.
+    //
+    // Semantics (never derives ServedMaps from collision, never derives collision requirements
+    // from ServedMaps beyond this exact check):
+    //   unserved map, collision absent  -> allowed (this method says nothing about it)
+    //   served map,   collision present -> allowed
+    //   served map,   collision absent  -> throws, naming EVERY missing served map (not just the
+    //                                       first found), so a single fix/rerun surfaces the
+    //                                       complete gap rather than one map at a time.
+    public static void RequireCollisionForAllServedMaps(IMapCollisionProvider collisionProvider)
+    {
+        var missing = ServedMaps.Where(map => !collisionProvider.TryGetMap(map, out _)).OrderBy(map => map, StringComparer.Ordinal).ToArray();
+        if (missing.Length > 0)
+        {
+            throw new InvalidOperationException(
+                $"MapServerHostingScope.ServedMaps declares {missing.Length} map(s) with no collision data loaded: " +
+                $"{string.Join(", ", missing)}. Every declared-served map must have real collision data before " +
+                "MapServer starts listening for clients - configure map_cache_path/map_collision_artifact so these " +
+                "maps resolve, or remove them from ServedMaps if this build genuinely does not serve them yet.");
+        }
+    }
 }
