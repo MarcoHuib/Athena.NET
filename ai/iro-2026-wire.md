@@ -895,5 +895,45 @@ peak of 94 simultaneously-visible players, which is the concrete evidence motiva
 bucket design (`PlayerPresenceRegistry`'s per-map uniform grid, bucket size 16) over any per-cell
 scan of all connected sessions.
 
+## Evidence gap: 0x0139 ZC_ATTACK_FAILURE_FOR_DISTANCE (out-of-range attack)
+
+Live stock-iRO acceptance on PR #20 (branch `feature/izlude-prontera-travel`) exercised the
+out-of-range-attack path (`0x0437` rejected, `0x0139` sent, client autonomously issues `0x035F`
+move-to-attack) and raised the question of whether Athena's current `0x0139` layout/behavior is
+correct for the exact PACKETVER 20220406 client this project targets. Checked against every
+capture and evidence file in this project (`ai/iro-2026-wire.md`, `ai/map-server.md`): **no
+verified stock-iRO capture of `0x0139`/`ZC_ATTACK_FAILURE_FOR_DISTANCE` exists anywhere in this
+project's evidence base.**
+
+`IroCombatDistancePackets.BuildAttackFailureForDistance` (`src/MapServer/Net/
+IroCombatDistancePackets.cs`) is **pinned-source-backed only**: its field layout is derived
+directly from pinned `struct PACKET_ZC_ATTACK_FAILURE_FOR_DISTANCE` (`packets_struct.hpp:5419-
+5427`, confirmed byte-for-byte: `int16 PacketType, uint32 targetAID, int16 targetXPos/targetYPos/
+xPos/yPos/currentAttRange` = 16 bytes total) and pinned `clif_movetoattack`
+(`clif.cpp:8172-8185`), the only pinned call site that constructs and sends it (from pinned
+`unit_attack_timer_sub`, `unit.cpp:3251-3258`, when a PC's own attack target fails
+`check_distance_client_bl`). Pinned source's own comment on `clif_movetoattack` - "Notifies the
+client that its attack target is too far" - confirms the client's own subsequent `0x035F` is
+INTENTIONAL, expected client behavior triggered by this packet, not a server-side relocation/warp
+bug; this matches exactly what live acceptance observed (attack rejected -> client sends `0x035F`
+towards the target -> target moves -> next attack rejected -> client sends another `0x035F`) - see
+`ai/map-server.md`'s "Weapon-aware basic melee combat" section for the surrounding combat-range
+architecture this packet is part of.
+
+What remains unverified, pending a real capture:
+- The exact packet ID `0x0139` for PACKETVER 20220406 (older/newer PACKETVER ranges can and do
+  reassign IDs for less-common packets like this one).
+- The exact 16-byte field layout/order above.
+- Whether `currentAttRange` in a live capture matches this project's own resolved value
+  (`BasicAttackRangeResolver.Resolve` + the walking-target +1 bonus) exactly, or diverges the way
+  `NV_BASIC`'s skill range already provably diverges from pinned source elsewhere in this document.
+
+`MapClientSession.HandleIroAttackRequestAsync`/`PerformDueRepeatAttackAsync` now logs the complete
+outgoing `0x0139` bytes (`[iRO MAP DEBUG] Sending 0x0139 (PINNED-SOURCE-BACKED, NOT
+capture-verified) len=... bytes=...`) specifically so a future real capture of this flow can be
+diffed byte-for-byte against what Athena actually sends, rather than only trusting the pinned
+derivation. Do not mark this Verified, and do not change the current layout, without such a
+capture - this is an explicit, reported evidence gap, not a resolved finding.
+
 ## Capture handling
 Official captures can contain credentials, account/session identifiers, bearer/JWT-like tokens, and other sensitive authentication material. Never commit unsanitized PCAPs or raw token dumps to the repository.

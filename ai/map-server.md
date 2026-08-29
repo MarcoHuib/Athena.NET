@@ -1761,3 +1761,58 @@ the new maps: both key purely by the map-name string a session reports, with no 
 allowlist (confirmed by direct code audit before any content was compiled - see
 `ai/world-data.md`), so presence/AOI on `izlude_d`/`prt_fild08d`/`prontera` works the same as on
 any other map without further changes.
+
+### Live stock-iRO acceptance fixes (PR #20 acceptance pass)
+
+Live acceptance on head `84a25d3` surfaced three issues, addressed as follows:
+
+**1. Mid-walk retarget visual speed-up/hop.** Traced to `MapClientSession.ProcessDueMovementAsync`
+seeding a mid-walk retarget's replacement step (`CharacterMovementState.StartWalk`) with a SECOND,
+independently-sampled `_timeProvider.GetUtcNow()` call rather than the exact cell-boundary
+timestamp `AdvanceTo` had just advanced to. Under a real (non-deterministic) clock, two
+`GetUtcNow()` calls are never exactly simultaneous, so whatever gap elapsed between them was
+silently gifted to the new step, shortening it - a real, compounding speed-up on repeated
+retargets, not a client-side rendering artifact. Fixed by adding
+`CharacterMovementState.CurrentCellReachedAt` (returns the exact boundary `AdvanceTo` already
+established, with no clock read of its own) and seeding `StartWalk` with that instead. Pinned
+`unit_walktoxy_nextcell`/`unit_walktoxy_sub` (`unit.cpp:180-320`) confirms this project's
+architecture was already correct on the bigger question the task raised - a fresh `0x0087` with a
+fresh tick, source=reached-cell, IS what the official server sends on a mid-walk retarget
+(`unit_walktoxy_timer`'s own `change_walk_target` branch calls `unit_walktoxy_sub`, which ends in
+`unit_walktoxy_nextcell(*bl, sendMove=true, gettick())`) - the bug was purely in which timestamp
+seeded the new step's duration, not whether/how the second `0x0087` itself was sent. Regression
+coverage: `CharacterMovementStateTests.CurrentCellReachedAt_...` (focused unit-level proof) and
+`MapClientSessionMovementRetargetTests.RepeatedMidWalkRetargets_...` (wire-level end-to-end proof
+that three consecutive retargets each still cost their full 150ms, never early).
+
+**2. Out-of-range attack / apparent relocation.** Confirmed as expected client move-to-attack
+behavior, not a server-side relocation bug: pinned `clif_movetoattack`'s own comment
+("Notifies the client that its attack target is too far") - the exact packet Athena's existing
+combat-range rejection path already sends - documents that the client autonomously issues its own
+`0x035F` in response. `IroCombatDistancePackets.BuildAttackFailureForDistance`'s `0x0139` layout
+remains pinned-source-backed only; **no verified stock-iRO capture of this packet exists anywhere
+in this project's evidence base** - see `ai/iro-2026-wire.md`'s new "Evidence gap: 0x0139" section
+for the full, explicitly-reported gap. `MapClientSession` now logs the complete outgoing `0x0139`
+bytes (marked `PINNED-SOURCE-BACKED, NOT capture-verified` in the log line itself) so a future real
+capture can be diffed against it.
+
+**3. Prontera transition mismatch / crash.** `prontera-walking.pcapng` frame 3246 proves the real
+field->Prontera door lands at `(156,34)`; pinned `prontera_fild.txt:105` computes `(156,26)` - a
+genuine pinned-snapshot-vs-live-operator divergence, the same class of finding as the existing
+NV_BASIC skill-range override. Fixed via a new, narrowly-scoped entry in `IroWireCompatibility`
+(`ResolveVerifiedWarpDestinationOverride`, keyed by `(SourceMap, DestinationMap)`), applied only at
+the point `SendSameServerWarpAsync` actually executes a warp - the generated
+`PrtFild08Warps.cs`/`GeneratedWarps.All` `WarpDefinition` data itself stays an untouched, faithful
+reproduction of pinned source (see `ai/world-data.md`). The separately-observed Prontera
+south-entry NPC divergence (`Guide#04prontera`: capture `(160,34)`, pinned source `(160,29)`) is
+noted here for completeness but was NOT folded into this fix - it is unrelated to the reported
+crash and out of this narrow bugfix's scope. Full transition logging was added to
+`SendSameServerWarpAsync` (triggering warp/source cell, pinned vs. compatibility-resolved
+destination, exact `0x0091` bytes) plus session-wide "last packet successfully written before
+disconnect" tracking (`RunAsync`'s own `finally` block) for future crash investigation; the
+coordinate mismatch itself is documented as a genuine capture-vs-pinned divergence, NOT claimed as
+the crash's proven root cause absent reproduction. Regression coverage:
+`IroWireCompatibilityTests` (the override resolves narrowly, keyed by both source and destination)
+and `MapClientSessionWarpTests.MovementIntoPrtFild08dPronteraDoor_...` (the real generated warp,
+walked into via normal movement, actually lands the session and its persisted position at
+`(156,34)`, never `(156,26)`).

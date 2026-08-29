@@ -53,8 +53,15 @@ public sealed class WorldMapRegistryTests
     }
 
     [Fact]
-    public void TravelCorridorWarps_MatchVerifiedCaptureDestinations()
+    public void TravelCorridorWarps_MatchGeneratedPinnedSourceValues()
     {
+        // This test verifies the GENERATED (pinned legacy/rathena) WarpDefinition data only - the
+        // izlude_d<->prt_fild08d doors here are NOT known to diverge from any verified capture.
+        // prt_fild08d -> prontera's own pinned value (156,26) is a KNOWN, documented divergence
+        // from the verified stock-iRO capture (prontera-walking.pcapng frame 3246 proves (156,34))
+        // - see IroWireCompatibilityTests for the compatibility-resolved runtime value this test
+        // deliberately does NOT assert, and IroWireCompatibility's own doc comment for why the
+        // generated value here stays an untouched, faithful reproduction of pinned source.
         var registry = WorldMapRegistry.Tutorial;
         // izlude-prontera-travel-trace.txt sections H/J: izlude_d <-> prt_fild08d.
         Assert.True(registry.TryFindWarp("izlude_d", 20, 98, out var izludeExit));
@@ -62,6 +69,8 @@ public sealed class WorldMapRegistryTests
         Assert.True(registry.TryFindWarp("prt_fild08d", 371, 212, out var fieldBackToIzlude));
         Assert.Equal(("izlude_d", (ushort)24, (ushort)98), (fieldBackToIzlude.DestinationMap, fieldBackToIzlude.DestinationX, fieldBackToIzlude.DestinationY));
         // Section J: prt_fild08d -> prontera (one-way in pinned source; no reverse door exists).
+        // (156,26) is the PINNED value, matching legacy/rathena/npc/re/warps/fields/
+        // prontera_fild.txt:105 exactly - it is deliberately NOT the capture-verified (156,34).
         Assert.True(registry.TryFindWarp("prt_fild08d", 170, 378, out var fieldToProntera));
         Assert.Equal(("prontera", (ushort)156, (ushort)26), (fieldToProntera.DestinationMap, fieldToProntera.DestinationX, fieldToProntera.DestinationY));
     }
