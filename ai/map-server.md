@@ -1289,3 +1289,57 @@ incrementally - no capture of that transition exists yet). Neither gap blocks th
 This PR does not implement skill EXECUTION - a persisted, wire-synchronized
 `NV_BASIC`/`SM_BASH`/etc. level does not mean that skill can be cast, deals damage, consumes SP,
 applies a status, or has a cooldown. That remains fully out of scope for a future slice.
+
+## Handwritten custom world content
+
+`src/MapServer/Generated/` is rAthena-derived: it is produced by `WorldDataImporter` and must
+never be hand-edited (see `src/MapServer/Generated/README.md`). `src/MapServer/Customs/` is the
+parallel tree for handwritten Athena.NET development content - never generated, never touched by
+regeneration. Both trees compose the SAME runtime types (`NpcDefinition`, `NpcPlacement`,
+`INpcScript`, `ScriptContext`, `WorldEntityDefinition`, `WorldRegistryBuilder`); the difference
+between them is provenance, not runtime behavior.
+
+Composition boundary: `CustomWorldRegistry.Register(WorldRegistryBuilder)`
+(`src/MapServer/Customs/World/CustomWorldRegistry.cs`) mirrors `AcademyWorld.Register`'s exact
+shape (definitions + placements applied onto an externally supplied builder). `GeneratedScriptRegistry`
+was narrowly refactored to expose its own composition step the same way
+(`GeneratedScriptRegistry.Register(WorldRegistryBuilder)`, reused both by its own static `Result`
+field and by the live composed world) rather than exposing raw collections for re-adding.
+`MapServerWorld.Build(..., customsEnabled: bool = false)` builds ONE `WorldRegistryBuilder`,
+applies `GeneratedScriptRegistry.Register` unconditionally and `CustomWorldRegistry.Register`
+only when `customsEnabled` is true, then builds `WorldMapRegistry`/`MonsterRegistry` from that
+single combined result - generated and custom content share one entity/script registry, one
+`WorldActorIdAllocator`, and one collision-validation pass; there is no second, parallel world.
+`GeneratedScriptRegistry` itself stays entirely config-independent - it never knows whether
+Customs will also be applied to the builder it's handed, and there is no mutable static
+configuration flag anywhere in this path.
+
+Configuration: `customs.enabled: yes|no` in `map_athena.conf` (`MapConfig.CustomsEnabled`,
+`MapConfigLoader`), defaulting to `false`/disabled like every other boolean key in this loader
+(the `console` key's convention - see `MapConfigLoader.ParseBool`). `MapServerApp.RunAsync`
+threads `mergedConfig.CustomsEnabled` into `MapServerWorld.Build`. A fresh/unconfigured server
+never exposes development-only content; enabling it never removes or replaces generated content
+(`WorldRegistryBuilder.AddNpc`'s existing duplicate-identity check throws for a colliding
+`PlacementId`/`entityId:trigger` key unless `explicitlyOverrideGenerated: true` is passed, which
+Customs content does not use).
+
+**Athena Test NPC** (`src/MapServer/Customs/World/Izlude/AthenaTestNpc.cs` +
+`Scripts/AthenaTestNpcOnClickScript.cs`) is the one development NPC this slice adds: placed on
+`iz_int03` (the tutorial instance new characters actually spawn on) at `(15,22)`, away from the
+`#room_out03`/`#room_in03` warp doors and the Wounded Swordsman actors. Its `OnClick` menu (Give
+Base EXP / Give Job EXP / Give Base + Job EXP / Full Heal / Show Character State / Close) is
+ordinary compiled `INpcScript` C# using the same `ScriptContext` capabilities generated scripts
+use: `GrantExperienceAsync` (the same `getexp`-equivalent path `CaptainCaroccOnClickScript` and
+monster-kill EXP both use - raw amounts pass through the same configured
+`base_exp_rate`/`job_exp_rate`, never an "ignore rates" mode) and `HealAsync` (the same `heal`
+path). "Show Character State" reads a new general-purpose `ScriptContext.GetGameplayState()` /
+`INpcScriptHost.GetGameplayState()` capability - a synchronous read of the session's already
+in-memory `CharacterGameplayState` snapshot, no additional CharServer query - added because no
+existing script needed a read-only state accessor before this. The script contains no direct
+character-state mutation, DB access, or `BaseLevel =`/`JobLevel =`/`SkillPoints =`/`StatPoints =`
+assignment anywhere.
+
+Job Change and direct SkillPoints/StatPoints grants are deliberately NOT implemented here: there
+is no `CharacterJobChangeService`/supported job-change flow yet, and normal testing should
+exercise the full Job EXP -> Job Level -> SkillPoints chain rather than a shortcut. Both remain
+documented future menu extensions once their underlying production services exist.

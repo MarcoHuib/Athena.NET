@@ -46,6 +46,14 @@ public sealed record MapConfig
     // throws) rather than an implicit precedence rule, since silently picking one source over the
     // other could hide a real operator mistake.
     public string? MapCachePath { get; init; }
+
+    // "customs.enabled: yes|no" (see ai/map-server.md's "Handwritten custom world content"
+    // section). Gates whether Athena.NET's own handwritten Customs/World content (currently just
+    // the Athena Test NPC) is composed alongside the generated world at startup. Defaults to
+    // false/unset, matching MapConfigLoader's silent-default-on-missing-or-malformed-value
+    // convention for every other boolean key (see "console"): a fresh/unconfigured server never
+    // exposes development-only content. Generated world content is unaffected either way.
+    public bool CustomsEnabled { get; init; }
 }
 
 public sealed record MapCollisionArtifactConfig(string Path, IReadOnlyList<string> Maps);

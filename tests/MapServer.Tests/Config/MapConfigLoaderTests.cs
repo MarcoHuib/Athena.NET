@@ -170,6 +170,53 @@ public sealed class MapConfigLoaderTests
     }
 
     [Fact]
+    public void Load_ConfigMissing_CustomsDefaultToDisabled()
+    {
+        var tempDir = CreateTempDir();
+        var path = Path.Combine(tempDir, "missing.conf");
+
+        var config = MapConfigLoader.Load(path);
+
+        Assert.False(config.CustomsEnabled);
+    }
+
+    [Fact]
+    public void Load_ConfigPresentWithoutCustomsKey_DefaultsToDisabled()
+    {
+        var tempDir = CreateTempDir();
+        var path = Path.Combine(tempDir, "map_athena.conf");
+        File.WriteAllText(path, "char_ip: 10.0.0.5\n");
+
+        var config = MapConfigLoader.Load(path);
+
+        Assert.False(config.CustomsEnabled);
+    }
+
+    [Fact]
+    public void Load_CustomsEnabledYes_ParsesTrue()
+    {
+        var tempDir = CreateTempDir();
+        var path = Path.Combine(tempDir, "map_athena.conf");
+        File.WriteAllText(path, "customs.enabled: yes\n");
+
+        var config = MapConfigLoader.Load(path);
+
+        Assert.True(config.CustomsEnabled);
+    }
+
+    [Fact]
+    public void Load_CustomsEnabledNo_ParsesFalse()
+    {
+        var tempDir = CreateTempDir();
+        var path = Path.Combine(tempDir, "map_athena.conf");
+        File.WriteAllText(path, "customs.enabled: no\n");
+
+        var config = MapConfigLoader.Load(path);
+
+        Assert.False(config.CustomsEnabled);
+    }
+
+    [Fact]
     public void Load_ResolvesImports()
     {
         var tempDir = CreateTempDir();

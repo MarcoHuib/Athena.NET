@@ -1,6 +1,8 @@
+using Athena.Net.MapServer.Customs.World;
 using Athena.Net.MapServer.Gameplay.Rules;
 using Athena.Net.MapServer.Gameplay.Rates;
 using Athena.Net.MapServer.Generated.GameData.Quests;
+using Athena.Net.MapServer.Generated.World.Izlude.Academy;
 using Athena.Net.MapServer.World.GeneratedScripts;
 
 namespace Athena.Net.MapServer.World;
@@ -43,18 +45,29 @@ public sealed record MapServerWorld(WorldMapRegistry Maps, MonsterRegistry Monst
     // local/gitignored, never committed). Threaded through composition now so a future branch can
     // supply a real provider without touching this signature's callers again; nothing in the
     // current gameplay runtime consumes it yet.
-    public static MapServerWorld Build(GameplayRuleServices gameplayRules, IMobSpawnCellSelector? cellSelector = null, TimeProvider? timeProvider = null, IMapCollisionProvider? collisionProvider = null, GameplayRateOptions? rates = null)
+    // `customsEnabled` composes Athena.NET's own handwritten Customs/World content (currently
+    // just the Athena Test NPC - see ai/map-server.md's "Handwritten custom world content"
+    // section) alongside the generated world on the SAME WorldRegistryBuilder instance
+    // GeneratedScriptRegistry.Register already populates - never a second/parallel registry, and
+    // never by mutating GeneratedScriptRegistry's own static Result. Defaults to false so every
+    // existing caller (including every test that doesn't pass it) keeps building a customs-free
+    // world exactly as before.
+    public static MapServerWorld Build(GameplayRuleServices gameplayRules, IMobSpawnCellSelector? cellSelector = null, TimeProvider? timeProvider = null, IMapCollisionProvider? collisionProvider = null, GameplayRateOptions? rates = null, bool customsEnabled = false)
     {
         var resolvedCollisionProvider = collisionProvider ?? EmptyMapCollisionProvider.Instance;
         var allocator = new WorldActorIdAllocator();
-        var maps = WorldMapRegistry.LoadGenerated(allocator);
+        var builder = new WorldRegistryBuilder();
+        GeneratedScriptRegistry.Register(builder);
+        if (customsEnabled) CustomWorldRegistry.Register(builder);
+        var world = builder.Build();
+        var maps = new WorldMapRegistry(GeneratedWarps.All, world.Entities, scripts: world.Scripts, allocator: allocator);
         // Explicit either/or choice, not a fallback: EmptyMapCollisionProvider.Instance IS the
         // collision-less/dev case; anything else is a real collision-backed world.
         IMobSpawnCellSelector defaultCellSelector = ReferenceEquals(resolvedCollisionProvider, EmptyMapCollisionProvider.Instance)
             ? new UnverifiedFallbackMobSpawnCellSelector()
             : new RathenaCompatibleMobSpawnCellSelector(resolvedCollisionProvider);
         var monsters = new MonsterRegistry(
-            GeneratedScriptRegistry.MobSpawns,
+            world.MobSpawns,
             allocator,
             cellSelector ?? defaultCellSelector,
             timeProvider ?? TimeProvider.System);
