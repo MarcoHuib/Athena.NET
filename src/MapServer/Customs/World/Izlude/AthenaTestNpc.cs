@@ -32,9 +32,12 @@ internal static class IzludeCustomWorld
     private const string DefinitionId = "custom:izlude:athena_test_npc";
     private const string NpcName = "Athena Test NPC";
 
-    // A plain, already-supported NPC sprite - the same class id AcademyNpcs.Sailor already uses,
-    // so no new client resource is required.
-    private const ushort SpriteClass = 100;
+    // A plain, already-supported generic NPC sprite (a standard rAthena male-villager class) that
+    // is genuinely distinct from every sprite class already used anywhere in the generated Academy
+    // world - AcademyNpcs.CaptainCarocc (873), Lumin (639), Sailor (100), and the Wounded Swordsman
+    // variants (687/688) - so this NPC is visually distinguishable from every generated tutorial
+    // actor rather than reusing an existing one (e.g. Sailor's 100).
+    private const ushort SpriteClass = 117;
 
     public static readonly NpcDefinition AthenaTestNpc = new(
         DefinitionId,
