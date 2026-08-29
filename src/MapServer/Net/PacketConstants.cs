@@ -90,6 +90,19 @@ public static class PacketConstants
     public const short IroCzUseItem = 0x00a7;
     public const int IroCzUseItemLength = 9;
 
+    // VERIFIED via dedicated stock-iRO skill-up capture (iro-skill-up-nv-basic-0-to-1.pcapng,
+    // frame 3604, isolated single click on NV_BASIC's + button with a fresh Novice/JobLevel 2/
+    // SkillPoints=1/NV_BASIC=0 precondition, no other client action in the surrounding window -
+    // see ai/iro-2026-wire.md for the full capture evidence trace). Observed bytes
+    // 12 01 01 00 1D: opcode.W(2) skillId.W(2) + one opaque trailing byte(1) = 5, matching the
+    // same "+1 opaque trailing byte beyond a familiar generic shape" pattern already proven for
+    // attack/equip/unequip/movement/NPC/item-use client packets. This is the iRO CLIENT-facing
+    // skill-up protocol - deliberately NOT the same name/id as the Athena-internal
+    // MapServer<->CharServer MapSkillLearnRequest (0x2b3b), which is a completely separate wire
+    // boundary (see MapSkillLearnProtocol's own doc comment).
+    public const short IroCzSkillLevelUp = 0x0112;
+    public const int IroCzSkillLevelUpLength = 5;
+
     // ZC_USE_ITEM_ACK2 (clif.cpp:4468-4497, packets_struct.hpp:2577-2589) - pinned-source
     // layout for the current PACKETVER_RE_NUM >= 20180704 branch; not yet independently
     // capture-verified on the response side (see IroUseItemPackets.BuildUseItemAck).
@@ -100,6 +113,14 @@ public static class PacketConstants
     // ZC_SKILLINFO_LIST3 - verified stock-iRO capture (ai/iro-2026-wire.md): 4-byte header plus
     // one 15-byte SKILLDATA entry per visible skill. See IroSkillInfoListPackets.
     public const short ZcSkillInfoList = 0x0b32;
+    // VERIFIED via the same dedicated skill-up capture as IroCzSkillLevelUp above (frame 3623,
+    // the immediate server response to the captured click): id.W(2) + one 15-byte SKILLDATA
+    // entry, byte-for-byte the SAME entry layout as one ZcSkillInfoList row (SkillId.W(0)
+    // inf.L(2) currentLevel.W(6) spCost.W(8) range.W(10) upgradable.B(12) secondaryLevel.W(13))
+    // minus that packet's 2-byte totalLength header field - i.e. a single-skill incremental
+    // update, NOT a resend of the full list (task section 21). See IroSkillLevelUpdatePackets.
+    public const short ZcSkillLevelUpdate = 0x0b33;
+    public const int ZcSkillLevelUpdateLength = 17;
     public const short ZcNotifyPlayerMove = 0x0087;
     public const short ZcNpcAckMapMove = 0x0091;
     public const short ZcNotifyStandEntry = 0x09ff;

@@ -546,25 +546,93 @@ per-character persisted acquisition-mechanism flag (Permanent/Temporary/Plagiari
 `inf` is an intrinsic per-skill classification (attack/ground/self/support/trap) - the two are never
 conflated in code or on the wire.
 
-## CURRENT OPEN WIRE ITEM
+## Verified stock-iRO skill-up client protocol (0x0112 request / 0x0B33 response)
 
-Stock iRO client → MapServer skill-level-up request: not yet captured/verified.
+Source: dedicated capture `iro-skill-up-nv-basic-0-to-1.pcapng` (SHA-256
+`ce868cada9bfa64de31f2ca24730fa2fec6c6373ac491800b9ab2e9816c8ece8`), same live stock-iRO client/
+server session convention as every other capture in this document (`192.168.178.55` client,
+`128.241.92.42:4506` MapServer, `PACKETVER 20220406`). Precondition: fresh Novice, JobLevel 2,
+SkillPoints=1, `NV_BASIC`=0. Sequence: enter map, allow bootstrap to finish, open skill window,
+click `+` on `NV_BASIC` exactly once, no other client action in the surrounding window.
 
-Do not implement from rAthena packet tables alone.
+### Client → server: `0x0112` (capture frame 3604)
 
-Required capture:
 ```text
-character with available skill point
-→ open stock skill window
-→ click + on a skill
-→ record client→server packet.
+12 01 01 00 1D
 ```
 
-No guessed packet ID, layout, or response sequence is implemented anywhere in this codebase
-pending that capture. `CharacterGameplayStateSession.LearnSkillAsync` implements the complete
-internal validate → atomic-persist → replace-both-snapshots pipeline this future request will call,
-but no client-facing packet handler exists yet - see `ai/map-server.md`'s skill-state section for
-the full architecture this future handler will plug into.
+| Offset | Type | Captured value | Field | Evidence status |
+|---:|---|---:|---|---|
+| 0 | `uint16` | `0x0112` | packet ID | **Verified** (stock-iRO capture) |
+| 2 | `uint16` | 1 | SkillId (`NV_BASIC`) | **Verified** by the `NV_BASIC 0→1` transition proven in the surrounding `0x0B32`/`0x0B33`/`0x00B0` evidence below |
+| 4 | `uint8` | `0x1D` | opaque trailing byte | **Unknown**. Present, structurally required (fixed 5-byte length), but its semantics are not established by this single capture - matches the same "+1 opaque trailing byte" pattern already proven for `0x0360`/`0x0368`/`0x0361`/`0x0090`/`0x0437`/`0x00A7`. Only one skill-up capture exists so far, so this is NOT resolved by a second `0→1`/`1→2` comparison (task section 10 permits this when one capture is already unambiguous for framing purposes, which this one is). |
+
+Fixed length 5, single opcode-registered packet, does not carry any client-supplied target/current
+level - the request means "upgrade `NV_BASIC`", never "set `NV_BASIC` to level N" (see
+`IroSkillLevelUpRequestPacket`).
+
+### Server → client response sequence (capture frames 3623, 3625)
+
+Verified ordering, both immediately following the request with no intervening packets on this
+connection:
+
+```text
+Frame 3623  S->C  0x0B33 / 17 bytes  188ms after the request
+Frame 3625  S->C  0x00B0 / 8 bytes (VarId 12, Count 0)  220ms after 0x0B33
+```
+
+**`0x0B33` (capture frame 3623)**:
+
+```text
+33 0B 01 00 00 00 00 00 01 00 00 00 01 00 01 01 00
+```
+
+Byte-for-byte the SAME 15-byte `SKILLDATA` entry layout as one `0x0B32` row (see the verified
+`0x0B32` table above), minus that packet's own 2-byte `totalLength` header field - i.e. `id.W(2)`
+followed directly by one entry, 17 bytes total. A single-skill incremental update, not a full-list
+resend (task section 21 - `0x0B32` stays reserved for the initial bootstrap).
+
+| Entry offset | Type | Captured value | Field | Evidence status |
+|---:|---|---:|---|---|
+| 0 | `uint16` | 1 | SkillId | **Verified** |
+| 2 | `int32` | 0 | inf | **Verified**, consistent with the same `NV_BASIC` value already established in the `0x0B32` table |
+| 6 | `uint16` | 1 | currentLevel | **Verified** - the POST-commit level (0→1), proving the response is built from committed state, not the pre-click snapshot |
+| 8 | `uint16` | 0 | spCost | **Verified**, consistent with `0x0B32` |
+| 10 | `uint16` | 1 | range | **Verified** - matches the existing `IroWireCompatibility` `NV_BASIC` range-override entry exactly; this response routes through the SAME compatibility policy, not a fresh guess |
+| 12 | `uint8` | 1 | upgradable | **Verified** - still upgradable (level 1 < MaxLevel 9) |
+| 13 | `uint16` | 1 | secondaryLevel | **Verified** - mirrors currentLevel, same identity rule as `0x0B32` |
+
+**`0x00B0` (capture frame 3625)**:
+
+```text
+B0 00 0C 00 00 00 00 00
+```
+
+`opcode.W(2) VarId.W(2)=12 value.L(4)=0`. VarId 12 was already independently established elsewhere
+in this document (`0x00B0 param 12 = 1` for the character's initial SkillPoints) - this capture's
+`param 12 = 0` proves the SkillPoints 1→0 transition, reusing the SAME existing
+`IroCharacterProgressionPackets.Parameter` serializer, not a new packet type (task section 22).
+
+### Evidence boundary
+
+- **Verified**: the successful `NV_BASIC 0→1` request/response byte sequence and ordering above.
+- **Unknown**: semantics of the request's trailing `0x1D` byte.
+- **Not captured**: failure/rejection response behavior for an invalid skill-up request. No
+  official failure capture exists; Athena's handler currently sends NO response packet on
+  rejection (silently drops the request, matching the general "gameplay rejection, not malformed
+  packet" policy) - this is **Reference-backed only** (no pinned rAthena skill-up failure response
+  packet was located either), not Verified.
+- **Not captured**: how a prerequisite-unlock (a second skill becoming newly `ClientVisible` as a
+  side effect of learning another) is incrementally synchronized to the client. Only a single
+  `NV_BASIC` skill was exercised, which has no dependents in the current generated Novice tree.
+  This PR does not claim generic incremental prerequisite-unlock synchronization is solved - a
+  skill whose learning unlocks another visible skill will currently only see that second skill's
+  visibility change on the NEXT reconnect's `0x0B32`, not incrementally. A future capture of a
+  prerequisite-unlock transition is required before extending this.
+
+`CharacterGameplayStateSession.LearnSkillAsync` (unchanged from PR #15) remains the sole
+authoritative mutation path this handler calls into - see `MapClientSession.
+HandleIroSkillLevelUpRequestAsync` for the thin parse-and-call wiring.
 
 ## Capture handling
 Official captures can contain credentials, account/session identifiers, bearer/JWT-like tokens, and other sensitive authentication material. Never commit unsanitized PCAPs or raw token dumps to the repository.
