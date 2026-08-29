@@ -1873,17 +1873,24 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
 
         var wireStatusId = IroStatusUpRequestPacket.WireStatusId(stat);
 
-        // 0x0141 ZC_COUPLESTATUS: base = the new persisted value, plus = 0. Athena.NET has no
-        // live temporary-bonus projection affecting base stats at the time of a stat-up (see
-        // CharacterStatusEffectState's OWN resync path in RunStatusExpirationLoopAsync above,
-        // which is for buff/debuff expiry, not stat allocation, and is not invoked from here) -
-        // plus=0 reflects the currently-modeled state honestly rather than fabricating a bonus
-        // this project does not track. This is an explicit, documented PARTIAL match of the
-        // capture's full derived-status burst - the capture also shows additional combat-stat
-        // packets (ATK/DEF/FLEE/HIT/ASPD-related) this project does not yet compute anywhere
-        // (no derived-combat-stat engine exists), so those are deliberately NOT sent here rather
-        // than fabricated. See ai/iro-2026-wire.md for the full scope note.
-        await WriteAsync(IroStatusEffectPackets.BuildCoupleStatus(wireStatusId, result.NewValue, 0), cancellationToken);
+        // 0x0141 ZC_COUPLESTATUS: base = the new persisted value, plus = the CURRENTLY ACTIVE
+        // temporary-status bonus on this stat, reused from the SAME existing projection
+        // RunStatusExpirationLoopAsync above already uses for Blessing/Increase AGI resync -
+        // never a duplicated formula here. Blessing affects STR/INT/DEX and Increase AGI
+        // affects AGI (CharacterStatusEffectState.Recalculate's own doc comment traces both to
+        // pinned status_calc_str/int/dex/agi); VIT and LUK have no currently-modeled temporary
+        // bonus source, so plus naturally stays 0 for them. Recalculated AFTER the authoritative
+        // mutation commits, from the POST-COMMIT gameplayState.State, so base and plus are
+        // always read from the same coherent post-commit snapshot - never a stale pre-mutation
+        // base paired with a fresh plus or vice versa. This remains an explicit, documented
+        // PARTIAL match of the capture's full derived-status burst - the capture also shows
+        // additional combat-stat packets (ATK/DEF/FLEE/HIT/ASPD-related) this project does not
+        // yet compute anywhere (no derived-combat-stat engine exists, and MaxHP/MaxSP
+        // recalculation only exists for the level-up formula path), so those remain deliberately
+        // NOT sent here rather than fabricated. See ai/iro-2026-wire.md for the full scope note.
+        var effective = _statusEffects.Recalculate(gameplayState.State);
+        var plusValue = EffectiveStatBonus(stat, gameplayState.State, effective);
+        await WriteAsync(IroStatusEffectPackets.BuildCoupleStatus(wireStatusId, result.NewValue, plusValue), cancellationToken);
 
         MapLogger.Info($"[iRO MAP DEBUG] Sending 0x00B0 param 9 (StatusPoints) = {gameplayState.State.StatPoints}");
         await WriteAsync(IroCharacterProgressionPackets.Parameter(9, gameplayState.State.StatPoints), cancellationToken);
@@ -1891,6 +1898,23 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost
         MapLogger.Info($"[iRO MAP DEBUG] Sending 0x00BC stat={stat} newValue={result.NewValue}");
         await WriteAsync(IroStatusUpAckPacket.BuildSuccess(wireStatusId, (byte)result.NewValue), cancellationToken);
     }
+
+    // The 0x0141 "plus" value for a given base stat: effective (base + active temporary
+    // statuses) minus the same POST-COMMIT persisted base, using CharacterStatusEffectState.
+    // Recalculate as the single existing source of truth for Blessing/Increase AGI bonuses -
+    // see that type's own doc comment for the pinned status_calc_str/int/dex/agi tracing. Both
+    // baseState and effective must come from the same Recalculate call against the same
+    // baseState, so this never mixes a stale base with a fresh effective value or vice versa.
+    private static int EffectiveStatBonus(CharacterBaseStat stat, CharacterGameplayState baseState, EffectiveCharacterStats effective) => stat switch
+    {
+        CharacterBaseStat.Strength => effective.Strength - baseState.Strength,
+        CharacterBaseStat.Agility => effective.Agility - baseState.Agility,
+        CharacterBaseStat.Vitality => effective.Vitality - baseState.Vitality,
+        CharacterBaseStat.Intelligence => effective.Intelligence - baseState.Intelligence,
+        CharacterBaseStat.Dexterity => effective.Dexterity - baseState.Dexterity,
+        CharacterBaseStat.Luck => effective.Luck - baseState.Luck,
+        _ => throw new ArgumentOutOfRangeException(nameof(stat), stat, "Unknown base stat."),
+    };
 
     // Pinned clif_parse_EquipItem (clif.cpp:12113-12159): index = server_index(p->index)
     // (client index - 2, clif.cpp:127-129) - never an item id. _inventory is guaranteed

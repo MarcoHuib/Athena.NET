@@ -1472,10 +1472,10 @@ CharacterGameplayStateSession.IncreaseStatAsync (UNCHANGED from the domain/persi
 the same CharacterStatService.ValidateIncrease → ICharacterGameplayStatePersistence.UpdateAsync
 → atomic CharServer MSSQL persistence → replace State pipeline)
         ↓
-on success: 0x0141 ZC_COUPLESTATUS (new base-stat value, plusValue=0 - see below) →
-0x00B0 ZC_PAR_CHANGE (varID 9, post-commit StatusPoints, reused unchanged from the existing
-progression serializer) → 0x00BC ZC_STATUS_CHANGE_ACK (final success ack, capture-verified byte
-layout)
+on success: 0x0141 ZC_COUPLESTATUS (new base-stat value, plusValue from
+CharacterStatusEffectState.Recalculate - see below) → 0x00B0 ZC_PAR_CHANGE (varID 9, post-commit
+StatusPoints, reused unchanged from the existing progression serializer) → 0x00BC
+ZC_STATUS_CHANGE_ACK (final success ack, capture-verified byte layout)
         ↓
 on any rejection (unrecognized StatusId, insufficient StatusPoints, stat at generated per-job
 cap, stale version, persistence failure, etc.): IncreaseStatAsync returns null, handler sends
@@ -1498,16 +1498,24 @@ does not send, because Athena.NET has no derived-combat-stat engine anywhere in 
 for the level-up formula path, not a live stat-up. Porting `status_calc_pc_`'s full
 recalculation is explicitly out of scope for this slice - see task section 16's original
 scoping, which this respects. Athena sends only the two derived values it already owns
-correctly: `0x0141` (base-stat sync) and `0x00B0` (`StatusPoints`). The `0x0141` `plusValue` is
-always `0`: `CharacterStatusEffectState`'s own base/plus resync path (`RunStatusExpirationLoopAsync`
-in `MapClientSession.cs`, the ONE existing canonical source for a non-zero plus-value, used for
-temporary buff/debuff expiry) is not invoked from the stat-up handler, since a stat allocation
-introduces no temporary bonus of its own - `0` reflects the currently-modeled state honestly
-rather than fabricating a value this project does not track.
-`MapClientSessionStatUpTests.NoviceAcceptanceCase_IncreasesStrength_EmitsVerifiedResponseSequence`
-asserts this explicitly (`plus = 0`) as proof no unowned derived value is fabricated. Full
-capture parity (the remaining combat-stat packets) is a future source-backed derived-stat
-recalculation/projection slice.
+correctly: `0x0141` (base-stat sync) and `0x00B0` (`StatusPoints`).
+
+The `0x0141` `plusValue` is NOT hardcoded to `0` - Athena.NET DOES already have a live
+temporary-bonus projection affecting base stats (`CharacterStatusEffectState.Recalculate`,
+covering Blessing's STR/INT/DEX bonus and Increase AGI's AGI bonus - the SAME projection
+`RunStatusExpirationLoopAsync` already uses for buff/debuff expiry resync), and the handler
+reuses it exactly, never a duplicated formula: after the authoritative mutation commits, it
+calls `_statusEffects.Recalculate(gameplayState.State)` against the POST-COMMIT state and derives
+`plusValue = effectiveStat - postCommitPersistedStat` for the changed stat via the small
+`EffectiveStatBonus` switch. Blessing/Increase AGI active while the changed stat is STR/INT/DEX/
+AGI therefore produce the correct non-zero `plusValue`; VIT and LUK naturally stay `0` because
+no currently-modeled temporary status affects either (not because the handler special-cases
+them - `CharacterStatusEffectState.Recalculate` simply has no bonus source for VIT/LUK yet).
+`MapClientSessionStatUpTests` proves all three cases explicitly: `StrStatUp_WithActiveBlessing_
+EmitsCoupleStatusWithNonZeroPlusFromExistingProjection`, `AgiStatUp_WithActiveIncreaseAgi_
+EmitsCoupleStatusWithCorrectNonZeroPlus`, and `StatUp_WithNoActiveStatus_PlusRemainsZero` (the
+no-active-status baseline, still correctly `0`). Full capture parity (the remaining combat-stat
+packets) is a future source-backed derived-stat recalculation/projection slice.
 
 Still open (see `ai/iro-2026-wire.md`'s evidence-boundary note for detail): the official
 rejection-response behavior (no capture exists; Athena sends no packet, which is

@@ -728,12 +728,19 @@ stat engine at all yet (no ATK/DEF/FLEE/HIT/ASPD calculation exists anywhere in 
 and MaxHP/MaxSP are only recalculated on level-up via a different formula path than a live
 VIT/INT stat-up would need - see `ai/map-server.md` section 16's original scoping). Implementing
 `status_calc_pc_`'s full recalculation is explicitly out of scope for this slice. Athena
-therefore sends only `0x0141` (base-stat sync, `plusValue=0` since no live temporary-bonus
-projection affecting base stats exists to source a non-zero value from - never a fabricated
-bonus) and `0x00B0` (`StatusPoints`, the one derived value this project already computes
-correctly) before `0x00BC`. This is a deliberate, documented boundary, not an oversight - full
-capture parity (the remaining combat-stat packets) is a future source-backed derived-stat
-recalculation/projection slice.
+therefore sends only `0x0141` (base-stat sync) and `0x00B0` (`StatusPoints`, the one other
+derived value this project already computes correctly) before `0x00BC`. This is a deliberate,
+documented boundary, not an oversight - full capture parity (the remaining combat-stat packets)
+is a future source-backed derived-stat recalculation/projection slice.
+
+`0x0141`'s `plusValue` is NOT hardcoded to `0` - Athena.NET already has a live temporary-bonus
+projection affecting base stats (`CharacterStatusEffectState.Recalculate`, covering Blessing's
+STR/INT/DEX bonus and Increase AGI's AGI bonus, the same projection already used for buff/debuff
+expiry resync), and `MapClientSession.HandleIroStatusUpRequestAsync` reuses it directly against
+the POST-COMMIT gameplay state rather than duplicating either formula: `plusValue =
+effectiveStat - postCommitPersistedStat`. VIT and LUK stay `0` simply because
+`CharacterStatusEffectState.Recalculate` has no bonus source for either stat yet - not because
+the handler special-cases them.
 
 ### Evidence boundary
 

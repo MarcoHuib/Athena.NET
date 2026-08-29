@@ -60,6 +60,81 @@ public sealed class MapClientSessionStatUpTests
         await run.WaitAsync(TimeSpan.FromSeconds(5));
     }
 
+    // PR #18 review correction: 0x0141's plusValue must reflect the CURRENTLY ACTIVE temporary
+    // status bonus on the changed stat (reused from CharacterStatusEffectState.Recalculate, the
+    // SAME existing projection RunStatusExpirationLoopAsync already uses for Blessing/Increase
+    // AGI resync), never a hardcoded 0. Blessing(val1=10) grants val2=val1=10 to STR/INT/DEX
+    // (CharacterStatusEffectState.Start's own doc comment, matching pinned
+    // status_change_start_post_delay's SC_BLESSING case, status.cpp:11566-11571).
+    [Fact]
+    public async Task StrStatUp_WithActiveBlessing_EmitsCoupleStatusWithNonZeroPlusFromExistingProjection()
+    {
+        var (client, stream, persistence, session, run) = await StartAuthenticatedSessionAsync(NoviceState(statPoints: 34, strength: 2));
+        using var _ = client;
+
+        await SkipBootstrapAsync(stream);
+        session.StatusEffects.Start(CharacterStatusEffectState.StatusIds.Blessing, 240_000, 10);
+
+        await stream.WriteAsync(new byte[] { 0xBB, 0x00, 0x0D, 0x00, 0x01, 0x1E });
+
+        var coupleStatus = await ReadExact(stream, 14);
+        Assert.Equal((short)0x0141, BinaryPrimitives.ReadInt16LittleEndian(coupleStatus));
+        Assert.Equal(13u, BinaryPrimitives.ReadUInt32LittleEndian(coupleStatus.AsSpan(2))); // statusType = SP_STR
+        Assert.Equal(3, BinaryPrimitives.ReadInt32LittleEndian(coupleStatus.AsSpan(6))); // base = new persisted STR (post-commit)
+        Assert.Equal(10, BinaryPrimitives.ReadInt32LittleEndian(coupleStatus.AsSpan(10))); // plus = active Blessing bonus, NOT 0
+
+        Assert.Equal((ushort)3, persistence.State!.Strength); // persisted base unaffected by the temporary bonus
+
+        client.Close();
+        await run.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    // Increase AGI(val1=10) grants val2=2+val1=12 to AGI (status_change_start_post_delay's
+    // SC_INCREASEAGI case, status.cpp:10844-10854, "// Agi change").
+    [Fact]
+    public async Task AgiStatUp_WithActiveIncreaseAgi_EmitsCoupleStatusWithCorrectNonZeroPlus()
+    {
+        var (client, stream, persistence, session, run) = await StartAuthenticatedSessionAsync(NoviceState(statPoints: 34, CharacterBaseStat.Agility, value: 2));
+        using var _ = client;
+
+        await SkipBootstrapAsync(stream);
+        session.StatusEffects.Start(CharacterStatusEffectState.StatusIds.IncreaseAgi, 240_000, 10);
+
+        await stream.WriteAsync(new byte[] { 0xBB, 0x00, 0x0E, 0x00, 0x01, 0x80 });
+
+        var coupleStatus = await ReadExact(stream, 14);
+        Assert.Equal((short)0x0141, BinaryPrimitives.ReadInt16LittleEndian(coupleStatus));
+        Assert.Equal(14u, BinaryPrimitives.ReadUInt32LittleEndian(coupleStatus.AsSpan(2))); // statusType = SP_AGI
+        Assert.Equal(3, BinaryPrimitives.ReadInt32LittleEndian(coupleStatus.AsSpan(6))); // base = new persisted AGI (post-commit)
+        Assert.Equal(12, BinaryPrimitives.ReadInt32LittleEndian(coupleStatus.AsSpan(10))); // plus = 2 + val1 = 12, NOT 0
+
+        Assert.Equal((ushort)3, persistence.State!.Agility);
+
+        client.Close();
+        await run.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    // Without any active temporary status, plus must remain 0 - proving the fix does not
+    // fabricate a bonus when nothing is actually active (VIT/LUK also naturally stay 0, since
+    // neither Blessing nor Increase AGI ever affects them per CharacterStatusEffectState's own
+    // Recalculate).
+    [Fact]
+    public async Task StatUp_WithNoActiveStatus_PlusRemainsZero()
+    {
+        var (client, stream, persistence, session, run) = await StartAuthenticatedSessionAsync(NoviceState(statPoints: 34, strength: 2));
+        using var _ = client;
+
+        await SkipBootstrapAsync(stream);
+        await stream.WriteAsync(new byte[] { 0xBB, 0x00, 0x0D, 0x00, 0x01, 0x1E });
+
+        var coupleStatus = await ReadExact(stream, 14);
+        Assert.Equal(3, BinaryPrimitives.ReadInt32LittleEndian(coupleStatus.AsSpan(6)));
+        Assert.Equal(0, BinaryPrimitives.ReadInt32LittleEndian(coupleStatus.AsSpan(10)));
+
+        client.Close();
+        await run.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
     // PRODUCTION regression: proves the exact captured ack bytes for all six stats, driven
     // through the real handler (not a manually constructed IroStatusUpAckPacket call).
     [Theory]
