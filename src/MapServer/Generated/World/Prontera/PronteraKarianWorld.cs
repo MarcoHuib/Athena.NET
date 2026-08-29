@@ -6,13 +6,13 @@ using Athena.Net.MapServer.World;
 
 namespace Athena.Net.MapServer.Generated.World.Prontera;
 
-internal static class ProntereKarianWorld
+internal static class PronteraKarianWorld
 {
     public static void Register(WorldRegistryBuilder world)
     {
-        world.AddNpc(ProntereKarianNpcs.Karian,
+        world.AddNpc(PronteraKarianNpcs.Karian,
         [
-            new("npc:prontera:karian#cmd9", ProntereKarianNpcs.Karian.DefinitionId, "Karian#cmd9", "prontera", 155, 49, 4, 486, 0, 0, 0),
+            new("npc:prontera:karian#cmd9", PronteraKarianNpcs.Karian.DefinitionId, "Karian#cmd9", "prontera", 155, 49, 4, 486, 0, 0, 0),
         ]);
     }
 }

@@ -1857,18 +1857,50 @@ walked into via normal movement, actually lands the session and its persisted po
   and, incidentally, `prt_fild08` (400x400, not currently in `ServedMaps` - see
   `MapServerHostingScope`'s own doc comment on why that stays a separate scope decision), but does
   NOT declare `prt_fild08d`/`izlude_d`/`int_land04`/`iz_int04` at all. Fixed generically (no
-  Prontera special-casing) by making `MapCollisionStartupLoader.Load` ruleset-aware: it now merges
-  `db/{re|pre-re}/map_cache.dat` (selected from the already-composed `RagnarokRuleSet`, matching
-  pinned `DBPATH` exactly) over the configured `map_cache_path`, in the same priority order pinned
-  `map_readallmaps` uses. The overlay file's absence is not an error (some deployments may not have
-  it); a present-but-malformed overlay still fails startup loudly like every other collision-source
-  failure mode in this loader. Regression coverage: `MapCollisionStartupLoaderTests.
+  Prontera special-casing) by making `MapCollisionStartupLoader.Load` implement pinned
+  `map_readallmaps`' full THREE-layer, first-match-wins merge: `db/import/map_cache.dat` (highest
+  priority), then `db/{re|pre-re}/map_cache.dat` (selected from the already-composed
+  `RagnarokRuleSet`, matching pinned `DBPATH` exactly), then the configured `map_cache_path` as the
+  final fallback - exactly pinned source's own priority order, not an approximation of it. Both
+  higher-priority layers are independently optional: a deployment's `db/import/map_cache.dat` may
+  genuinely not exist at all (pinned rAthena's own checked-in tree ships none, only the
+  `db/import-tmpl/` template directory), and `db/{re|pre-re}/map_cache.dat` may likewise be absent
+  for a given deployment - neither absence is an error, but a PRESENT, malformed file at either
+  layer still fails startup loudly like every other collision-source failure mode in this loader.
+  A duplicate map name within one single layer's own file is still a hard failure; the same name
+  appearing in two different layers is normal layering, and the higher-priority layer silently
+  wins. Regression coverage: `MapCollisionStartupLoaderTests.
   Load_RenewalRuleSet_RealPinnedMapCache_ResolvesProntheraViaRulesetOverlay`,
   `..._StillResolvesGenericFallbackMapsNotInTheOverlay`,
-  `..._NoRuleSetArgumentGiven_DefaultsToRenewal_StillResolvesProntera`, and the full end-to-end
-  acceptance proof `Load_RealPinnedMapCache_ProductionStartupSequence_AllServedMapsResolve` (loads
-  the real pinned map cache exactly as `MapServerApp` does, then calls
-  `MapServerHostingScope.RequireCollisionForAllServedMaps` and asserts no exception).
+  `..._NoRuleSetArgumentGiven_DefaultsToRenewal_StillResolvesProntera`; the three-layer priority
+  proofs `Load_ImportLayerMap_OverridesRulesetAndRootForTheSameMapName`,
+  `Load_RulesetLayerMap_OverridesRootWhenImportHasNoMatchingMap`,
+  `Load_RootLayerMap_SuppliesMapsAbsentFromBothOverlays`,
+  `Load_MissingOptionalImportAndRulesetFiles_StillLoadsFromRootAlone`,
+  `Load_PresentButMalformedOptionalOverlayFile_ThrowsClearly`,
+  `Load_DuplicateMapNameWithinTheImportLayerFileItself_ThrowsClearly`; and the full end-to-end
+  acceptance proof `Load_RealPinnedMapCache_ThreeLayerMerge_ProductionStartupSequence_
+  AllServedMapsResolve` (loads the real pinned map cache exactly as `MapServerApp` does, with the
+  complete three-layer merge, then calls `MapServerHostingScope.RequireCollisionForAllServedMaps`
+  and asserts no exception).
+
+**5. GitHub Actions CI flake under contended runners.** A Linux CI run of the full Release suite
+(reproduced locally via a fresh clone under a 2-CPU-constrained Docker container, matching GitHub's
+runner shape - never reproduced in isolation or on an unconstrained run) intermittently failed
+`MapClientSessionCombatRangeTests.Attack_MovingTargetLeavesRangeBetweenRepeatedHits_
+LaterHitDoesNotOccurRemotely` with a real-socket read timeout. Root cause: this test drives the
+server's repeat-attack scheduling with a fake `ControllableTimeProvider` clock (`AdvanceAsync`),
+but its `ReadExact` helper bounded the resulting real-socket read with a real 5-second wall-clock
+`CancellationTokenSource` - the project's ordinary bound elsewhere - which a genuinely contended
+2-core runner can exceed before the scheduled hit gets real thread time to fire and write to the
+socket. Unrelated to the collision-source fix; not a scheduling regression (isolated and
+unconstrained runs never reproduced it). Fixed narrowly: `MapClientSessionCombatRangeTests` alone
+now uses a named `SocketReadTimeout = TimeSpan.FromSeconds(15)` constant (a hang-safety bound only,
+not part of the asserted combat-range behavior) instead of the project's usual 5s, applied via
+`ReadExact`/`ReadDynamic`. No other fixture's timeout was touched, and the class's existing
+`DisableParallelization = true` collection setting is unchanged. Verified by reproducing the full
+`MapServer.Tests` Release suite under the same 2-CPU Docker constraint four consecutive times with
+zero failures after the fix (previously flaky under the same constraint before it).
 
 No live stock-client acceptance is claimed for this fix - per this project's standing convention,
 that requires an actual retest against a stock client, which has not been performed in this

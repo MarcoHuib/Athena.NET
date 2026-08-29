@@ -54,12 +54,12 @@ public static class MapServerApp
         // MapCollisionStartupLoader's own doc comment. An unconfigured server (neither key set) is
         // unaffected: Load returns EmptyMapCollisionProvider.Instance, the same default
         // MapServerWorld.Build already used.
-        // ruleSet: MapCollisionStartupLoader merges pinned rAthena's own ruleset-specific overlay
-        // (db/re/map_cache.dat for Renewal) over the configured generic map_cache_path, matching
-        // pinned map_readallmaps' own load order exactly - see that loader's own doc comment for
-        // why this is required (real example: pinned "prontera" geometry exists ONLY in
-        // db/re/map_cache.dat, not the generic db/map_cache.dat this project was previously
-        // loading alone).
+        // ruleSet: MapCollisionStartupLoader merges pinned rAthena's own db/import/map_cache.dat
+        // and ruleset-specific overlay (db/re/map_cache.dat for Renewal) over the configured
+        // generic map_cache_path, matching pinned map_readallmaps' own three-layer load order
+        // exactly - see that loader's own doc comment for why this is required (real example:
+        // pinned "prontera" geometry exists ONLY in db/re/map_cache.dat, not the generic
+        // db/map_cache.dat this project was previously loading alone).
         var collisionProvider = MapCollisionStartupLoader.Load(mergedConfig.CollisionArtifacts, effectiveMapCachePath, gameplayOptions.RuleSet);
         // Production-only fail-closed guard (never applied inside MapServerWorld.Build itself, so
         // tests can still freely compose a collision-less world on purpose) - see that method's own

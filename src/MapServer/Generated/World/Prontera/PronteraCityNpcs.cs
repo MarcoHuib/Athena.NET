@@ -6,7 +6,7 @@ using Athena.Net.MapServer.World;
 
 namespace Athena.Net.MapServer.Generated.World.Prontera;
 
-internal static class ProntereCityNpcs
+internal static class PronteraCityNpcs
 {
     internal static readonly NpcDefinition Guide = new(
         "npcdef:legacy/rathena/npc/re/guides/guides_prontera.txt:guide#01prontera", "Guide#01prontera",

@@ -92,10 +92,18 @@ public sealed class MapClientSessionCombatRangeTests
         return packet;
     }
 
+    // Deadlock/hang safety bound only, not part of the asserted combat-range behavior. Wider than
+    // this project's usual 5s socket-read bound because this class's real-socket reads race a
+    // genuinely contended CI runner (observed flaky failure under a 2-CPU-constrained Linux run of
+    // the full suite, never in isolation): the repeat-attack hit this test waits on is scheduled
+    // off ControllableTimeProvider.AdvanceAsync, which still has to get real thread time to run
+    // before the socket write happens, and a loaded 2-core runner can push that past 5s.
+    private static readonly TimeSpan SocketReadTimeout = TimeSpan.FromSeconds(15);
+
     private static async Task<byte[]> ReadExact(Stream stream, int length)
     {
         var buffer = new byte[length];
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        using var cts = new CancellationTokenSource(SocketReadTimeout);
         await stream.ReadExactlyAsync(buffer, cts.Token);
         return buffer;
     }

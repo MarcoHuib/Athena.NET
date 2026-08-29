@@ -37,33 +37,36 @@ public static class MapCollisionStartupLoader
         return LoadFromArtifacts(artifacts);
     }
 
-    // Loads pinned map_cache.dat data, merging TWO files in the SAME priority order pinned
-    // rAthena's own map_readallmaps (map.cpp:3908-3943) uses: for each map name, the RULESET-
-    // SPECIFIC cache (db/re/map_cache.dat for Renewal, db/pre-re/map_cache.dat for PreRenewal -
-    // src/config/const.hpp's own DBPATH macro) is checked FIRST and wins on any name collision;
-    // the configured `mapCachePath` (Athena's own generic/broad db/map_cache.dat) is the
-    // FALLBACK for any map the ruleset-specific file does not declare. This is a real,
-    // non-cosmetic distinction: pinned db/re/map_cache.dat is a small, CURATED set of maps whose
-    // Renewal geometry genuinely differs from the generic/legacy cache (independently confirmed:
-    // "prontera" exists ONLY in db/re/map_cache.dat at 312x392, not at all in the root
+    // Loads pinned map_cache.dat data, merging THREE layers in the SAME first-match-wins priority
+    // order pinned rAthena's own map_readallmaps (map.cpp:3908-3943) uses, from highest to lowest
+    // priority: db/import/map_cache.dat, then the RULESET-SPECIFIC cache (db/re/map_cache.dat for
+    // Renewal, db/pre-re/map_cache.dat for PreRenewal - src/config/const.hpp's own DBPATH macro),
+    // then the configured `mapCachePath` (Athena's own generic/broad db/map_cache.dat) as the
+    // final fallback for any map neither higher layer declares. The ruleset-specific layer is a
+    // real, non-cosmetic distinction: pinned db/re/map_cache.dat is a small, CURATED set of maps
+    // whose Renewal geometry genuinely differs from the generic/legacy cache (independently
+    // confirmed: "prontera" exists ONLY in db/re/map_cache.dat at 312x392, not at all in the root
     // db/map_cache.dat, while db/re/map_cache.dat itself has only 8 total maps and does not
     // declare izlude_d/prt_fild08d/int_land04/etc. at all) - a live Prontera-collision crash was
     // traced directly to this project previously only ever loading the generic file and missing
     // this ruleset-specific overlay. This is a GENERIC fix (every map benefits from the same
     // merge order, not a Prontera-specific patch) matching the same Renewal/PreRenewal
     // distinction the rest of this project's game-data pipeline already uses (ai/world-data.md's
-    // "compile-character-data" Renewal-only sourcing).
+    // "compile-character-data" Renewal-only sourcing). The import layer exists for pinned-source
+    // parity (map_readallmaps checks db/import/map_cache.dat first) even though pinned rAthena's
+    // own checked-in tree ships no such file today (only db/import-tmpl/, a template directory) -
+    // see LoadLayeredOverlay's own doc comment for exactly how each optional layer is resolved.
     //
     // A missing/malformed configured mapCachePath still fails startup loudly exactly as before -
     // an operator who configured map_cache_path must be told if it did not load, not left
-    // believing it did. The ruleset-specific overlay file is OPTIONAL: its absence is not itself
-    // an error (a deployment might genuinely not have db/re/map_cache.dat available), only silent
-    // if truly absent - see LoadRulesetOverlay's own doc comment for the exact distinction between
-    // "file absent" (silently skipped) and "file present but malformed" (still fails loudly).
-    // map_cache.dat's own map names are used verbatim as Athena's logical map names: each pinned
-    // map (including int_land/int_land01../04, which the file itself declares as distinct records
-    // with real geometry) is registered under its own name, with no alias mechanism - see
-    // ai/world-data.md for why an alias layer is not needed for this source.
+    // believing it did. Both higher-priority layers (import, ruleset-specific) are OPTIONAL: their
+    // absence is not itself an error (a deployment might genuinely not have either file available),
+    // only silent if truly absent - see LoadLayeredOverlay's own doc comment for the exact
+    // distinction between "file absent" (silently skipped) and "file present but malformed" (still
+    // fails loudly). map_cache.dat's own map names are used verbatim as Athena's logical map
+    // names: each pinned map (including int_land/int_land01../04, which the file itself declares
+    // as distinct records with real geometry) is registered under its own name, with no alias
+    // mechanism - see ai/world-data.md for why an alias layer is not needed for this source.
     private static IMapCollisionProvider LoadFromMapCache(string mapCachePath, RagnarokRuleSet ruleSet)
     {
         // `mapCachePath` as configured/passed in is resolved by ordinary filesystem rules, which
@@ -86,11 +89,22 @@ public static class MapCollisionStartupLoader
                 "where it should resolve from, or supply an absolute path via --map-cache-path.");
         }
 
+        var dbDirectory = Path.GetDirectoryName(resolvedPath);
         var byMapName = new Dictionary<string, MapCollisionMap>(StringComparer.OrdinalIgnoreCase);
 
-        // Ruleset-specific overlay FIRST (higher priority - wins on collision), matching pinned
-        // source's own load order exactly.
-        var overlayCount = LoadRulesetOverlay(resolvedPath, ruleSet, byMapName);
+        // Highest-to-lowest priority, matching pinned map_readallmaps' own load order exactly -
+        // each layer wins on collision over every layer loaded after it.
+        var importPath = dbDirectory is null ? null : Path.Combine(dbDirectory, "import", "map_cache.dat");
+        var importCount = importPath is null ? 0 : LoadLayeredOverlay(importPath, "import", byMapName);
+
+        var rulesetSubdirectory = ruleSet switch
+        {
+            RagnarokRuleSet.Renewal => "re",
+            RagnarokRuleSet.PreRenewal => "pre-re",
+            _ => throw new ArgumentOutOfRangeException(nameof(ruleSet), ruleSet, "Unknown ruleset."),
+        };
+        var rulesetPath = dbDirectory is null ? null : Path.Combine(dbDirectory, rulesetSubdirectory, "map_cache.dat");
+        var rulesetCount = rulesetPath is null ? 0 : LoadLayeredOverlay(rulesetPath, $"ruleset-specific ({ruleSet})", byMapName);
 
         IReadOnlyList<MapCollisionMap> baseMaps;
         try
@@ -105,9 +119,9 @@ public static class MapCollisionStartupLoader
         var baseCount = 0;
         foreach (var map in baseMaps)
         {
-            // The overlay already won for this name (TryAdd fails silently on a real collision -
-            // NOT the same as the duplicate-within-one-file error below, which only fires for a
-            // genuine same-file duplicate).
+            // A higher-priority layer already won for this name (TryAdd fails silently on a real
+            // cross-layer collision - NOT the same as the duplicate-within-one-file error below,
+            // which only fires for a genuine same-file duplicate).
             if (byMapName.ContainsKey(map.MapName)) continue;
             if (!byMapName.TryAdd(map.MapName, map))
             {
@@ -116,30 +130,28 @@ public static class MapCollisionStartupLoader
             baseCount++;
         }
 
-        MapLogger.Status($"Loaded map_cache.dat '{resolvedPath}': {baseCount} maps ({overlayCount} overridden/added by the ruleset-specific overlay, {byMapName.Count} total).");
+        MapLogger.Status(
+            $"Loaded map_cache.dat '{resolvedPath}': {baseCount} maps ({importCount} from import overlay, " +
+            $"{rulesetCount} from ruleset-specific overlay, {byMapName.Count} total).");
         return new MapCollisionProvider(byMapName);
     }
 
-    // Ruleset-specific overlay: db/re/map_cache.dat for Renewal, db/pre-re/map_cache.dat for
-    // PreRenewal (matching pinned src/config/const.hpp's DBPATH exactly), resolved RELATIVE TO
-    // the configured base map_cache_path's own containing "db" directory - e.g. configured
-    // ".../db/map_cache.dat" with ruleSet=Renewal resolves the overlay to ".../db/re/map_cache.dat",
-    // the same relative "db/" + DBPATH + "map_cache.dat" layout pinned source itself uses. Absence
-    // of this file is NOT an error (silently skipped, zero maps loaded from it) - a deployment
-    // might genuinely lack it - but a PRESENT, malformed overlay file still fails startup loudly,
-    // matching every other collision-source failure mode in this loader.
-    private static int LoadRulesetOverlay(string resolvedBasePath, RagnarokRuleSet ruleSet, Dictionary<string, MapCollisionMap> byMapName)
+    // One optional higher-priority overlay layer (db/import/map_cache.dat or
+    // db/{re|pre-re}/map_cache.dat), resolved RELATIVE TO the configured base map_cache_path's own
+    // containing "db" directory - e.g. configured ".../db/map_cache.dat" resolves the ruleset
+    // overlay to ".../db/re/map_cache.dat" for Renewal, the same relative "db/" + DBPATH +
+    // "map_cache.dat" layout pinned source itself uses (and "db/import/map_cache.dat" for the
+    // import layer). Absence of this file is NOT an error (silently skipped, zero maps loaded from
+    // it, `byMapName` untouched) - a deployment might genuinely lack it, and pinned rAthena's own
+    // checked-in tree ships no db/import/map_cache.dat at all (only the db/import-tmpl/ template
+    // directory) - but a PRESENT, malformed overlay file still fails startup loudly, matching
+    // every other collision-source failure mode in this loader. A duplicate map name WITHIN this
+    // one file still fails loudly (a genuine same-file authoring error); a name this layer shares
+    // with an already-loaded higher-priority layer is normal first-match-wins layering, not an
+    // error - the caller passes maps in strict priority order and relies on `TryAdd`'s no-op
+    // failure for that case, never overwriting what a higher-priority layer already contributed.
+    private static int LoadLayeredOverlay(string overlayPath, string layerDescription, Dictionary<string, MapCollisionMap> byMapName)
     {
-        var dbDirectory = Path.GetDirectoryName(resolvedBasePath);
-        if (dbDirectory is null) return 0;
-
-        var subdirectory = ruleSet switch
-        {
-            RagnarokRuleSet.Renewal => "re",
-            RagnarokRuleSet.PreRenewal => "pre-re",
-            _ => throw new ArgumentOutOfRangeException(nameof(ruleSet), ruleSet, "Unknown ruleset."),
-        };
-        var overlayPath = Path.Combine(dbDirectory, subdirectory, "map_cache.dat");
         if (!File.Exists(overlayPath)) return 0;
 
         IReadOnlyList<MapCollisionMap> overlayMaps;
@@ -149,20 +161,25 @@ public static class MapCollisionStartupLoader
         }
         catch (Exception ex) when (ex is InvalidDataException or IOException)
         {
-            throw new InvalidOperationException($"Ruleset-specific map cache '{overlayPath}' could not be read: {ex.Message}", ex);
+            throw new InvalidOperationException($"{layerDescription} map cache '{overlayPath}' could not be read: {ex.Message}", ex);
         }
 
+        var seenInThisFile = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var added = 0;
         foreach (var map in overlayMaps)
         {
-            if (!byMapName.TryAdd(map.MapName, map))
+            if (!seenInThisFile.Add(map.MapName))
             {
-                throw new InvalidOperationException($"Ruleset-specific map cache '{overlayPath}' contains duplicate map name '{map.MapName}'.");
+                throw new InvalidOperationException($"{layerDescription} map cache '{overlayPath}' contains duplicate map name '{map.MapName}'.");
             }
+
+            // A higher-priority layer (or an earlier call for this same layer type) already won
+            // this name - normal first-match-wins layering, not an error.
+            byMapName.TryAdd(map.MapName, map);
             added++;
         }
 
-        MapLogger.Status($"Loaded ruleset-specific map cache '{overlayPath}' ({ruleSet}): {added} maps.");
+        MapLogger.Status($"Loaded {layerDescription} map cache '{overlayPath}': {added} maps.");
         return added;
     }
 

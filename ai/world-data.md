@@ -581,13 +581,13 @@ dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- compile
 
 dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- compile-npc-world \
   --source-root legacy/rathena/npc/re/guides --name 'GuideProntera' \
-  --namespace Athena.Net.MapServer.Generated.World.Prontera --prefix ProntereCity \
+  --namespace Athena.Net.MapServer.Generated.World.Prontera --prefix PronteraCity \
   --rathena-commit e985006171d2eb320ee512a653f4c83aea3d81b6 \
   --output-dir src/MapServer/Generated/World/Prontera
 
 dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- compile-npc-world \
   --source-root legacy/rathena/npc/re/jobs/3-2 --name 'Karian#cmd9' \
-  --namespace Athena.Net.MapServer.Generated.World.Prontera --prefix ProntereKarian \
+  --namespace Athena.Net.MapServer.Generated.World.Prontera --prefix PronteraKarian \
   --rathena-commit e985006171d2eb320ee512a653f4c83aea3d81b6 \
   --output-dir src/MapServer/Generated/World/Prontera
 ```

@@ -48,8 +48,8 @@ public static partial class GeneratedScriptRegistry
         // static NPC presence (Sailor, Guide, Resting Adventurer, Karian) compiled alongside them.
         IzludeCityWorld.Register(builder);
         IzludeGuideWorld.Register(builder);
-        ProntereCityWorld.Register(builder);
-        ProntereKarianWorld.Register(builder);
+        PronteraCityWorld.Register(builder);
+        PronteraKarianWorld.Register(builder);
         PrtFild08World.Register(builder);
         // AcademyMobSpawns.GPoringSpawns registration is composed here (not inside AcademyWorld.cs)
         // because AcademyWorld.cs is `compile-npc-world` output, verified byte-for-byte reproducible

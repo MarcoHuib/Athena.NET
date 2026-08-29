@@ -1,6 +1,8 @@
 using System.Buffers.Binary;
+using System.IO.Compression;
 using System.Text;
 using Athena.Net.MapServer.Config;
+using Athena.Net.MapServer.Gameplay.Rules;
 using Athena.Net.MapServer.World;
 
 namespace Athena.Net.MapServer.Tests.World;
@@ -12,6 +14,83 @@ public sealed class MapCollisionStartupLoaderTests
         var path = Path.Combine(Path.GetTempPath(), "athena-map-collision-tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(path);
         return path;
+    }
+
+    // Synthetic map_cache.dat builder mirroring RathenaMapCacheReaderTests' own fixture layout
+    // (see that type's doc comment for the exact pinned byte trace) - needed here to exercise the
+    // import/ruleset-specific/generic THREE-LAYER merge against small, controlled per-layer
+    // dictionaries of maps, independently of what pinned rAthena's own real files happen to
+    // contain today.
+    private static byte[] ZlibCompress(byte[] raw)
+    {
+        using var output = new MemoryStream();
+        using (var zlib = new ZLibStream(output, CompressionMode.Compress, leaveOpen: true))
+            zlib.Write(raw, 0, raw.Length);
+        return output.ToArray();
+    }
+
+    private static byte[] BuildRecord(string name, short xs, short ys, byte[] rawCells)
+    {
+        // MAP_NAME_LENGTH = 11 + 1 (RathenaMapCacheReader's own doc comment) - a longer fixture
+        // name would silently overflow into the adjacent xs field instead of failing loudly.
+        if (name.Length > 11) throw new ArgumentException($"Synthetic map name '{name}' exceeds the 11-character pinned field limit.", nameof(name));
+
+        var compressed = ZlibCompress(rawCells);
+        var record = new byte[12 + 2 + 2 + 4 + compressed.Length];
+        Encoding.ASCII.GetBytes(name).CopyTo(record, 0);
+        BinaryPrimitives.WriteInt16LittleEndian(record.AsSpan(12, 2), xs);
+        BinaryPrimitives.WriteInt16LittleEndian(record.AsSpan(14, 2), ys);
+        BinaryPrimitives.WriteInt32LittleEndian(record.AsSpan(16, 4), compressed.Length);
+        compressed.CopyTo(record, 20);
+        return record;
+    }
+
+    private static byte[] BuildMapCache(params (string Name, short Xs, short Ys)[] maps)
+    {
+        var records = maps.Select(map => BuildRecord(map.Name, map.Xs, map.Ys, new byte[map.Xs * map.Ys])).ToArray();
+        var totalLength = 8 + records.Sum(record => record.Length);
+        var buffer = new byte[totalLength];
+        BinaryPrimitives.WriteUInt32LittleEndian(buffer.AsSpan(0, 4), (uint)totalLength);
+        BinaryPrimitives.WriteUInt16LittleEndian(buffer.AsSpan(4, 2), (ushort)maps.Length);
+        var offset = 8;
+        foreach (var record in records)
+        {
+            record.CopyTo(buffer, offset);
+            offset += record.Length;
+        }
+        return buffer;
+    }
+
+    // Lays out a temp "db/" directory with a base map_cache.dat plus optional import/ and re/
+    // subdirectory overlays, mirroring pinned rAthena's own db/{import,re,pre-re}/map_cache.dat
+    // layout exactly - the shape MapCollisionStartupLoader.LoadFromMapCache actually resolves
+    // relative paths against.
+    private static string BuildLayeredDbDirectory(
+        string tempDir,
+        (string Name, short Xs, short Ys)[] baseMaps,
+        (string Name, short Xs, short Ys)[]? importMaps = null,
+        (string Name, short Xs, short Ys)[]? rulesetMaps = null,
+        string rulesetSubdirectory = "re")
+    {
+        var dbDir = Path.Combine(tempDir, "db");
+        Directory.CreateDirectory(dbDir);
+        File.WriteAllBytes(Path.Combine(dbDir, "map_cache.dat"), BuildMapCache(baseMaps));
+
+        if (importMaps is not null)
+        {
+            var importDir = Path.Combine(dbDir, "import");
+            Directory.CreateDirectory(importDir);
+            File.WriteAllBytes(Path.Combine(importDir, "map_cache.dat"), BuildMapCache(importMaps));
+        }
+
+        if (rulesetMaps is not null)
+        {
+            var rulesetDir = Path.Combine(dbDir, rulesetSubdirectory);
+            Directory.CreateDirectory(rulesetDir);
+            File.WriteAllBytes(Path.Combine(rulesetDir, "map_cache.dat"), BuildMapCache(rulesetMaps));
+        }
+
+        return Path.Combine(dbDir, "map_cache.dat");
     }
 
     // Mirrors MapCollisionArtifact's own layout (see that type's doc comment) - a tiny synthetic
@@ -280,6 +359,133 @@ public sealed class MapCollisionStartupLoaderTests
         Assert.True(provider.TryGetMap("prt_fild08", out var map));
         Assert.Equal(400, map.Width);
         Assert.Equal(400, map.Height);
+    }
+
+    // Three-layer priority proof #1: import wins over BOTH the ruleset-specific overlay and the
+    // generic base file when all three declare the same map name.
+    [Fact]
+    public void Load_ImportLayerMap_OverridesRulesetAndRootForTheSameMapName()
+    {
+        var tempDir = CreateTempDir();
+        var mapCachePath = BuildLayeredDbDirectory(
+            tempDir,
+            baseMaps: [("shared_map", 10, 10)],
+            importMaps: [("shared_map", 30, 30)],
+            rulesetMaps: [("shared_map", 20, 20)]);
+
+        var provider = MapCollisionStartupLoader.Load([], mapCachePath, RagnarokRuleSet.Renewal);
+
+        Assert.True(provider.TryGetMap("shared_map", out var map));
+        Assert.Equal(30, map.Width);
+        Assert.Equal(30, map.Height);
+    }
+
+    // Three-layer priority proof #2: the ruleset-specific overlay wins over the generic base file
+    // when import has no matching record for that map name (import present, but for a DIFFERENT
+    // map entirely).
+    [Fact]
+    public void Load_RulesetLayerMap_OverridesRootWhenImportHasNoMatchingMap()
+    {
+        var tempDir = CreateTempDir();
+        var mapCachePath = BuildLayeredDbDirectory(
+            tempDir,
+            baseMaps: [("shared_map", 10, 10)],
+            importMaps: [("import_only", 5, 5)],
+            rulesetMaps: [("shared_map", 20, 20)]);
+
+        var provider = MapCollisionStartupLoader.Load([], mapCachePath, RagnarokRuleSet.Renewal);
+
+        Assert.True(provider.TryGetMap("shared_map", out var map));
+        Assert.Equal(20, map.Width);
+        Assert.Equal(20, map.Height);
+        Assert.True(provider.TryGetMap("import_only", out _));
+    }
+
+    // Three-layer priority proof #3: the generic base file still supplies any map absent from
+    // BOTH overlays - the lowest-priority layer is not orphaned by the merge.
+    [Fact]
+    public void Load_RootLayerMap_SuppliesMapsAbsentFromBothOverlays()
+    {
+        var tempDir = CreateTempDir();
+        var mapCachePath = BuildLayeredDbDirectory(
+            tempDir,
+            baseMaps: [("root_map", 15, 15)],
+            importMaps: [("import_only", 5, 5)],
+            rulesetMaps: [("rset_only", 8, 8)]);
+
+        var provider = MapCollisionStartupLoader.Load([], mapCachePath, RagnarokRuleSet.Renewal);
+
+        Assert.True(provider.TryGetMap("root_map", out var map));
+        Assert.Equal(15, map.Width);
+        Assert.Equal(15, map.Height);
+    }
+
+    // Missing optional import/ruleset files are tolerated - a deployment with no db/import/ and no
+    // db/re/ at all must still load cleanly from the generic base file alone (this mirrors the
+    // real pinned rAthena tree today, which ships no db/import/map_cache.dat).
+    [Fact]
+    public void Load_MissingOptionalImportAndRulesetFiles_StillLoadsFromRootAlone()
+    {
+        var tempDir = CreateTempDir();
+        var mapCachePath = BuildLayeredDbDirectory(tempDir, baseMaps: [("root_map", 15, 15)]);
+
+        var provider = MapCollisionStartupLoader.Load([], mapCachePath, RagnarokRuleSet.Renewal);
+
+        Assert.True(provider.TryGetMap("root_map", out _));
+    }
+
+    // A PRESENT but malformed overlay must still fail startup loudly, for both optional layers -
+    // an operator whose db/import/ or db/re/ directory exists but holds a corrupt file must be
+    // told, never silently treated as "absent".
+    [Theory]
+    [InlineData("import")]
+    [InlineData("re")]
+    public void Load_PresentButMalformedOptionalOverlayFile_ThrowsClearly(string subdirectory)
+    {
+        var tempDir = CreateTempDir();
+        var dbDir = Path.Combine(tempDir, "db");
+        Directory.CreateDirectory(dbDir);
+        File.WriteAllBytes(Path.Combine(dbDir, "map_cache.dat"), BuildMapCache(("root_map", 15, 15)));
+        var overlayDir = Path.Combine(dbDir, subdirectory);
+        Directory.CreateDirectory(overlayDir);
+        File.WriteAllBytes(Path.Combine(overlayDir, "map_cache.dat"), [0x00, 0x01, 0x02]); // Too short to even have a header.
+
+        var mapCachePath = Path.Combine(dbDir, "map_cache.dat");
+
+        Assert.Throws<InvalidOperationException>(() => MapCollisionStartupLoader.Load([], mapCachePath, RagnarokRuleSet.Renewal));
+    }
+
+    // Duplicate names WITHIN one individual layer file must still fail loudly - a genuine
+    // same-file authoring error, independent of any cross-layer merge concern.
+    [Fact]
+    public void Load_DuplicateMapNameWithinTheImportLayerFileItself_ThrowsClearly()
+    {
+        var tempDir = CreateTempDir();
+        var dbDir = Path.Combine(tempDir, "db");
+        Directory.CreateDirectory(dbDir);
+        File.WriteAllBytes(Path.Combine(dbDir, "map_cache.dat"), BuildMapCache(("root_map", 15, 15)));
+        var importDir = Path.Combine(dbDir, "import");
+        Directory.CreateDirectory(importDir);
+        File.WriteAllBytes(Path.Combine(importDir, "map_cache.dat"), BuildMapCache(("dup", 5, 5), ("dup", 6, 6)));
+
+        var mapCachePath = Path.Combine(dbDir, "map_cache.dat");
+
+        var ex = Assert.Throws<InvalidOperationException>(() => MapCollisionStartupLoader.Load([], mapCachePath, RagnarokRuleSet.Renewal));
+        Assert.Contains("dup", ex.Message);
+    }
+
+    // Full end-to-end acceptance proof against the REAL pinned map_cache.dat tree, now with the
+    // complete three-layer merge (import optional/absent in pinned rAthena's own checked-in tree,
+    // ruleset-specific + generic as before) - production startup must still resolve every
+    // MapServerHostingScope.ServedMaps entry.
+    [Fact]
+    public void Load_RealPinnedMapCache_ThreeLayerMerge_ProductionStartupSequence_AllServedMapsResolve()
+    {
+        var mapCachePath = Path.Combine(FindRepositoryRoot(), "legacy/rathena/db/map_cache.dat");
+
+        var provider = MapCollisionStartupLoader.Load([], mapCachePath, RagnarokRuleSet.Renewal);
+
+        MapServerHostingScope.RequireCollisionForAllServedMaps(provider); // No exception - every ServedMaps entry resolves.
     }
 
     private static string FindRepositoryRoot()

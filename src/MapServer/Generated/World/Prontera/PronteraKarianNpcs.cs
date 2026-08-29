@@ -6,7 +6,7 @@ using Athena.Net.MapServer.World;
 
 namespace Athena.Net.MapServer.Generated.World.Prontera;
 
-internal static class ProntereKarianNpcs
+internal static class PronteraKarianNpcs
 {
     internal static readonly NpcDefinition Karian = new(
         "npcdef:legacy/rathena/npc/re/jobs/3-2/minstrel.txt:karian#cmd9", "Karian#cmd9",
