@@ -24,7 +24,7 @@ public static class IroWorldActorPackets
         BinaryPrimitives.WriteUInt16LittleEndian(packet.AsSpan(13), 300);
         BinaryPrimitives.WriteUInt32LittleEndian(packet.AsSpan(19), actor.EffectState);
         BinaryPrimitives.WriteUInt16LittleEndian(packet.AsSpan(23), actor.SpriteClass);
-        WritePosition(packet.AsSpan(63, 3), actor.X, actor.Y, actor.Direction);
+        IroCoordinatePacking.WritePosition(packet.AsSpan(63, 3), actor.X, actor.Y, actor.Direction);
         packet[66] = actor.RadiusX;
         packet[67] = actor.RadiusY;
         BinaryPrimitives.WriteUInt32LittleEndian(packet.AsSpan(73), uint.MaxValue);
@@ -45,10 +45,4 @@ public static class IroWorldActorPackets
         return packet;
     }
 
-    private static void WritePosition(Span<byte> buffer, ushort x, ushort y, byte direction)
-    {
-        buffer[0] = (byte)(x >> 2);
-        buffer[1] = (byte)((x << 6) | ((y >> 4) & 0x3f));
-        buffer[2] = (byte)((y << 4) | (direction & 0x0f));
-    }
 }

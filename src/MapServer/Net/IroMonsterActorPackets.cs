@@ -57,7 +57,7 @@ internal static class IroMonsterActorPackets
         BinaryPrimitives.WriteUInt32LittleEndian(packet.AsSpan(5), actorId);
         BinaryPrimitives.WriteUInt16LittleEndian(packet.AsSpan(13), mobWalkSpeed);
         BinaryPrimitives.WriteUInt16LittleEndian(packet.AsSpan(23), mobClassId);
-        WritePosition(packet.AsSpan(63, 3), x, y, direction);
+        IroCoordinatePacking.WritePosition(packet.AsSpan(63, 3), x, y, direction);
 
         // maxHP=-1,HP=-1 sentinel when at full HP (matches pinned clif_set_unit_idle's
         // "no HP bar" branch); real values when damaged, matching the same source's
@@ -75,13 +75,6 @@ internal static class IroMonsterActorPackets
 
         nameBytes.CopyTo(packet.AsSpan(FixedLength));
         return packet;
-    }
-
-    private static void WritePosition(Span<byte> buffer, ushort x, ushort y, byte direction)
-    {
-        buffer[0] = (byte)(x >> 2);
-        buffer[1] = (byte)((x << 6) | ((y >> 4) & 0x3f));
-        buffer[2] = (byte)((y << 4) | (direction & 0x0f));
     }
 
     // Verified against the SAME kill-poring-heal-jobup.pcapng frame 566 as BuildStandEntry above -
@@ -131,7 +124,7 @@ internal static class IroMonsterActorPackets
         BinaryPrimitives.WriteUInt16LittleEndian(packet.AsSpan(13), mobWalkSpeed);
         BinaryPrimitives.WriteUInt16LittleEndian(packet.AsSpan(23), mobClassId);
         BinaryPrimitives.WriteUInt32LittleEndian(packet.AsSpan(37), moveStartTime);
-        WriteMoveData(packet.AsSpan(67, 6), srcX, srcY, dstX, dstY);
+        IroCoordinatePacking.WriteMovement(packet.AsSpan(67, 6), srcX, srcY, dstX, dstY);
 
         if (currentHp < maxHp)
         {
@@ -151,18 +144,6 @@ internal static class IroMonsterActorPackets
     // Pinned WBUFPOS2 (clif.cpp:182-190). subX/subY are hardcoded to 8 (see BuildWalkEntry's own
     // doc comment on why: the only capture-verified value, matching pinned unit_walktoxy_sub's own
     // fresh-walk-start default).
-    private static void WriteMoveData(Span<byte> buffer, ushort srcX, ushort srcY, ushort dstX, ushort dstY)
-    {
-        const byte subX = 8;
-        const byte subY = 8;
-        buffer[0] = (byte)(srcX >> 2);
-        buffer[1] = (byte)((srcX << 6) | ((srcY >> 4) & 0x3f));
-        buffer[2] = (byte)((srcY << 4) | ((dstX >> 6) & 0x0f));
-        buffer[3] = (byte)((dstX << 2) | ((dstY >> 8) & 0x03));
-        buffer[4] = (byte)dstY;
-        buffer[5] = (byte)((subX << 4) | (subY & 0x0f));
-    }
-
     // Capture-verified (kill-poring-heal-jobup.pcapng frame 674, ai/iro-2026-wire.md): ZC_STOPMOVE
     // (0x0088, clif.cpp:2204), fixed 10 bytes: id.L x.W y.W. Captured stopping the SAME Poring the
     // 0x09FD in frame 566 was walking, landing at its walk's own destination (75,57) - used here to

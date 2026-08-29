@@ -42,5 +42,7 @@ internal sealed class VisibleActorTracker
 
     public void MarkNotVisible(uint actorId) { lock (_gate) _actorIds.Remove(actorId); }
 
+    public bool TryMarkNotVisible(uint actorId) { lock (_gate) return _actorIds.Remove(actorId); }
+
     public void Clear() { lock (_gate) _actorIds.Clear(); }
 }

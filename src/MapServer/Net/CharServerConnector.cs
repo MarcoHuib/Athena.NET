@@ -563,6 +563,19 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
         var font = BinaryPrimitives.ReadUInt16LittleEndian(packet.AsSpan(50, 2));
         var sex = packet[52];
         var characterName = ReadFixedString(packet.AsSpan(53, PacketConstants.NameLength));
+        var hairStyle = BinaryPrimitives.ReadUInt16LittleEndian(packet.AsSpan(77));
+        var hairColor = BinaryPrimitives.ReadUInt16LittleEndian(packet.AsSpan(79));
+        var clothesColor = BinaryPrimitives.ReadUInt16LittleEndian(packet.AsSpan(81));
+        var bodyStyle = BinaryPrimitives.ReadUInt16LittleEndian(packet.AsSpan(83));
+        var weaponAppearance = BinaryPrimitives.ReadUInt32LittleEndian(packet.AsSpan(85));
+        var shieldAppearance = BinaryPrimitives.ReadUInt32LittleEndian(packet.AsSpan(89));
+        var headBottomAppearance = BinaryPrimitives.ReadUInt16LittleEndian(packet.AsSpan(93));
+        var headTopAppearance = BinaryPrimitives.ReadUInt16LittleEndian(packet.AsSpan(95));
+        var headMidAppearance = BinaryPrimitives.ReadUInt16LittleEndian(packet.AsSpan(97));
+        var robeAppearance = BinaryPrimitives.ReadUInt16LittleEndian(packet.AsSpan(99));
+        var option = BinaryPrimitives.ReadUInt32LittleEndian(packet.AsSpan(101));
+        var karma = packet[105];
+        var manner = BinaryPrimitives.ReadInt16LittleEndian(packet.AsSpan(106));
 
         authOk = new MapAuthOkData(
             accountId,
@@ -578,7 +591,20 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
             direction,
             font,
             sex,
-            characterName);
+            characterName,
+            hairStyle,
+            hairColor,
+            clothesColor,
+            bodyStyle,
+            weaponAppearance,
+            shieldAppearance,
+            headBottomAppearance,
+            headTopAppearance,
+            headMidAppearance,
+            robeAppearance,
+            option,
+            karma,
+            manner);
 
         return true;
     }

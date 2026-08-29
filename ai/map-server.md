@@ -1588,3 +1588,152 @@ Job Change and direct SkillPoints/StatPoints grants are deliberately NOT impleme
 is no `CharacterJobChangeService`/supported job-change flow yet, and normal testing should
 exercise the full Job EXP -> Job Level -> SkillPoints chain rather than a shortcut. Both remain
 documented future menu extensions once their underlying production services exist.
+
+## Player presence, AOI visibility, and movement/look/info fan-out
+
+Source evidence: `prontera-walking.pcapng` (SHA-256
+`be06f244719c702d81d09ba9e595bb2e04ec5f8bd0248db70b4dbc43f23198ad`) - see `ai/iro-2026-wire.md`'s
+own "Verified multiplayer player-presence/AOI wire evidence" section for the full packet-level
+evidence trace (0x09FF/0x09FD/0x0080/0x009C/0x0368/0x0A30/0x09FE). This section documents the
+resulting Athena.NET architecture and its scope/gaps, not the wire evidence itself.
+
+### Why not per-session TCP iteration
+
+The capture's single short walk observed 258 unique player ActorIds and a peak of 94
+simultaneously-visible players. A naive "for every player movement, scan every live
+`MapClientSession`" design does not scale past that, and would also couple map-local visibility
+directly to `MapTcpServer`'s session dictionary - making later distribution (explicitly out of
+scope for this slice, but not something the current design should foreclose) harder than
+necessary. The implemented shape instead is:
+
+```text
+validated action (movement/look/enter/leave)
+  -> authoritative shared player state (PlayerPresenceRegistry)
+  -> visibility coordinator / spatial query (PlayerVisibilityCoordinator)
+  -> observer notifications (IPlayerPresenceObserver, implemented by MapClientSession)
+  -> pure wire serializers (IroPlayerActorPackets)
+```
+
+`MapClientSession` remains transport/session orchestration; it never inspects another session's
+private fields, and `PlayerPresence` (`src/MapServer/World/PlayerPresence.cs`) is a plain
+immutable record with no `TcpClient`/`NetworkStream` field - the world model is not the network
+connection.
+
+### PlayerPresenceRegistry (spatial index)
+
+`src/MapServer/World/PlayerPresenceRegistry.cs` is a thread-safe authoritative registry keyed by
+both ActorId and CharacterId (`TryGetByActorId`/`TryGetByCharacterId`), backed by one
+per-map uniform grid (`bucket size 16`, independently configurable from `AreaSize` via
+`WorldVisibilityOptions`). `TryRegister`/`TryReplace`/`TryUnregister` mutate the index atomically
+under one short in-memory `Lock`; `QueryNearby`/`QueryCandidateActorIds` only ever examine buckets
+within `(AreaSize + bucketSize - 1) / bucketSize + 1` bucket-radius of the query point, then apply
+the exact AOI check per candidate - never a full-population scan. `Validate` rejects ActorId `0`,
+CharacterId `0`, or any ActorId `>= 110_000_000` (the NPC/monster `WorldActorIdAllocator` domain),
+enforcing that player wire ActorIds stay a visibly separate identity space from NPCs/monsters,
+never allocated through that allocator.
+`PlayerPresenceRegistryTests.LocalQuery_UsesOnlyNearbyMapBuckets_NotGlobalPopulation` proves the
+candidate set stays small (a 1-of-1000 registered player) even at that scale, and
+`ConcurrentRegisterMoveUnregister_DoesNotDuplicateOrCorruptIndex` proves concurrent
+register/move/unregister across 250 simulated players never corrupts bucket membership.
+
+### WorldVisibilityOptions (AOI rule)
+
+`src/MapServer/World/WorldVisibilityOptions.cs`: `AreaSize=14` (pinned
+`legacy/rathena/conf/battle/client.conf`, independently corroborated by the Prontera capture -
+see the wire doc), `BucketSize=16`. `IsVisible` is same-map (case-insensitive) AND
+`max(abs(dx), abs(dy)) <= AreaSize` - square/Chebyshev, never Euclidean. This is the ONE canonical
+place `14` is defined; it is not repeated as a literal elsewhere in runtime code.
+
+### PlayerVisibilityCoordinator (reciprocal discovery / edge reconciliation)
+
+`src/MapServer/World/PlayerVisibilityCoordinator.cs` owns one `SemaphoreSlim` gate serializing
+`RegisterAsync`/`UpdateMovementAsync`/`UpdateLookAsync`/`UnregisterAsync` against the registry and
+the `IPlayerPresenceObserver` map, so registry mutation + affected-observer computation happen
+atomically, while the actual packet delivery (`DeliverAllAsync`) happens AFTER releasing the gate
+(delivery is note-worthy I/O; correctness-critical state mutation is not held across it). This
+ordering is what keeps two concurrent registrations from ever both computing "I am the only one
+here" - see `ai/iro-2026-wire.md`'s player-presence section and
+`PlayerVisibilityCoordinatorTests.ReciprocalLogin_NewcomerGetsExistingAndExistingGetsSpawnExactlyOnce`.
+
+- **RegisterAsync**: the newcomer's own perspective discovers already-present nearby players as
+  `PlayerEntryKind.ExistingStandingOrWalking` (`0x09FF`/`0x09FD` depending on `Movement`); every
+  already-registered nearby observer receives the newcomer as `PlayerEntryKind.NewlySpawned`
+  (`0x09FE`) - see the wire doc's `0x09FE` evidence-boundary note for why this split is
+  Reference-backed rather than independently Prontera-capture-proven.
+- **UpdateMovementAsync**: replaces the authoritative presence, then for every actor whose AOI
+  relationship with the mover could have changed (candidates from BOTH the old and new position's
+  nearby buckets - a plain dedup loop over the two `QueryNearby` calls, not LINQ, since this runs
+  on every movement cell), computes `wasVisible`/`isVisible` from the OLD/NEW positions and emits
+  exactly one of: enter (both directions), leave (both directions, `0x0080` reason 0), or
+  `0x09FD` movement update (only if still visible AND the caller asked to broadcast movement -
+  `broadcastMovement=false` is used for intermediate crossed-cell reconciliation so only the
+  actual step that changes AOI membership emits enter/leave, not every intermediate cell).
+- **UpdateLookAsync**: replaces the presence, then sends `0x009C` to every CURRENTLY visible
+  observer only - a look change never itself creates/removes visibility.
+- **UnregisterAsync**: removes from the registry, sends one `0x0080` reason 0 to every observer
+  that had this actor visible, and calls `ForgetPlayer` on the removed session's own tracker for
+  each of those (see the next section for why reciprocal forgetting matters here).
+
+Every delivery method is `try`/catch-swallows `IOException`/`ObjectDisposedException`/
+`OperationCanceledException` in `DeliverAllAsync` - a dead/dropped peer connection during fan-out
+never faults the coordinator or blocks delivery to the remaining observers.
+
+### MapClientSession as IPlayerPresenceObserver
+
+`MapClientSession` implements `IPlayerPresenceObserver` directly (`ActorId => _accountId`).
+Each session keeps its OWN `VisibleActorTracker` (already existed for monster/NPC visibility;
+reused here) as the per-observer edge state: `PlayerEnteredViewAsync`/`PlayerMovementChangedAsync`/
+`PlayerLookChangedAsync`/`PlayerLeftViewAsync` each gate on `TryMarkVisible`/`IsActorVisible`/
+`TryMarkNotVisible` before writing anything, so a redundant reconciliation (the coordinator may
+call these more than once for the same logical edge under concurrent movement) never produces a
+duplicate wire packet, and a session never receives an entry/movement/look/vanish for its OWN
+`ActorId` (explicit `presence.ActorId == _accountId`/`actorId == _accountId` guard on every one of
+these methods) - a session never sees itself via presence fan-out.
+
+Lifecycle: `PlayerSessionLifecycle` (`Unauthenticated -> AuthenticatedButNotWorldVisible ->
+WorldVisible -> ChangingMapOrUnregistering -> Closed`, `src/MapServer/World/PlayerPresence.cs`)
+gates `EnterPlayerWorldAsync`/`LeavePlayerWorldAsync` under one `_playerPresenceGate` lock so a
+session can only ever be registering, registered-once, or cleanly deregistering - never
+double-registered or double-unregistered. `EnterPlayerWorldAsync` builds the public
+`PlayerPresence` projection from authoritative session state (`BuildCurrentPresence`: gameplay
+state, authenticated appearance fields, live-resolved equipped-item view IDs) and only calls
+`RegisterAsync` once that projection is non-null (an intentionally-empty character name, used by
+some legacy focused tests, is not eligible to become world-visible).
+
+`LeavePlayerWorldAsync` always reaches a terminal lifecycle state even if the underlying
+`PlayerVisibilityCoordinator.UnregisterAsync` call throws: it moves to
+`ChangingMapOrUnregistering` BEFORE awaiting, then unregisters with `CancellationToken.None`
+(never the caller's own token) inside a `try`/`finally` that resets `_presence`/`_playerLifecycle`
+unconditionally. This closes a real race that existed in an earlier draft of this code: a
+same-server warp, script warp, or generated-script warp path (`SendSameServerWarpAsync`,
+`ExecuteScriptWarpAsync`, `INpcScriptHost.WarpAsync`) all call `LeavePlayerWorldAsync` with the
+live session-cancellation token, and `PlayerVisibilityCoordinator.UnregisterAsync`'s very first
+`await` is a cancellable gate wait - a session cancellation landing at exactly that moment could
+previously throw `OperationCanceledException` before `TryUnregister` ever ran, permanently
+stranding the presence in the registry/old map's spatial index with the lifecycle wedged at
+`ChangingMapOrUnregistering` forever. The clean disconnect path
+(`StopCoreAsync`) already passed `CancellationToken.None`, so this only affected the warp paths -
+fixed by moving the `CancellationToken.None` substitution into `LeavePlayerWorldAsync` itself so
+every caller gets the same ghost-presence-proof guarantee regardless of which token it holds.
+
+### 0x0368 -> 0x0A30 actor-info integration
+
+`MapClientSession`'s existing `IroCzActorInfoRequest` handler (originally NPC/monster-only) now
+tries, in order: (1) self OR a currently-visible player ActorId resolved through
+`PlayerPresenceRegistry.TryGetByActorId` -> `0x0A30` built from live registry state (never a
+capture replay of another player's real social state - Athena has no party/guild system yet, so
+those three name fields are correctly empty per `PlayerPresence`'s defaults); (2) a visible NPC
+name from `WorldMapRegistry`; (3) a visible monster name from `MonsterRegistry`. The opaque
+trailing byte on `0x0368` is read but never validated, matching the wire doc's evidence.
+
+### Scope and explicitly open gaps (unchanged from the original PR scope)
+
+Not implemented by this slice, and not claimed: local/public chat, whisper, party, guild, trade,
+vending, PvP, player-vs-player skills, pet/homunculus/mercenary lifecycle, `objectType=7`
+companion actors, cross-process MapServer presence replication/distribution, dynamic-equipment-
+appearance broadcast to nearby players (equip/unequip refreshes the wearer's OWN
+`PlayerPresence` and its own `0x01D7`/inventory resync, but does not yet re-broadcast the changed
+look to observers already seeing that player), player death/respawn interaction with presence,
+stealth/invisibility/GM-visibility filtering, and a capture-proven byte-for-byte `0x09FE` layout
+(currently Reference-backed via the shared idle-unit serializer, one byte shorter than `0x09FF`
+for its missing standing/alive-state byte - see `IroPlayerActorPackets.SpawnFixedLength`).
