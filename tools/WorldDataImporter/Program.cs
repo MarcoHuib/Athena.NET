@@ -324,13 +324,15 @@ internal static class WorldDataImporterCli
         {
             "src/common/mmo.hpp", "src/map/script_constants.hpp", "db/re/job_exp.yml", "db/re/job_basepoints.yml",
             "db/re/job_stats.yml", "db/re/statpoint.yml", "db/re/skill_db.yml", "db/re/skill_tree.yml",
+            "conf/battle/player.conf",
         };
         foreach (var relative in required) if (!File.Exists(Path.Combine(root, relative))) throw new ArgumentException($"Required pinned source file is missing: {relative}.");
         return CharacterDataCompiler.Compile(new(
             await File.ReadAllTextAsync(Path.Combine(root, required[0])), await File.ReadAllTextAsync(Path.Combine(root, required[1])),
             await File.ReadAllTextAsync(Path.Combine(root, required[2])), await File.ReadAllTextAsync(Path.Combine(root, required[3])),
             await File.ReadAllTextAsync(Path.Combine(root, required[4])), await File.ReadAllTextAsync(Path.Combine(root, required[5])),
-            await File.ReadAllTextAsync(Path.Combine(root, required[6])), await File.ReadAllTextAsync(Path.Combine(root, required[7]))), commit);
+            await File.ReadAllTextAsync(Path.Combine(root, required[6])), await File.ReadAllTextAsync(Path.Combine(root, required[7])),
+            await File.ReadAllTextAsync(Path.Combine(root, required[8]))), commit);
     }
 
     private static async Task<int> CompileMobSpawnAsync(string[] args)

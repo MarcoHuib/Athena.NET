@@ -82,4 +82,63 @@ public sealed class CharacterGameplayStateSession
         }
         finally { _mutationLock.Release(); }
     }
+
+    // Validates and, if valid, atomically persists a base-stat increase (STR/AGI/VIT/INT/DEX/
+    // LUK). Unlike LearnSkillAsync this mutates ONLY fields already inside
+    // CharacterGameplayState (the target stat, StatPoints, Version), so it reuses the plain
+    // ICharacterGameplayStatePersistence.UpdateAsync optimistic-concurrency path through this
+    // session's existing MutateAsync rather than a second persistence interface - see
+    // ai/map-server.md section 15 ("reuse existing gameplay-state persistence where possible").
+    // Returns null on validation rejection OR persistence failure (including a stale
+    // GameplayStateVersion); in both cases State is left unchanged and no Status Points are
+    // spent. CharacterStatService remains fully static/pure - this is the one place that calls
+    // into it, exactly the way LearnSkillAsync is the one place that calls CharacterSkillService.
+    public async Task<CharacterStatIncreaseResult?> IncreaseStatAsync(
+        CharacterBaseStat stat,
+        int increaseAmount,
+        CancellationToken cancellationToken)
+    {
+        await _mutationLock.WaitAsync(cancellationToken);
+        try
+        {
+            var before = State;
+            var validation = CharacterStatService.ValidateIncrease(before, stat, increaseAmount);
+            if (!validation.IsValid) return null;
+            var candidate = ApplyStat(before, stat, validation.NewValue) with { StatPoints = validation.RemainingStatusPoints };
+            var persisted = await _persistence.UpdateAsync(_accountId, before, candidate, cancellationToken);
+            if (persisted is null) return null;
+            State = persisted;
+            return new CharacterStatIncreaseResult(before, persisted, stat, validation.PreviousValue, validation.NewValue, validation.StatusPointsSpent);
+        }
+        finally { _mutationLock.Release(); }
+    }
+
+    private static CharacterGameplayState ApplyStat(CharacterGameplayState state, CharacterBaseStat stat, ushort newValue) => stat switch
+    {
+        CharacterBaseStat.Strength => state with { Strength = newValue },
+        CharacterBaseStat.Agility => state with { Agility = newValue },
+        CharacterBaseStat.Vitality => state with { Vitality = newValue },
+        CharacterBaseStat.Intelligence => state with { Intelligence = newValue },
+        CharacterBaseStat.Dexterity => state with { Dexterity = newValue },
+        CharacterBaseStat.Luck => state with { Luck = newValue },
+        _ => throw new ArgumentOutOfRangeException(nameof(stat), stat, "Unknown base stat."),
+    };
+}
+
+// Immutable committed outcome of CharacterGameplayStateSession.IncreaseStatAsync. Before/After
+// are the full POST-COMMIT gameplay state on either side of the mutation - mirrors
+// CharacterProgressionResult's own Before/After convention. Deliberately carries no
+// packet-specific fields (see CharacterStatService's own doc comment on keeping protocol
+// constants out of the pure gameplay layer) - a future wire boundary projects a response from
+// this result, never the reverse.
+public sealed record CharacterStatIncreaseResult(
+    CharacterGameplayState Before,
+    CharacterGameplayState After,
+    CharacterBaseStat Stat,
+    ushort PreviousValue,
+    ushort NewValue,
+    uint StatusPointsSpent)
+{
+    public bool ValueChanged => NewValue != PreviousValue;
+    public uint StatusPointsChanged => StatusPointsSpent;
 }

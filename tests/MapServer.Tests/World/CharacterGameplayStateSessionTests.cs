@@ -117,6 +117,77 @@ public sealed class CharacterGameplayStateSessionTests
         Assert.Equal(first.State,second.State);
     }
 
+    [Fact]
+    public async Task IncreaseStatAsync_ValidMutation_PersistenceCalled_StatIncreases_StatusPointsDecrease_VersionIncreases()
+    {
+        var initial = State() with { StatPoints = 51 };
+        var store = new MemoryStore(initial);
+        var session = new CharacterGameplayStateSession(7, initial, store);
+
+        var result = await session.IncreaseStatAsync(CharacterBaseStat.Strength, 1, default);
+
+        Assert.NotNull(result);
+        Assert.Equal((ushort)1, result.PreviousValue);
+        Assert.Equal((ushort)2, result.NewValue);
+        Assert.Equal(2U, result.StatusPointsSpent);
+        Assert.Equal((ushort)2, session.State.Strength);
+        Assert.Equal(49U, session.State.StatPoints);
+        Assert.Equal(1UL, session.State.Version);
+    }
+
+    [Fact]
+    public async Task IncreaseStatAsync_ValidationRejection_NoPersistenceAttempted_StateUnchanged()
+    {
+        var initial = State() with { StatPoints = 0 }; // no points -> ValidateIncrease rejects before any persistence call
+        var store = new MemoryStore(initial);
+        var session = new CharacterGameplayStateSession(7, initial, store);
+
+        var result = await session.IncreaseStatAsync(CharacterBaseStat.Strength, 1, default);
+
+        Assert.Null(result);
+        Assert.Equal((ushort)1, session.State.Strength);
+        Assert.Equal(0U, session.State.StatPoints);
+        Assert.Equal(0UL, session.State.Version);
+    }
+
+    [Fact]
+    public async Task IncreaseStatAsync_FailedPersistence_StateUnchanged()
+    {
+        var initial = State() with { StatPoints = 51 };
+        var store = new MemoryStore(initial) { FailUpdates = true };
+        var session = new CharacterGameplayStateSession(7, initial, store);
+
+        var result = await session.IncreaseStatAsync(CharacterBaseStat.Strength, 1, default);
+
+        Assert.Null(result);
+        Assert.Equal((ushort)1, session.State.Strength);
+        Assert.Equal(51U, session.State.StatPoints);
+        Assert.Equal(0UL, session.State.Version);
+    }
+
+    // Two concurrent/replayed requests against the same session must serialize through the same
+    // mutation lock IncreaseStatAsync shares with MutateAsync/LearnSkillAsync, so a character
+    // can never overspend Status Points by racing two requests against the same starting state.
+    // Starting StatPoints=2 covers exactly one increase (cost 2); the second concurrent call must
+    // observe the first's already-updated State and be rejected as InsufficientStatusPoints.
+    [Fact]
+    public async Task IncreaseStatAsync_TwoConcurrentCallsAgainstSameSession_CannotOverspendStatusPoints()
+    {
+        var initial = State() with { Version = 10, StatPoints = 2 };
+        var store = new MemoryStore(initial);
+        var session = new CharacterGameplayStateSession(7, initial, store);
+
+        var first = session.IncreaseStatAsync(CharacterBaseStat.Strength, 1, default);
+        var second = session.IncreaseStatAsync(CharacterBaseStat.Strength, 1, default);
+        var results = await Task.WhenAll(first, second);
+
+        Assert.Single(results, r => r is not null);
+        Assert.Single(results, r => r is null);
+        Assert.Equal(11UL, session.State.Version);
+        Assert.Equal(0U, session.State.StatPoints);
+        Assert.Equal((ushort)2, session.State.Strength);
+    }
+
     private static CharacterGameplayState State()=>new(9,0,0,1,1,0,0,40,11,40,11,48,0,1,1,1,1,1,1);
     private sealed class MemoryStore(CharacterGameplayState state):ICharacterGameplayStatePersistence
     {

@@ -88,11 +88,17 @@ internal static class IroStatusEffectPackets
         return packet;
     }
 
-    // _sp enum values (legacy/rathena/src/map/map.hpp:500-501) used by BuildCoupleStatus.
+    // _sp enum values (legacy/rathena/src/map/map.hpp:500-501) used by BuildCoupleStatus. All
+    // six are independently confirmed by the base-stat-allocation capture (statsonly.pcapng,
+    // ai/iro-2026-wire.md) as the StatusId field of both 0x00BB (client request) and 0x00BC
+    // (server ack) - SpVit/SpLuk were added alongside that capture; SpStr/SpAgi/SpInt/SpDex
+    // pre-date it (added for CharacterStatusEffectState's temporary-status resync).
     internal const ushort SpStr = 13;
     internal const ushort SpAgi = 14;
+    internal const ushort SpVit = 15;
     internal const ushort SpInt = 16;
     internal const ushort SpDex = 17;
+    internal const ushort SpLuk = 18;
 
     // Pinned legacy/rathena/src/map/status.hpp enum efst_type (EFST_BLANK = -1 origin).
     internal const ushort EfstBlessing = 10;
