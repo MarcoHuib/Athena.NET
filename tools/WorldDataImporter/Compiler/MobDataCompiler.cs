@@ -17,7 +17,36 @@ internal static class MobDataCompiler
         int Attack, int Attack2, int Defense, int MagicDefense,
         int Str, int Agi, int Vit, int Int, int Dex, int Luk,
         int AttackRange, int WalkSpeed, int AttackDelay, int AttackMotion, int DamageMotion,
-        long BaseExp, long JobExp, MobModeData Mode);
+        long BaseExp, long JobExp, MobModeData Mode,
+        string? JapaneseName, uint Sp, long MvpExp, int Resistance, int MagicResistance,
+        int SkillRange, int ChaseRange, MobSizeData Size, MobRaceData Race, MobElementData Element,
+        int ElementLevel, int ClientAttackMotion, int DamageTaken, int GroupId, string? Title,
+        MobClassData Class);
+
+    // Mirrors Athena.Net.MapServer.World.MobSize exactly (same numeric values/names) - see that
+    // enum's own doc comment for the pinned e_size trace and why SZ_ALL/SZ_MAX are excluded.
+    internal enum MobSizeData { Small = 0, Medium = 1, Big = 2 }
+
+    // Mirrors Athena.Net.MapServer.World.MobRace exactly (same numeric values/names) - see that
+    // enum's own doc comment for the pinned e_race trace and why RC_NONE_/RC_ALL/RC_MAX are excluded.
+    internal enum MobRaceData
+    {
+        Formless = 0, Undead = 1, Brute = 2, Plant = 3, Insect = 4, Fish = 5, Demon = 6,
+        DemiHuman = 7, Angel = 8, Dragon = 9, PlayerHuman = 10, PlayerDoram = 11,
+    }
+
+    // Mirrors Athena.Net.MapServer.World.MobElement exactly (same numeric values/names) - see that
+    // enum's own doc comment for the pinned e_element trace and why the sentinel/wildcard members
+    // are excluded.
+    internal enum MobElementData
+    {
+        Neutral = 0, Water = 1, Earth = 2, Fire = 3, Wind = 4, Poison = 5, Holy = 6, Dark = 7,
+        Ghost = 8, Undead = 9,
+    }
+
+    // Mirrors Athena.Net.MapServer.World.MobClass exactly (same numeric values/names, including the
+    // pinned enum's own gap at 3) - see that enum's own doc comment for the pinned e_mob_class trace.
+    internal enum MobClassData { Normal = 0, Boss = 1, Guardian = 2, Battlefield = 4, Event = 5 }
 
     // Mirrors Athena.Net.MapServer.World.MobMode exactly (same bit values/names) - kept as a
     // separate type per this project's existing WorldDataImporter/MapServer decoupling rule (see
@@ -108,7 +137,89 @@ internal static class MobDataCompiler
             (int)OptionalInt(block, "DamageMotion", 0),
             OptionalInt(block, "BaseExp", 0),
             OptionalInt(block, "JobExp", 0),
-            ReadMode(block));
+            ReadMode(block),
+            OptionalScalar(block, "JapaneseName"),
+            (uint)OptionalInt(block, "Sp", 1),
+            OptionalInt(block, "MvpExp", 0),
+            (int)OptionalInt(block, "Resistance", 0),
+            (int)OptionalInt(block, "MagicResistance", 0),
+            (int)OptionalInt(block, "SkillRange", 0),
+            (int)OptionalInt(block, "ChaseRange", 0),
+            ReadSize(block),
+            ReadRace(block),
+            ReadElement(block),
+            (int)OptionalInt(block, "ElementLevel", 1),
+            // ClientAttackMotion has no fixed default: pinned MobDatabase::parseBodyNode resolves an
+            // absent field to THIS SAME mob's own resolved AttackMotion value the first time a mob_id
+            // is seen (mob.cpp:5391-5397) - see MobDefinition.ClientAttackMotion's own doc comment.
+            (int)OptionalInt(block, "ClientAttackMotion", OptionalInt(block, "AttackMotion", 0)),
+            (int)OptionalInt(block, "DamageTaken", 100),
+            (int)OptionalInt(block, "GroupId", 0),
+            OptionalScalar(block, "Title"),
+            ReadClass(block));
+    }
+
+    // Pinned MobDatabase::parseBodyNode's Size:/Race:/Element:/Class: resolution (mob.cpp:5244-5487):
+    // build "<Prefix>_" + the pinned string value, case-insensitively look it up against the fixed
+    // pinned constant table (script_get_constant -> search_str uses strcasecmp, matching real data
+    // such as "Player_Doram"/"Demihuman"), and fall back to the documented default when absent,
+    // unrecognized, or out of the type's valid range - exactly like every other unrecognized-Ai/
+    // unrecognized-mode fallback already in this file, never a thrown error for a single bad
+    // enum-shaped field.
+    private static MobSizeData ReadSize(string block)
+    {
+        var value = OptionalScalar(block, "Size");
+        if (value is null) return MobSizeData.Small;
+        return value.Trim() switch
+        {
+            var v when string.Equals(v, "Small", StringComparison.OrdinalIgnoreCase) => MobSizeData.Small,
+            var v when string.Equals(v, "Medium", StringComparison.OrdinalIgnoreCase) => MobSizeData.Medium,
+            var v when string.Equals(v, "Large", StringComparison.OrdinalIgnoreCase) => MobSizeData.Big, // Pinned "Size_Large" constant name maps to SZ_BIG.
+            _ => MobSizeData.Small,
+        };
+    }
+
+    private static readonly Dictionary<string, MobRaceData> RaceNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["Formless"] = MobRaceData.Formless, ["Undead"] = MobRaceData.Undead, ["Brute"] = MobRaceData.Brute,
+        ["Plant"] = MobRaceData.Plant, ["Insect"] = MobRaceData.Insect, ["Fish"] = MobRaceData.Fish,
+        ["Demon"] = MobRaceData.Demon, ["Demihuman"] = MobRaceData.DemiHuman, ["Angel"] = MobRaceData.Angel,
+        ["Dragon"] = MobRaceData.Dragon, ["Player_Human"] = MobRaceData.PlayerHuman, ["Player_Doram"] = MobRaceData.PlayerDoram,
+    };
+
+    private static MobRaceData ReadRace(string block)
+    {
+        var value = OptionalScalar(block, "Race");
+        if (value is null) return MobRaceData.Formless;
+        return RaceNames.TryGetValue(value.Trim(), out var race) ? race : MobRaceData.Formless;
+    }
+
+    private static readonly Dictionary<string, MobElementData> ElementNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["Neutral"] = MobElementData.Neutral, ["Water"] = MobElementData.Water, ["Earth"] = MobElementData.Earth,
+        ["Fire"] = MobElementData.Fire, ["Wind"] = MobElementData.Wind, ["Poison"] = MobElementData.Poison,
+        ["Holy"] = MobElementData.Holy, ["Dark"] = MobElementData.Dark, ["Ghost"] = MobElementData.Ghost,
+        ["Undead"] = MobElementData.Undead,
+    };
+
+    private static MobElementData ReadElement(string block)
+    {
+        var value = OptionalScalar(block, "Element");
+        if (value is null) return MobElementData.Neutral;
+        return ElementNames.TryGetValue(value.Trim(), out var element) ? element : MobElementData.Neutral;
+    }
+
+    private static readonly Dictionary<string, MobClassData> ClassNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["Normal"] = MobClassData.Normal, ["Boss"] = MobClassData.Boss, ["Guardian"] = MobClassData.Guardian,
+        ["Battlefield"] = MobClassData.Battlefield, ["Event"] = MobClassData.Event,
+    };
+
+    private static MobClassData ReadClass(string block)
+    {
+        var value = OptionalScalar(block, "Class");
+        if (value is null) return MobClassData.Normal;
+        return ClassNames.TryGetValue(value.Trim(), out var mobClass) ? mobClass : MobClassData.Normal;
     }
 
     // Reproduces pinned MobDatabase::parseBodyNode's mode resolution exactly (mob.cpp:5446-5519):
@@ -272,7 +383,16 @@ internal static class MobDataCompiler
                 .Append(", AttackDelay: ").Append(mob.AttackDelay).Append(", AttackMotion: ").Append(mob.AttackMotion)
                 .Append(", DamageMotion: ").Append(mob.DamageMotion).Append(", BaseExp: ").Append(mob.BaseExp)
                 .Append(", JobExp: ").Append(mob.JobExp).Append(", Mode: ").Append(FormatMode(mob.Mode))
-                .Append(", Source: new WorldSourceInfo(\"rAthena\", \"").Append(commit).Append("\", \"").Append(sourceFile).Append("\", ").Append(sourceLine).AppendLine("));");
+                .Append(", Source: new WorldSourceInfo(\"rAthena\", \"").Append(commit).Append("\", \"").Append(sourceFile).Append("\", ").Append(sourceLine).Append(')')
+                .Append(", JapaneseName: ").Append(FormatNullableString(mob.JapaneseName))
+                .Append(", MaxSp: ").Append(mob.Sp).Append(", MvpExp: ").Append(mob.MvpExp)
+                .Append(", Resistance: ").Append(mob.Resistance).Append(", MagicResistance: ").Append(mob.MagicResistance)
+                .Append(", SkillRange: ").Append(mob.SkillRange).Append(", ChaseRange: ").Append(mob.ChaseRange)
+                .Append(", Size: MobSize.").Append(mob.Size).Append(", Race: MobRace.").Append(mob.Race)
+                .Append(", Element: MobElement.").Append(mob.Element).Append(", ElementLevel: ").Append(mob.ElementLevel)
+                .Append(", ClientAttackMotion: ").Append(mob.ClientAttackMotion).Append(", DamageTaken: ").Append(mob.DamageTaken)
+                .Append(", GroupId: ").Append(mob.GroupId).Append(", Title: ").Append(FormatNullableString(mob.Title))
+                .Append(", Class: MobClass.").Append(mob.Class).AppendLine(");");
         }
         output.AppendLine("}");
         return output.ToString();
@@ -419,11 +539,37 @@ internal static class MobDataCompiler
         return string.Join(" | ", parts);
     }
 
+    // Emits a C# null literal or an escaped string literal - JapaneseName/Title are genuinely
+    // Optional pinned fields (mob_db.yml doc comment) unlike AegisName/Name, which pinned source
+    // treats as always-present per-block identifiers.
+    private static string FormatNullableString(string? value) =>
+        value is null ? "null" : "\"" + EscapeForCSharpString(value) + "\"";
+
+    private static string EscapeForCSharpString(string value) => value.Replace("\\", "\\\\").Replace("\"", "\\\"");
+
     private static string RequiredScalar(string block, string field)
     {
         var match = ScalarRegex(field).Match(block);
         if (!match.Success) throw new ArgumentException($"Pinned mob_db.yml block has no '{field}' field.");
         return match.Groups[1].Value;
+    }
+
+    // Unlike RequiredScalar, an absent field is a legitimate "use the documented default" case, not
+    // an error - mirrors OptionalInt's own absent-field semantics for string-shaped fields
+    // (JapaneseName, Title, and the Size/Race/Element/Class enum-shaped scalars).
+    private static string? OptionalScalar(string block, string field)
+    {
+        var match = ScalarRegex(field).Match(block);
+        if (!match.Success) return null;
+        var raw = match.Groups[1].Value;
+        // Real pinned Title: values are YAML-double-quoted whenever the string contains characters
+        // the YAML scanner would otherwise treat specially (e.g. "<Red Pepper>" - the angle brackets
+        // require quoting). Size/Race/Element/Class/JapaneseName are always bare unquoted words in
+        // every real pinned occurrence, so this only ever fires for a genuinely quoted scalar - a
+        // one-layer strip of a matching leading/trailing '"' pair, mirroring how a real YAML parser
+        // would unwrap this exact simple case (no embedded-quote escape handling is needed since
+        // rAthena's own values never contain an embedded '"').
+        return raw.Length >= 2 && raw[0] == '"' && raw[^1] == '"' ? raw[1..^1] : raw;
     }
 
     // A field entirely absent from the block takes the constructor default

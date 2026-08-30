@@ -776,6 +776,54 @@ existing `IMobSpawnCellSelector` map-wide randomized-search semantics apply (nev
 convention, all five pinned `prt_fild08{,a,b,c,d}` family rows are generated losslessly (`new_1-3`,
 an unrelated map sharing "Little Poring"'s display name, is the only excluded row).
 
+### Mob static-data schema coverage
+
+`MobDefinition` (`src/MapServer/World/WorldEntityDefinition.cs`) and `MobDataCompiler.
+ReadMobDefinition`/`GenerateMobDefinition` (`tools/WorldDataImporter/Compiler/MobDataCompiler.cs`)
+losslessly model every pinned `db/re/mob_db.yml` top-level scalar field documented in that file's
+own header comment, beyond the original combat/movement slice (Level/Hp/Attack/Attack2/Defense/
+MagicDefense/Str-Agi-Vit-Int-Dex-Luk/AttackRange/WalkSpeed/AttackDelay/AttackMotion/DamageMotion/
+BaseExp/JobExp/Ai+Modes): `JapaneseName`, `Sp` (-> `MaxSp`), `MvpExp`, `Resistance`,
+`MagicResistance`, `SkillRange`, `ChaseRange`, `Size`, `Race`, `Element`, `ElementLevel`,
+`ClientAttackMotion`, `DamageTaken`, `GroupId`, and `Title`. Each uses the pinned default
+documented in that header comment (verified against `mob.cpp`'s own `s_mob_db` constructor and
+`MobDatabase::parseBodyNode`, e.g. `Sp` -> 1, `DamageTaken` -> 100, `ElementLevel` -> 1) rather than
+a blanket zero — `ClientAttackMotion` specifically has NO fixed default: an absent value resolves
+to THIS SAME mob's own resolved `AttackMotion` (`mob.cpp:5391-5397`, the `else { if (!exists) ...
+}` branch for a mob_id seen for the first time), which `MobDataCompiler` computes explicitly rather
+than approximating with a constant.
+
+`Size`/`Race`/`Element`/`Class` are new strongly-typed generated enums (`MobSize`/`MobRace`/
+`MobElement`/`MobClass`, alongside the pre-existing `[Flags] MobMode`) mirroring the pinned
+`e_size`/`e_race`/`e_element`/`e_mob_class` numeric values exactly (including pinned's own gap —
+`MobClass.Battlefield = 4`, no member at 3). Only the members `MobDatabase::parseBodyNode` can
+actually resolve into a real per-mob value are modeled (e.g. `RC_ALL`/`ELE_WEAPON`/`SZ_MAX` are
+pinned wildcard/sentinel constants a real `Size:`/`Race:`/`Element:` field is never resolved to,
+per each parser's own bounds-check-then-clamp-to-default logic) — see each enum's own doc comment
+in `WorldEntityDefinition.cs` for the exact pinned trace. String values resolve case-insensitively
+against the fixed pinned name table (matching `script_get_constant`'s own `search_str`/`strcasecmp`
+lookup — real pinned data uses both `Size: Large`/`Race: Player_Doram` and `Race: Demihuman`
+spellings, not the enum member's own C# identifier casing), falling back to the documented default
+on an unrecognized value exactly like the pre-existing unrecognized-`Ai`-preset fallback — never a
+thrown error for one bad enum-shaped field. A `Title:`/`JapaneseName:` value that is YAML-quoted in
+the pinned source (e.g. `Title: "<Red Pepper>"`, required whenever the value contains a
+YAML-special character) is unwrapped before being re-emitted as a proper escaped C# string literal,
+not embedded with its original YAML quote characters.
+
+Deliberately still out of scope: `RaceGroups` (no `CHK_RACE`-style fixed bound, no runtime
+consumer) and `MvpDrops` (list-shaped, no drop-table runtime — same rationale as `Drops`, but
+without `Drops`' own dedicated analyzer component, since nothing yet consumes MVP-specific reward
+items). Both remain genuine, tracked `StaticData` gaps (`mob-field:race-groups`/
+`mob-field:mvp-drops`) in `analyze`'s domain report — `RepositoryDomainAnalyzers.MobSupportedKeys`
+is kept in sync with `MobDataCompiler`'s actual field coverage by
+`MobDataCompilerTests.PinnedMobDbSchema_EveryDocumentedTopLevelField_IsAccountedForByCompilerOrExplicitExclusion`,
+so a future pinned schema addition is caught as a test failure rather than silently widening the
+unmeasured gap. See `tests/WorldDataImporter.Tests/MobDataCompilerTests.cs` for the full
+enum-coverage and lossless-round-trip regression suite, including a real pinned fixture (Golden
+Thief Bug, Id 1086) that exercises `MvpExp`/`Size: Large`/`Race: Insect`/`Element: Fire`/
+`ElementLevel: 2`/`Class: Boss` together against real rAthena data rather than only synthetic
+fixtures.
+
 Mob definitions are generated once, stateless/deterministic, into the shared global
 `GeneratedMobs` (`internal static partial class`). Output is sharded by pinned-source-derived
 category AND a fixed 1000-MobId range grid within that category — a FIXED grid (1000-1999,

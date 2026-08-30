@@ -542,7 +542,13 @@ internal static class RepositoryDomainAnalyzers
         new(domain, id, name, Relative(root, path), line, status, components,
             dependencies.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray(), blockers.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray(), map, provenance);
 
-    private static readonly string[] MobSupportedKeys = ["Id", "AegisName", "Name", "Level", "Hp", "Attack", "Attack2", "Defense", "MagicDefense", "Str", "Agi", "Vit", "Int", "Dex", "Luk", "AttackRange", "WalkSpeed", "AttackDelay", "AttackMotion", "DamageMotion", "BaseExp", "JobExp", "Ai", "Modes"];
+    // Kept in sync with MobDataCompiler.ReadMobDefinition's actually-parsed field set - a field
+    // added there without a matching addition here would silently under-report a real gap as fixed
+    // (see MobDataCompilerSchemaDriftTests for the regression that keeps these two lists honest).
+    // RaceGroups/MvpDrops are deliberately NOT here even though MobDataCompiler doesn't read them:
+    // MvpDrops has no runtime concept and remains a genuine StaticData gap; RaceGroups likewise has
+    // no CHK_RACE-style fixed bound or runtime consumer.
+    private static readonly string[] MobSupportedKeys = ["Id", "AegisName", "Name", "Level", "Hp", "Attack", "Attack2", "Defense", "MagicDefense", "Str", "Agi", "Vit", "Int", "Dex", "Luk", "AttackRange", "WalkSpeed", "AttackDelay", "AttackMotion", "DamageMotion", "BaseExp", "JobExp", "Ai", "Modes", "JapaneseName", "Sp", "MvpExp", "Resistance", "MagicResistance", "SkillRange", "ChaseRange", "Size", "Race", "Element", "ElementLevel", "ClientAttackMotion", "DamageTaken", "GroupId", "Title", "Class"];
     private static readonly string[] MobSupportedModes = ["CanMove", "NoRandomWalk", "CanAttack", "ChangeTargetMelee", "ChangeTargetChase"];
     private static readonly string[] ItemSupportedKeys = ["Id", "AegisName", "Name", "Type", "AliasName", "Attack", "WeaponLevel", "SubType", "Range", "Locations", "Script", "EquipScript", "UnEquipScript"];
 

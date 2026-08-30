@@ -399,4 +399,340 @@ public sealed class MobDataCompilerTests
         Assert.Contains("int_land04", first);
         Assert.Contains("X: 0, Y: 0, Xs: 0, Ys: 0", first);
     }
+
+    // ===== Expanded static-field schema coverage (Size/Race/Element/Class/scalars) =====
+
+    // Real pinned db/re/mob_db.yml Id 1086 (Golden Thief Bug, e985006171d2eb320ee512a653f4c83aea3d81b6),
+    // reproduced verbatim except for the still-unmodeled list-shaped MvpDrops:/Drops: blocks (which
+    // this project intentionally does not scalar-parse - see the Drops component's own doc comment
+    // in RepositoryDomainAnalyzers.AnalyzeMobs). Chosen because it is a real MVP that exercises
+    // MvpExp, Size: Large (-> MobSize.Big), Race: Insect, Element: Fire, a non-default ElementLevel,
+    // ClientAttackMotion/DamageTaken values that genuinely differ from their pinned defaults, and
+    // Class: Boss all in one authentic pinned block - a genuine "lossless round trip against real
+    // rAthena data" regression, not a synthetic fixture.
+    private const string GoldenThiefBugFixture = """
+        Body:
+          - Id: 1086
+            AegisName: GOLDEN_BUG
+            Name: Golden Thief Bug
+            Level: 65
+            Hp: 222750
+            BaseExp: 102060
+            JobExp: 77760
+            MvpExp: 51030
+            Attack: 952
+            Attack2: 843
+            Defense: 159
+            MagicDefense: 81
+            Str: 71
+            Agi: 77
+            Vit: 80
+            Int: 62
+            Dex: 140
+            Luk: 76
+            AttackRange: 1
+            SkillRange: 10
+            ChaseRange: 12
+            Size: Large
+            Race: Insect
+            Element: Fire
+            ElementLevel: 2
+            WalkSpeed: 100
+            AttackDelay: 768
+            AttackMotion: 768
+            ClientAttackMotion: 720
+            DamageMotion: 480
+            DamageTaken: 10
+            Ai: 07
+            Class: Boss
+            Modes:
+              Mvp: true
+        """;
+
+    [Fact]
+    public void ReadMobDefinition_RealPinnedGoldenThiefBug_ReadsEveryExpandedStaticField()
+    {
+        var mob = MobDataCompiler.ReadMobDefinition(GoldenThiefBugFixture, 1086);
+
+        Assert.Equal("GOLDEN_BUG", mob.AegisName);
+        Assert.Equal(51030, mob.MvpExp);
+        Assert.Equal(10, mob.SkillRange);
+        Assert.Equal(12, mob.ChaseRange);
+        Assert.Equal(MobDataCompiler.MobSizeData.Big, mob.Size); // Pinned "Large" -> SZ_BIG.
+        Assert.Equal(MobDataCompiler.MobRaceData.Insect, mob.Race);
+        Assert.Equal(MobDataCompiler.MobElementData.Fire, mob.Element);
+        Assert.Equal(2, mob.ElementLevel);
+        Assert.Equal(720, mob.ClientAttackMotion); // Explicit pinned value, not the AttackMotion-derived default.
+        Assert.Equal(10, mob.DamageTaken);
+        Assert.Equal(MobDataCompiler.MobClassData.Boss, mob.Class);
+        Assert.Equal(0, mob.Resistance); // Absent from this block - genuinely defaults to 0.
+        Assert.Equal(0, mob.MagicResistance);
+        Assert.Equal(1u, mob.Sp); // Absent - defaults to 1 per pinned constructor.
+        Assert.Null(mob.JapaneseName);
+        Assert.Null(mob.Title);
+        Assert.Equal(0, mob.GroupId);
+    }
+
+    [Fact]
+    public void GenerateMobDefinition_RealPinnedGoldenThiefBug_RoundTripsLosslesslyThroughGeneratedSource()
+    {
+        var mob = MobDataCompiler.ReadMobDefinition(GoldenThiefBugFixture, 1086);
+        var generated = MobDataCompiler.GenerateMobDefinition(mob, "e985006171d2eb320ee512a653f4c83aea3d81b6", "GeneratedMobs", "GoldenThiefBug", "db/re/mob_db.yml", 4187);
+
+        Assert.Contains("MvpExp: 51030", generated);
+        Assert.Contains("SkillRange: 10", generated);
+        Assert.Contains("ChaseRange: 12", generated);
+        Assert.Contains("Size: MobSize.Big", generated);
+        Assert.Contains("Race: MobRace.Insect", generated);
+        Assert.Contains("Element: MobElement.Fire", generated);
+        Assert.Contains("ElementLevel: 2", generated);
+        Assert.Contains("ClientAttackMotion: 720", generated);
+        Assert.Contains("DamageTaken: 10", generated);
+        Assert.Contains("Class: MobClass.Boss", generated);
+        Assert.Contains("JapaneseName: null", generated);
+        Assert.Contains("Title: null", generated);
+    }
+
+    // ClientAttackMotion's pinned "absent -> falls back to this same mob's own resolved
+    // AttackMotion" default (mob.cpp:5391-5397) is genuinely derived, not a fixed constant - proven
+    // with a dedicated fixture that sets a distinctive AttackMotion and omits ClientAttackMotion
+    // entirely (unlike G_PORING's fixture block above, which sets both explicitly to DIFFERENT
+    // values and would not actually exercise this fallback path).
+    [Fact]
+    public void ReadMobDefinition_MissingClientAttackMotion_DefaultsToThisMobsOwnAttackMotion()
+    {
+        const string fixture = "Body:\n  - Id: 1\n    AegisName: T\n    Name: T\n    AttackMotion: 555\n";
+        var mob = MobDataCompiler.ReadMobDefinition(fixture, 1);
+
+        Assert.Equal(555, mob.AttackMotion);
+        Assert.Equal(555, mob.ClientAttackMotion);
+    }
+
+    [Fact]
+    public void ReadMobDefinition_MissingDamageTaken_DefaultsTo100()
+    {
+        // Pinned constructor default (mob.cpp:4966: this->damagetaken = 100;), matching the doc
+        // comment "(Default: 100)" exactly - not 0.
+        var mob = MobDataCompiler.ReadMobDefinition(MobDbFixture, 2401);
+
+        Assert.Equal(100, mob.DamageTaken);
+    }
+
+    // ===== Enum-coverage: every valid pinned Size:/Race:/Element:/Class: string value resolves to
+    // the matching modeled enum member, exercising the full CHK_RACE/CHK_ELEMENT/Size_*/CLASS_*
+    // valid ranges this project models - not merely the handful of values incidentally present in
+    // the G_PORING/Golden Thief Bug fixtures above. =====
+
+    // xUnit [Theory]/[InlineData] requires the test method's parameter types to be at least as
+    // accessible as the method itself (a public [Theory] cannot take an `internal` enum parameter),
+    // and MobDataCompiler's Mob*Data enums are deliberately `internal` (matching MobModeData's own
+    // existing accessibility) - so each enum-coverage case below is a small [Fact] loop instead of a
+    // [Theory], not a scope reduction in what is actually asserted.
+    [Fact]
+    public void ReadMobDefinition_EveryValidSize_ResolvesToMatchingEnumMember()
+    {
+        AssertSize("Small", MobDataCompiler.MobSizeData.Small);
+        AssertSize("Medium", MobDataCompiler.MobSizeData.Medium);
+        AssertSize("Large", MobDataCompiler.MobSizeData.Big);
+        AssertSize("large", MobDataCompiler.MobSizeData.Big); // script_get_constant/search_str uses strcasecmp - case-insensitive.
+
+        static void AssertSize(string pinnedValue, MobDataCompiler.MobSizeData expected)
+        {
+            var fixture = $"Body:\n  - Id: 1\n    AegisName: T\n    Name: T\n    Size: {pinnedValue}\n";
+            Assert.Equal(expected, MobDataCompiler.ReadMobDefinition(fixture, 1).Size);
+        }
+    }
+
+    [Fact]
+    public void ReadMobDefinition_UnknownSize_DefaultsToSmall()
+    {
+        const string fixture = "Body:\n  - Id: 1\n    AegisName: T\n    Name: T\n    Size: NotReal\n";
+        Assert.Equal(MobDataCompiler.MobSizeData.Small, MobDataCompiler.ReadMobDefinition(fixture, 1).Size);
+    }
+
+    [Fact]
+    public void ReadMobDefinition_EveryValidRace_ResolvesToMatchingEnumMember()
+    {
+        AssertRace("Formless", MobDataCompiler.MobRaceData.Formless);
+        AssertRace("Undead", MobDataCompiler.MobRaceData.Undead);
+        AssertRace("Brute", MobDataCompiler.MobRaceData.Brute);
+        AssertRace("Plant", MobDataCompiler.MobRaceData.Plant);
+        AssertRace("Insect", MobDataCompiler.MobRaceData.Insect);
+        AssertRace("Fish", MobDataCompiler.MobRaceData.Fish);
+        AssertRace("Demon", MobDataCompiler.MobRaceData.Demon);
+        AssertRace("Demihuman", MobDataCompiler.MobRaceData.DemiHuman); // Real pinned spelling (single-word "Demihuman", not "DemiHuman").
+        AssertRace("Angel", MobDataCompiler.MobRaceData.Angel);
+        AssertRace("Dragon", MobDataCompiler.MobRaceData.Dragon);
+        AssertRace("Player_Human", MobDataCompiler.MobRaceData.PlayerHuman);
+        AssertRace("Player_Doram", MobDataCompiler.MobRaceData.PlayerDoram);
+
+        static void AssertRace(string pinnedValue, MobDataCompiler.MobRaceData expected)
+        {
+            var fixture = $"Body:\n  - Id: 1\n    AegisName: T\n    Name: T\n    Race: {pinnedValue}\n";
+            Assert.Equal(expected, MobDataCompiler.ReadMobDefinition(fixture, 1).Race);
+        }
+    }
+
+    [Fact]
+    public void ReadMobDefinition_UnknownRace_DefaultsToFormless()
+    {
+        const string fixture = "Body:\n  - Id: 1\n    AegisName: T\n    Name: T\n    Race: NotReal\n";
+        Assert.Equal(MobDataCompiler.MobRaceData.Formless, MobDataCompiler.ReadMobDefinition(fixture, 1).Race);
+    }
+
+    [Fact]
+    public void ReadMobDefinition_EveryValidElement_ResolvesToMatchingEnumMember()
+    {
+        AssertElement("Neutral", MobDataCompiler.MobElementData.Neutral);
+        AssertElement("Water", MobDataCompiler.MobElementData.Water);
+        AssertElement("Earth", MobDataCompiler.MobElementData.Earth);
+        AssertElement("Fire", MobDataCompiler.MobElementData.Fire);
+        AssertElement("Wind", MobDataCompiler.MobElementData.Wind);
+        AssertElement("Poison", MobDataCompiler.MobElementData.Poison);
+        AssertElement("Holy", MobDataCompiler.MobElementData.Holy);
+        AssertElement("Dark", MobDataCompiler.MobElementData.Dark);
+        AssertElement("Ghost", MobDataCompiler.MobElementData.Ghost);
+        AssertElement("Undead", MobDataCompiler.MobElementData.Undead);
+
+        static void AssertElement(string pinnedValue, MobDataCompiler.MobElementData expected)
+        {
+            var fixture = $"Body:\n  - Id: 1\n    AegisName: T\n    Name: T\n    Element: {pinnedValue}\n";
+            Assert.Equal(expected, MobDataCompiler.ReadMobDefinition(fixture, 1).Element);
+        }
+    }
+
+    [Fact]
+    public void ReadMobDefinition_UnknownElement_DefaultsToNeutral()
+    {
+        const string fixture = "Body:\n  - Id: 1\n    AegisName: T\n    Name: T\n    Element: NotReal\n";
+        Assert.Equal(MobDataCompiler.MobElementData.Neutral, MobDataCompiler.ReadMobDefinition(fixture, 1).Element);
+    }
+
+    [Fact]
+    public void ReadMobDefinition_EveryValidClass_ResolvesToMatchingEnumMember()
+    {
+        AssertClass("Normal", MobDataCompiler.MobClassData.Normal);
+        AssertClass("Boss", MobDataCompiler.MobClassData.Boss);
+        AssertClass("Guardian", MobDataCompiler.MobClassData.Guardian);
+        AssertClass("Battlefield", MobDataCompiler.MobClassData.Battlefield);
+        AssertClass("Event", MobDataCompiler.MobClassData.Event);
+
+        static void AssertClass(string pinnedValue, MobDataCompiler.MobClassData expected)
+        {
+            var fixture = $"Body:\n  - Id: 1\n    AegisName: T\n    Name: T\n    Class: {pinnedValue}\n";
+            Assert.Equal(expected, MobDataCompiler.ReadMobDefinition(fixture, 1).Class);
+        }
+    }
+
+    [Fact]
+    public void ReadMobDefinition_UnknownClass_DefaultsToNormal()
+    {
+        const string fixture = "Body:\n  - Id: 1\n    AegisName: T\n    Name: T\n    Class: NotReal\n";
+        Assert.Equal(MobDataCompiler.MobClassData.Normal, MobDataCompiler.ReadMobDefinition(fixture, 1).Class);
+    }
+
+    // ===== Optional string fields (JapaneseName/Title) - genuinely Optional per the pinned doc
+    // comment, unlike AegisName/Name which pinned source always populates. =====
+
+    [Fact]
+    public void ReadMobDefinition_JapaneseNameAndTitle_ArePreservedWhenPresent()
+    {
+        // Real pinned values: db/re/mob_db.yml Id 1013 (Snake) JapaneseName, and the "<Red Pepper>"
+        // Title convention used by several real pinned costume/festival mobs.
+        const string fixture = """
+            Body:
+              - Id: 1
+                AegisName: T
+                Name: Test
+                JapaneseName: Snake
+                Title: "<Red Pepper>"
+            """;
+        var mob = MobDataCompiler.ReadMobDefinition(fixture, 1);
+
+        Assert.Equal("Snake", mob.JapaneseName);
+        Assert.Equal("<Red Pepper>", mob.Title);
+    }
+
+    [Fact]
+    public void GenerateMobDefinition_Title_IsUnwrappedFromYamlQuotingAndEmittedAsCSharpStringLiteral()
+    {
+        // Real pinned convention (db/re/mob_db.yml Id 100200/100201): Title: values are
+        // YAML-double-quoted whenever they contain characters the YAML scanner treats specially
+        // (here, '<'/'>') - MobDataCompiler must unwrap that YAML quoting, not embed it verbatim
+        // into the generated C# string literal.
+        const string fixture = """
+            Body:
+              - Id: 1
+                AegisName: T
+                Name: Test
+                Title: "<Red Pepper>"
+            """;
+        var mob = MobDataCompiler.ReadMobDefinition(fixture, 1);
+        var generated = MobDataCompiler.GenerateMobDefinition(mob, "abc123", "GeneratedMobs", "Test", "db/re/mob_db.yml", 1);
+
+        Assert.Equal("<Red Pepper>", mob.Title);
+        Assert.Contains("Title: \"<Red Pepper>\"", generated);
+    }
+
+    [Fact]
+    public void GenerateMobDefinition_TitleContainingABackslashOrQuote_IsEscapedForCSharpStringLiterals()
+    {
+        // No real pinned mob_db.yml Title: value contains an embedded quote/backslash today, but
+        // MobDataCompiler's escaping must still be correct if one ever did - proven directly against
+        // EscapeForCSharpString's contract via a synthetic value (bare, not YAML-quoted, so this
+        // exercises escaping in isolation from the YAML-unwrap behavior proven above).
+        const string fixture = "Body:\n  - Id: 1\n    AegisName: T\n    Name: T\n    Title: Say \"Hi\"\n";
+        var mob = MobDataCompiler.ReadMobDefinition(fixture, 1);
+        var generated = MobDataCompiler.GenerateMobDefinition(mob, "abc123", "GeneratedMobs", "Test", "db/re/mob_db.yml", 1);
+
+        Assert.Equal("Say \"Hi\"", mob.Title);
+        Assert.Contains("Title: \"Say \\\"Hi\\\"\"", generated);
+    }
+
+    // ===== Schema-drift guard: the pinned mob_db.yml header comment (legacy/rathena/db/re/
+    // mob_db.yml, the file's own authoritative field list) is the ground truth this project's
+    // MobDataCompiler is measured against. This test enumerates every top-level scalar/nested-block
+    // field name documented there and asserts each is either read by MobDataCompiler.
+    // ReadMobDefinition (this project's static-data model) or is one of the explicitly-excluded
+    // list-shaped/unbounded blocks that RepositoryDomainAnalyzers.AnalyzeMobs already tracks through
+    // its own dedicated component instead (Drops, MvpDrops, RaceGroups) - so a future pinned
+    // mob_db.yml revision that adds a genuinely new top-level scalar field is caught here as a test
+    // failure instead of silently expanding the unmeasured gap.
+    [Fact]
+    public void PinnedMobDbSchema_EveryDocumentedTopLevelField_IsAccountedForByCompilerOrExplicitExclusion()
+    {
+        var documentedFields = new[]
+        {
+            "Id", "AegisName", "Name", "JapaneseName", "Level", "Hp", "Sp", "BaseExp", "JobExp",
+            "MvpExp", "Attack", "Attack2", "Defense", "MagicDefense", "Resistance", "MagicResistance",
+            "Str", "Agi", "Vit", "Int", "Dex", "Luk", "AttackRange", "SkillRange", "ChaseRange",
+            "Size", "Race", "RaceGroups", "Element", "ElementLevel", "WalkSpeed", "AttackDelay",
+            "AttackMotion", "ClientAttackMotion", "DamageMotion", "DamageTaken", "GroupId", "Title",
+            "Ai", "Class", "Modes", "MvpDrops", "Drops",
+        };
+        // Fields MobDataCompiler.ReadMobDefinition genuinely parses into MobDefinitionData (via
+        // ScalarRegex/ReadMode/ReadSize/ReadRace/ReadElement/ReadClass).
+        var compilerReadFields = new[]
+        {
+            "Id", "AegisName", "Name", "JapaneseName", "Level", "Hp", "Sp", "BaseExp", "JobExp",
+            "MvpExp", "Attack", "Attack2", "Defense", "MagicDefense", "Resistance", "MagicResistance",
+            "Str", "Agi", "Vit", "Int", "Dex", "Luk", "AttackRange", "SkillRange", "ChaseRange",
+            "Size", "Race", "Element", "ElementLevel", "WalkSpeed", "AttackDelay", "AttackMotion",
+            "ClientAttackMotion", "DamageMotion", "DamageTaken", "GroupId", "Title", "Ai", "Class",
+            "Modes",
+        };
+        // List-shaped/unbounded blocks with no fixed scalar shape and their own dedicated analyzer
+        // component (RepositoryDomainAnalyzers.AnalyzeMobs' Drops component; MvpDrops/RaceGroups
+        // remain genuine, tracked StaticData gaps) - deliberately excluded from
+        // MobDataCompiler.ReadMobDefinition, not silently forgotten.
+        var explicitlyExcluded = new[] { "RaceGroups", "MvpDrops", "Drops" };
+
+        var unaccountedFor = documentedFields.Except(compilerReadFields).Except(explicitlyExcluded).ToArray();
+
+        Assert.Empty(unaccountedFor);
+        // Guards the guard itself: every compiler-read field must actually be one of the
+        // pinned-documented fields (catches a typo'd field name in either list above).
+        Assert.Empty(compilerReadFields.Except(documentedFields));
+        Assert.Empty(explicitlyExcluded.Except(documentedFields));
+    }
 }

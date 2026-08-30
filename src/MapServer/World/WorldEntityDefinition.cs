@@ -66,6 +66,74 @@ public enum MobMode
     ChangeTargetChase = 0x0002000,
 }
 
+// Pinned e_size (legacy/rathena/src/map/mob.hpp:114-120). Only SZ_SMALL/SZ_MEDIUM/SZ_BIG are ever
+// resolved by MobDatabase::parseBodyNode's own Size: parser (it clamps any parsed constant outside
+// [SZ_SMALL, SZ_BIG] back to SZ_SMALL, mob.cpp:5244) - SZ_ALL/SZ_MAX are pinned-source runtime
+// sentinels (e.g. skill/item size-filter wildcards), never a real mob_db.yml Size: value, so they
+// are intentionally not members here. Numeric values match pinned source exactly.
+public enum MobSize
+{
+    Small = 0,
+    Medium = 1,
+    Big = 2,
+}
+
+// Pinned e_race (legacy/rathena/src/map/map.hpp:324-339). RC_NONE_/RC_ALL/RC_MAX are pinned-source
+// sentinels/wildcards (RC_NONE_ means "no bonus applies", RC_ALL is a skill/item race-filter
+// wildcard) - CHK_RACE (the same bounds MobDatabase::parseBodyNode itself enforces, mob.cpp:5287,
+// clamping any out-of-range parsed constant back to Formless) only ever accepts RC_FORMLESS..
+// RC_PLAYER_DORAM as a real per-mob value, so only those are modeled here. Numeric values match
+// pinned source exactly.
+public enum MobRace
+{
+    Formless = 0,
+    Undead = 1,
+    Brute = 2,
+    Plant = 3,
+    Insect = 4,
+    Fish = 5,
+    Demon = 6,
+    DemiHuman = 7,
+    Angel = 8,
+    Dragon = 9,
+    PlayerHuman = 10,
+    PlayerDoram = 11,
+}
+
+// Pinned e_element (legacy/rathena/src/map/map.hpp:390-407). ELE_NONE/ELE_ALL/ELE_MAX/ELE_WEAPON/
+// ELE_ENDOWED/ELE_RANDOM are pinned-source sentinels/wildcards (skill/item element-filter or
+// "use the weapon's own element" markers), never a real mob_db.yml Element: value - pinned
+// MobDatabase::parseBodyNode's own CHK_ELEMENT bounds check (mob.cpp:5334) only ever accepts
+// ELE_NEUTRAL..ELE_UNDEAD for a per-mob value, so only those are modeled here. Numeric values
+// match pinned source exactly.
+public enum MobElement
+{
+    Neutral = 0,
+    Water = 1,
+    Earth = 2,
+    Fire = 3,
+    Wind = 4,
+    Poison = 5,
+    Holy = 6,
+    Dark = 7,
+    Ghost = 8,
+    Undead = 9,
+}
+
+// Pinned e_mob_class / CLASS_* (legacy/rathena/src/map/mob.hpp:186-192). MobDatabase::parseBodyNode
+// only ever accepts CLASS_NORMAL..CLASS_EVENT for a per-mob Class: value (mob.cpp:5483, clamping
+// anything outside that range back to Normal) - CLASS_ALL is a pinned-source wildcard sentinel,
+// never a real mob_db.yml value, so it is intentionally not modeled here. Numeric values match
+// pinned source exactly (note the pinned enum's own gap: Guardian=2, Battlefield=4 - no value 3).
+public enum MobClass
+{
+    Normal = 0,
+    Boss = 1,
+    Guardian = 2,
+    Battlefield = 4,
+    Event = 5,
+}
+
 // Immutable, source-backed monster data (pinned rAthena db/re/mob_db.yml).
 // Renewal semantics: Attack -> rhw.atk (weapon-roll component when this mob
 // is the ATTACKER, irrelevant when it is the target), Defense -> hard DEF,
@@ -91,13 +159,33 @@ public enum MobMode
 // clif_damage's dstSpeed when this mob is the TARGET (player->mob combat). The two directions must
 // never be conflated: a mob's own DamageMotion is never a valid dstSpeed when THAT SAME mob is the
 // attacker (see MobBasicAttackCalculator/IroMonsterCombatPackets call sites).
+// Fields added beyond the original combat/movement slice (JapaneseName, MaxSp, MvpExp,
+// Resistance, MagicResistance, SkillRange, ChaseRange, Size, Race, Element, ElementLevel,
+// ClientAttackMotion, DamageTaken, GroupId, Title, Class) are the remaining STATIC scalar/enum
+// mob_db.yml fields with no runtime consumer yet - preserved losslessly (never dropped at compile
+// time) matching this project's lossless-conversion convention for NPC/warp data (ai/world-data.md).
+// List-shaped blocks (RaceGroups, Modes' unmodeled bits, MvpDrops, Drops) remain out of scope for
+// this record: RaceGroups has no CHK_RACE-style fixed bound and no runtime consumer, and
+// MvpDrops/Drops are each already their own dedicated analyzer component
+// (ai/world-data.md "Two static-vs-runtime splits"), not a scalar field on this record.
 public sealed record MobDefinition(
     int Id, string AegisName, string Name, int Level, uint MaxHp,
     int Attack, int Attack2, int Defense, int MagicDefense,
     int Str, int Agi, int Vit, int Int, int Dex, int Luk,
     int AttackRange, int WalkSpeed, int AttackDelay, int AttackMotion, int DamageMotion,
     long BaseExp, long JobExp, MobMode Mode,
-    WorldSourceInfo Source);
+    WorldSourceInfo Source,
+    string? JapaneseName = null, uint MaxSp = 1, long MvpExp = 0,
+    int Resistance = 0, int MagicResistance = 0, int SkillRange = 0, int ChaseRange = 0,
+    MobSize Size = MobSize.Small, MobRace Race = MobRace.Formless,
+    MobElement Element = MobElement.Neutral, int ElementLevel = 1,
+    // ClientAttackMotion has NO fixed record default: pinned MobDatabase::parseBodyNode resolves an
+    // absent ClientAttackMotion to THIS SAME mob's own resolved AttackMotion value when the block is
+    // being seen for the first time (mob.cpp:5391-5397, the `else { if (!exists) ... }` branch) -
+    // MobDataCompiler.ReadMobDefinition computes this derived default explicitly rather than the
+    // record declaring a constant that would be wrong for every mob whose AttackMotion isn't 0.
+    int ClientAttackMotion = 0, int DamageTaken = 100, int GroupId = 0, string? Title = null,
+    MobClass Class = MobClass.Normal);
 
 // One pinned `monster` spawn-line declaration (npc/re/mobs/*.txt), scoped to
 // a single map. `Count` instances are maintained on that map; `RespawnDelayMs`

@@ -431,16 +431,19 @@ public sealed class RepositoryDomainAnalyzersTests
     public void Mob_UnsupportedStaticField_DoesNotTaintModesOrDrops()
     {
         using var fixture = new DomainFixture();
-        // Size/Race are real mob_db.yml fields with zero representation in MobDefinitionData.
-        fixture.Write("db/re/mob_db.yml", MobBlock(1002, "PORING", "Poring") + "    Size: Small\n    Race: Plant\n");
+        // RaceGroups/MvpExp... RaceGroups is a real mob_db.yml field with zero representation in
+        // MobDefinitionData (no CHK_RACE-style fixed bound and no runtime consumer, unlike Size/Race/
+        // Element/Class, which MobDataCompiler now reads and MobSupportedKeys now lists).
+        fixture.Write("db/re/mob_db.yml", MobBlock(1002, "PORING", "Poring") + "    Size: Small\n    Race: Plant\n    RaceGroups:\n      Goblin: true\n");
 
         var entities = RepositoryDomainAnalyzers.Analyze(fixture.Root, new HashSet<string> { "mobs" });
 
         var mob = Assert.Single(entities);
         var staticData = mob.Components.Single(c => c.Name == "StaticData");
         Assert.Equal(DomainCompatibilityStatus.PartiallyCompatible, staticData.Status);
-        Assert.Contains("mob-field:size", staticData.Blockers!);
-        Assert.Contains("mob-field:race", staticData.Blockers!);
+        Assert.DoesNotContain("mob-field:size", staticData.Blockers!);
+        Assert.DoesNotContain("mob-field:race", staticData.Blockers!);
+        Assert.Contains("mob-field:race-groups", staticData.Blockers!);
         Assert.Equal(DomainCompatibilityStatus.FullyCompatible, mob.Components.Single(c => c.Name == "Modes").Status);
         Assert.Equal(DomainCompatibilityStatus.PartiallyCompatible, mob.Status);
     }
