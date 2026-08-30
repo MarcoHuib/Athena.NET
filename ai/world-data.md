@@ -714,15 +714,15 @@ Physical placement rules, applied per map:
    World-family folder (one with its own NPCs/warps/scripts) gets its spawn array added to that
    SAME folder, never a new one. Two families exist today: `PrtFild08` (`prt_fild08`,
    `prt_fild08a..d`) and `Izlude/Academy` (`int_land`, `int_land01..04`) - e.g.
-   `src/MapServer/Generated/World/PrtFild08/PrtFild08Spawn.cs` sits alongside
+   `src/MapServer/Generated/World/PrtFild08/PrtFild08MobSpawns.cs` sits alongside
    `PrtFild08Npcs.cs`/`PrtFild08Warps.cs`/`PrtFild08World.cs`, exposing
    `PrtFild08`/`PrtFild08A`/`PrtFild08B`/`PrtFild08C`/`PrtFild08D` arrays plus a composed `All`
    (byte-for-byte the same shape the original hand-authored `PrtFild08MobSpawns.cs` used, restored
-   here rather than duplicated). `Izlude/Academy/AcademySpawn.cs` mirrors this for the tutorial
+   here rather than duplicated). `Izlude/Academy/AcademyMobSpawns.cs` mirrors this for the tutorial
    family (`IntLand`/`IntLand01..04`/`All`).
 2. **New map, no existing family** - every other resolvable map gets a deterministic, freshly
    created single-map folder named after the map itself (PascalCase, matching the repository's
-   existing map-name convention), e.g. `src/MapServer/Generated/World/PayFild01/PayFild01Spawn.cs`
+   existing map-name convention), e.g. `src/MapServer/Generated/World/PayFild01/PayFild01MobSpawns.cs`
    for `pay_fild01`. A genuine PascalCase collision between two DISTINCT real maps (a real pinned
    case: `gl_cas02` and `gl_cas02_`, a trailing-underscore variant, both resolve and both
    PascalCase to `GlCas02`) gets a deterministic numeric folder suffix (`GlCas02`, `GlCas02_2`) -
@@ -730,14 +730,14 @@ Physical placement rules, applied per map:
 3. **Unresolved event-map declarations** - a map that does NOT resolve through the canonical
    map-cache layers, but whose every declaration originates from a source file under `npc/events/`
    AND whose map token starts with `evt_`, is classified under
-   `src/MapServer/Generated/World/Events/<PascalMap>/<PascalMap>Spawn.cs` - an organizational
+   `src/MapServer/Generated/World/Events/<PascalMap>/<PascalMap>MobSpawns.cs` - an organizational
    placement only, proving nothing about runtime loadability (see "Invalid map dependencies"
    below). `evt_` alone is never a blanket escape hatch; the events-directory source-context
    requirement must also hold.
 4. **Anything else unresolved fails generation closed** - a genuinely new unresolved map that
    doesn't qualify for rule 3 is a hard `generate-mob-spawns` error, not a silent guess.
 
-Total generated size is ~3.0 MiB across 432 map/family modules (largest file is `PrtFild08Spawn.cs`,
+Total generated size is ~3.0 MiB across 432 map/family modules (largest file is `PrtFild08MobSpawns.cs`,
 since `prt_fild08` itself absorbs many pre-Renewal `prontera.txt` field-mob declarations that
 target it as their base map).
 
@@ -745,7 +745,7 @@ target it as their base map).
 `WorldRegistryBuilder.AddMobSpawn` for every entry - the SOLE mob-spawn source
 `MapServerWorld.Build` sees. The two originally hand-picked slices (`AcademyMobSpawns.GPoringSpawns`
 for `int_land*`, `PrtFild08MobSpawns.All` for the `prt_fild08*` family) are retired as independent
-files: their content is a strict subset of `PrtFild08Spawn`/`AcademySpawn`'s own data (verified
+files: their content is a strict subset of `PrtFild08MobSpawns`/`AcademyMobSpawns`'s own data (verified
 byte-identical - same MobId/map/count/delay/source-line - before deletion), and their API shape is
 restored under the map-oriented layout rather than duplicated, so registering both an old and new
 path would have double-registered the same physical source declarations.
@@ -768,7 +768,7 @@ Master on map `evt_zombie`) target a map that resolves through no pinned map-cac
 `RepositoryDomainAnalyzers.AnalyzeMaps` uses - generated spawn map validation and analyzer map
 validation agree by construction). Because every one of these three declarations originates from a
 source file under `npc/events/` and the map token starts with `evt_`, they are classified under the
-dedicated `src/MapServer/Generated/World/Events/EvtZombie/EvtZombieSpawn.cs` organizational module
+dedicated `src/MapServer/Generated/World/Events/EvtZombie/EvtZombieMobSpawns.cs` organizational module
 (placement rule 3 above) rather than failing generation - source declaration and mob reference stay
 valid, but map dependency and runtime activation stay invalid. This placement is ORGANIZATIONAL
 ONLY and never implies `evt_zombie` is a loadable map: it is never a member of

@@ -421,7 +421,7 @@ The three invalid map dependencies are the pinned `evt_zombie` declarations
 (`npc/events/halloween_2008.txt:267-269`) - a map that resolves through no pinned map-cache layer
 at all. Because every one of them originates from a source file under `npc/events/` and the map
 token starts with `evt_`, they are classified under the organizational
-`Generated/World/Events/EvtZombie/EvtZombieSpawn.cs` module (source coverage is never dropped for a
+`Generated/World/Events/EvtZombie/EvtZombieMobSpawns.cs` module (source coverage is never dropped for a
 bad map dependency, but this placement never implies `evt_zombie` is runtime-loadable); ANY other
 unresolvable map that doesn't qualify for that exact classification, or any spawn MobId that fails
 to resolve against the freshly-parsed `mob_db.yml` symbol table, fails generation closed.
@@ -432,9 +432,9 @@ alongside that map's other generated content (NPCs/warps/scripts), never grouped
 source file happened to declare it - if several source files target the same map, all their
 declarations merge into that one map's single generated array (`WorldSourceInfo` still keeps the
 exact per-declaration file/line). Two established world-family folders are reused rather than
-duplicated: `PrtFild08/PrtFild08Spawn.cs` (`prt_fild08{,a,b,c,d}`) and
-`Izlude/Academy/AcademySpawn.cs` (`int_land{,01,02,03,04}`); every other resolvable map gets a fresh
-deterministic single-map folder (e.g. `PayFild01/PayFild01Spawn.cs`). One central
+duplicated: `PrtFild08/PrtFild08MobSpawns.cs` (`prt_fild08{,a,b,c,d}`) and
+`Izlude/Academy/AcademyMobSpawns.cs` (`int_land{,01,02,03,04}`); every other resolvable map gets a fresh
+deterministic single-map folder (e.g. `PayFild01/PayFild01MobSpawns.cs`). One central
 `Generated/World/GeneratedMobSpawnRegistry.cs` remains an INDEX ONLY - it composes/references the
 map-owned arrays rather than owning duplicate spawn data - exposing the map-keyed
 `GeneratedMobSpawnRegistry.GetForMap(string)`/`TryGetMap`/`All` API. See `ai/world-data.md`'s
@@ -442,9 +442,10 @@ map-owned arrays rather than owning duplicate spawn data - exposing the map-keye
 `RespawnRandomDelay`/`DeathEvent`/`Size`/`Ai` fields), the complete placement-classification rules,
 and the runtime-activation model (`MapServerHostingScope.ServedMaps` remains the only hosting-scope
 decision; registry completeness never implies a map is actually served). Cleanup removes only
-generator-owned files (auto-generated header plus a `*Spawn.cs` filename suffix, or the registry's
-own exact filename) across the entire output tree, never hand-maintained `*Npcs.cs`/`*Warps.cs`/
-`*World.cs`/`Scripts/` siblings; regenerating twice produces byte-identical output.
+generator-owned files (auto-generated header plus a `*MobSpawns.cs` filename suffix, or the
+registry's own exact filename) across the entire output tree, never hand-maintained
+`*Npcs.cs`/`*Warps.cs`/`*World.cs`/`Scripts/` siblings; regenerating twice produces byte-identical
+output.
 
 `Compatible` means the complete event passes the current real compilation boundary;
 unsupported statements are never omitted. `soleBlockerFor` counts events whose

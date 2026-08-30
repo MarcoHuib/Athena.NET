@@ -763,11 +763,14 @@ internal static class WorldDataImporterCli
 
         Directory.CreateDirectory(outputDir);
         // Stale-file cleanup spans the ENTIRE output tree (every existing map/family folder may
-        // contain a previously-generated *Spawn.cs alongside hand-maintained *Npcs.cs/*Warps.cs/
-        // *World.cs/Scripts/ siblings - task's safe-cleanup requirement) - filename suffix
-        // ("...Spawn.cs") plus the auto-generated header are BOTH required before deletion
+        // contain a previously-generated *MobSpawns.cs alongside hand-maintained *Npcs.cs/
+        // *Warps.cs/*World.cs/Scripts/ siblings - task's safe-cleanup requirement) - filename suffix
+        // ("...MobSpawns.cs") plus the auto-generated header are BOTH required before deletion
         // (MobDataCompiler.IsOwnedGeneratedMobSpawnFile), so a hand-maintained file can never be
-        // swept up even if it coincidentally ends in "Spawn.cs".
+        // swept up even if it coincidentally ends in "MobSpawns.cs". Also removes any leftover
+        // "*Spawn.cs" file from this generator's own earlier (now-renamed) naming convention -
+        // IsOwnedGeneratedMobSpawnFile recognizes both suffixes specifically for this one-time
+        // migration cleanup (see that method's own doc comment).
         foreach (var stale in Directory.EnumerateFiles(outputDir, "*.cs", SearchOption.AllDirectories).Where(path => MobDataCompiler.IsOwnedGeneratedMobSpawnFile(path, RegistryFileName)))
             File.Delete(stale);
         // Remove the RETIRED source-file-sharded layout's directory entirely if it still exists
@@ -788,12 +791,12 @@ internal static class WorldDataImporterCli
                 (IReadOnlyList<(MobDataCompiler.MobSpawnData Spawn, string MobDefinitionExpression)>)item.Spawns.Select(spawn => (spawn, $"GeneratedMobs.{mobSymbolById[spawn.MobId]}")).ToArray()
             )).OrderBy(item => item.ArrayName, StringComparer.Ordinal).ToArray();
 
-            var source = MobDataCompiler.GenerateMobSpawnFamily(mapEntries, commit, $"{className}Spawn", ns);
+            var source = MobDataCompiler.GenerateMobSpawnFamily(mapEntries, commit, $"{className}MobSpawns", ns);
             var fileDir = Path.Combine(outputDir, folderPath.Replace('/', Path.DirectorySeparatorChar));
             Directory.CreateDirectory(fileDir);
-            var filePath = Path.Combine(fileDir, $"{className}Spawn.cs");
+            var filePath = Path.Combine(fileDir, $"{className}MobSpawns.cs");
             await File.WriteAllTextAsync(filePath, source, encoding);
-            arrayExpressions.Add($"{ns}.{className}Spawn.All");
+            arrayExpressions.Add($"{ns}.{className}MobSpawns.All");
         }
 
         var registrySource = GenerateMobSpawnRegistry(arrayExpressions.OrderBy(expr => expr, StringComparer.Ordinal).ToArray(), RegistryClassName, RegistryNamespace, commit, "npc/**/*.txt (all pinned ordinary monster declarations)");

@@ -127,7 +127,7 @@ public sealed class GeneratedMobSpawnRegistryTests
         Assert.NotEmpty(baseMap); Assert.NotEmpty(a); Assert.NotEmpty(b); Assert.NotEmpty(c); Assert.NotEmpty(d);
 
         // Every one of these five maps' declarations is drawn from the SAME physical array set
-        // (PrtFild08Spawn.All) - proven indirectly: the union of the five per-map lookups accounts
+        // (PrtFild08MobSpawns.All) - proven indirectly: the union of the five per-map lookups accounts
         // for every "prt_fild08*" entry in the flattened registry, with no leftover and no overlap.
         var expectedMaps = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "prt_fild08", "prt_fild08a", "prt_fild08b", "prt_fild08c", "prt_fild08d" };
         var allPrtFild08Entries = GeneratedMobSpawnRegistry.All.Where(spawn => expectedMaps.Contains(spawn.Map)).ToArray();
