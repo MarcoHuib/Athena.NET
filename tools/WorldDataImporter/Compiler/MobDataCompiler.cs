@@ -614,6 +614,43 @@ internal static class MobDataCompiler
         return results;
     }
 
+    // One spawn-line parse failure isolated to its own line - never a whole-file poison. Distinct
+    // from generate-mob-spawns' own fail-CLOSED behavior (a hard generation error is correct there:
+    // production output must never silently omit or misrepresent a real declaration). The analyzer's
+    // job is different - repository-wide REPORTING must keep going across the rest of a file/tree
+    // even when one line is genuinely malformed, but it must never silently drop that line's
+    // existence either. Line/Message are enough for a stable, deterministic diagnostic blocker id
+    // (RepositoryDomainAnalyzers.AnalyzeMobSpawns turns this into its own DomainEntity, matching the
+    // existing AnalyzeMobs try/catch-per-entity convention).
+    internal sealed record MobSpawnLineFailure(int Line, string Message);
+
+    // Fail-OPEN, line-isolated variant of ReadAllMobSpawns for analyzer use: every line that parses
+    // successfully is returned in Spawns; every line whose TryParseSpawnLine match succeeds but whose
+    // subsequent resolution/validation throws (unknown AegisName, invalid declared level, or any
+    // future pinned syntax/value drift) is captured in Failures instead of being silently skipped OR
+    // aborting the scan for the rest of the file. A non-matching line (not a spawn declaration at
+    // all) is neither a success nor a failure, exactly like ReadAllMobSpawns/TryParseSpawnLine's
+    // existing "continue" semantics for a non-matching line.
+    internal static (IReadOnlyList<MobSpawnData> Spawns, IReadOnlyList<MobSpawnLineFailure> Failures) TryReadAllMobSpawns(string spawnScriptText, string sourceFile, IReadOnlyDictionary<string, int>? aegisNameToId = null)
+    {
+        var results = new List<MobSpawnData>();
+        var failures = new List<MobSpawnLineFailure>();
+        var lines = spawnScriptText.Split('\n');
+        for (var i = 0; i < lines.Length; i++)
+        {
+            try
+            {
+                if (TryParseSpawnLine(lines[i], sourceFile, i + 1, aegisNameToId, out var spawn, out _))
+                    results.Add(spawn);
+            }
+            catch (Exception exception)
+            {
+                failures.Add(new MobSpawnLineFailure(i + 1, exception.Message));
+            }
+        }
+        return (results, failures);
+    }
+
     // Case-insensitive AegisName -> MobId lookup, matching pinned mobdb_search_aegisname's own
     // strcmpi comparison (src/map/mob.cpp:308-316) - built once by the caller from the same
     // ReadAllMobDefinitions result already used for MobId resolution elsewhere in this pipeline.

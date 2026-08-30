@@ -123,6 +123,53 @@ public sealed class RepositoryDomainAnalyzersTests
         Assert.Equal("Disabled", spawn.Provenance);
     }
 
+    // Hardening regression (post-PR #25/#26): a genuinely unknown AegisName token must never make a
+    // source declaration silently disappear from analyzer coverage. AnalyzeMobSpawns previously
+    // called MobDataCompiler.ReadMobSpawns once PER DISTINCT NAME in a file, wrapped in a blanket
+    // `try { ... } catch { continue; }` - since ReadMobSpawns' own TryParseSpawnLine call runs on
+    // EVERY line of the file before that line's mob name is even compared against the name being
+    // looked up, one malformed line threw for every name lookup that reached it, and the blanket
+    // catch silently dropped ALL of that file's mob-spawns domain coverage with zero diagnostic.
+    [Fact]
+    public void MobSpawn_UnknownAegisNameToken_NeverSilentlyDisappearsFromAnalyzerCoverage()
+    {
+        using var fixture = new DomainFixture();
+        fixture.WriteBytes("db/map_cache.dat", BuildMapCache(("prt_fild08", (short)1, (short)1, OneCell)));
+        fixture.Write("db/re/mob_db.yml", MobBlock(1002, "PORING", "Poring"));
+        fixture.Write("npc/re/mobs/fields.txt", "prt_fild08\tmonster\tGhost\tTHIS_TOKEN_DOES_NOT_EXIST,10,5000\n");
+
+        var entities = RepositoryDomainAnalyzers.Analyze(fixture.Root, null);
+
+        // The malformed declaration must be represented as its OWN diagnostic entity - never
+        // silently absent from the domain entirely.
+        var spawn = Assert.Single(entities, item => item.Domain == "mob-spawns");
+        Assert.Equal(DomainCompatibilityStatus.Unsupported, spawn.Status);
+        Assert.Contains("mob-spawn:parse-failure", spawn.Blockers);
+        Assert.Contains("THIS_TOKEN_DOES_NOT_EXIST", spawn.Name, StringComparison.Ordinal);
+    }
+
+    // The poisoning half of the same regression: a malformed line elsewhere in a file must not
+    // suppress OTHER, perfectly valid declarations in that same file (the old per-name/whole-file
+    // rescan meant a bad line anywhere could break name resolution for every other name too,
+    // depending on scan order) - both the good and the bad declaration must be represented.
+    [Fact]
+    public void MobSpawn_UnknownAegisNameToken_DoesNotSuppressOtherValidDeclarationsInTheSameFile()
+    {
+        using var fixture = new DomainFixture();
+        fixture.WriteBytes("db/map_cache.dat", BuildMapCache(("prt_fild08", (short)1, (short)1, OneCell)));
+        fixture.Write("db/re/mob_db.yml", MobBlock(1002, "PORING", "Poring"));
+        fixture.Write("npc/re/mobs/fields.txt",
+            "prt_fild08\tmonster\tGhost\tTHIS_TOKEN_DOES_NOT_EXIST,10,5000\n" +
+            "prt_fild08,0,0\tmonster\tPoring\t1002,5,5000\n");
+
+        var entities = RepositoryDomainAnalyzers.Analyze(fixture.Root, null);
+        var spawns = entities.Where(item => item.Domain == "mob-spawns").ToArray();
+
+        Assert.Equal(2, spawns.Length);
+        Assert.Contains(spawns, item => item.Status == DomainCompatibilityStatus.Unsupported && item.Blockers.Contains("mob-spawn:parse-failure"));
+        Assert.Contains(spawns, item => item.Status == DomainCompatibilityStatus.FullyCompatible && item.Name == "Poring");
+    }
+
     [Fact]
     public void MapFlag_ReferencingAMapPresentOnlyInTheBaseCache_HasNoFalseDependencyBlocker()
     {

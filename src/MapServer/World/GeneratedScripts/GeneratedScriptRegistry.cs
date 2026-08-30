@@ -54,7 +54,7 @@ public static partial class GeneratedScriptRegistry
         PrtFild08World.Register(builder);
         // The Athena.NET EFFECTIVE Renewal source-load profile (RathenaRenewalDefault + the
         // explicit Athena overlay, e.g. Academy - ai/world-data.md's "Generated mob spawns"
-        // section) - NOT GeneratedMobSpawnRegistry.All. All 9,844 pinned ordinary `monster` spawn
+        // section) - NOT GeneratedMobSpawnRegistry.All. All 10,068 pinned ordinary `monster` spawn
         // declarations remain represented in GeneratedMobSpawnRegistry.All for repository-wide
         // source coverage/research/analysis, but registering every one of them into the runtime
         // world would activate pre-Renewal-only and pinned-disabled (e.g. old event) content the
