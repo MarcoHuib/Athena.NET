@@ -569,7 +569,8 @@ public sealed class RepositoryDomainAnalyzersTests
         Assert.Equal(DomainCompatibilityStatus.FullyCompatible, world.Status);
         var spawns = world.Components.Single(c => c.Name == "MobSpawns");
         Assert.Equal(DomainCompatibilityStatus.FullyCompatible, spawns.Status);
-        Assert.Equal("1/1", spawns.Blockers!.Single());
+        Assert.Empty(spawns.Blockers!); // Priority 4: completeness counts are a structural Metric, never a formatted "x/y" string in Blockers.
+        Assert.Equal(new DomainMetric(1, 1), spawns.Metric);
     }
 
     [Fact]
@@ -624,6 +625,216 @@ public sealed class RepositoryDomainAnalyzersTests
 
         var first = RepositoryDomainAnalyzers.Analyze(fixture.Root, null);
         var second = RepositoryDomainAnalyzers.Analyze(fixture.Root, null);
+
+        Assert.Equal(DeterministicJson.Serialize(first), DeterministicJson.Serialize(second));
+    }
+
+    // ---------------------------------------------------------------------
+    // Priority 1 (post-full-dry-run): raw-line scanners must ignore commented-out declarations.
+    // ---------------------------------------------------------------------
+
+    [Fact]
+    public void MapFlags_ActiveDeclaration_IsDiscovered()
+    {
+        using var fixture = new DomainFixture();
+        fixture.WriteBytes("db/map_cache.dat", BuildMapCache(("prt_fild08", (short)1, (short)1, OneCell)));
+        fixture.Write("npc/custom/etc/penal_servitude.txt", "prt_fild08\tmapflag\tpvp\n");
+
+        var entities = RepositoryDomainAnalyzers.Analyze(fixture.Root, null);
+
+        var flag = Assert.Single(entities, item => item.Domain == "mapflags");
+        Assert.Equal("pvp", flag.Name);
+        Assert.Equal("prt_fild08", flag.Map);
+    }
+
+    [Fact]
+    public void MapFlags_CommentedOutDeclaration_IsIgnored()
+    {
+        using var fixture = new DomainFixture();
+        fixture.WriteBytes("db/map_cache.dat", BuildMapCache(("sec_in02", (short)1, (short)1, OneCell)));
+        // Real pinned shape: legacy/rathena/npc/custom/etc/penal_servitude.txt.
+        fixture.Write("npc/custom/etc/penal_servitude.txt",
+            "//sec_in02\tmapflag\tpvp\n" +
+            "//sec_in02\tmapflag\tpvp_noparty\n" +
+            "//sec_in02\tmapflag\tgvg\n");
+
+        var entities = RepositoryDomainAnalyzers.Analyze(fixture.Root, null);
+
+        Assert.DoesNotContain(entities, item => item.Domain == "mapflags");
+    }
+
+    [Fact]
+    public void MapFlags_WhitespaceBeforeComment_IsAlsoIgnored()
+    {
+        using var fixture = new DomainFixture();
+        fixture.WriteBytes("db/map_cache.dat", BuildMapCache(("sec_in02", (short)1, (short)1, OneCell)));
+        fixture.Write("npc/custom/etc/penal_servitude.txt", "   \t //sec_in02\tmapflag\tpvp\n");
+
+        var entities = RepositoryDomainAnalyzers.Analyze(fixture.Root, null);
+
+        Assert.DoesNotContain(entities, item => item.Domain == "mapflags");
+    }
+
+    [Fact]
+    public void MapFlags_CommentedDeclaration_NeverProducesDependencyMapBlocker()
+    {
+        // Even referencing a map name that genuinely does not exist anywhere: a commented-out line
+        // must never surface AT ALL, let alone as a false "dependency:map" blocker.
+        using var fixture = new DomainFixture();
+        fixture.WriteBytes("db/map_cache.dat", BuildMapCache(("prontera", (short)1, (short)1, OneCell)));
+        fixture.Write("npc/custom/etc/penal_servitude.txt", "//sec_in02\tmapflag\tpvp\n");
+
+        var entities = RepositoryDomainAnalyzers.Analyze(fixture.Root, null);
+
+        Assert.DoesNotContain(entities, item => item.Domain == "mapflags");
+    }
+
+    [Fact]
+    public void MapFlags_CommentedDeclarations_NeverContributeToDomainTotals()
+    {
+        using var fixture = new DomainFixture();
+        fixture.WriteBytes("db/map_cache.dat", BuildMapCache(("prt_fild08", (short)1, (short)1, OneCell)));
+        fixture.Write("npc/custom/etc/penal_servitude.txt",
+            "prt_fild08\tmapflag\tnoteleport\n" +
+            "//sec_in02\tmapflag\tpvp\n" +
+            "//sec_in02\tmapflag\tpvp_noparty\n" +
+            "//sec_in02\tmapflag\tgvg\n");
+
+        var entities = RepositoryDomainAnalyzers.Analyze(fixture.Root, null);
+        var summaries = RepositoryDomainAnalyzers.Summaries(entities);
+
+        var mapflagsSummary = Assert.Single(summaries, item => item.Domain == "mapflags");
+        Assert.Equal(1, mapflagsSummary.Total); // Only the one active declaration - the three commented ones never entered the totals.
+    }
+
+    [Fact]
+    public void MapFlags_ActiveDeclarationAdjacentToCommentedOne_IsStillDiscovered()
+    {
+        using var fixture = new DomainFixture();
+        fixture.WriteBytes("db/map_cache.dat", BuildMapCache(("prt_fild08", (short)1, (short)1, OneCell)));
+        fixture.Write("npc/custom/etc/penal_servitude.txt",
+            "//prt_fild08\tmapflag\tpvp\n" +
+            "prt_fild08\tmapflag\tnoteleport\n");
+
+        var entities = RepositoryDomainAnalyzers.Analyze(fixture.Root, null);
+
+        var flag = Assert.Single(entities, item => item.Domain == "mapflags");
+        Assert.Equal("noteleport", flag.Name);
+    }
+
+    // ---------------------------------------------------------------------
+    // Priority 2 (post-full-dry-run): mob Drops must not double-classify as both a generic
+    // StaticData "mob-field:drops" blocker AND the dedicated Drops component's blocker.
+    // ---------------------------------------------------------------------
+
+    [Fact]
+    public void Mob_WithDropsBlock_OnlyReportsDropsRuntimeBlocker_NotAGenericStaticDataDropsField()
+    {
+        using var fixture = new DomainFixture();
+        fixture.Write("db/re/mob_db.yml", MobBlock(1002, "PORING", "Poring") + "    Drops:\n      - Item: Jellopy\n        Rate: 5000\n");
+
+        var entities = RepositoryDomainAnalyzers.Analyze(fixture.Root, new HashSet<string> { "mobs" });
+
+        var mob = Assert.Single(entities, item => item.Domain == "mobs");
+        var staticData = mob.Components.Single(c => c.Name == "StaticData");
+        var drops = mob.Components.Single(c => c.Name == "Drops");
+        Assert.DoesNotContain("mob-field:drops", staticData.Blockers!);
+        Assert.Equal(DomainCompatibilityStatus.FullyCompatible, staticData.Status); // A Drops block alone must not degrade StaticData.
+        Assert.Equal(DomainCompatibilityStatus.Unsupported, drops.Status);
+        Assert.Contains("mob-drops:runtime", drops.Blockers!);
+        Assert.DoesNotContain("mob-field:drops", mob.Blockers);
+        Assert.Single(mob.Blockers, blocker => blocker == "mob-drops:runtime"); // Exactly one blocker for this one source construct, never two.
+    }
+
+    // ---------------------------------------------------------------------
+    // Priority 3 (post-full-dry-run): function entity ids must be source-qualified and unique.
+    // ---------------------------------------------------------------------
+
+    [Fact]
+    public void Functions_SameNameInDifferentFiles_RemainSeparateEntitiesWithDistinctIds()
+    {
+        using var fixture = new DomainFixture();
+        fixture.Write("npc/re/jobs/a.txt", "function\tscript\tChk\t{\n\tend;\n}\n");
+        fixture.Write("npc/re/jobs/b.txt", "function\tscript\tChk\t{\n\tend;\n}\n");
+
+        var entities = RepositoryDomainAnalyzers.Analyze(fixture.Root, new HashSet<string> { "functions" });
+        var functions = entities.Where(item => item.Domain == "functions").ToArray();
+
+        Assert.Equal(2, functions.Length);
+        var ids = functions.Select(item => item.Id).ToHashSet(StringComparer.Ordinal);
+        Assert.Equal(2, ids.Count); // Distinct ids - no collapse merely because the display name matches.
+        Assert.All(functions, item => Assert.Equal("Chk", item.Name)); // Display name is still the plain function name.
+        Assert.Contains(ids, id => id.Contains("a.txt", StringComparison.Ordinal));
+        Assert.Contains(ids, id => id.Contains("b.txt", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Functions_SameNameInSameFileDifferentLines_RemainSeparateEntities()
+    {
+        using var fixture = new DomainFixture();
+        fixture.Write("npc/re/jobs/a.txt",
+            "function\tscript\tCatwarp\t{\n\tend;\n}\n" +
+            "function\tscript\tCatwarp\t{\n\tend;\n}\n");
+
+        var entities = RepositoryDomainAnalyzers.Analyze(fixture.Root, new HashSet<string> { "functions" });
+        var functions = entities.Where(item => item.Domain == "functions").ToArray();
+
+        Assert.Equal(2, functions.Length);
+        Assert.Equal(2, functions.Select(item => item.Id).Distinct(StringComparer.Ordinal).Count());
+    }
+
+    [Fact]
+    public void Functions_DependenciesJson_KeepsSameNamedFunctionsAsSeparateGraphNodes()
+    {
+        using var fixture = new DomainFixture();
+        fixture.Write("npc/re/jobs/a.txt", "function\tscript\tJob_Change\t{\n\tend;\n}\n");
+        fixture.Write("npc/re/jobs/b.txt", "function\tscript\tJob_Change\t{\n\tend;\n}\n");
+
+        var entities = RepositoryDomainAnalyzers.Analyze(fixture.Root, new HashSet<string> { "functions" });
+        var functions = entities.Where(item => item.Domain == "functions").ToArray();
+
+        // Simulates the dependencies.json fold: grouping by Id (not Name) must not merge these.
+        var grouped = functions.GroupBy(item => item.Id, StringComparer.Ordinal).ToArray();
+        Assert.Equal(2, grouped.Length);
+    }
+
+    // ---------------------------------------------------------------------
+    // Priority 4 (post-full-dry-run): map-world completeness must be a structural Metric, never a
+    // formatted "x/y" string smuggled into Blockers.
+    // ---------------------------------------------------------------------
+
+    [Fact]
+    public void MapWorld_Components_NeverContainRatioStringsInBlockers()
+    {
+        using var fixture = new DomainFixture();
+        fixture.WriteBytes("db/map_cache.dat", BuildMapCache(("prt_fild08", (short)1, (short)1, OneCell)));
+        fixture.Write("db/re/mob_db.yml", MobBlock(1002, "PORING", "Poring"));
+        fixture.Write("npc/re/mobs/fields.txt", "prt_fild08,0,0\tmonster\tPoring\t1002,5,5000\n");
+        fixture.Write("npc/re/mobs/flags.txt", "prt_fild08\tmapflag\tnoteleport\n");
+
+        var entities = RepositoryDomainAnalyzers.Analyze(fixture.Root, null);
+
+        var world = Assert.Single(entities, item => item.Domain == "map-world" && item.Map == "prt_fild08");
+        foreach (var component in world.Components)
+        {
+            Assert.All(component.Blockers ?? [], blocker => Assert.DoesNotMatch(@"^\d+/\d+$", blocker));
+        }
+        var spawns = world.Components.Single(c => c.Name == "MobSpawns");
+        var flags = world.Components.Single(c => c.Name == "MapFlags");
+        Assert.Equal(new DomainMetric(1, 1), spawns.Metric);
+        Assert.Equal(new DomainMetric(0, 1), flags.Metric); // Mapflags are always Unsupported today (no runtime) - 0 of 1 compatible, still a real count.
+    }
+
+    [Fact]
+    public void MapWorld_Determinism_ByteIdenticalAcrossRepeatedRuns()
+    {
+        using var fixture = new DomainFixture();
+        fixture.WriteBytes("db/map_cache.dat", BuildMapCache(("prt_fild08", (short)1, (short)1, OneCell)));
+        fixture.Write("db/re/mob_db.yml", MobBlock(1002, "PORING", "Poring"));
+        fixture.Write("npc/re/mobs/fields.txt", "prt_fild08,0,0\tmonster\tPoring\t1002,5,5000\n");
+
+        var first = RepositoryDomainAnalyzers.Analyze(fixture.Root, null).Where(item => item.Domain == "map-world").ToArray();
+        var second = RepositoryDomainAnalyzers.Analyze(fixture.Root, null).Where(item => item.Domain == "map-world").ToArray();
 
         Assert.Equal(DeterministicJson.Serialize(first), DeterministicJson.Serialize(second));
     }

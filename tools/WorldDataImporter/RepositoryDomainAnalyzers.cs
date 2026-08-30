@@ -5,7 +5,13 @@ using Athena.WorldCompiler;
 using Athena.WorldCompiler.Generation;
 
 internal enum DomainCompatibilityStatus { FullyCompatible, PartiallyCompatible, Unsupported, NotYetAnalyzed, NotApplicable }
-internal sealed record DomainComponent(string Name, DomainCompatibilityStatus Status, IReadOnlyList<string>? Blockers = null);
+// Metric is a minimal, optional structural counter (e.g. "12 of 13 mob spawns on this map are
+// FullyCompatible") for components that report COMPLETENESS rather than blockers - currently only
+// map-world's MobSpawns/MapFlags components (Priority 4, ai/world-data.md). Blockers must contain
+// only genuine semantic blocker/capability IDs; a metric is never a blocker and must never be
+// smuggled into that list as a formatted string like "12/13".
+internal sealed record DomainMetric(int Compatible, int Total);
+internal sealed record DomainComponent(string Name, DomainCompatibilityStatus Status, IReadOnlyList<string>? Blockers = null, DomainMetric? Metric = null);
 internal sealed record DomainEntity(string Domain, string Id, string Name, string SourceFile, int SourceLine,
     DomainCompatibilityStatus Status, IReadOnlyList<DomainComponent> Components,
     IReadOnlyList<string> Dependencies, IReadOnlyList<string> Blockers, string? Map = null, string? Provenance = null);
@@ -73,13 +79,17 @@ internal static class RepositoryDomainAnalyzers
     // Fields the generated MobDefinition actually carries (MobDataCompiler.MobDefinitionData) are
     // MobSupportedKeys; anything else present in the pinned block (Size, Race, Element,
     // ElementLevel, Class, SkillRange, ChaseRange, ClientAttackMotion, DamageTaken, MvpExp,
-    // MvpDrops, Drops, ...) is real source data this project silently drops today and can never be
+    // MvpDrops, ...) is real source data this project silently drops today and can never be
     // reported FullyCompatible merely because MobDataCompiler.ReadMobDefinition/GenerateMobDefinition
-    // didn't throw. Drops is its own component (Unsupported when the mob has a Drops: table at all -
-    // there is no drop-table compiler/runtime anywhere in this project outside the single-quest
-    // QuestDropDataCompiler slice, which is unrelated general monster drop data). Skills starts as
-    // NotApplicable here and is populated by AnalyzeMobSkills afterward (a second pass over the
-    // differently-formatted mob_skill_db.txt, Priority 6).
+    // didn't throw. Drops is its own DEDICATED component (Unsupported when the mob has a Drops:
+    // table at all - there is no drop-table compiler/runtime anywhere in this project outside the
+    // single-quest QuestDropDataCompiler slice, which is unrelated general monster drop data) and is
+    // therefore excluded from the generic unknown-top-level-field StaticData scan below (Priority 2,
+    // ai/world-data.md) - a source `Drops:` block must produce exactly one blocker
+    // (`mob-drops:runtime`, on the Drops component), never also a redundant `mob-field:drops`
+    // StaticData blocker for the identical construct. Skills starts as NotApplicable here and is
+    // populated by AnalyzeMobSkills afterward (a second pass over the differently-formatted
+    // mob_skill_db.txt, Priority 6).
     private static IReadOnlyList<DomainEntity> AnalyzeMobs(string root)
     {
         var path = Path.Combine(root, "db/re/mob_db.yml"); if (!File.Exists(path)) return [];
@@ -93,7 +103,13 @@ internal static class RepositoryDomainAnalyzers
                 var mob = MobDataCompiler.ReadMobDefinition(yaml, id.Value);
                 _ = MobDataCompiler.GenerateMobDefinition(mob, "analysis", "CompatibilityProbe", "Mob", Relative(root, path), block.Line);
 
-                var staticBlockers = TopLevelKeys(block.Text).Except(MobSupportedKeys, StringComparer.Ordinal).Select(key => "mob-field:" + Kebab(key)).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
+                // "Drops" is deliberately excluded here even though it is not in MobSupportedKeys:
+                // it has its own dedicated Drops component below (Priority 2, ai/world-data.md), so
+                // the generic unknown-top-level-field detector must not ALSO report it as a
+                // "mob-field:drops" StaticData blocker - that would double-count the exact same
+                // source construct under two unrelated components. Every other unmodeled top-level
+                // field still becomes a StaticData gap as before.
+                var staticBlockers = TopLevelKeys(block.Text).Except(MobSupportedKeys, StringComparer.Ordinal).Except(["Drops"], StringComparer.Ordinal).Select(key => "mob-field:" + Kebab(key)).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
                 var staticStatus = staticBlockers.Length == 0 ? DomainCompatibilityStatus.FullyCompatible : DomainCompatibilityStatus.PartiallyCompatible;
 
                 var modeBlockers = NestedBooleanKeys(block.Text, "Modes").Except(MobSupportedModes, StringComparer.Ordinal).Select(mode => "mob-mode:" + Kebab(mode)).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
@@ -387,6 +403,7 @@ internal static class RepositoryDomainAnalyzers
         foreach (var path in Directory.EnumerateFiles(npc, "*.txt", SearchOption.AllDirectories).Order(StringComparer.Ordinal))
         foreach (var (line, index) in File.ReadLines(path).Select((line, index) => (line, index)))
         {
+            if (IsCommentedOrBlank(line)) continue;
             var columns = line.Trim().Split('\t'); if (columns.Length < 3 || columns[1] != "mapflag") continue;
             var map = columns[0]; var flag = columns[2].Split(' ', StringSplitOptions.RemoveEmptyEntries)[0]; var blockers = new List<string> { "mapflag:" + Kebab(flag) };
             if (!maps.Contains(map)) blockers.Add("dependency:map");
@@ -405,6 +422,7 @@ internal static class RepositoryDomainAnalyzers
             var lines = File.ReadAllLines(path);
             for (var index = 0; index < lines.Length; index++)
             {
+                if (IsCommentedOrBlank(lines[index])) continue;
                 var match = Regex.Match(lines[index], @"^function\s+(?:script\s+)?(?<name>\S+)\s*\{"); if (!match.Success) continue;
                 var declarationLine = index + 1;
                 var body = new List<string>(); var depth = lines[index].Count(character => character == '{') - lines[index].Count(character => character == '}');
@@ -414,7 +432,17 @@ internal static class RepositoryDomainAnalyzers
                 var compilation = RathenaEventCompiler.Compile(syntax, semantics, "OnClick");
                 var bodyBlockers = compilation.Diagnostics.Where(item => item.Severity == "Error").Select(item => CompatibilityDiagnosticNormalizer.Normalize(item, syntax).CapabilityId).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
                 var blockers = bodyBlockers.Append("function:runtime").Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
-                result.Add(Entity("functions", $"function:{match.Groups["name"].Value}", match.Groups["name"].Value, root, path, declarationLine, DomainCompatibilityStatus.Unsupported,
+                // Priority 3 (ai/world-data.md): the entity id must identify THIS source
+                // declaration, not merely its display name - pinned rAthena declares multiple
+                // distinct `function script <Name> {...}` bodies sharing the same name across
+                // different files (e.g. Job_Change, Chk, Catwarp), which previously collapsed onto
+                // one "function:<name>" id and silently merged unrelated entities/dependency-graph
+                // nodes. Source-qualified with the canonical relative source file and declaration
+                // line, both already deterministic per run (Relative(root, path) + a real source
+                // line number), so distinct declarations always stay distinct, identical reruns stay
+                // stable, and the id remains human-readable for diagnostics.
+                var functionId = $"function:{Relative(root, path)}:{declarationLine}:{match.Groups["name"].Value}";
+                result.Add(Entity("functions", functionId, match.Groups["name"].Value, root, path, declarationLine, DomainCompatibilityStatus.Unsupported,
                     [new("Body", bodyBlockers.Length == 0 ? DomainCompatibilityStatus.FullyCompatible : DomainCompatibilityStatus.Unsupported, bodyBlockers), new("Runtime", DomainCompatibilityStatus.Unsupported, ["function:runtime"])], [], blockers));
             }
         }
@@ -460,14 +488,14 @@ internal static class RepositoryDomainAnalyzers
             {
                 var forMap = mobSpawns.Where(item => item.Map == map).ToArray();
                 var (status, full, total) = RollupCounted(forMap.Select(item => item.Status));
-                components.Add(new("MobSpawns", status, [$"{full}/{total}"]));
+                components.Add(new("MobSpawns", status, [], new DomainMetric(full, total)));
                 consideredStatuses.Add(status);
             }
             if (mapFlagsSelected)
             {
                 var forMap = mapFlags.Where(item => item.Map == map).ToArray();
                 var (status, full, total) = RollupCounted(forMap.Select(item => item.Status));
-                components.Add(new("MapFlags", status, [$"{full}/{total}"]));
+                components.Add(new("MapFlags", status, [], new DomainMetric(full, total)));
                 consideredStatuses.Add(status);
             }
 
@@ -489,6 +517,19 @@ internal static class RepositoryDomainAnalyzers
         if (array.Length == 0) return (DomainCompatibilityStatus.NotApplicable, 0, 0);
         if (array.Any(item => item == DomainCompatibilityStatus.NotYetAnalyzed)) return (DomainCompatibilityStatus.NotYetAnalyzed, full, array.Length);
         return (full == array.Length ? DomainCompatibilityStatus.FullyCompatible : DomainCompatibilityStatus.PartiallyCompatible, full, array.Length);
+    }
+
+    // Shared guard for every raw-line domain scanner (AnalyzeMapFlags, AnalyzeFunctions) that reads
+    // rAthena *.txt content directly with regex/column-splitting rather than through
+    // RathenaSourceParser/RathenaEventCompiler (which already skip comments as part of real
+    // tokenization). A line is excluded once its content after trimming leading whitespace is empty
+    // or begins with a "//" line comment (rAthena's own comment syntax) - matching real pinned data,
+    // e.g. npc/custom/etc/penal_servitude.txt's commented-out `//sec_in02	mapflag	pvp` rows, which
+    // must never be discovered as active declarations (see ai/world-data.md).
+    private static bool IsCommentedOrBlank(string line)
+    {
+        var trimmed = line.TrimStart();
+        return trimmed.Length == 0 || trimmed.StartsWith("//", StringComparison.Ordinal);
     }
 
     private static IEnumerable<RathenaDeclaration> PositionedDeclarations(string root)

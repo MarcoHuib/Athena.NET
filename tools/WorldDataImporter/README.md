@@ -295,6 +295,27 @@ classification, and quest drop-rule vs full quest definition. Every `DomainEntit
 named `Components`, each deriving its status ONLY from its own blockers - one component being
 unsupported never taints a sibling.
 
+Raw-line domain scanners (`AnalyzeMapFlags`, `AnalyzeFunctions` - the domains that read pinned
+`*.txt` content directly rather than through `RathenaSourceParser`/`RathenaEventCompiler`) exclude
+commented-out (`//`, after trimming leading whitespace) and blank lines via a shared
+`IsCommentedOrBlank` helper before treating a line as a declaration - a commented-out
+`//map	mapflag	flag` line is never discovered as an active mapflag, and never produces a false
+`dependency:map` blocker referencing the literal `//map` text as a map name.
+
+`functions` domain entity ids are source-qualified (`function:<relative-source>:<line>:<name>`),
+not the bare function name, so two distinct pinned `function script` bodies that happen to share a
+name (pinned rAthena has several, e.g. `Job_Change`, `Chk`, `Catwarp`) remain separate entities and
+separate `dependencies.json` graph nodes instead of silently collapsing.
+
+A mob's `Drops:` block is classified exclusively by the dedicated `Drops` component
+(`mob-drops:runtime`); it is excluded from the generic unknown-top-level-field `StaticData` scan so
+the same source construct is never double-counted as both a `mob-field:drops` StaticData blocker
+and a `Drops` component blocker.
+
+Structural completeness counts (`map-world`'s `MobSpawns`/`MapFlags` components) are carried on an
+optional `DomainComponent.Metric` (`{ "Compatible": N, "Total": M }`), never as a formatted
+`"N/M"` string inside `Blockers` - `Blockers` holds only genuine semantic blocker/capability ids.
+
 `Compatible` means the complete event passes the current real compilation boundary;
 unsupported statements are never omitted. `soleBlockerFor` counts events whose
 distinct normalized capability set contains only that feature, rather than estimating

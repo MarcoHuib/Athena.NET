@@ -542,6 +542,42 @@ MVP classification is derived directly from pinned `Class: Boss` +
 not from grepping unrelated blocker strings, which is how an earlier version of
 this detection silently never fired against real data.
 
+A mob's `Drops:` block is classified ONLY by the dedicated `Drops` component
+(`mob-drops:runtime` when present) - it is explicitly excluded from the generic
+unknown-top-level-field `StaticData` scan, so a `Drops:` block never ALSO
+produces a redundant `mob-field:drops` StaticData blocker for the identical
+source construct. Every other unmodeled top-level mob field still becomes a
+StaticData gap as normal.
+
+Every raw-line domain scanner that reads pinned `*.txt` content directly (as
+opposed to going through `RathenaSourceParser`/`RathenaEventCompiler`, which
+already tokenize past comments) - currently `AnalyzeMapFlags` and
+`AnalyzeFunctions` - excludes commented-out (`//`, after trimming leading
+whitespace) and blank lines via the shared `IsCommentedOrBlank` helper before
+treating a line as a declaration. This closed a real false-positive source: a
+commented-out `//sec_in02	mapflag	pvp` block (`npc/custom/etc/
+penal_servitude.txt`) previously surfaced as an active mapflag entity
+referencing a literal `//sec_in02` map name, producing hundreds of false
+`dependency:map` blockers. `AnalyzeMobSpawns`'s own spawn-line regex was
+independently verified safe (`[^/\r\n]+` in the map-name position already
+rejects a leading `//`), and mob/item/quest YAML field scanning
+(`TopLevelKeys`/`Scalar`/`HasBlock`) is likewise safe against `#`-prefixed YAML
+comment lines (their patterns anchor on a leading letter, which a comment
+marker never satisfies).
+
+`functions` domain entity ids are source-qualified
+(`function:<canonical-relative-source>:<line>:<name>`), not merely the bare
+function name - pinned rAthena declares multiple distinct `function script`
+bodies sharing the same name across different files (e.g. `Job_Change`, `Chk`,
+`Catwarp`), which previously collapsed onto one shared id and silently merged
+unrelated entities and `dependencies.json` graph nodes.
+
+Structural completeness counts (currently `map-world`'s `MobSpawns`/`MapFlags`
+components) are carried on an optional `DomainComponent.Metric`
+(`DomainMetric(Compatible, Total)`), never smuggled into `Blockers` as a
+formatted `"12/13"` string - `Blockers` holds only genuine semantic
+blocker/capability ids.
+
 Quest analysis distinguishes the quest's overall `Definition` (there is no
 general quest-definition converter in this project, so most non-`Targets`
 quests are honestly `NotYetAnalyzed`, not `Unsupported`) from `DropRule`
