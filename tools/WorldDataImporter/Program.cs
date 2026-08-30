@@ -57,8 +57,14 @@ internal static class WorldDataImporterCli
         var context = options.Optional("source-context-lines") is { } raw
             ? int.Parse(raw, CultureInfo.InvariantCulture) : 5;
         var types = options.All("type").Select(item => item.ToLowerInvariant()).ToHashSet(StringComparer.Ordinal);
+        var scope = (options.Optional("scope") ?? "runtime").ToLowerInvariant() switch
+        {
+            "runtime" => AnalysisScope.Runtime,
+            "all" => AnalysisScope.All,
+            var value => throw new ArgumentException($"Unknown analysis scope '{value}'; expected runtime or all.")
+        };
         var analysisOptions = new AnalysisOptions(options.Required("rathena-root"), options.Required("output"), context,
-            types.Count == 0 ? null : types, options.Optional("map"), options.Optional("source"));
+            types.Count == 0 ? null : types, options.Optional("map"), options.Optional("source"), scope);
         var result = RepositoryCompatibilityAnalyzer.Analyze(analysisOptions);
         await RepositoryCompatibilityAnalyzer.WriteAsync(analysisOptions, result);
         Console.WriteLine($"Analyzed {result.Summary.FilesAnalyzed} files and {result.Summary.EntitiesAnalyzed} entities/events: {result.Summary.Compatible} compatible, {result.Summary.Unsupported} unsupported.");
@@ -619,7 +625,7 @@ internal static class WorldDataImporterCli
     private static void PrintUsage()
     {
         Console.Error.WriteLine("WorldDataImporter audit --source-root <folder> [--source-root <folder>] --output <report.json>");
-        Console.Error.WriteLine("WorldDataImporter analyze --rathena-root <folder> --output <folder> [--type <npc|warp|mob|boss|shop|function|mapflag>] [--map <map>] [--source <path-filter>] [--source-context-lines 5]");
+        Console.Error.WriteLine("WorldDataImporter analyze --rathena-root <folder> --output <folder> [--scope runtime|all] [--type <npc|warp|mob|boss|shop|function|mapflag>] [--map <map>] [--source <path-filter>] [--source-context-lines 5]");
         Console.Error.WriteLine("WorldDataImporter convert --source-root <folder> --output <entities-folder> [--source-file <path>] [--map <map>] [--name <name>] [--kind warp]");
         Console.Error.WriteLine("WorldDataImporter convert --source-root <folder> --all-compatible true --output <entities-folder> --report <report.json>");
         Console.Error.WriteLine("WorldDataImporter capabilities --source-root <folder> [--source-root <folder>] --output <report.json>");

@@ -235,6 +235,18 @@ event through the same lexer, parser, semantic analyzer, and lowerer used by C#
 generation. It is a read-only dry run: it does not emit runtime C#, modify the
 pinned source, update a database, or contact a server.
 
+The default `--scope runtime` analyzes the real runtime NPC tree (`npc/` when the
+supplied root contains it). Documentation and samples therefore do not distort the
+official compatibility baseline or roadmap. Use `--scope all` deliberately when
+including `doc/` and other text sources for parser stress analysis:
+
+```bash
+dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- analyze \
+  --rathena-root legacy/rathena \
+  --scope all \
+  --output artifacts/world-analysis-all
+```
+
 Run the complete analysis manually (it is intentionally not part of normal tests):
 
 ```bash
@@ -265,11 +277,28 @@ The output contains:
 
 `Compatible` means the complete event passes the current real compilation boundary;
 unsupported statements are never omitted. `soleBlockerFor` counts events whose
-distinct blocker set contains only that feature and stage, rather than estimating
+distinct normalized capability set contains only that feature, rather than estimating
 from command frequency. Parsing failures, semantic failures, lowering gaps,
 runtime capability gaps, dependencies, and generation failures are separate stages
 because they require different work. Reliably discoverable categories without an
 actual converter are reported as `NotYetAnalyzed`, never as compatible.
+
+Roadmap blockers use stable semantic capability IDs such as
+`control-flow:while`, `function:callfunc`, `variable:account`, and
+`operator:logical-and`. The unsupported JSONL retains `compilerConstruct`, the
+diagnostic code, message, and location separately so compiler implementation detail
+remains available without becoming the roadmap identity. Attribution is based on
+the syntax node owning the diagnostic span; a nearby supported command is never
+used as a guess.
+
+Event compatibility and NPC-definition compatibility are distinct. A definition is
+`FullyCompatible` only when every executable event is compatible,
+`PartiallyCompatible` when compatible and unsupported events coexist,
+`Unsupported` when no executable event is compatible, and `NotApplicable` only
+when it has no executable behavior. A future safe `--compatible-only` bulk mode
+must generate only fully compatible definitions by default. It must not silently
+drop an unsupported `OnTouch`, `OnInit`, or other event from a partially compatible
+NPC.
 
 ## Top-level content audit
 

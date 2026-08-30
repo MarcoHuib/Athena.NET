@@ -6,12 +6,15 @@ using Athena.WorldCompiler.Rathena.Syntax;
 
 internal enum CompatibilityStatus { Compatible, Unsupported, NotYetAnalyzed, NotApplicable }
 internal enum FailureStage { Discovery, Parsing, SemanticAnalysis, Lowering, RuntimeCapability, Dependency, Generation }
+internal enum AnalysisScope { Runtime, All }
+internal enum DefinitionCompatibilityStatus { FullyCompatible, PartiallyCompatible, Unsupported, NotApplicable }
 
 internal sealed record AnalysisOptions(
     string RathenaRoot, string OutputDirectory, int SourceContextLines = 5,
-    IReadOnlySet<string>? Types = null, string? Map = null, string? Source = null);
+    IReadOnlySet<string>? Types = null, string? Map = null, string? Source = null,
+    AnalysisScope Scope = AnalysisScope.Runtime);
 internal sealed record SourceContext(int StartLine, int EndLine, IReadOnlyList<string> Text);
-internal sealed record CompatibilityBlocker(string DiagnosticCode, string Feature, string Category, FailureStage Stage, int Line, int Column, string Message);
+internal sealed record CompatibilityBlocker(string DiagnosticCode, string Feature, string Category, FailureStage Stage, string CompilerConstruct, int Line, int Column, string Message);
 internal sealed record CompatibilityEntity(
     string Id, string EntityType, string EntityName, string? Map, string? Event,
     string SourceFile, int SourceLine, CompatibilityStatus Status,
@@ -19,8 +22,10 @@ internal sealed record CompatibilityEntity(
     SourceContext? SourceContext = null, IReadOnlyList<string>? Dependencies = null);
 internal sealed record CategorySummary(string Category, int Discovered, int Compatible, int Unsupported, int NotYetAnalyzed, int NotApplicable);
 internal sealed record EventSummary(string Event, int Compatible, int Unsupported);
+internal sealed record DefinitionCompatibilitySummary(int Total, int FullyCompatible, int PartiallyCompatible, int Unsupported, int NotApplicable);
 internal sealed record AnalysisSummary(int FilesAnalyzed, int EntitiesAnalyzed, int Compatible, int Unsupported,
-    IReadOnlyList<CategorySummary> Categories, IReadOnlyList<EventSummary> Events);
+    IReadOnlyList<CategorySummary> Categories, IReadOnlyList<EventSummary> Events,
+    DefinitionCompatibilitySummary NpcDefinitions, DefinitionCompatibilitySummary WarpNpcDefinitions);
 internal sealed record BlockerSummary(string Feature, string Category, FailureStage Stage, int Occurrences, int AffectedEntities, int SoleBlockerFor, IReadOnlyList<string> RepresentativeSources);
 internal sealed record WorkItem(int Priority, string Feature, string Category, FailureStage Stage, int AffectedEntities, int EntitiesUnlocked, int Occurrences, IReadOnlyList<string> RepresentativeSources);
 internal sealed record EntityDependencies(string Entity, IReadOnlyList<string> Dependencies);
@@ -35,9 +40,10 @@ internal static class RepositoryCompatibilityAnalyzer
         var root = Path.GetFullPath(options.RathenaRoot);
         if (!Directory.Exists(root)) throw new ArgumentException($"rAthena root does not exist: {root}");
         if (options.SourceContextLines < 0 || options.SourceContextLines > 50) throw new ArgumentException("--source-context-lines must be between 0 and 50.");
-        var files = Directory.EnumerateFiles(root, "*.txt", SearchOption.AllDirectories).Order(StringComparer.Ordinal).ToArray();
-        var declarations = RathenaSourceParser.Parse([root]);
-        var warpConversion = WorldEntityConverter.Convert([root], new(null, null, null, "warp"));
+        var contentRoot = options.Scope == AnalysisScope.Runtime && Directory.Exists(Path.Combine(root, "npc")) ? Path.Combine(root, "npc") : root;
+        var files = Directory.EnumerateFiles(contentRoot, "*.txt", SearchOption.AllDirectories).Order(StringComparer.Ordinal).ToArray();
+        var declarations = RathenaSourceParser.Parse([contentRoot]);
+        var warpConversion = WorldEntityConverter.Convert([contentRoot], new(null, null, null, "warp"));
         var convertedWarps = warpConversion.Entities.Select(item => (CanonicalSource(root, item.Source.File), item.Source.Line)).ToHashSet();
         var rejectedWarps = warpConversion.Unsupported.Select(item => (File: CanonicalSource(root, item.File), item.Line, item.Reason)).ToLookup(item => (item.File, item.Line));
         var records = new List<CompatibilityEntity>();
@@ -53,7 +59,7 @@ internal static class RepositoryCompatibilityAnalyzer
                     type == "warp" ? CompatibilityStatus.Unsupported :
                     type == "duplicate" ? CompatibilityStatus.NotApplicable : CompatibilityStatus.NotYetAnalyzed;
                 IReadOnlyList<CompatibilityBlocker>? conversionBlockers = status == CompatibilityStatus.Unsupported
-                    ? rejectedWarps[(declaration.Source.File, declaration.Source.Line)].Select(item => new CompatibilityBlocker("RATD001", "warp", "world-converter", FailureStage.Discovery, declaration.Source.Line, 1, item.Reason)).ToArray()
+                    ? rejectedWarps[(declaration.Source.File, declaration.Source.Line)].Select(item => new CompatibilityBlocker("RATD001", "world:warp", "world-converter", FailureStage.Discovery, "RathenaDeclaration", declaration.Source.Line, 1, item.Reason)).ToArray()
                     : null;
                 records.Add(Entity(declaration, type, null, status, [], conversionBlockers, null));
                 continue;
@@ -76,7 +82,7 @@ internal static class RepositoryCompatibilityAnalyzer
                     records.Add(Entity(declaration, type, eventName, CompatibilityStatus.Compatible, features, null, null) with { Dependencies = Dependencies(compilation.Script) });
                 else
                 {
-                    var eventBlockers = errors.Select(error => ToBlocker(error, compilation.Features)).Distinct().OrderBy(item => item.Line).ThenBy(item => item.Column).ThenBy(item => item.Feature, StringComparer.Ordinal).ToArray();
+                    var eventBlockers = errors.Select(error => ToBlocker(error, syntax)).Distinct().OrderBy(item => item.Line).ThenBy(item => item.Column).ThenBy(item => item.Feature, StringComparer.Ordinal).ToArray();
                     var firstLine = eventBlockers.Min(item => item.Line);
                     records.Add(Entity(declaration, type, eventName, CompatibilityStatus.Unsupported, features, eventBlockers,
                         Context(root, declaration.Source.File, firstLine, options.SourceContextLines)) with { Dependencies = Dependencies(compilation.Script) });
@@ -98,8 +104,10 @@ internal static class RepositoryCompatibilityAnalyzer
             .Select(group => new CategorySummary(group.Key, group.Count(), group.Count(x => x.Status == CompatibilityStatus.Compatible), group.Count(x => x.Status == CompatibilityStatus.Unsupported), group.Count(x => x.Status == CompatibilityStatus.NotYetAnalyzed), group.Count(x => x.Status == CompatibilityStatus.NotApplicable))).ToArray();
         var eventSummary = ordered.Where(item => item.Event is not null).GroupBy(item => item.Event!, StringComparer.Ordinal).OrderBy(item => item.Key, StringComparer.Ordinal)
             .Select(group => new EventSummary(group.Key, group.Count(x => x.Status == CompatibilityStatus.Compatible), group.Count(x => x.Status == CompatibilityStatus.Unsupported))).ToArray();
+        var npcDefinitions = DefinitionSummary(ordered, "npc");
+        var warpNpcDefinitions = DefinitionSummary(ordered, "warpnpc");
         var dependencies = ordered.Where(item => item.Dependencies is { Count: > 0 }).Select(item => new EntityDependencies(item.Id, item.Dependencies!)).ToArray();
-        return new(new(files.Length, ordered.Length, compatible.Length, unsupported.Length, categories, eventSummary), compatible, unsupported, blockers, work, dependencies);
+        return new(new(files.Length, ordered.Length, compatible.Length, unsupported.Length, categories, eventSummary, npcDefinitions, warpNpcDefinitions), compatible, unsupported, blockers, work, dependencies);
     }
 
     public static async Task WriteAsync(AnalysisOptions options, RepositoryAnalysisResult result)
@@ -122,23 +130,12 @@ internal static class RepositoryCompatibilityAnalyzer
         return labels;
     }
 
-    private static CompatibilityBlocker ToBlocker(CompilerDiagnostic diagnostic, IReadOnlyList<Athena.WorldCompiler.Semantics.SemanticOccurrence> features)
+    private static CompatibilityBlocker ToBlocker(CompilerDiagnostic diagnostic, CompilationUnitSyntax syntax)
     {
-        var occurrence = features.OrderBy(item => Math.Abs(item.Span.Start.Offset - diagnostic.Span.Start.Offset)).FirstOrDefault();
-        var feature = diagnostic.Construct ?? occurrence?.Name ?? diagnostic.Code;
-        if (feature.EndsWith("StatementSyntax", StringComparison.Ordinal) && occurrence is not null) feature = occurrence.Name;
-        var stage = diagnostic.Code.StartsWith("RAT1", StringComparison.Ordinal) || diagnostic.Code.StartsWith("RAT2", StringComparison.Ordinal) ? FailureStage.Parsing
-            : diagnostic.Code.StartsWith("RAT3", StringComparison.Ordinal) ? FailureStage.SemanticAnalysis
-            : diagnostic.Code.StartsWith("RAT4", StringComparison.Ordinal) ? FailureStage.Lowering : FailureStage.Generation;
-        return new(diagnostic.Code, feature.ToLowerInvariant(), Category(feature), stage, diagnostic.Span.Start.Line, diagnostic.Span.Start.Column, diagnostic.Message);
+        var normalized = CompatibilityDiagnosticNormalizer.Normalize(diagnostic, syntax);
+        return new(diagnostic.Code, normalized.CapabilityId, normalized.Category, normalized.Stage, normalized.CompilerConstruct,
+            diagnostic.Span.Start.Line, diagnostic.Span.Start.Column, diagnostic.Message);
     }
-
-    private static string Category(string feature) => feature.ToLowerInvariant() switch
-    {
-        "sleep" or "sleep2" or "addtimer" or "deltimer" or "initnpctimer" => "timer",
-        "callfunc" or "callsub" => "control-flow",
-        _ => "script-compiler"
-    };
 
     private static IReadOnlyList<BlockerSummary> AggregateBlockers(IReadOnlyList<CompatibilityEntity> unsupported)
     {
@@ -146,9 +143,28 @@ internal static class RepositoryCompatibilityAnalyzer
         return occurrences.GroupBy(item => (item.blocker.Feature, item.blocker.Category, item.blocker.Stage))
             .Select(group => new BlockerSummary(group.Key.Feature, group.Key.Category, group.Key.Stage, group.Count(),
                 group.Select(item => item.entity.Id).Distinct(StringComparer.Ordinal).Count(),
-                group.Select(item => item.entity).DistinctBy(item => item.Id).Count(entity => entity.Blockers!.Select(b => (b.Feature, b.Stage)).Distinct().Count() == 1),
+                group.Select(item => item.entity).DistinctBy(item => item.Id).Count(entity => entity.Blockers!.Select(b => b.Feature).Distinct(StringComparer.Ordinal).Count() == 1),
                 group.Select(item => $"{item.entity.SourceFile}:{item.blocker.Line}").Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).Take(5).ToArray()))
             .OrderByDescending(item => item.SoleBlockerFor).ThenByDescending(item => item.AffectedEntities).ThenBy(item => item.Feature, StringComparer.Ordinal).ToArray();
+    }
+
+    private static DefinitionCompatibilitySummary DefinitionSummary(IReadOnlyList<CompatibilityEntity> records, string entityType)
+    {
+        var statuses = records.Where(item => item.EntityType == entityType)
+            .GroupBy(item => (item.SourceFile, item.SourceLine, item.EntityName))
+            .Select(group =>
+            {
+                var events = group.Where(item => item.Event is not null).ToArray();
+                if (events.Length == 0) return DefinitionCompatibilityStatus.NotApplicable;
+                var compatible = events.Count(item => item.Status == CompatibilityStatus.Compatible);
+                return compatible == events.Length ? DefinitionCompatibilityStatus.FullyCompatible :
+                    compatible > 0 ? DefinitionCompatibilityStatus.PartiallyCompatible : DefinitionCompatibilityStatus.Unsupported;
+            }).ToArray();
+        return new(statuses.Length,
+            statuses.Count(item => item == DefinitionCompatibilityStatus.FullyCompatible),
+            statuses.Count(item => item == DefinitionCompatibilityStatus.PartiallyCompatible),
+            statuses.Count(item => item == DefinitionCompatibilityStatus.Unsupported),
+            statuses.Count(item => item == DefinitionCompatibilityStatus.NotApplicable));
     }
 
     private static CompatibilityEntity Entity(RathenaDeclaration d, string type, string? eventName, CompatibilityStatus status, IReadOnlyList<string> features, IReadOnlyList<CompatibilityBlocker>? blockers, SourceContext? context)
@@ -260,6 +276,8 @@ internal static class RepositoryCompatibilityAnalyzer
         text.AppendLine($"Files analyzed: {result.Summary.FilesAnalyzed}");
         text.AppendLine($"Entities/events analyzed: {result.Summary.EntitiesAnalyzed}");
         text.AppendLine($"Compatible: {result.Summary.Compatible}"); text.AppendLine($"Unsupported: {result.Summary.Unsupported}");
+        AppendDefinitionSummary(text, "NPC definitions", result.Summary.NpcDefinitions);
+        AppendDefinitionSummary(text, "WARPNPC definitions", result.Summary.WarpNpcDefinitions);
         text.AppendLine("\n## Content categories\n\n| Category | Discovered | Compatible | Unsupported | Not yet analyzed | Not applicable |\n|---|---:|---:|---:|---:|---:|");
         foreach (var item in result.Summary.Categories) text.AppendLine($"| {item.Category} | {item.Discovered} | {item.Compatible} | {item.Unsupported} | {item.NotYetAnalyzed} | {item.NotApplicable} |");
         text.AppendLine("\n## Event compatibility\n\n| Event | Compatible | Unsupported |\n|---|---:|---:|");
@@ -267,5 +285,19 @@ internal static class RepositoryCompatibilityAnalyzer
         text.AppendLine("\n## Top compatibility blockers\n\n| Rank | Feature | Stage | Affected | Sole blocker / unlocked |\n|---:|---|---|---:|---:|");
         foreach (var item in result.WorkItems.Take(25)) text.AppendLine($"| {item.Priority} | {item.Feature} | {item.Stage} | {item.AffectedEntities} | {item.EntitiesUnlocked} |");
         return text.ToString();
+    }
+
+    private static void AppendDefinitionSummary(StringBuilder text, string heading, DefinitionCompatibilitySummary summary)
+    {
+        text.AppendLine($"\n## {heading}\n\n| Status | Count | Percentage |\n|---|---:|---:|");
+        Append("Fully compatible", summary.FullyCompatible);
+        Append("Partially compatible", summary.PartiallyCompatible);
+        Append("Unsupported", summary.Unsupported);
+        Append("Not applicable", summary.NotApplicable);
+        void Append(string status, int count)
+        {
+            var percentage = summary.Total == 0 ? 0 : count * 100d / summary.Total;
+            text.AppendLine($"| {status} | {count} | {percentage.ToString("0.00", CultureInfo.InvariantCulture)}% |");
+        }
     }
 }

@@ -492,7 +492,11 @@ It reuses the same per-event parser/semantic/lowering result as NPC generation,
 reports fail-closed event compatibility and staged blockers, and writes deterministic
 JSON/JSONL plus Markdown without generating runtime source. Its result model is the
 intended input boundary for a future compatible-only bulk generator, avoiding an
-independent compatibility parser or duplicated capability list.
+independent compatibility parser or duplicated capability list. Roadmap aggregation
+uses normalized semantic capability IDs while retaining raw compiler constructs in
+event diagnostics. The official baseline defaults to runtime `npc/` content, and
+definition-level status fails closed: future compatible-only generation may select
+only definitions whose complete executable event set is compatible.
 
 Regenerate complete character data from the current pinned SHA (never edit generated output):
 

@@ -157,3 +157,6 @@ ai/agent-status.md
 *.rsw
 *.grf
 *.athmap
+
+
+artifacts/
