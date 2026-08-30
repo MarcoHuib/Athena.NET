@@ -27,6 +27,7 @@ internal static class WorldDataImporterCli
                 "compile-character-data" => await CompileCharacterDataAsync(args[1..]),
                 "compile-progression" => await CompileProgressionAsync(args[1..]),
                 "compile-mob-definitions" => await CompileMobDefinitionsAsync(args[1..]),
+                "generate-mobs" => await GenerateMobsAsync(args[1..]),
                 "compile-mob-spawn" => await CompileMobSpawnAsync(args[1..]),
                 "compile-quest-drop" => await CompileQuestDropAsync(args[1..]),
                 "compile-item" => await CompileItemAsync(args[1..]),
@@ -419,6 +420,57 @@ internal static class WorldDataImporterCli
         return 0;
     }
 
+    private static async Task<int> GenerateMobsAsync(string[] args)
+    {
+        const int BucketSize = 1000;
+        const string ClassName = "GeneratedMobs";
+        const string Category = "Monsters";
+        var options = CliOptions.Parse(args);
+        var root = Path.GetFullPath(options.Required("rathena-root"));
+        var outputDir = Path.GetFullPath(options.Required("output"));
+        var commit = options.Optional("rathena-commit") ?? ReadPinnedCommit(root);
+        var sourcePath = Path.Combine(root, "db/re/mob_db.yml");
+        var sourceFile = CanonicalSourceFile(sourcePath);
+        var definitions = MobDataCompiler.ReadAllMobDefinitions(await File.ReadAllTextAsync(sourcePath));
+        var symbols = MobDataCompiler.CreateGeneratedSymbols(definitions);
+
+        Directory.CreateDirectory(outputDir);
+        foreach (var path in Directory.EnumerateFiles(outputDir, "*.cs").Where(path => MobDataCompiler.IsOwnedGeneratedMobFile(path, ClassName, Category)))
+            File.Delete(path);
+
+        var encoding = new System.Text.UTF8Encoding(false);
+        var fileCount = 0;
+        foreach (var bucket in symbols.GroupBy(item => item.Mob.Id / BucketSize).OrderBy(group => group.Key))
+        {
+            var lo = bucket.Key * BucketSize;
+            var path = Path.Combine(outputDir, $"{ClassName}.{Category}.{lo}-{lo + BucketSize - 1}.cs");
+            await File.WriteAllTextAsync(path,
+                MobDataCompiler.GenerateMobDefinitions(bucket.Select(item => (item.Mob, item.Symbol)).ToArray(), commit, ClassName, sourceFile, 0), encoding);
+            fileCount++;
+        }
+        await File.WriteAllTextAsync(Path.Combine(outputDir, $"{ClassName}.Registry.cs"),
+            MobDataCompiler.GenerateMobRegistry(symbols, commit, sourceFile), encoding);
+        Console.WriteLine($"Mob generated-production coverage: {symbols.Count} / {definitions.Count} definitions across {fileCount} range shard(s) plus registry.");
+        return 0;
+    }
+
+    private static string ReadPinnedCommit(string rathenaRoot)
+    {
+        var gitFile = Path.Combine(rathenaRoot, ".git");
+        if (Directory.Exists(gitFile))
+            throw new ArgumentException("generate-mobs requires --rathena-commit when the rAthena root is not a pinned submodule gitfile.");
+        if (!File.Exists(gitFile))
+            throw new ArgumentException("generate-mobs requires --rathena-commit because the pinned rAthena commit could not be discovered.");
+        var pointer = File.ReadAllText(gitFile).Trim();
+        if (!pointer.StartsWith("gitdir: ", StringComparison.Ordinal))
+            throw new ArgumentException("Pinned rAthena .git file has an unsupported format; pass --rathena-commit explicitly.");
+        var gitDir = pointer[8..];
+        if (!Path.IsPathRooted(gitDir)) gitDir = Path.GetFullPath(Path.Combine(rathenaRoot, gitDir));
+        var head = File.ReadAllText(Path.Combine(gitDir, "HEAD")).Trim();
+        if (!head.StartsWith("ref: ", StringComparison.Ordinal)) return head;
+        return File.ReadAllText(Path.Combine(gitDir, head[5..])).Trim();
+    }
+
     // Spawn-only: references an ALREADY-generated global mob-definition class (via
     // --definition-class, e.g. "GeneratedMobs") rather than generating one itself - keeps this
     // command's sole responsibility "where/how many/how often does mob X spawn", matching
@@ -635,6 +687,7 @@ internal static class WorldDataImporterCli
         Console.Error.WriteLine("WorldDataImporter compile-actors --source-root <folder> --rathena-commit <sha> --output <Actors.cs> --source-file <path> --map <map> --name <name> [--name <name>]");
         Console.Error.WriteLine("WorldDataImporter compile-navigation --source-root <folder> --output <Navigation.cs> --name <name> [--name <name>] [--namespace <ns>]");
         Console.Error.WriteLine("WorldDataImporter compile-character-data --rathena-root <folder> --rathena-commit <sha> --output <MapServer/Generated directory>");
+        Console.Error.WriteLine("WorldDataImporter generate-mobs --rathena-root <folder> [--rathena-commit <sha>] --output <MapServer/Generated/GameData/Mobs directory>");
         Console.Error.WriteLine("WorldDataImporter compile-progression --rathena-root <folder> --rathena-commit <sha> --output <MapServer/Generated/Progression directory> (compatibility alias)");
         Console.Error.WriteLine("WorldDataImporter compile-mob-spawn --rathena-root <folder> --rathena-commit <sha> --mob-id <id> --name <spawn-name> --spawn-file <path> [--exclude-map <map>] --class-name <n> --constant-name <n> --spawn-class-name <n> --spawn-array-name <n> --output-definition <Mob.cs> --output-spawns <MobSpawns.cs>");
         Console.Error.WriteLine("WorldDataImporter compile-quest-drop --rathena-root <folder> --rathena-commit <sha> --quest-id <id> --output <QuestDrops.cs>");

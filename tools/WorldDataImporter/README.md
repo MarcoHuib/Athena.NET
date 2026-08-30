@@ -368,6 +368,31 @@ Structural completeness counts (`map-world`'s `MobSpawns`/`MapFlags` components)
 optional `DomainComponent.Metric` (`{ "Compatible": N, "Total": M }`), never as a formatted
 `"N/M"` string inside `Blockers` - `Blockers` holds only genuine semantic blocker/capability ids.
 
+### Generate all production mob definitions
+
+The production mob pipeline is intentionally separate from runtime compatibility analysis:
+
+1. source representation: every effective pinned `db/re/mob_db.yml` block is losslessly parsed;
+2. generated production data: every pinned ID is emitted as native C# and indexed by MobId;
+3. runtime capability: drops, mob skills, race-group effects, MVP rewards, and unsupported mode
+   behavior remain honest analyzer blockers.
+
+Generate the current complete set with:
+
+```bash
+dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- generate-mobs \
+  --rathena-root legacy/rathena \
+  --rathena-commit e985006171d2eb320ee512a653f4c83aea3d81b6 \
+  --output src/MapServer/Generated/GameData/Mobs
+```
+
+The current pin generates 2,675 definitions, six non-empty fixed 1,000-ID shards, and a generated
+dictionary registry. Duplicate IDs fail closed. Symbol normalization and collision resolution are
+deterministic. Cleanup removes only generator-owned mob shard/registry files carrying the expected
+auto-generated header. MapServer compiles only the emitted C#; it never reads rAthena YAML at
+runtime. The command prints `Mob generated-production coverage: 2675 / 2675` as a distinct
+integrity metric, not as a runtime-compatibility claim.
+
 `Compatible` means the complete event passes the current real compilation boundary;
 unsupported statements are never omitted. `soleBlockerFor` counts events whose
 distinct normalized capability set contains only that feature, rather than estimating
