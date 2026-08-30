@@ -776,6 +776,179 @@ existing `IMobSpawnCellSelector` map-wide randomized-search semantics apply (nev
 convention, all five pinned `prt_fild08{,a,b,c,d}` family rows are generated losslessly (`new_1-3`,
 an unrelated map sharing "Little Poring"'s display name, is the only excluded row).
 
+### Mob static-data schema coverage
+
+`MobDefinition` (`src/MapServer/World/WorldEntityDefinition.cs`) and `MobDataCompiler.
+ReadMobDefinition`/`GenerateMobDefinition` (`tools/WorldDataImporter/Compiler/MobDataCompiler.cs`)
+losslessly model every pinned `db/re/mob_db.yml` top-level scalar field documented in that file's
+own header comment, beyond the original combat/movement slice (Level/Hp/Attack/Attack2/Defense/
+MagicDefense/Str-Agi-Vit-Int-Dex-Luk/AttackRange/WalkSpeed/AttackDelay/AttackMotion/DamageMotion/
+BaseExp/JobExp/Ai+Modes): `JapaneseName`, `Sp` (-> `MaxSp`), `MvpExp`, `Resistance`,
+`MagicResistance`, `SkillRange`, `ChaseRange`, `Size`, `Race`, `Element`, `ElementLevel`,
+`ClientAttackMotion`, `DamageTaken`, `GroupId`, and `Title`. Each uses the pinned default
+documented in that header comment (verified against `mob.cpp`'s own `s_mob_db` constructor and
+`MobDatabase::parseBodyNode`, e.g. `Sp` -> 1, `DamageTaken` -> 100, `ElementLevel` -> 1) rather than
+a blanket zero — `ClientAttackMotion` specifically has NO fixed default: an absent value resolves
+to THIS SAME mob's own resolved `AttackMotion` (`mob.cpp:5391-5397`, the `else { if (!exists) ...
+}` branch for a mob_id seen for the first time), which `MobDataCompiler` computes explicitly rather
+than approximating with a constant.
+
+`Size`/`Race`/`Element`/`Class` are strongly-typed generated enums (`MobSize`/`MobRace`/
+`MobElement`/`MobClass`) mirroring the pinned `e_size`/`e_race`/`e_element`/`e_mob_class` numeric
+values exactly (including pinned's own gap — `MobClass.Battlefield = 4`, no member at 3). Only the
+members `MobDatabase::parseBodyNode` can actually resolve into a real per-mob value are modeled
+(e.g. `RC_ALL`/`ELE_WEAPON`/`SZ_MAX` are pinned wildcard/sentinel constants a real `Size:`/`Race:`/
+`Element:` field is never resolved to, per each parser's own bounds-check-then-clamp-to-default
+logic) — see each enum's own doc comment in `WorldEntityDefinition.cs` for the exact pinned trace.
+String values resolve case-insensitively against the fixed pinned name table (matching
+`script_get_constant`'s own `search_str`/`strcasecmp` lookup — real pinned data uses both
+`Size: Large`/`Race: Player_Doram` and `Race: Demihuman` spellings, not the enum member's own C#
+identifier casing), falling back to the documented default on an unrecognized value exactly like
+the pre-existing unrecognized-`Ai`-preset fallback — never a thrown error for one bad enum-shaped
+field. A `Title:`/`JapaneseName:` value that is YAML-quoted in the pinned source (e.g.
+`Title: "<Red Pepper>"`, required whenever the value contains a YAML-special character) is unwrapped
+before being re-emitted as a proper escaped C# string literal, not embedded with its original YAML
+quote characters.
+
+`RepositoryDomainAnalyzers.MobSupportedKeys` is kept in sync with `MobDataCompiler`'s actual scalar
+field coverage; a real, pinned-file-scanning schema-drift test
+(`MobDataCompilerTests.PinnedMobDbSchema_EveryTopLevelKeyActuallyPresentInRealData_IsExplicitlyClassified`
+and its `Modes:`-nested-key companion) discovers every top-level key that actually occurs anywhere
+in the real pinned `db/re/mob_db.yml` (not merely the file's own header comment) and asserts each
+is either `Modeled` (a scalar/enum `MobDefinitionData` field), a `DedicatedComponent` (`Modes`,
+`RaceGroups`, `Drops`, `MvpDrops` — see below), or `ExplicitlyIgnoredWithReason` (currently empty) —
+so a future pinned schema addition is caught as a test failure rather than silently widening the
+unmeasured gap. See `tests/WorldDataImporter.Tests/MobDataCompilerTests.cs` for the full
+enum-coverage and lossless-round-trip regression suite, including a real pinned fixture (Golden
+Thief Bug, Id 1086) that exercises `MvpExp`/`Size: Large`/`Race: Insect`/`Element: Fire`/
+`ElementLevel: 2`/`Class: Boss` together against real rAthena data rather than only synthetic
+fixtures.
+
+### Mob Modes: the complete pinned bitmask, representation vs runtime execution
+
+`MobMode`/`MobModeData` (`WorldEntityDefinition.cs`/`MobDataCompiler.cs`) model the COMPLETE pinned
+`e_mode` bitmask — all 26 named `MD_*` bits (`mmo.hpp:242-272`, cross-checked against
+`legacy/rathena/doc/mob_db_mode_list.txt`; the two remaining bit positions, `0x0000100`/`0x0800000`,
+are pinned "FREE"/unused slots with no `MD_*` constant and are correctly absent — `MobModeData_
+NamedMemberCount_Is26` in `MobDataCompilerTests.cs` locks this count down). Every valid `Modes:`
+entry name — `CanMove`/`Looter`/`Aggressive`/`Assist`/`CastSensorIdle`/`NoRandomWalk`/
+`NoCast`/`CanAttack`/`CastSensorChase`/`ChangeChase`/`Angry`/`ChangeTargetMelee`/
+`ChangeTargetChase`/`TargetWeak`/`RandomTarget`/`IgnoreMelee`/`IgnoreMagic`/`IgnoreRanged`/`Mvp`/
+`IgnoreMisc`/`KnockBackImmune`/`TeleportBlock`/`FixedItemDrop`/`Detector`/`StatusImmune`/
+`SkillImmune` — round-trips losslessly through `ReadMode`/`GenerateMobDefinition`, individually
+OR'd (`true`)/AND-NOT'd (`false`) onto the mob's `Ai:`-preset base mode exactly like pinned
+`MobDatabase::parseBodyNode` (`mob.cpp:5446-5519`). Only 5 of those 26 bits
+(`CanMove`/`NoRandomWalk`/`CanAttack`/`ChangeTargetMelee`/`ChangeTargetChase`) are consulted by any
+real MapServer runtime call site today (`MonsterRuntime`/`MobInstance`/`MonsterCombatCoordinator`,
+via `mode.HasFlag`) — every other bit is genuinely stored, real source data that is currently inert
+at runtime, never silently dropped.
+
+`RepositoryDomainAnalyzers.AnalyzeMobs` expresses this split as two independent components:
+`ModeData` (can every `Modes:` entry NAME in this block be represented at all — blocked only by a
+genuinely unrecognized/future `MD_*` name, reported as `mob-field:mode-<name>`, not by any of the 26
+modeled bits) and `ModeRuntime` (of the bits this mob's EFFECTIVE mode actually carries, how many
+does MapServer execute; blocked bits are reported as `mob-mode-runtime:<name>`). A mob can be
+`ModeData: FullyCompatible` (every source bit retained) while `ModeRuntime: PartiallyCompatible` or
+even `Unsupported` (few/none of its own effective bits happen to be runtime-executed) — never
+inflating runtime compatibility merely because storage succeeded. `ModeRuntime` is `NotApplicable`
+for a mob whose effective mode is `MobMode.None` (nothing to execute in the first place, e.g. an
+immobile `CLASS_NORMAL` plant with no `Ai:` match).
+
+#### SourceMode vs EffectiveMode
+
+`MobDefinition.Mode` is genuinely SOURCE mode only — the pinned `Ai:` preset plus `Modes:` block
+overrides (`MobDatabase::parseBodyNode`, `mob.cpp:5446-5519`), exactly what a reader of the YAML
+block itself would see. It deliberately excludes the class-derived bits pinned
+`MobDatabase::loadingFinished()` (`mob.cpp:5536-5551`) ORs on AFTERWARD, purely from `Class:`, with
+no corresponding `Modes:` entry: `CLASS_BOSS` implicitly adds `Detector`/`StatusImmune`/
+`KnockBackImmune`; `CLASS_GUARDIAN` adds `StatusImmune`; `CLASS_BATTLEFIELD` adds `StatusImmune`/
+`SkillImmune`; `CLASS_EVENT` adds `FixedItemDrop`. Mutating the stored `Mode` field with those would
+misrepresent what the pinned block itself actually declared — e.g. a real MVP's `Modes:` block
+typically only ever sets `Mvp: true` explicitly (verified against Golden Thief Bug, Id 1086); its
+`Detector`/`StatusImmune`/`KnockBackImmune` bits exist purely because `Class: Boss` implies them,
+never because the YAML mentions them.
+
+`MobDefinition.EffectiveMode` (a computed property, `Mode | MobModeResolver.ClassDerivedBits(Class)`
+— never generated/stored data, so it can never drift out of sync) is the pinned-accurate mode value
+a real rAthena server actually holds and runs combat against. `MobModeResolver`
+(`WorldEntityDefinition.cs`) and its WorldDataImporter-side mirror `MobDataCompiler.
+ResolveEffectiveMode` implement the class-derived resolution identically. Every real MapServer
+runtime call site today (`MonsterRuntime`/`MobInstance`/`MonsterCombatCoordinator`) only ever checks
+`CanMove`/`NoRandomWalk`/`CanAttack`/`ChangeTargetMelee`/`ChangeTargetChase` — none of which
+`loadingFinished()` ever derives from `Class` — so those call sites correctly keep reading source
+`Mode` directly and need no change; `RepositoryDomainAnalyzers`' `ModeRuntime` component is the one
+consumer that needs the complete effective value, and uses it exclusively (see
+`Mob_ClassBoss_ImpliesClassDerivedModeRuntimeBlockersEvenWithNoExplicitModesEntries` in
+`RepositoryDomainAnalyzersTests.cs`).
+
+### RaceGroups, Drops, MvpDrops: representation vs runtime
+
+`RaceGroups`/`Drops`/`MvpDrops` are all list-shaped pinned blocks, now retained on `MobDefinition`
+as typed lists (`IReadOnlyList<MobRaceGroupEntry>? RaceGroups`, `IReadOnlyList<MobDropEntry>? Drops`,
+`IReadOnlyList<MobDropEntry>? MvpDrops` — `null` when the pinned block is entirely absent, an empty
+list is never emitted for an absent block) rather than being excluded from the source-data model.
+`RaceGroups` is deliberately a pinned-NAME list (`MobRaceGroupEntry(string Name, bool Value)`), not
+a hand-maintained C# enum — the pinned `RC2_*` constant table (`map.hpp:343-382`) is open-ended and
+content-defined (`RC2_GOBLIN`, `RC2_BIOLAB`, `RC2_MALANGDO`, ...), so re-encoding it into a fixed
+enum would silently reject a future pinned addition rather than representing it. `Drops`/`MvpDrops`
+share one shape (`MobDropEntry(string Item, int Rate, bool StealProtected, string? RandomOptionGroup)`)
+because pinned `MobDatabase::parseDropNode` (`mob.cpp:4844-4923`) parses both blocks identically;
+`Item` is retained as the pinned AegisName string (no cross-domain item-Id resolution happens at
+this layer — see the item/mob domain-independence note above).
+
+#### Drops/MvpDrops `Index:` — real pinned overwrite/append/skip semantics
+
+`Index:` is NOT a db/import-overlay-only mechanism this project can ignore — real pinned
+`db/re/mob_db.yml` uses it on essentially every drop entry (1,301 real occurrences; e.g. the real
+Poring/1002 declares `Index: 0` through `Index: 7` on its own 8 base-file `Drops:` entries).
+`MobDataCompiler.ReadDrops` reproduces pinned `MobDatabase::parseDropNode` (`mob.cpp:4844-4923`)
+exactly: declarations are processed SEQUENTIALLY, each one mutating the SAME growing effective list
+the next declaration is evaluated against — no `Index:` appends (bounded by the section's own max,
+`MAX_MOB_DROP`=10/`MAX_MVP_DROP`=3); `Index == count` appends at that (implicitly correct) next
+slot; `Index < count` OVERWRITES the entry already at that slot IN PLACE (does not move it);
+`Index > count` is a genuine gap and is skipped (pinned source's own `// TODO: warning` case);
+`Index >= max` is skipped as out of bounds. `Index` itself is consumed during this resolution and
+carries no meaning once the effective list is built, so it is not a persistent field on the final
+`MobDropEntry` — see `MobDataCompilerTests.cs`'s dedicated Index test group (append/explicit-append/
+overwrite/gap/max-bound cases, plus a real-Poring regression proving all 8 real entries survive)
+and `PinnedMobDbSchema_Every{Drops,MvpDrops}EntryFieldActuallyPresentInRealData_IsExplicitlyClassified`
+(the nested drop-schema-drift guard covering `Item`/`Rate`/`StealProtected`/`RandomOptionGroup`/
+`Index` for both sections against the real pinned file).
+
+Each of the three has its OWN dedicated analyzer component (`RaceGroups`/`Drops`/`MvpDrops`),
+exactly like the pre-existing `Drops`-vs-`StaticData` split: a non-empty block is unconditionally
+excluded from the generic unknown-top-level-field `StaticData` scan (so it never produces a
+`mob-field:race-groups`/`mob-field:mvp-drops`/`mob-field:drops` StaticData blocker for a construct
+that is, in fact, now fully represented) and instead reports its OWN dedicated `Unsupported` status
+with a distinct runtime-capability id (`mob-race-groups:runtime`/`mob-drops:runtime`/
+`mob-mvp-drops:runtime`) — there is no race-group/drop-table/MVP-reward runtime consumer anywhere in
+this project outside the unrelated single-quest `QuestDropDataCompiler` slice. An absent block is
+`NotApplicable` on its own component (no runtime gap to report for a mob that never declared the
+section).
+
+#### Zero remaining `mob-definition:*`/`mob-field:*` blockers
+
+As of this hardening pass, `mob-field:*` StaticData blockers are **zero** across the complete pinned
+`db/re/mob_db.yml`, AND every one of the 2,675 real pinned mobs is now `StaticData: FullyCompatible`
+— the prior 48 `StaticData: Unsupported` mobs (Ids 22192-22239, e.g. `SPIRIT_G_LAND_S`) were NOT
+genuinely unparseable/unrepresentable source data - they were a real parser bug. Every one of those
+48 real pinned blocks declares `DamageMotion: 1000    # (unknown)` — a trailing inline YAML comment
+after the scalar value — and `ScalarRegex`'s own `(.+)$` capture previously included the comment
+text verbatim, so `long.Parse("1000    # (unknown)")` threw a `FormatException`, misreported as
+`mob-definition:format`. Fixed by stripping a trailing unquoted `\s+#.*` YAML comment from every
+captured scalar before parsing (`MobDataCompiler.StripTrailingComment`) — verified this is the ONLY
+place in the entire pinned file any top-level scalar's raw captured text contains a `#` at all.
+
+A related, independently-discovered real parsing bug (found while implementing `Index:` support,
+above): `ModesBlock`/`RaceGroupsBlock`/`DropsBlockRegex`'s block-capture regexes previously required
+EVERY line of a captured block to be 6-space-indented, which silently truncated the block at the
+first COLUMN-0 `#`-commented-out line interrupting it — real pinned data has both (14 real mobs'
+`Modes:` blocks, and the real Poring/1002's own `Drops:` block, which is interrupted by a
+`#       RandomOptionGroup: 30L` comment at `db/re/mob_db.yml:171` between its `Knife_` and
+`Sticky_Mucus` entries). Fixed by making all three block-capture regexes tolerate an interleaved
+column-0 `#...`-or-blank line without ending the block (the comment/blank lines are still captured,
+but harmless — the entry-matching regexes only match genuine `Name: value`/`- Item:` lines).
+
 Mob definitions are generated once, stateless/deterministic, into the shared global
 `GeneratedMobs` (`internal static partial class`). Output is sharded by pinned-source-derived
 category AND a fixed 1000-MobId range grid within that category — a FIXED grid (1000-1999,
