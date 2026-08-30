@@ -6,10 +6,16 @@ namespace Athena.WorldCompiler.Generation;
 
 // Compiles pinned rAthena mob_db.yml Id blocks plus the fixed-column
 // "map,x,y monster Name MobId,Count,Delay" declaration format used by
-// npc/re/mobs/*.txt. Neither is a general rAthena mob-DB/script parser: it
-// reads only the scalar fields this vertical slice needs, the same way
-// ProgressionDataCompiler reads only the progression-table scalars it needs
-// out of job_exp.yml/job_basepoints.yml rather than a general YAML library.
+// npc/re/mobs/*.txt. Neither is a general rAthena mob-DB/script parser: both
+// use a narrow, purpose-built line/block scanner (ScalarRegex and friends)
+// rather than a general YAML library, the same approach ProgressionDataCompiler
+// uses for job_exp.yml/job_basepoints.yml. Despite that narrow PARSING
+// technique, ReadMobDefinition's actual FIELD COVERAGE is intentionally
+// lossless/near-complete for mob_db.yml's documented schema (every meaningful
+// top-level scalar plus the Modes:/RaceGroups:/Drops:/MvpDrops: list-shaped
+// blocks - see ai/world-data.md's "Mob static-data schema coverage" section
+// and the PinnedMobDbSchema_* tests in MobDataCompilerTests.cs) - it is not
+// merely reading "the few scalars an early vertical slice needed".
 internal static class MobDataCompiler
 {
     internal sealed record MobDefinitionData(
@@ -56,6 +62,21 @@ internal static class MobDataCompiler
     // Mirrors Athena.Net.MapServer.World.MobClass exactly (same numeric values/names, including the
     // pinned enum's own gap at 3) - see that enum's own doc comment for the pinned e_mob_class trace.
     internal enum MobClassData { Normal = 0, Boss = 1, Guardian = 2, Battlefield = 4, Event = 5 }
+
+    // Mirrors Athena.Net.MapServer.World.MobModeResolver.ClassDerivedBits exactly - pinned
+    // MobDatabase::loadingFinished()'s class-derived mode-bit resolution (mob.cpp:5536-5551),
+    // applied to every mob's SOURCE mode (Ai preset + Modes: overrides) to compute the pinned-
+    // accurate EFFECTIVE mode a real rAthena server actually holds/runs combat against. See
+    // MobModeResolver's own doc comment in WorldEntityDefinition.cs for the SourceMode-vs-
+    // EffectiveMode rationale this mirrors.
+    internal static MobModeData ResolveEffectiveMode(MobModeData sourceMode, MobClassData mobClass) => sourceMode | mobClass switch
+    {
+        MobClassData.Boss => MobModeData.Detector | MobModeData.StatusImmune | MobModeData.KnockBackImmune,
+        MobClassData.Guardian => MobModeData.StatusImmune,
+        MobClassData.Battlefield => MobModeData.StatusImmune | MobModeData.SkillImmune,
+        MobClassData.Event => MobModeData.FixedItemDrop,
+        _ => MobModeData.None,
+    };
 
     // Mirrors Athena.Net.MapServer.World.MobMode exactly (same bit values/names, the complete
     // pinned MD_* bitmask) - kept as a separate type per this project's existing
@@ -123,11 +144,12 @@ internal static class MobDataCompiler
         if (start < 0) throw new ArgumentException($"Mob Id {mobId} was not found in the pinned mob_db.yml.");
         var next = mobDbYaml.IndexOf("\n  - Id: ", start + marker.Length, StringComparison.Ordinal);
         var block = next >= 0 ? mobDbYaml[start..(next + 1)] : mobDbYaml[start..];
+        var name = RequiredScalar(block, "Name");
 
         return new MobDefinitionData(
             mobId,
             RequiredScalar(block, "AegisName"),
-            RequiredScalar(block, "Name"),
+            name,
             (int)OptionalInt(block, "Level", 1),
             (uint)OptionalInt(block, "Hp", 0),
             (int)OptionalInt(block, "Attack", 0),
@@ -157,7 +179,13 @@ internal static class MobDataCompiler
             OptionalInt(block, "BaseExp", 0),
             OptionalInt(block, "JobExp", 0),
             ReadMode(block),
-            OptionalScalar(block, "JapaneseName"),
+            // Pinned MobDatabase::parseBodyNode (mob.cpp:5028-5040): JapaneseName present -> use it;
+            // absent on a mob_id seen for the first time (`!exists`) -> falls back to this SAME
+            // block's own resolved Name (mob->jname = mob->name), never left null/blank. This
+            // project reads only the base db/re/mob_db.yml with no db/import overlay layering, so
+            // every parsed mob is effectively "seen for the first time" - the `exists`-true branch
+            // (which would instead leave a PRIOR jname untouched) never applies here.
+            OptionalScalar(block, "JapaneseName") ?? name,
             (uint)OptionalInt(block, "Sp", 1),
             OptionalInt(block, "MvpExp", 0),
             (int)OptionalInt(block, "Resistance", 0),
@@ -198,13 +226,30 @@ internal static class MobDataCompiler
         return entries;
     }
 
-    // Reproduces pinned MobDatabase::parseDropNode (mob.cpp:4844-4923), shared verbatim by both
-    // `Drops:` and `MvpDrops:` - each list entry is `- Item: <name>` followed by indented
-    // `Rate:`/`StealProtected:`/`RandomOptionGroup:` fields (Index is a pinned overwrite-by-index
-    // mechanism for db/import overlays; this project reads only the base db/re/mob_db.yml, which
-    // never uses Index, so entries are read in pinned declaration order without needing to honor it).
+    // Pinned MAX_MOB_DROP/MAX_MVP_DROP (mob.hpp:27/31) - the exact bound MobDatabase::parseDropNode
+    // enforces per section (an Index >= max, or an append once the effective list already holds
+    // max entries, is skipped/warned rather than accepted).
+    private const int MaxMobDrop = 10;
+    private const int MaxMvpDrop = 3;
+
+    // Reproduces pinned MobDatabase::parseDropNode (mob.cpp:4844-4923) EXACTLY, including its
+    // stateful Index: overwrite/append/skip semantics - shared verbatim by both `Drops:` and
+    // `MvpDrops:` (parseDropNode is one function called for both sections with a different `max`).
+    // Index is NOT merely a db/import overlay mechanism this project can ignore: real pinned
+    // db/re/mob_db.yml itself uses `Index:` on essentially every drop entry (1,301 real occurrences)
+    // - e.g. the REAL Poring/1002 declares `Index: 0` through `Index: 7` on its own 8 base-file
+    // drop entries. Declarations are processed SEQUENTIALLY, each one mutating the SAME growing
+    // effective list the next declaration is evaluated against (not independently parsed and then
+    // reordered) - exactly mirroring pinned source's own `for (dropit : node) { ... }` loop over
+    // the SAME `drops` vector:
+    //   - no `Index:`           -> append (if the effective list has not yet reached `max`)
+    //   - `Index == count`      -> append at that (implicitly correct) next slot
+    //   - `Index < count`       -> OVERWRITE the entry already at that slot in place (does not move it)
+    //   - `Index > count`       -> skip (a "gap" - pinned source's own explicit `// TODO: warning` case)
+    //   - `Index >= max`        -> skip (invalid, out of the section's own bound)
     private static IReadOnlyList<MobDropEntryData> ReadDrops(string block, string sectionName)
     {
+        var max = sectionName == "MvpDrops" ? MaxMvpDrop : MaxMobDrop;
         var blockMatch = DropsBlockRegex(sectionName).Match(block);
         if (!blockMatch.Success) return [];
         var entries = new List<MobDropEntryData>();
@@ -216,7 +261,20 @@ internal static class MobDataCompiler
             var stealValue = OptionalScalarIn(rest, "StealProtected");
             var steal = stealValue is not null && string.Equals(stealValue, "true", StringComparison.OrdinalIgnoreCase);
             var group = OptionalScalarIn(rest, "RandomOptionGroup");
-            entries.Add(new MobDropEntryData(item, rate, steal, group));
+            var drop = new MobDropEntryData(item, rate, steal, group);
+
+            var indexValue = OptionalScalarIn(rest, "Index");
+            if (indexValue is null)
+            {
+                if (entries.Count < max) entries.Add(drop); // else: skipped, matching pinned "Maximum of %d monster %s met, skipping.".
+                continue;
+            }
+
+            var index = int.Parse(indexValue, CultureInfo.InvariantCulture);
+            if (index >= max) continue; // Skipped, matching pinned "Invalid monster %s index %hu ... skipping.".
+            if (index == entries.Count) entries.Add(drop); // Append at the next slot.
+            else if (index < entries.Count) entries[index] = drop; // Overwrite in place - does not move the entry.
+            // else (index > entries.Count): a genuine gap - skipped, matching pinned's own "TODO: warning" case.
         }
         return entries;
     }
@@ -693,7 +751,7 @@ internal static class MobDataCompiler
     {
         var match = ScalarRegex(field).Match(block);
         if (!match.Success) throw new ArgumentException($"Pinned mob_db.yml block has no '{field}' field.");
-        return match.Groups[1].Value;
+        return StripTrailingComment(match.Groups[1].Value);
     }
 
     // Unlike RequiredScalar, an absent field is a legitimate "use the documented default" case, not
@@ -703,7 +761,7 @@ internal static class MobDataCompiler
     {
         var match = ScalarRegex(field).Match(block);
         if (!match.Success) return null;
-        var raw = match.Groups[1].Value;
+        var raw = StripTrailingComment(match.Groups[1].Value);
         // Real pinned Title: values are YAML-double-quoted whenever the string contains characters
         // the YAML scanner would otherwise treat specially (e.g. "<Red Pepper>" - the angle brackets
         // require quoting). Size/Race/Element/Class/JapaneseName are always bare unquoted words in
@@ -719,8 +777,21 @@ internal static class MobDataCompiler
     private static long OptionalInt(string block, string field, long defaultValue)
     {
         var match = ScalarRegex(field).Match(block);
-        return match.Success ? long.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture) : defaultValue;
+        return match.Success ? long.Parse(StripTrailingComment(match.Groups[1].Value), CultureInfo.InvariantCulture) : defaultValue;
     }
+
+    // Strips a trailing unquoted YAML end-of-line comment (a '#' preceded by whitespace, per
+    // standard YAML comment syntax) from an already-captured scalar value. Real pinned data:
+    // every `DamageMotion: 1000    # (unknown)` occurrence across db/re/mob_db.yml (48 real mobs,
+    // Ids 22192-22239) - ScalarRegex's own `(.+)$` previously captured the comment text verbatim,
+    // so `long.Parse("1000    # (unknown)")` threw a FormatException and those 48 mobs were
+    // misreported as genuinely unparseable ("mob-definition:format") rather than fully
+    // representable. No real pinned scalar value anywhere in this file contains a quoted '#'
+    // (verified: only these 48 DamageMotion lines have '#' in their raw captured text at all), so
+    // this unconditional strip is safe - it does not special-case DamageMotion, since a future
+    // pinned revision could add the same inline-comment convention to any other field.
+    private static readonly Regex TrailingComment = new(@"\s+#.*$", RegexOptions.None);
+    private static string StripTrailingComment(string raw) => TrailingComment.Replace(raw, string.Empty);
 
     private static readonly Regex SpawnLine = new(@"^(?<map>[A-Za-z0-9_]+),(?<x>-?\d+),(?<y>-?\d+)(?:,(?<xs>\d+),(?<ys>\d+))?\t+monster\t+(?<name>[^\t]+)\t+(?<mobid>\d+),(?<count>\d+)(?:,(?<delay1>\d+))?(?:,(?<delay2>\d+))?", RegexOptions.None);
     private static Regex SpawnLineRegex() => SpawnLine;
@@ -728,26 +799,35 @@ internal static class MobDataCompiler
     private static Regex ScalarRegex(string field) => new($@"^    {Regex.Escape(field)}: (.+)$", RegexOptions.Multiline);
 
     // Captures the raw text of a `    Modes:\n      Name: value\n      ...` block: every
-    // subsequent 6-space-indented line, stopping at the first line that is NOT indented that
-    // deeply (the next top-level `    Field:` entry or the next `  - Id:` block).
-    private static readonly Regex ModesBlock = new(@"^    Modes:\n((?:      .+\n?)*)", RegexOptions.Multiline);
+    // subsequent 6-space-indented line, OR a column-0 `#`-commented-out line, OR a blank line,
+    // stopping at the first line that is none of those (the next top-level `    Field:` entry or
+    // the next `  - Id:` block). The `#`/blank tolerance matters for real pinned data: e.g.
+    // `db/re/mob_db.yml` has 14 real mobs whose `Modes:` block is interrupted by a column-0 `#...`
+    // comment line partway through - an earlier version of this regex (6-space-indent-only) treated
+    // that comment as ending the block, silently truncating every mode entry AFTER it. The comment/
+    // blank lines are captured but harmless - ModeEntryRegex below only matches genuine
+    // `Name: true/false` lines, so a captured `#...` line is simply never matched as an entry.
+    private static readonly Regex ModesBlock = new(@"^    Modes:\n((?:(?:      .+|#.*|)\n?)*)", RegexOptions.Multiline);
     private static Regex ModesBlockRegex() => ModesBlock;
 
     private static readonly Regex ModeEntry = new(@"^\s*(?<name>\w+):\s*(?<value>true|false)\s*$", RegexOptions.Multiline);
     private static Regex ModeEntryRegex() => ModeEntry;
 
-    // Same shape as ModesBlock (6-space-indented body under a `    RaceGroups:` header) - pinned
-    // RaceGroups: entries use the identical `<Name>: <bool>` shape as Modes: entries, so ModeEntryRegex
-    // is reused directly rather than duplicating an identical pattern.
-    private static readonly Regex RaceGroupsBlock = new(@"^    RaceGroups:\n((?:      .+\n?)*)", RegexOptions.Multiline);
+    // Same shape/tolerance as ModesBlock (see that field's own doc comment for the real-data
+    // rationale) - pinned RaceGroups: entries use the identical `<Name>: <bool>` shape as Modes:
+    // entries, so ModeEntryRegex is reused directly rather than duplicating an identical pattern.
+    private static readonly Regex RaceGroupsBlock = new(@"^    RaceGroups:\n((?:(?:      .+|#.*|)\n?)*)", RegexOptions.Multiline);
     private static Regex RaceGroupsBlockRegex() => RaceGroupsBlock;
 
     // Captures the raw text of a `    <sectionName>:\n      - Item: ...\n        Rate: ...\n      - ...`
     // list block: every subsequent 6-space-indented line (each entry's `- Item:` line and its own
-    // further-indented `Rate:`/`StealProtected:`/`RandomOptionGroup:` continuation lines all satisfy
-    // this depth), stopping at the first line indented less deeply - mirrors ModesBlock's own
-    // "capture by indentation depth, not by counting fields" approach.
-    private static Regex DropsBlockRegex(string sectionName) => new($@"^    {Regex.Escape(sectionName)}:\n((?:      .+\n?)*)", RegexOptions.Multiline);
+    // further-indented `Rate:`/`StealProtected:`/`RandomOptionGroup:`/`Index:` continuation lines
+    // all satisfy this depth), OR a column-0 `#`-commented-out line, OR a blank line - same
+    // real-data rationale as ModesBlock above (e.g. the REAL pinned Poring/1002 `Drops:` block has
+    // a column-0 `#       RandomOptionGroup: 30L` comment between its `Knife_` and `Sticky_Mucus`
+    // entries at db/re/mob_db.yml:171 - an earlier indent-only version of this regex silently
+    // truncated Poring's drop table down to 2 of its real 8 entries).
+    private static Regex DropsBlockRegex(string sectionName) => new($@"^    {Regex.Escape(sectionName)}:\n((?:(?:      .+|#.*|)\n?)*)", RegexOptions.Multiline);
 
     // One `- Item: <name>` entry followed by its own optional indented Rate:/StealProtected:/
     // RandomOptionGroup: fields, up to the next `- Item:` entry or the end of the captured block.

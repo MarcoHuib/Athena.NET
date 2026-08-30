@@ -547,7 +547,9 @@ public sealed class MobDataCompilerTests
         Assert.Equal(0, mob.Resistance); // Absent from this block - genuinely defaults to 0.
         Assert.Equal(0, mob.MagicResistance);
         Assert.Equal(1u, mob.Sp); // Absent - defaults to 1 per pinned constructor.
-        Assert.Null(mob.JapaneseName);
+        // Absent JapaneseName falls back to this SAME block's own Name (mob.cpp:5028-5040's
+        // `!exists` branch), never null - see ReadMobDefinition's own doc comment.
+        Assert.Equal("Golden Thief Bug", mob.JapaneseName);
         Assert.Null(mob.Title);
         Assert.Equal(0, mob.GroupId);
     }
@@ -568,7 +570,7 @@ public sealed class MobDataCompilerTests
         Assert.Contains("ClientAttackMotion: 720", generated);
         Assert.Contains("DamageTaken: 10", generated);
         Assert.Contains("Class: MobClass.Boss", generated);
-        Assert.Contains("JapaneseName: null", generated);
+        Assert.Contains("JapaneseName: \"Golden Thief Bug\"", generated);
         Assert.Contains("Title: null", generated);
     }
 
@@ -732,6 +734,31 @@ public sealed class MobDataCompilerTests
         Assert.Equal("<Red Pepper>", mob.Title);
     }
 
+    // Pinned MobDatabase::parseBodyNode (mob.cpp:5028-5040): JapaneseName absent on a mob_id seen
+    // for the first time (`!exists`) falls back to `mob->name` - never left null/blank. Verified
+    // against a real pinned mob whose block genuinely omits JapaneseName (Poring, Id 1002 -
+    // db/re/mob_db.yml:135-165 has no `JapaneseName:` line at all), not only the synthetic fixture
+    // above.
+    [Fact]
+    public void ReadMobDefinition_RealPinnedPoring_MissingJapaneseName_FallsBackToName()
+    {
+        var yaml = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "legacy/rathena/db/re/mob_db.yml"));
+        var mob = MobDataCompiler.ReadMobDefinition(yaml, 1002);
+
+        Assert.Equal("Poring", mob.Name);
+        Assert.Equal("Poring", mob.JapaneseName);
+    }
+
+    [Fact]
+    public void GenerateMobDefinition_MissingJapaneseName_EmitsNameAsTheFallbackValue()
+    {
+        var mob = MobDataCompiler.ReadMobDefinition(MobDbFixture, 1002);
+        var generated = MobDataCompiler.GenerateMobDefinition(mob, "abc123", "GeneratedMobs", "Poring", "db/re/mob_db.yml", 1);
+
+        Assert.Equal("Poring", mob.JapaneseName);
+        Assert.Contains("JapaneseName: \"Poring\"", generated);
+    }
+
     [Fact]
     public void GenerateMobDefinition_Title_IsUnwrappedFromYamlQuotingAndEmittedAsCSharpStringLiteral()
     {
@@ -825,8 +852,15 @@ public sealed class MobDataCompilerTests
     // Companion to the header-body scan: also fails closed on a genuinely new nested Modes: entry
     // name (the complete pinned MD_* bitmask this project already models in full - see MobModeData's
     // own doc comment - so this should only ever fail if a FUTURE rAthena revision adds a brand new
-    // MD_* bit beyond the 22 pinned ones this project currently knows about).
+    // MD_* bit beyond the 26 pinned ones this project currently knows about).
     private static readonly Regex ModesEntryPattern = new(@"(?m)^      (?<key>[A-Za-z][A-Za-z0-9_]*):\s*(?:true|false)\s*$", RegexOptions.Compiled);
+
+    // Same column-0-comment tolerance as MobDataCompiler's own ModesBlock regex (see that field's
+    // doc comment in MobDataCompiler.cs for the real-data rationale: 14 real pinned mobs have their
+    // Modes: block interrupted by a column-0 `#...` line) - using a STRICTER indent-only scan here
+    // would make this schema-drift test itself under-count real entries and silently pass instead
+    // of genuinely verifying full coverage.
+    private static readonly Regex ModesBlockTolerant = new(@"(?m)^    Modes:\n((?:(?:      .+|#.*|)\n?)*)", RegexOptions.Compiled);
 
     [Fact]
     public void PinnedMobDbSchema_EveryModesEntryNameActuallyPresentInRealData_IsRecognizedByModeBitsByName()
@@ -841,9 +875,10 @@ public sealed class MobDataCompilerTests
             "RandomTarget", "IgnoreMelee", "IgnoreMagic", "IgnoreRanged", "Mvp", "IgnoreMisc", "KnockBackImmune",
             "TeleportBlock", "FixedItemDrop", "Detector", "StatusImmune", "SkillImmune",
         };
+        Assert.Equal(26, recognizedModeNames.Count);
 
         var discoveredModeNames = new List<string>();
-        foreach (Match modesBlock in Regex.Matches(yaml, @"(?m)^    Modes:\n((?:      .+\n?)*)"))
+        foreach (Match modesBlock in ModesBlockTolerant.Matches(yaml))
         {
             discoveredModeNames.AddRange(ModesEntryPattern.Matches(modesBlock.Groups[1].Value).Select(m => m.Groups["key"].Value));
         }
@@ -851,6 +886,306 @@ public sealed class MobDataCompilerTests
         Assert.NotEmpty(distinctDiscovered); // Guards against a silently-empty scan passing vacuously.
 
         Assert.Empty(distinctDiscovered.Except(recognizedModeNames, StringComparer.Ordinal));
+    }
+
+    // ===== Nested drop-entry schema drift: both Drops: and MvpDrops: list entries must have every
+    // field they actually use, in real pinned data, explicitly classified - fails closed on a
+    // genuinely new drop-entry field the same way the top-level scan does. =====
+
+    private static Regex DropsBlockTolerant(string sectionName) => new($@"(?m)^    {Regex.Escape(sectionName)}:\n((?:(?:      .+|#.*|)\n?)*)", RegexOptions.Compiled);
+    private static readonly Regex DropEntryFieldName = new(@"(?m)^\s*(?<field>[A-Za-z][A-Za-z0-9_]*):", RegexOptions.Compiled);
+
+    [Fact]
+    public void PinnedMobDbSchema_EveryDropsEntryFieldActuallyPresentInRealData_IsExplicitlyClassified()
+    {
+        AssertDropSectionSchema("Drops", knownIndexField: true);
+    }
+
+    [Fact]
+    public void PinnedMobDbSchema_EveryMvpDropsEntryFieldActuallyPresentInRealData_IsExplicitlyClassified()
+    {
+        AssertDropSectionSchema("MvpDrops", knownIndexField: true);
+    }
+
+    // knownIndexField is always true for both sections today (both Drops: and MvpDrops: entries use
+    // Index: in real pinned data - see ReadDrops' own doc comment on why Index carries real
+    // overwrite/append semantics, not merely "unused, ignorable") - kept as an explicit parameter
+    // rather than a hardcoded assumption so a future divergence between the two sections' actual
+    // field usage is visible in the test signature, not silently assumed identical.
+    private static void AssertDropSectionSchema(string sectionName, bool knownIndexField)
+    {
+        var path = Path.Combine(FindRepositoryRoot(), "legacy/rathena/db/re/mob_db.yml");
+        var yaml = File.ReadAllText(path);
+
+        // Modeled (MobDataCompiler.ReadDrops parses these into MobDropEntryData/effective-list
+        // resolution) vs the one genuinely pinned-documented field this project does NOT retain on
+        // the FINAL MobDropEntry as its own persistent field (Index only affects WHICH slot/whether
+        // an entry survives into the effective list - see ReadDrops - it has no meaning once the
+        // effective list is resolved, so it is consumed during resolution rather than stored).
+        var modeled = new HashSet<string>(StringComparer.Ordinal) { "Item", "Rate", "StealProtected", "RandomOptionGroup" };
+        var consumedDuringResolution = new HashSet<string>(StringComparer.Ordinal);
+        if (knownIndexField) consumedDuringResolution.Add("Index");
+
+        var discoveredFields = new List<string>();
+        foreach (Match sectionBlock in DropsBlockTolerant(sectionName).Matches(yaml))
+        {
+            foreach (Match entry in Regex.Matches(sectionBlock.Groups[1].Value, @"(?m)^\s*-\s*Item:\s*\S+\s*\n(?<rest>(?:(?!\s*-\s*Item:).*\n?)*)"))
+            {
+                discoveredFields.AddRange(DropEntryFieldName.Matches(entry.Groups["rest"].Value).Select(m => m.Groups["field"].Value));
+            }
+        }
+        var distinctDiscovered = discoveredFields.Distinct(StringComparer.Ordinal).ToArray();
+        Assert.NotEmpty(distinctDiscovered); // Guards against a silently-empty scan passing vacuously.
+
+        var unclassified = distinctDiscovered.Where(field => !modeled.Contains(field) && !consumedDuringResolution.Contains(field)).ToArray();
+        Assert.Empty(unclassified);
+    }
+
+    // ===== Drops/MvpDrops Index: pinned overwrite/append/skip semantics (MobDatabase::
+    // parseDropNode, mob.cpp:4844-4923). Real pinned data uses Index: on essentially every drop
+    // entry (1,301 real occurrences) - it is not a theoretical/db-import-only mechanism. =====
+
+    [Fact]
+    public void ReadMobDefinition_DropsWithNoIndex_Appends()
+    {
+        const string fixture = "Body:\n  - Id: 1\n    AegisName: T\n    Name: T\n    Drops:\n      - Item: A\n        Rate: 100\n";
+        var mob = MobDataCompiler.ReadMobDefinition(fixture, 1);
+
+        var entry = Assert.Single(mob.Drops);
+        Assert.Equal("A", entry.Item);
+        Assert.Equal(100, entry.Rate);
+    }
+
+    [Fact]
+    public void ReadMobDefinition_DropsWithExplicitAppendIndex_AppendsAtThatSlot()
+    {
+        // Index == the effective list's current count (0, since this is the first entry) is an
+        // explicit append, identical in effect to omitting Index entirely - pinned source's own
+        // "Trying to add the next entry (just manually assigned the index)" comment.
+        const string fixture = "Body:\n  - Id: 1\n    AegisName: T\n    Name: T\n    Drops:\n      - Item: A\n        Index: 0\n        Rate: 100\n";
+        var mob = MobDataCompiler.ReadMobDefinition(fixture, 1);
+
+        var entry = Assert.Single(mob.Drops);
+        Assert.Equal("A", entry.Item);
+    }
+
+    [Fact]
+    public void ReadMobDefinition_DropsIndexLessThanCurrentCount_OverwritesInPlace()
+    {
+        // Entry B declares Index: 0 - the slot A (implicitly index 0, via plain append) already
+        // occupies - pinned source OVERWRITES that slot rather than moving/appending: the final
+        // effective table has exactly ONE entry (B), not two.
+        const string fixture = """
+            Body:
+              - Id: 1
+                AegisName: T
+                Name: T
+                Drops:
+                  - Item: A
+                    Rate: 100
+                  - Item: B
+                    Index: 0
+                    Rate: 200
+            """;
+        var mob = MobDataCompiler.ReadMobDefinition(fixture, 1);
+
+        var entry = Assert.Single(mob.Drops);
+        Assert.Equal("B", entry.Item);
+        Assert.Equal(200, entry.Rate);
+    }
+
+    [Fact]
+    public void ReadMobDefinition_DropsIndexOverwritesOnlyTheTargetedSlot_SiblingEntriesUnaffected()
+    {
+        const string fixture = """
+            Body:
+              - Id: 1
+                AegisName: T
+                Name: T
+                Drops:
+                  - Item: A
+                    Rate: 100
+                  - Item: B
+                    Rate: 200
+                  - Item: C
+                    Index: 0
+                    Rate: 999
+            """;
+        var mob = MobDataCompiler.ReadMobDefinition(fixture, 1);
+
+        Assert.Equal(2, mob.Drops.Count);
+        Assert.Equal("C", mob.Drops[0].Item); // Overwritten.
+        Assert.Equal(999, mob.Drops[0].Rate);
+        Assert.Equal("B", mob.Drops[1].Item); // Untouched - stays at its own slot.
+        Assert.Equal(200, mob.Drops[1].Rate);
+    }
+
+    [Fact]
+    public void ReadMobDefinition_DropsIndexGreaterThanCurrentCount_IsSkipped()
+    {
+        // Index: 5 with only one prior entry (count=1) is a genuine gap - pinned source's own
+        // "TODO: warning" branch skips it entirely rather than padding/inserting.
+        const string fixture = "Body:\n  - Id: 1\n    AegisName: T\n    Name: T\n    Drops:\n      - Item: A\n        Rate: 100\n      - Item: B\n        Index: 5\n        Rate: 200\n";
+        var mob = MobDataCompiler.ReadMobDefinition(fixture, 1);
+
+        var entry = Assert.Single(mob.Drops);
+        Assert.Equal("A", entry.Item);
+    }
+
+    [Fact]
+    public void ReadMobDefinition_DropsIndexAtOrAboveMaxMobDrop_IsSkipped()
+    {
+        // MAX_MOB_DROP is 10 (mob.hpp:27) - Index: 10 is out of bounds (valid range 0-9).
+        const string fixture = "Body:\n  - Id: 1\n    AegisName: T\n    Name: T\n    Drops:\n      - Item: A\n        Index: 10\n        Rate: 100\n";
+        var mob = MobDataCompiler.ReadMobDefinition(fixture, 1);
+
+        Assert.Empty(mob.Drops);
+    }
+
+    [Fact]
+    public void ReadMobDefinition_MoreThan10DropsWithNoIndex_StopsAtMaxMobDrop()
+    {
+        var lines = new System.Text.StringBuilder("Body:\n  - Id: 1\n    AegisName: T\n    Name: T\n    Drops:\n");
+        for (var i = 0; i < 12; i++) lines.Append("      - Item: Item").Append(i).Append("\n        Rate: 100\n");
+        var mob = MobDataCompiler.ReadMobDefinition(lines.ToString(), 1);
+
+        Assert.Equal(10, mob.Drops.Count); // MAX_MOB_DROP, not all 12 declared entries.
+        Assert.Equal("Item0", mob.Drops[0].Item);
+        Assert.Equal("Item9", mob.Drops[9].Item);
+    }
+
+    [Fact]
+    public void ReadMobDefinition_MvpDropsIndexAtOrAboveMaxMvpDrop_IsSkipped()
+    {
+        // MAX_MVP_DROP is 3 (mob.hpp:31), distinct from MAX_MOB_DROP - Index: 3 is out of bounds
+        // for MvpDrops even though it would be valid for a normal Drops: block.
+        const string fixture = "Body:\n  - Id: 1\n    AegisName: T\n    Name: T\n    MvpDrops:\n      - Item: A\n        Index: 3\n        Rate: 100\n";
+        var mob = MobDataCompiler.ReadMobDefinition(fixture, 1);
+
+        Assert.Empty(mob.MvpDrops);
+    }
+
+    [Fact]
+    public void ReadMobDefinition_MoreThan3MvpDropsWithNoIndex_StopsAtMaxMvpDrop()
+    {
+        const string fixture = """
+            Body:
+              - Id: 1
+                AegisName: T
+                Name: T
+                MvpDrops:
+                  - Item: A
+                    Rate: 100
+                  - Item: B
+                    Rate: 100
+                  - Item: C
+                    Rate: 100
+                  - Item: D
+                    Rate: 100
+            """;
+        var mob = MobDataCompiler.ReadMobDefinition(fixture, 1);
+
+        Assert.Equal(3, mob.MvpDrops.Count);
+        Assert.DoesNotContain(mob.MvpDrops, entry => entry.Item == "D");
+    }
+
+    // Real pinned Poring (Id 1002) declares Index: 0 through Index: 7 on its own 8 base Drops:
+    // entries (db/re/mob_db.yml:164-188) - every entry is a plain sequential append via Index, so
+    // the effective table must equal all 8 declared entries in declaration order. This is also a
+    // regression proof for the block-capture indentation fix: Poring's real Drops: block is
+    // interrupted by a column-0 `#       RandomOptionGroup: 30L` comment
+    // (db/re/mob_db.yml:171) between its 2nd and 3rd entries - an earlier version of
+    // DropsBlockRegex (6-space-indent-only) silently truncated the block there, so this mob's real
+    // generated data previously carried only 2 of its true 8 drop entries.
+    [Fact]
+    public void ReadMobDefinition_RealPinnedPoring_Has8DropsDespiteInterruptingCommentLine()
+    {
+        var yaml = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "legacy/rathena/db/re/mob_db.yml"));
+        var mob = MobDataCompiler.ReadMobDefinition(yaml, 1002);
+
+        Assert.Equal(8, mob.Drops.Count);
+        Assert.Equal("Jellopy", mob.Drops[0].Item);
+        Assert.Equal("Knife_", mob.Drops[1].Item);
+        Assert.Equal("Sticky_Mucus", mob.Drops[2].Item); // Immediately after the interrupting comment.
+        Assert.Equal("Apple", mob.Drops[3].Item);
+        Assert.Equal("Wing_Of_Fly", mob.Drops[4].Item);
+        Assert.Equal("Apple", mob.Drops[5].Item);
+        Assert.Equal("Unripe_Apple", mob.Drops[6].Item);
+        var card = mob.Drops[7];
+        Assert.Equal("Poring_Card", card.Item);
+        Assert.Equal(20, card.Rate);
+        Assert.True(card.StealProtected);
+    }
+
+    // ===== Effective mode: SourceMode (Ai preset + Modes: overrides, i.e. .Mode) vs EffectiveMode
+    // (SourceMode + Class-derived bits pinned MobDatabase::loadingFinished() ORs on afterward,
+    // mob.cpp:5536-5551). MobDataCompiler.ResolveEffectiveMode is the WorldDataImporter-side mirror
+    // of Athena.Net.MapServer.World.MobModeResolver.ClassDerivedBits. =====
+
+    [Fact]
+    public void ResolveEffectiveMode_ClassBoss_AddsDetectorStatusImmuneKnockBackImmune()
+    {
+        var effective = MobDataCompiler.ResolveEffectiveMode(MobDataCompiler.MobModeData.CanMove, MobDataCompiler.MobClassData.Boss);
+
+        Assert.True(effective.HasFlag(MobDataCompiler.MobModeData.CanMove)); // Source bit preserved.
+        Assert.True(effective.HasFlag(MobDataCompiler.MobModeData.Detector));
+        Assert.True(effective.HasFlag(MobDataCompiler.MobModeData.StatusImmune));
+        Assert.True(effective.HasFlag(MobDataCompiler.MobModeData.KnockBackImmune));
+        Assert.False(effective.HasFlag(MobDataCompiler.MobModeData.SkillImmune)); // Not a Boss bit.
+    }
+
+    [Fact]
+    public void ResolveEffectiveMode_ClassGuardian_AddsOnlyStatusImmune()
+    {
+        var effective = MobDataCompiler.ResolveEffectiveMode(MobDataCompiler.MobModeData.None, MobDataCompiler.MobClassData.Guardian);
+
+        Assert.Equal(MobDataCompiler.MobModeData.StatusImmune, effective);
+    }
+
+    [Fact]
+    public void ResolveEffectiveMode_ClassBattlefield_AddsStatusImmuneAndSkillImmune()
+    {
+        var effective = MobDataCompiler.ResolveEffectiveMode(MobDataCompiler.MobModeData.None, MobDataCompiler.MobClassData.Battlefield);
+
+        Assert.Equal(MobDataCompiler.MobModeData.StatusImmune | MobDataCompiler.MobModeData.SkillImmune, effective);
+    }
+
+    [Fact]
+    public void ResolveEffectiveMode_ClassEvent_AddsFixedItemDrop()
+    {
+        var effective = MobDataCompiler.ResolveEffectiveMode(MobDataCompiler.MobModeData.None, MobDataCompiler.MobClassData.Event);
+
+        Assert.Equal(MobDataCompiler.MobModeData.FixedItemDrop, effective);
+    }
+
+    [Fact]
+    public void ResolveEffectiveMode_ClassNormal_AddsNothing()
+    {
+        var effective = MobDataCompiler.ResolveEffectiveMode(MobDataCompiler.MobModeData.CanMove | MobDataCompiler.MobModeData.CanAttack, MobDataCompiler.MobClassData.Normal);
+
+        Assert.Equal(MobDataCompiler.MobModeData.CanMove | MobDataCompiler.MobModeData.CanAttack, effective);
+    }
+
+    // Real pinned Golden Thief Bug (Id 1086, Class: Boss) - its source Modes: block only ever sets
+    // Mvp: true explicitly; Detector/StatusImmune/KnockBackImmune are NEVER mentioned in the YAML
+    // at all, yet a real rAthena server grants them purely from Class: Boss. Proves source-mode
+    // fidelity is preserved (mob.Mode does NOT contain those bits) while effective-mode resolution
+    // still correctly derives them.
+    [Fact]
+    public void ResolveEffectiveMode_RealPinnedGoldenThiefBug_SourceModeExcludesClassBitsEffectiveModeIncludesThem()
+    {
+        var mob = MobDataCompiler.ReadMobDefinition(GoldenThiefBugFixture, 1086);
+
+        Assert.True(mob.Mode.HasFlag(MobDataCompiler.MobModeData.Mvp)); // Explicit Modes: Mvp: true.
+        Assert.False(mob.Mode.HasFlag(MobDataCompiler.MobModeData.Detector)); // Never in the YAML.
+        Assert.False(mob.Mode.HasFlag(MobDataCompiler.MobModeData.StatusImmune));
+        Assert.False(mob.Mode.HasFlag(MobDataCompiler.MobModeData.KnockBackImmune));
+
+        var effective = MobDataCompiler.ResolveEffectiveMode(mob.Mode, mob.Class);
+        Assert.True(effective.HasFlag(MobDataCompiler.MobModeData.Mvp)); // Source bit still present.
+        Assert.True(effective.HasFlag(MobDataCompiler.MobModeData.Detector)); // Class-derived.
+        Assert.True(effective.HasFlag(MobDataCompiler.MobModeData.StatusImmune));
+        Assert.True(effective.HasFlag(MobDataCompiler.MobModeData.KnockBackImmune));
     }
 
     // ===== RaceGroups: real pinned round-trip (Id 1016, Archer Skeleton - db/re/mob_db.yml). =====
@@ -956,12 +1291,29 @@ public sealed class MobDataCompilerTests
         Assert.Equal(MobDataCompiler.MobModeData.CanMove | MobDataCompiler.MobModeData.CanAttack, mob.Mode);
     }
 
+    // Pinned mmo.hpp:242-272 declares 26 named MD_* enum members (MD_NONE=0 excluded, since it is
+    // not a toggleable bit; the MD_MASK #define excluded, since it is not an enum member at all) -
+    // 5 of those are exercised elsewhere (CanMove/NoRandomWalk/CanAttack/ChangeTargetMelee/
+    // ChangeTargetChase, the runtime-executed subset - see e.g.
+    // ReadMobDefinition_GPoring2401_ModeIsCanMoveAndCanAttack_DerivedFromAiPreset_NotFromModesBlock),
+    // the remaining 21 are exercised individually below - proving the modeled named-bit count is
+    // genuinely 26, not merely "a lot". Two bit POSITIONS (0x0000100, 0x0800000) are pinned "FREE"/
+    // unused - correctly zero named members, not a gap in this project's own modeling.
+    [Fact]
+    public void MobModeData_NamedMemberCount_Is26()
+    {
+        var namedMembers = Enum.GetValues<MobDataCompiler.MobModeData>().Where(value => value != MobDataCompiler.MobModeData.None).ToArray();
+        Assert.Equal(26, namedMembers.Length);
+    }
+
     [Fact]
     public void ReadMobDefinition_EveryPinnedModeBitName_SetsExactlyThatBit()
     {
-        // Exercises every one of the 22 pinned MD_* names this project models (see MobModeData's
-        // own doc comment) individually via a fresh Ai-less block (Ai absent -> base mode None), so
-        // each assertion proves that name maps to exactly its own bit, not merely "some bit changed".
+        // Exercises 21 of the 26 pinned MD_* names this project models (see MobModeData's own doc
+        // comment and MobModeData_NamedMemberCount_Is26 above) individually via a fresh Ai-less
+        // block (Ai absent -> base mode None), so each assertion proves that name maps to exactly
+        // its own bit, not merely "some bit changed". The other 5 (the runtime-executed subset) are
+        // exercised by their own dedicated tests elsewhere in this file.
         AssertBit("Looter", MobDataCompiler.MobModeData.Looter);
         AssertBit("Aggressive", MobDataCompiler.MobModeData.Aggressive);
         AssertBit("Assist", MobDataCompiler.MobModeData.Assist);

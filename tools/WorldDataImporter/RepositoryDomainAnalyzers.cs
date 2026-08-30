@@ -133,13 +133,19 @@ internal static class RepositoryDomainAnalyzers
                     .Select(mode => "mob-field:mode-" + Kebab(mode)).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
                 var modeDataStatus = modeDataBlockers.Length == 0 ? DomainCompatibilityStatus.FullyCompatible : DomainCompatibilityStatus.PartiallyCompatible;
 
-                // ModeRuntime: of the bits this mob's FULLY RESOLVED mode actually carries (Ai preset
-                // + Modes: overrides, i.e. mob.Mode - not merely the literal Modes: entries in this
-                // block, since most of a real mob's mode comes from its Ai preset), how many are
-                // runtime-executed. A mob whose resolved mode has zero bits (mob.Mode == None, e.g. a
-                // stationary "can't attack" plant) is NotApplicable - there is no runtime gap to
-                // report when the mob has no mode behavior to execute in the first place.
-                var resolvedModeNames = AllModeBitNames.Where(bitName => mob.Mode.HasFlag((MobDataCompiler.MobModeData)ModeBitsByRathenaName[bitName])).ToArray();
+                // ModeRuntime: of the bits this mob's EFFECTIVE mode actually carries, how many are
+                // runtime-executed. "Effective" is pinned MobDatabase::loadingFinished()'s complete
+                // resolution (mob.cpp:5536-5551): source mode (Ai preset + Modes: overrides, i.e.
+                // mob.Mode) PLUS this mob's own Class-derived bits (MobDataCompiler.
+                // ResolveEffectiveMode - CLASS_BOSS implicitly adds Detector/StatusImmune/
+                // KnockBackImmune with no corresponding Modes: entry, etc.) - never merely mob.Mode
+                // in isolation, since a real rAthena server runs combat against the EFFECTIVE value,
+                // not the raw YAML-declared one. A mob whose effective mode has zero bits (e.g. a
+                // stationary "can't attack" CLASS_NORMAL plant) is NotApplicable - there is no
+                // runtime gap to report when the mob has no mode behavior to execute in the first
+                // place.
+                var effectiveMode = MobDataCompiler.ResolveEffectiveMode(mob.Mode, mob.Class);
+                var resolvedModeNames = AllModeBitNames.Where(bitName => effectiveMode.HasFlag((MobDataCompiler.MobModeData)ModeBitsByRathenaName[bitName])).ToArray();
                 var modeRuntimeBlockers = resolvedModeNames.Except(MobSupportedModes, StringComparer.Ordinal)
                     .Select(mode => "mob-mode-runtime:" + Kebab(mode)).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
                 var modeRuntimeStatus = resolvedModeNames.Length == 0 ? DomainCompatibilityStatus.NotApplicable

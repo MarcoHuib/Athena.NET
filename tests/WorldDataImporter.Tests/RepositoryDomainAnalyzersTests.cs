@@ -517,6 +517,41 @@ public sealed class RepositoryDomainAnalyzersTests
     }
 
     [Fact]
+    public void Mob_ClassBoss_ImpliesClassDerivedModeRuntimeBlockersEvenWithNoExplicitModesEntries()
+    {
+        using var fixture = new DomainFixture();
+        // No Modes: block at all - Detector/StatusImmune/KnockBackImmune come ENTIRELY from
+        // Class: Boss (pinned MobDatabase::loadingFinished(), mob.cpp:5536-5551), never an explicit
+        // source Modes: entry. ModeRuntime must still report them as unexecuted, proving effective-
+        // mode (not merely source Modes:) drives this component.
+        fixture.Write("db/re/mob_db.yml", MobBlock(1002, "PORING", "Poring") + "    Class: Boss\n");
+
+        var entities = RepositoryDomainAnalyzers.Analyze(fixture.Root, new HashSet<string> { "mobs" });
+
+        var mob = Assert.Single(entities);
+        var modeRuntime = mob.Components.Single(c => c.Name == "ModeRuntime");
+        Assert.Contains("mob-mode-runtime:detector", modeRuntime.Blockers!);
+        Assert.Contains("mob-mode-runtime:status-immune", modeRuntime.Blockers!);
+        Assert.Contains("mob-mode-runtime:knock-back-immune", modeRuntime.Blockers!);
+        // ModeData (source-representation) must stay unaffected - no Modes: block was declared at all.
+        Assert.Equal(DomainCompatibilityStatus.FullyCompatible, mob.Components.Single(c => c.Name == "ModeData").Status);
+        Assert.Empty(mob.Components.Single(c => c.Name == "ModeData").Blockers!);
+    }
+
+    [Fact]
+    public void Mob_ClassEvent_ImpliesFixedItemDropModeRuntimeBlocker()
+    {
+        using var fixture = new DomainFixture();
+        fixture.Write("db/re/mob_db.yml", MobBlock(1002, "PORING", "Poring") + "    Class: Event\n");
+
+        var entities = RepositoryDomainAnalyzers.Analyze(fixture.Root, new HashSet<string> { "mobs" });
+
+        var mob = Assert.Single(entities);
+        var modeRuntime = mob.Components.Single(c => c.Name == "ModeRuntime");
+        Assert.Contains("mob-mode-runtime:fixed-item-drop", modeRuntime.Blockers!);
+    }
+
+    [Fact]
     public void Mob_WithDropsBlock_DropsComponentUnsupportedButNotAStaticDataBlocker()
     {
         using var fixture = new DomainFixture();

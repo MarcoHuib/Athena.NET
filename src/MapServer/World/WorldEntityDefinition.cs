@@ -31,7 +31,7 @@ public sealed record WorldSourceInfo(string Repository, string Commit, string Fi
 // Pinned rAthena monster capability bits (legacy/rathena/src/common/mmo.hpp enum e_mode,
 // mmo.hpp:242-272; cross-checked against legacy/rathena/doc/mob_db_mode_list.txt, the pinned
 // project's own authoritative bit-by-bit reference). This is now the COMPLETE pinned MD_* bitmask
-// (22 named bits across the 32-bit range; two positions - 0x0000100 and 0x0800000 - are pinned
+// (26 named bits across the 32-bit range; two positions - 0x0000100 and 0x0800000 - are pinned
 // "FREE"/unused slots with no MD_* constant and are correctly absent here). Every bit is
 // REPRESENTED (a source Modes: entry for any of these names round-trips losslessly through
 // MobDataCompiler/GenerateMobDefinition), independent of whether MapServer's runtime currently
@@ -241,6 +241,22 @@ public enum MobClass
 // analyzer component distinguishing DATA representation (now losslessly complete) from RUNTIME
 // support (still absent: no race-group gameplay consumer, no drop-table/MVP-reward runtime exists
 // anywhere in this project outside the unrelated single-quest QuestDropDataCompiler slice).
+// `Mode` on this record is SOURCE mode - the pinned `Ai:` preset plus `Modes:` block overrides
+// ONLY (`MobDatabase::parseBodyNode`, mob.cpp:5446-5519), exactly what a reader of the YAML block
+// itself would see. It deliberately does NOT include the class-derived bits pinned
+// `MobDatabase::loadingFinished()` (mob.cpp:5536-5551) ORs on AFTERWARD, purely from `Class:` -
+// MD_DETECTOR/MD_STATUSIMMUNE/MD_KNOCKBACKIMMUNE for CLASS_BOSS, MD_STATUSIMMUNE for
+// CLASS_GUARDIAN, MD_STATUSIMMUNE/MD_SKILLIMMUNE for CLASS_BATTLEFIELD, MD_FIXEDITEMDROP for
+// CLASS_EVENT - since mutating the stored source-backed `Mode` field with those would misrepresent
+// what the pinned YAML block itself actually declared (a mob whose Modes: never mentions Detector
+// would incorrectly look, from this record alone, like it explicitly set Detector). Call
+// `EffectiveMode` for the mode value pinned rAthena ACTUALLY loads and runs combat against -
+// `Mode | MobModeResolver.ClassDerivedBits(Class)`. Every real MapServer runtime call site today
+// (MonsterRuntime/MobInstance/MonsterCombatCoordinator) only ever checks CanMove/NoRandomWalk/
+// CanAttack/ChangeTargetMelee/ChangeTargetChase - none of which loadingFinished() ever derives from
+// Class - so those call sites correctly keep reading source `Mode` directly; `EffectiveMode` exists
+// for callers (chiefly RepositoryDomainAnalyzers' ModeRuntime component) that need the COMPLETE
+// pinned-accurate mode a real rAthena server would hold at runtime.
 public sealed record MobDefinition(
     int Id, string AegisName, string Name, int Level, uint MaxHp,
     int Attack, int Attack2, int Defense, int MagicDefense,
@@ -273,7 +289,30 @@ public sealed record MobDefinition(
     // true; it is still present on the shared record type rather than a second near-duplicate record,
     // since the pinned per-entry SHAPE is otherwise identical. See MobDropEntry.
     IReadOnlyList<MobDropEntry>? Drops = null,
-    IReadOnlyList<MobDropEntry>? MvpDrops = null);
+    IReadOnlyList<MobDropEntry>? MvpDrops = null)
+{
+    // The pinned-accurate mode a real rAthena server actually holds/runs combat against - source
+    // Mode plus this mob's own Class-derived bits. Computed on read (never stored/generated), so it
+    // can never drift out of sync with Mode/Class and never needs its own generated-data field.
+    public MobMode EffectiveMode => Mode | MobModeResolver.ClassDerivedBits(Class);
+}
+
+// Pinned `MobDatabase::loadingFinished()`'s class-derived mode-bit resolution (mob.cpp:5536-5551) -
+// applied to EVERY mob after its own Ai/Modes: source mode is resolved, purely from `Class:`, with
+// no corresponding `Modes:` entry required or expected. Not a `Modes:` override in the pinned
+// source's own sense (it never appears in the YAML, and pinned's own per-Modes-entry
+// invalidWarning/skip logic is not involved) - a separate, unconditional post-processing pass.
+internal static class MobModeResolver
+{
+    public static MobMode ClassDerivedBits(MobClass mobClass) => mobClass switch
+    {
+        MobClass.Boss => MobMode.Detector | MobMode.StatusImmune | MobMode.KnockBackImmune,
+        MobClass.Guardian => MobMode.StatusImmune,
+        MobClass.Battlefield => MobMode.StatusImmune | MobMode.SkillImmune,
+        MobClass.Event => MobMode.FixedItemDrop,
+        _ => MobMode.None, // CLASS_NORMAL (and any other value) adds nothing.
+    };
+}
 
 // One pinned `RaceGroups:` entry - `Name` is the bare pinned key (e.g. "Goblin", "Biolab",
 // "Malangdo"), matched case-sensitively against the pinned `RC2_<Name>` constant table by rAthena

@@ -329,9 +329,9 @@ against the fixed pinned string table (matching `script_get_constant`'s own `str
 with the documented fallback default on an unrecognized value - never a thrown error for one bad
 enum-shaped field.
 
-List-shaped blocks: `Modes:` retains the COMPLETE pinned 22-bit `MD_*` bitmask (`MobMode`/
+List-shaped blocks: `Modes:` retains the COMPLETE pinned 26-named-bit `MD_*` bitmask (`MobMode`/
 `MobModeData`, `[Flags]`) - every valid mode NAME is representable, independent of whether
-MapServer's runtime executes that bit (only 5 of the 22 bits are runtime-executed today - see
+MapServer's runtime executes that bit (only 5 of the 26 bits are runtime-executed today - see
 `ai/world-data.md`'s "Mob Modes" section for the full list and the `ModeData`/`ModeRuntime`
 component split this enables). `RaceGroups:` retains each entry as `MobRaceGroupEntry(string Name,
 bool Value)` - a pinned-NAME list, not a fixed C# enum, since the pinned `RC2_*` constant table is
@@ -342,11 +342,27 @@ entirely absent.
 
 `MobSupportedKeys` in `RepositoryDomainAnalyzers` is kept in sync with the compiler's actual scalar
 field coverage. As of this hardening pass, `analyze`'s `mob-field:*` StaticData blockers are **zero**
-across the complete pinned `db/re/mob_db.yml` - every meaningful top-level field is either a modeled
-scalar or one of the four dedicated components (`ModeData`/`RaceGroups`/`Drops`/`MvpDrops`), and a
-real, pinned-file-scanning test
-(`MobDataCompilerTests.PinnedMobDbSchema_EveryTopLevelKeyActuallyPresentInRealData_IsExplicitlyClassified`)
-fails closed if a future pinned revision adds a genuinely new, unclassified top-level key.
+across the complete pinned `db/re/mob_db.yml`, AND all 2,675 real pinned mobs are `StaticData:
+FullyCompatible` (no remaining `mob-definition:*` blockers either) - every meaningful top-level
+field is either a modeled scalar or one of the four dedicated components (`ModeData`/`RaceGroups`/
+`Drops`/`MvpDrops`), and real, pinned-file-scanning tests
+(`MobDataCompilerTests.PinnedMobDbSchema_EveryTopLevelKeyActuallyPresentInRealData_IsExplicitlyClassified`
+and its `Modes:`-entry-name and `Drops:`/`MvpDrops:`-entry-field companions) fail closed if a future
+pinned revision adds a genuinely new, unclassified field.
+
+`Drops:`/`MvpDrops:` `Index:` entries carry real pinned overwrite/append/skip semantics (mirroring
+`MobDatabase::parseDropNode` exactly, including the section's own `MAX_MOB_DROP`/`MAX_MVP_DROP`
+bound) - not a db/import-overlay-only mechanism this project could ignore; real base
+`db/re/mob_db.yml` uses `Index:` on 1,301 real entries. `MobMode`/`MobModeData` distinguish SOURCE
+mode (`Ai:` preset + `Modes:` overrides, `MobDefinition.Mode`) from EFFECTIVE mode
+(`MobDefinition.EffectiveMode`, a computed property = source mode plus this mob's own `Class:`-
+derived bits pinned `MobDatabase::loadingFinished()` ORs on afterward) - `ModeRuntime` analysis uses
+the effective value, since a real rAthena server runs combat against that, not the raw YAML-declared
+source mode. See `ai/world-data.md`'s "Mob Modes" and "RaceGroups, Drops, MvpDrops" sections for the
+full pinned trace, including two real parser bugs this hardening pass found and fixed (a trailing
+`# comment` on `DamageMotion:` breaking numeric parsing for 48 real mobs, and a column-0 comment
+line silently truncating `Modes:`/`Drops:` block capture for several real mobs including Poring's
+own real 8-entry drop table).
 
 Structural completeness counts (`map-world`'s `MobSpawns`/`MapFlags` components) are carried on an
 optional `DomainComponent.Metric` (`{ "Compatible": N, "Total": M }`), never as a formatted
