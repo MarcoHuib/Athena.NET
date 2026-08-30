@@ -13,19 +13,19 @@ internal static class MoskDun03MobSpawns
 {
     internal static readonly MobSpawnDefinition[] MoskDun03 =
     [
-        new(GeneratedMobs.Vavayaga, "mosk_dun03", 60, 10000, 10000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/mosk_dun.txt", 43), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Uzhas, "mosk_dun03", 35, 20000, 10000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/mosk_dun.txt", 44), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Mavka, "mosk_dun03", 15, 20000, 10000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/mosk_dun.txt", 45), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.YellowPlant, "mosk_dun03", 10, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/mosk_dun.txt", 46), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.WhitePlant, "mosk_dun03", 10, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/mosk_dun.txt", 47), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.ShiningPlant, "mosk_dun03", 5, 10000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/mosk_dun.txt", 48), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.C5Vavayaga, "mosk_dun03", 2, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 218), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Vavayaga, "mosk_dun03", 68, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/mosk_dun.txt", 36), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Uzhas, "mosk_dun03", 39, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/mosk_dun.txt", 37), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Mavka, "mosk_dun03", 17, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/mosk_dun.txt", 38), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.YellowPlant, "mosk_dun03", 11, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/mosk_dun.txt", 40), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.WhitePlant, "mosk_dun03", 11, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/mosk_dun.txt", 41), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.ShiningPlant, "mosk_dun03", 5, 10000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/mosk_dun.txt", 42), X: 0, Y: 0, Xs: 0, Ys: 0),
+        new(GeneratedMobs.Vavayaga, "mosk_dun03", 60, 10000, 10000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/mosk_dun.txt", 43), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Baba Yaga"),
+        new(GeneratedMobs.Uzhas, "mosk_dun03", 35, 20000, 10000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/mosk_dun.txt", 44), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Uzhas"),
+        new(GeneratedMobs.Mavka, "mosk_dun03", 15, 20000, 10000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/mosk_dun.txt", 45), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Mavka"),
+        new(GeneratedMobs.YellowPlant, "mosk_dun03", 10, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/mosk_dun.txt", 46), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Yellow Plant"),
+        new(GeneratedMobs.WhitePlant, "mosk_dun03", 10, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/mosk_dun.txt", 47), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "White Plant"),
+        new(GeneratedMobs.ShiningPlant, "mosk_dun03", 5, 10000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/mosk_dun.txt", 48), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Shining Plant"),
+        new(GeneratedMobs.C5Vavayaga, "mosk_dun03", 2, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 218), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Elusive Vavayaga"),
+        new(GeneratedMobs.Vavayaga, "mosk_dun03", 68, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/mosk_dun.txt", 36), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Baba Yaga"),
+        new(GeneratedMobs.Uzhas, "mosk_dun03", 39, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/mosk_dun.txt", 37), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Uzhas"),
+        new(GeneratedMobs.Mavka, "mosk_dun03", 17, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/mosk_dun.txt", 38), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Mavka"),
+        new(GeneratedMobs.YellowPlant, "mosk_dun03", 11, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/mosk_dun.txt", 40), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Yellow Plant"),
+        new(GeneratedMobs.WhitePlant, "mosk_dun03", 11, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/mosk_dun.txt", 41), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "White Plant"),
+        new(GeneratedMobs.ShiningPlant, "mosk_dun03", 5, 10000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/mosk_dun.txt", 42), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Shining Plant"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. MoskDun03];

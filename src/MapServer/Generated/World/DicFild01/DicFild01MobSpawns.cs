@@ -13,16 +13,16 @@ internal static class DicFild01MobSpawns
 {
     internal static readonly MobSpawnDefinition[] DicFild01 =
     [
-        new(GeneratedMobs.Goldporing, "dic_fild01", 3, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/RWC_2011.txt", 271), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.XmasSmokeyGift, "dic_fild01", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1131), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.XmasSmokeySock, "dic_fild01", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1422), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.OrganicJakk, "dic_fild01", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 558), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.InorganicJakk, "dic_fild01", 4, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 861), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.C1Centipede, "dic_fild01", 2, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 62), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Centipede, "dic_fild01", 60, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/dicastes.txt", 17), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.CentipedeLarva, "dic_fild01", 30, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/dicastes.txt", 18), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Tatacho, "dic_fild01", 25, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/dicastes.txt", 19), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Dolomedes, "dic_fild01", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/dicastes.txt", 20), X: 0, Y: 0, Xs: 0, Ys: 0),
+        new(GeneratedMobs.Goldporing, "dic_fild01", 3, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/RWC_2011.txt", 271), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Golden Poring"),
+        new(GeneratedMobs.XmasSmokeyGift, "dic_fild01", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1131), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Gift Stealing Raccoon"),
+        new(GeneratedMobs.XmasSmokeySock, "dic_fild01", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1422), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Sock Stealing Raccoon"),
+        new(GeneratedMobs.OrganicJakk, "dic_fild01", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 558), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Organic Pumpkin"),
+        new(GeneratedMobs.InorganicJakk, "dic_fild01", 4, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 861), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Inorganic Pumpkin"),
+        new(GeneratedMobs.C1Centipede, "dic_fild01", 2, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 62), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Swift Centipede"),
+        new(GeneratedMobs.Centipede, "dic_fild01", 60, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/dicastes.txt", 17), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Centipede"),
+        new(GeneratedMobs.CentipedeLarva, "dic_fild01", 30, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/dicastes.txt", 18), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Centipede Larva"),
+        new(GeneratedMobs.Tatacho, "dic_fild01", 25, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/dicastes.txt", 19), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Tatacho"),
+        new(GeneratedMobs.Dolomedes, "dic_fild01", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/dicastes.txt", 20), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Dolomedes"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. DicFild01];

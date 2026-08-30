@@ -52,18 +52,25 @@ public static partial class GeneratedScriptRegistry
         PronteraCityWorld.Register(builder);
         PronteraKarianWorld.Register(builder);
         PrtFild08World.Register(builder);
-        // ALL 9,844 pinned ordinary `monster` spawn declarations (generate-mob-spawns CLI command,
-        // ai/world-data.md's "Generated mob spawns" section) - the SOLE mob-spawn source this
-        // builder sees. Formerly two hand-picked slices (AcademyMobSpawns.GPoringSpawns for
-        // int_land*, PrtFild08MobSpawns.All for the prt_fild08 family) were registered here
-        // separately; both are now a strict subset of GeneratedMobSpawnRegistry.All's own
-        // int_land*/prt_fild08* entries (same MobId/map/count/delay/source-line, verified when
-        // those two hand-picked files were retired), so registering both would have double-spawned
-        // the same physical source declarations. MapServerHostingScope.ServedMaps (and
+        // The Athena.NET EFFECTIVE Renewal source-load profile (RathenaRenewalDefault + the
+        // explicit Athena overlay, e.g. Academy - ai/world-data.md's "Generated mob spawns"
+        // section) - NOT GeneratedMobSpawnRegistry.All. All 10,068 pinned ordinary `monster` spawn
+        // declarations remain represented in GeneratedMobSpawnRegistry.All for repository-wide
+        // source coverage/research/analysis, but registering every one of them into the runtime
+        // world would activate pre-Renewal-only and pinned-disabled (e.g. old event) content the
+        // real rAthena Renewal script-config graph never actually loads. GeneratedMobSpawnLoadProfiles
+        // .AthenaIroEffective is the deterministic, generation-time-computed subset that matches the
+        // real pinned npc/re/scripts_main.conf graph plus Athena's explicit overlay allow-list
+        // (AthenaOverlaySourceFiles) - it references the SAME canonical MobSpawnDefinition instances
+        // GeneratedMobSpawnRegistry.All holds (by index, never a duplicate copy). Formerly two
+        // hand-picked slices (AcademyMobSpawns.GPoringSpawns for int_land*, PrtFild08MobSpawns.All
+        // for the prt_fild08 family) were registered here separately; both are a strict subset of
+        // this profile's own int_land*/prt_fild08* entries. MapServerHostingScope.ServedMaps (and
         // MapServerWorld.Build's servedMaps filter) remains the SEPARATE runtime-instantiation
-        // decision - registering every declaration here does not activate every map; see that
-        // filter for why "definition availability" and "runtime instantiation" stay independent.
-        foreach (var spawn in GeneratedMobSpawnRegistry.All) builder.AddMobSpawn(spawn);
+        // decision - registering every profile-active declaration here does not activate every map;
+        // see that filter for why "definition availability" and "runtime instantiation" stay
+        // independent.
+        foreach (var spawn in GeneratedMobSpawnLoadProfiles.AthenaIroEffective) builder.AddMobSpawn(spawn);
     }
 
     private static WorldRegistryBuildResult BuildRegistry()

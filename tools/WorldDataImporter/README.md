@@ -409,13 +409,26 @@ dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- generat
 Prints:
 
 ```text
-Pinned ordinary mob-spawn declarations: 9844
-Generated:                             9844
-Mob definitions resolved:              9844 / 9844
-Valid map dependencies:                9841
+Pinned ordinary mob-spawn declarations: 10068
+Generated:                             10068
+Mob definitions resolved:              10068 / 10068
+Valid map dependencies:                10065
 Invalid map dependencies:              3
-Generated map/family modules:          432
+Generated map/family modules:          460
+Active Renewal source files (config graph): 835
+RenewalDefault declarations:           3802
+AthenaOverlay declarations:            73
+PreRenewalSource declarations:         3374
+Disabled declarations:                 2819
+AthenaIroEffective declarations:       3875
 ```
+
+Count corrected from an earlier 9,844 by a genuine pinned-syntax parser bug fix: pinned
+`npc_parse_mob`'s own w1 success condition is `w1count >= 1` (`src/map/npc.cpp:5233`) - a bare
+`<map>\tmonster\t...` declaration with no `,x,y` coordinates at all is valid pinned syntax, but the
+prior `SpawnLine` regex required `,x,y` unconditionally and silently dropped 224 real ordinary
+`monster` declarations using this form (12 more real bare-form declarations are `boss_monster`,
+still out of this project's ordinary-monster scope).
 
 The three invalid map dependencies are the pinned `evt_zombie` declarations
 (`npc/events/halloween_2008.txt:267-269`) - a map that resolves through no pinned map-cache layer
@@ -423,8 +436,9 @@ at all. Because every one of them originates from a source file under `npc/event
 token starts with `evt_`, they are classified under the organizational
 `Generated/World/Events/EvtZombie/EvtZombieMobSpawns.cs` module (source coverage is never dropped for a
 bad map dependency, but this placement never implies `evt_zombie` is runtime-loadable); ANY other
-unresolvable map that doesn't qualify for that exact classification, or any spawn MobId that fails
-to resolve against the freshly-parsed `mob_db.yml` symbol table, fails generation closed.
+unresolvable map that doesn't qualify for that exact classification, any spawn MobId/AegisName token
+that fails to resolve against the freshly-parsed `mob_db.yml` symbol table, or any present level
+field outside pinned's valid `(0, MAX_LEVEL]`/omitted-sentinel range, fails generation closed.
 
 **Physical layout is map/world-family-oriented, not source-file-oriented**: `MobSpawnDefinition` is
 world/map-owned content, so its generated C# lives under `Generated/World/<Map-or-Family>/`
@@ -437,15 +451,31 @@ duplicated: `PrtFild08/PrtFild08MobSpawns.cs` (`prt_fild08{,a,b,c,d}`) and
 deterministic single-map folder (e.g. `PayFild01/PayFild01MobSpawns.cs`). One central
 `Generated/World/GeneratedMobSpawnRegistry.cs` remains an INDEX ONLY - it composes/references the
 map-owned arrays rather than owning duplicate spawn data - exposing the map-keyed
-`GeneratedMobSpawnRegistry.GetForMap(string)`/`TryGetMap`/`All` API. See `ai/world-data.md`'s
-"Generated mob spawns" section for the full field-by-field trace (including the losslessly-preserved
-`RespawnRandomDelay`/`DeathEvent`/`Size`/`Ai` fields), the complete placement-classification rules,
-and the runtime-activation model (`MapServerHostingScope.ServedMaps` remains the only hosting-scope
-decision; registry completeness never implies a map is actually served). Cleanup removes only
-generator-owned files (auto-generated header plus a `*MobSpawns.cs` filename suffix, or the
-registry's own exact filename) across the entire output tree, never hand-maintained
-`*Npcs.cs`/`*Warps.cs`/`*World.cs`/`Scripts/` siblings; regenerating twice produces byte-identical
-output.
+`GeneratedMobSpawnRegistry.GetForMap(string)`/`TryGetMap`/`All` API (every REPRESENTED declaration,
+regardless of Renewal source-load profile). Cleanup removes only generator-owned files
+(auto-generated header plus a `*MobSpawns.cs` filename suffix, or the registry's/profiles' own exact
+filenames) across the entire output tree, never hand-maintained `*Npcs.cs`/`*Warps.cs`/`*World.cs`/
+`Scripts/` siblings; regenerating twice produces byte-identical output.
+
+**Renewal source-load profile** (`Generated/World/GeneratedMobSpawnLoadProfiles.cs`): repository
+source coverage is not the same as the pinned Renewal default loadout, which is not the same as
+Athena.NET's own effective runtime loadout. `RathenaScriptConfigGraph.ResolveActiveNpcFiles`
+resolves the real active `npc:`/`import:` directive graph rooted at pinned
+`npc/re/scripts_main.conf` (commented directives never followed); each declaration's source file is
+classified (`MobSpawnLoadClass`: `RenewalDefault`/`AthenaOverlay`/`PreRenewalSource`/`Disabled`) at
+generation time - this classification is NEVER stored on `MobSpawnDefinition` itself (profile
+membership is metadata about a declaration, not a property of it). `AthenaOverlaySourceFiles.Files`
+is a small, explicit allow-list of pinned-disabled content Athena.NET deliberately activates
+(currently just `npc/re/mobs/academy.txt`, the tutorial content). `GeneratedMobSpawnLoadProfiles
+.RathenaRenewalDefault`/`.AthenaIroEffective` are filtered VIEWS indexing by position into
+`GeneratedMobSpawnRegistry.All` (true reference identity, never duplicate `MobSpawnDefinition`
+copies), with their own `GetForMap(map, MobSpawnLoadProfile)` overload.
+`GeneratedScriptRegistry.Register` feeds `AthenaIroEffective` (not `.All`) into
+`WorldRegistryBuilder.AddMobSpawn` - `MapServerHostingScope.ServedMaps` remains the separate,
+unchanged, final map-hosting decision applied downstream. See `ai/world-data.md`'s "Renewal
+source-load profile" section for the full field-by-field trace (including the losslessly-preserved
+`SpawnName`/`DeclaredLevel`/`RespawnRandomDelay`/`DeathEvent`/`Size`/`Ai` fields, numeric-MobId/
+AegisName token resolution, and every discovered real count).
 
 `Compatible` means the complete event passes the current real compilation boundary;
 unsupported statements are never omitted. `soleBlockerFor` counts events whose

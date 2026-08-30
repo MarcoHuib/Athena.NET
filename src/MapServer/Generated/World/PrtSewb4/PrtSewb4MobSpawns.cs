@@ -13,21 +13,21 @@ internal static class PrtSewb4MobSpawns
 {
     internal static readonly MobSpawnDefinition[] PrtSewb4 =
     [
-        new(GeneratedMobs.Goldporing, "prt_sewb4", 3, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/RWC_2011.txt", 478), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.EventLude, "prt_sewb4", 3, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2006.txt", 1399), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.ThiefBugEgg, "prt_sewb4", 10, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/prt_sew.txt", 47), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.ThiefBug, "prt_sewb4", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/prt_sew.txt", 48), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.ThiefBug_1053, "prt_sewb4", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/prt_sew.txt", 49), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.ThiefBug_1054, "prt_sewb4", 70, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/prt_sew.txt", 50), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Drainliar, "prt_sewb4", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/prt_sew.txt", 51), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Cramp, "prt_sewb4", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/prt_sew.txt", 52), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.C2ThiefBug, "prt_sewb4", 2, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 267), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.ThiefBug_1054, "prt_sewb4", 70, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/prt_sew.txt", 48), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.ThiefBug, "prt_sewb4", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/prt_sew.txt", 49), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.ThiefBug_1053, "prt_sewb4", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/prt_sew.txt", 50), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Drainliar, "prt_sewb4", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/prt_sew.txt", 51), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.ThiefBugEgg, "prt_sewb4", 10, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/prt_sew.txt", 52), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Cramp, "prt_sewb4", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/prt_sew.txt", 53), X: 0, Y: 0, Xs: 0, Ys: 0),
+        new(GeneratedMobs.Goldporing, "prt_sewb4", 3, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/RWC_2011.txt", 478), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Golden Poring"),
+        new(GeneratedMobs.EventLude, "prt_sewb4", 3, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2006.txt", 1399), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Lude"),
+        new(GeneratedMobs.ThiefBugEgg, "prt_sewb4", 10, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/prt_sew.txt", 47), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Thief Bug Egg"),
+        new(GeneratedMobs.ThiefBug, "prt_sewb4", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/prt_sew.txt", 48), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Thief Bug"),
+        new(GeneratedMobs.ThiefBug_1053, "prt_sewb4", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/prt_sew.txt", 49), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Thief Bug Female"),
+        new(GeneratedMobs.ThiefBug_1054, "prt_sewb4", 70, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/prt_sew.txt", 50), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Thief Bug Male"),
+        new(GeneratedMobs.Drainliar, "prt_sewb4", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/prt_sew.txt", 51), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Drainliar"),
+        new(GeneratedMobs.Cramp, "prt_sewb4", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/prt_sew.txt", 52), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Cramp"),
+        new(GeneratedMobs.C2ThiefBug, "prt_sewb4", 2, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 267), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Solid Thief Bug"),
+        new(GeneratedMobs.ThiefBug_1054, "prt_sewb4", 70, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/prt_sew.txt", 48), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Thief Bug Male"),
+        new(GeneratedMobs.ThiefBug, "prt_sewb4", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/prt_sew.txt", 49), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Thief Bug"),
+        new(GeneratedMobs.ThiefBug_1053, "prt_sewb4", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/prt_sew.txt", 50), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Thief Bug Female"),
+        new(GeneratedMobs.Drainliar, "prt_sewb4", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/prt_sew.txt", 51), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Drainliar"),
+        new(GeneratedMobs.ThiefBugEgg, "prt_sewb4", 10, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/prt_sew.txt", 52), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Thief Bug Egg"),
+        new(GeneratedMobs.Cramp, "prt_sewb4", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/prt_sew.txt", 53), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Cramp"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. PrtSewb4];

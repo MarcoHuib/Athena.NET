@@ -13,9 +13,9 @@ internal static class MoskQueMobSpawns
 {
     internal static readonly MobSpawnDefinition[] MoskQue =
     [
-        new(GeneratedMobs.FreezerR, "mosk_que", 10, 20000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/quests/quests_moscovia.txt", 9053), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.GarmBabyR, "mosk_que", 3, 300000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/quests/quests_moscovia.txt", 9054), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Sasquatch, "mosk_que", 15, 10000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/quests/quests_moscovia.txt", 9055), X: 0, Y: 0, Xs: 0, Ys: 0),
+        new(GeneratedMobs.FreezerR, "mosk_que", 10, 20000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/quests/quests_moscovia.txt", 9053), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Freezer"),
+        new(GeneratedMobs.GarmBabyR, "mosk_que", 3, 300000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/quests/quests_moscovia.txt", 9054), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Hatii Baby"),
+        new(GeneratedMobs.Sasquatch, "mosk_que", 15, 10000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/quests/quests_moscovia.txt", 9055), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Sasquatch"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. MoskQue];

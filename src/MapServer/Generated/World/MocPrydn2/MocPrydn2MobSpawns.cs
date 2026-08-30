@@ -13,15 +13,15 @@ internal static class MocPrydn2MobSpawns
 {
     internal static readonly MobSpawnDefinition[] MocPrydn2 =
     [
-        new(GeneratedMobs.XmasSmokeyGift, "moc_prydn2", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1698), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.XmasSmokeySock, "moc_prydn2", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1699), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.OrganicJakk, "moc_prydn2", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 827), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.InorganicJakk, "moc_prydn2", 4, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 1130), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.C4Mimic, "moc_prydn2", 2, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 215), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.NMimic, "moc_prydn2", 35, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/moc_pryd.txt", 78), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.NVerit, "moc_prydn2", 35, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/moc_pryd.txt", 79), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.NArclouse, "moc_prydn2", 23, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/moc_pryd.txt", 80), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.NAncientMummy, "moc_prydn2", 23, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/moc_pryd.txt", 81), X: 0, Y: 0, Xs: 0, Ys: 0),
+        new(GeneratedMobs.XmasSmokeyGift, "moc_prydn2", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1698), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Gift Stealing Raccoon"),
+        new(GeneratedMobs.XmasSmokeySock, "moc_prydn2", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1699), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Sock Stealing Raccoon"),
+        new(GeneratedMobs.OrganicJakk, "moc_prydn2", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 827), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Organic Pumpkin"),
+        new(GeneratedMobs.InorganicJakk, "moc_prydn2", 4, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 1130), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Inorganic Pumpkin"),
+        new(GeneratedMobs.C4Mimic, "moc_prydn2", 2, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 215), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Furious Mimic"),
+        new(GeneratedMobs.NMimic, "moc_prydn2", 35, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/moc_pryd.txt", 78), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Nightmare Mimic"),
+        new(GeneratedMobs.NVerit, "moc_prydn2", 35, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/moc_pryd.txt", 79), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Nightmare Verit"),
+        new(GeneratedMobs.NArclouse, "moc_prydn2", 23, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/moc_pryd.txt", 80), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Nightmare Arclouze"),
+        new(GeneratedMobs.NAncientMummy, "moc_prydn2", 23, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/moc_pryd.txt", 81), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Nightmare Ancient Mummy"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. MocPrydn2];

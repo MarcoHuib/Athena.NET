@@ -13,10 +13,10 @@ internal static class IzAc01AMobSpawns
 {
     internal static readonly MobSpawnDefinition[] IzAc01A =
     [
-        new(GeneratedMobs.Dummy10Fire, "iz_ac01_a", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/jobs/novice/academy.txt", 3840), X: 47, Y: 68, Xs: 0, Ys: 0, DeathEvent: "0"),
-        new(GeneratedMobs.Dummy10Fire, "iz_ac01_a", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/jobs/novice/academy.txt", 3841), X: 50, Y: 68, Xs: 0, Ys: 0, DeathEvent: "0"),
-        new(GeneratedMobs.Dummy10, "iz_ac01_a", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/jobs/novice/academy.txt", 3842), X: 53, Y: 68, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Dummy10, "iz_ac01_a", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/jobs/novice/academy.txt", 3843), X: 56, Y: 68, Xs: 0, Ys: 0),
+        new(GeneratedMobs.Dummy10Fire, "iz_ac01_a", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/jobs/novice/academy.txt", 3840), X: 47, Y: 68, Xs: 0, Ys: 0, SpawnName: "Lv 10 (Fire)", DeathEvent: "0"),
+        new(GeneratedMobs.Dummy10Fire, "iz_ac01_a", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/jobs/novice/academy.txt", 3841), X: 50, Y: 68, Xs: 0, Ys: 0, SpawnName: "Lv 10 (Fire)", DeathEvent: "0"),
+        new(GeneratedMobs.Dummy10, "iz_ac01_a", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/jobs/novice/academy.txt", 3842), X: 53, Y: 68, Xs: 0, Ys: 0, SpawnName: "Lv 10"),
+        new(GeneratedMobs.Dummy10, "iz_ac01_a", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/jobs/novice/academy.txt", 3843), X: 56, Y: 68, Xs: 0, Ys: 0, SpawnName: "Lv 10"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. IzAc01A];

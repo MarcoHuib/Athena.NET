@@ -13,16 +13,16 @@ internal static class GldDun032MobSpawns
 {
     internal static readonly MobSpawnDefinition[] GldDun032 =
     [
-        new(GeneratedMobs.XmasSmokeyGift, "gld_dun03_2", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1106), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.XmasSmokeySock, "gld_dun03_2", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1397), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.OrganicJakk, "gld_dun03_2", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 533), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.InorganicJakk, "gld_dun03_2", 4, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 836), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.C5GldKobold2, "gld_dun03_2", 2, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 121), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.GldKobold1, "gld_dun03_2", 13, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_re.txt", 58), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.GldKobold2, "gld_dun03_2", 23, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_re.txt", 59), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.GldKobold3, "gld_dun03_2", 23, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_re.txt", 60), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.GldKoboldArcher, "gld_dun03_2", 23, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_re.txt", 61), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.KoboldLeader, "gld_dun03_2", 1, 14400000, 7200000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_re.txt", 62), X: 0, Y: 0, Xs: 0, Ys: 0),
+        new(GeneratedMobs.XmasSmokeyGift, "gld_dun03_2", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1106), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Gift Stealing Raccoon"),
+        new(GeneratedMobs.XmasSmokeySock, "gld_dun03_2", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1397), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Sock Stealing Raccoon"),
+        new(GeneratedMobs.OrganicJakk, "gld_dun03_2", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 533), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Organic Pumpkin"),
+        new(GeneratedMobs.InorganicJakk, "gld_dun03_2", 4, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 836), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Inorganic Pumpkin"),
+        new(GeneratedMobs.C5GldKobold2, "gld_dun03_2", 2, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 121), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Elusive Dark Hammer Kobold"),
+        new(GeneratedMobs.GldKobold1, "gld_dun03_2", 13, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_re.txt", 58), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Dark Axe Kobold"),
+        new(GeneratedMobs.GldKobold2, "gld_dun03_2", 23, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_re.txt", 59), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Dark Hammer Kobold"),
+        new(GeneratedMobs.GldKobold3, "gld_dun03_2", 23, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_re.txt", 60), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Dark Mace Kobold"),
+        new(GeneratedMobs.GldKoboldArcher, "gld_dun03_2", 23, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_re.txt", 61), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Dark Kobold Archer"),
+        new(GeneratedMobs.KoboldLeader, "gld_dun03_2", 1, 14400000, 7200000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_re.txt", 62), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Kobold Leader"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. GldDun032];

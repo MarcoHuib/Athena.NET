@@ -13,7 +13,7 @@ internal static class PayonIn02MobSpawns
 {
     internal static readonly MobSpawnDefinition[] PayonIn02 =
     [
-        new(GeneratedMobs.ThiefBug, "payon_in02", 7, 1200000, 600000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/citycleaners.txt", 18), X: 23, Y: 68, Xs: 5, Ys: 5),
+        new(GeneratedMobs.ThiefBug, "payon_in02", 7, 1200000, 600000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/citycleaners.txt", 18), X: 23, Y: 68, Xs: 5, Ys: 5, SpawnName: "Thief Bug"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. PayonIn02];

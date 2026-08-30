@@ -13,15 +13,15 @@ internal static class GldDun042MobSpawns
 {
     internal static readonly MobSpawnDefinition[] GldDun042 =
     [
-        new(GeneratedMobs.XmasSmokeyGift, "gld_dun04_2", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1107), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.XmasSmokeySock, "gld_dun04_2", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1398), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.OrganicJakk, "gld_dun04_2", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 534), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.InorganicJakk, "gld_dun04_2", 4, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 837), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.C2GldDarkShadow, "gld_dun04_2", 2, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 123), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.GldDarkFrame, "gld_dun04_2", 15, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_re.txt", 81), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.GldDarkPriest, "gld_dun04_2", 15, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_re.txt", 82), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.GldDarkShadow, "gld_dun04_2", 45, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_re.txt", 83), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.DarkIllusion, "gld_dun04_2", 1, 1200000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_re.txt", 84), X: 0, Y: 0, Xs: 0, Ys: 0),
+        new(GeneratedMobs.XmasSmokeyGift, "gld_dun04_2", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1107), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Gift Stealing Raccoon"),
+        new(GeneratedMobs.XmasSmokeySock, "gld_dun04_2", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1398), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Sock Stealing Raccoon"),
+        new(GeneratedMobs.OrganicJakk, "gld_dun04_2", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 534), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Organic Pumpkin"),
+        new(GeneratedMobs.InorganicJakk, "gld_dun04_2", 4, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 837), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Inorganic Pumpkin"),
+        new(GeneratedMobs.C2GldDarkShadow, "gld_dun04_2", 2, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 123), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Solid Dark Shadow"),
+        new(GeneratedMobs.GldDarkFrame, "gld_dun04_2", 15, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_re.txt", 81), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Dark Frame"),
+        new(GeneratedMobs.GldDarkPriest, "gld_dun04_2", 15, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_re.txt", 82), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Dark Priest"),
+        new(GeneratedMobs.GldDarkShadow, "gld_dun04_2", 45, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_re.txt", 83), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Dark Shadow"),
+        new(GeneratedMobs.DarkIllusion, "gld_dun04_2", 1, 1200000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_re.txt", 84), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Dark Illusion"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. GldDun042];

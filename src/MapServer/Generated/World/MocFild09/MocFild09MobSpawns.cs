@@ -13,18 +13,18 @@ internal static class MocFild09MobSpawns
 {
     internal static readonly MobSpawnDefinition[] MocFild09 =
     [
-        new(GeneratedMobs.Goldporing, "moc_fild09", 3, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/RWC_2011.txt", 421), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.GSnake_1841, "moc_fild09", 3, 0, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/StPatrick_2008.txt", 315), X: 0, Y: 0, Xs: 0, Ys: 0, DeathEvent: "0"),
-        new(GeneratedMobs.GAnacondaq_1842, "moc_fild09", 3, 0, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/StPatrick_2008.txt", 427), X: 0, Y: 0, Xs: 0, Ys: 0, DeathEvent: "0"),
-        new(GeneratedMobs.GSideWinder_1843, "moc_fild09", 2, 0, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/StPatrick_2008.txt", 539), X: 0, Y: 0, Xs: 0, Ys: 0, DeathEvent: "0"),
-        new(GeneratedMobs.GIsis_1844, "moc_fild09", 1, 0, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/StPatrick_2008.txt", 651), X: 0, Y: 0, Xs: 0, Ys: 0, DeathEvent: "0"),
-        new(GeneratedMobs.XmasSmokeyGift, "moc_fild09", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1281), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.XmasSmokeySock, "moc_fild09", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1572), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.EventLude, "moc_fild09", 3, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2006.txt", 1243), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.OrganicJakk, "moc_fild09", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 708), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.InorganicJakk, "moc_fild09", 4, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 1011), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Poring_1062, "moc_fild09", 15, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/xmas.txt", 166), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Antonio, "moc_fild09", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/xmas.txt", 281), X: 0, Y: 0, Xs: 0, Ys: 0),
+        new(GeneratedMobs.Goldporing, "moc_fild09", 3, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/RWC_2011.txt", 421), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Golden Poring"),
+        new(GeneratedMobs.GSnake_1841, "moc_fild09", 3, 0, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/StPatrick_2008.txt", 315), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Snake Lord's Minon", DeathEvent: "0"),
+        new(GeneratedMobs.GAnacondaq_1842, "moc_fild09", 3, 0, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/StPatrick_2008.txt", 427), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Snake Lord's Minon", DeathEvent: "0"),
+        new(GeneratedMobs.GSideWinder_1843, "moc_fild09", 2, 0, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/StPatrick_2008.txt", 539), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Snake Lord's Minon", DeathEvent: "0"),
+        new(GeneratedMobs.GIsis_1844, "moc_fild09", 1, 0, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/StPatrick_2008.txt", 651), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Snake Lord's Minon", DeathEvent: "0"),
+        new(GeneratedMobs.XmasSmokeyGift, "moc_fild09", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1281), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Gift Stealing Raccoon"),
+        new(GeneratedMobs.XmasSmokeySock, "moc_fild09", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1572), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Sock Stealing Raccoon"),
+        new(GeneratedMobs.EventLude, "moc_fild09", 3, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2006.txt", 1243), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Lude"),
+        new(GeneratedMobs.OrganicJakk, "moc_fild09", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 708), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Organic Pumpkin"),
+        new(GeneratedMobs.InorganicJakk, "moc_fild09", 4, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 1011), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Inorganic Pumpkin"),
+        new(GeneratedMobs.Poring_1062, "moc_fild09", 15, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/xmas.txt", 166), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Santa Poring"),
+        new(GeneratedMobs.Antonio, "moc_fild09", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/xmas.txt", 281), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Antonio"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. MocFild09];

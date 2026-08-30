@@ -13,16 +13,16 @@ internal static class GldDun04MobSpawns
 {
     internal static readonly MobSpawnDefinition[] GldDun04 =
     [
-        new(GeneratedMobs.WraithDead, "gld_dun04", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/gld_dun.txt", 47), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.MiniDemon, "gld_dun04", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/gld_dun.txt", 48), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.ZombieMaster, "gld_dun04", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/gld_dun.txt", 49), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.DarkIllusion, "gld_dun04", 1, 1200000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/gld_dun.txt", 50), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Ghostring, "gld_dun04", 1, 14400000, 7200000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/gld_dun.txt", 52), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.C3ZombieMaster, "gld_dun04", 2, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 124), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.MiniDemon, "gld_dun04", 10, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_re.txt", 75), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.ZombieMaster, "gld_dun04", 55, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_re.txt", 76), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.WraithDead, "gld_dun04", 25, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_re.txt", 77), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Ghostring, "gld_dun04", 1, 14400000, 7200000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_re.txt", 78), X: 0, Y: 0, Xs: 0, Ys: 0),
+        new(GeneratedMobs.WraithDead, "gld_dun04", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/gld_dun.txt", 47), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Wraith Dead"),
+        new(GeneratedMobs.MiniDemon, "gld_dun04", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/gld_dun.txt", 48), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Mini Demon"),
+        new(GeneratedMobs.ZombieMaster, "gld_dun04", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/gld_dun.txt", 49), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Zombie Master"),
+        new(GeneratedMobs.DarkIllusion, "gld_dun04", 1, 1200000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/gld_dun.txt", 50), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Dark Illusion"),
+        new(GeneratedMobs.Ghostring, "gld_dun04", 1, 14400000, 7200000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/gld_dun.txt", 52), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Ghostring"),
+        new(GeneratedMobs.C3ZombieMaster, "gld_dun04", 2, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 124), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Zombie Master Ringleader"),
+        new(GeneratedMobs.MiniDemon, "gld_dun04", 10, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_re.txt", 75), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Mini Demon"),
+        new(GeneratedMobs.ZombieMaster, "gld_dun04", 55, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_re.txt", 76), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Zombie Master"),
+        new(GeneratedMobs.WraithDead, "gld_dun04", 25, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_re.txt", 77), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Wraith Dead"),
+        new(GeneratedMobs.Ghostring, "gld_dun04", 1, 14400000, 7200000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_re.txt", 78), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Ghostring"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. GldDun04];

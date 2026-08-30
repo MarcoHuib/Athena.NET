@@ -13,12 +13,12 @@ internal static class Harboro2MobSpawns
 {
     internal static readonly MobSpawnDefinition[] Harboro2 =
     [
-        new(GeneratedMobs.RrArclouse, "harboro2", 30, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/rockridge.txt", 24), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.RrCramp, "harboro2", 30, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/rockridge.txt", 25), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Anopheles, "harboro2", 10, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/rockridge.txt", 26), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.BlackMushroom, "harboro2", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/rockridge.txt", 27), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.ThiefBug, "harboro2", 10, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/rockridge.txt", 28), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Seaanemone, "harboro2", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/rockridge.txt", 29), X: 50, Y: 259, Xs: 10, Ys: 6),
+        new(GeneratedMobs.RrArclouse, "harboro2", 30, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/rockridge.txt", 24), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Swamp Arclouze"),
+        new(GeneratedMobs.RrCramp, "harboro2", 30, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/rockridge.txt", 25), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Brown Rat"),
+        new(GeneratedMobs.Anopheles, "harboro2", 10, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/rockridge.txt", 26), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Anopheles"),
+        new(GeneratedMobs.BlackMushroom, "harboro2", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/rockridge.txt", 27), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Black Mushroom"),
+        new(GeneratedMobs.ThiefBug, "harboro2", 10, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/rockridge.txt", 28), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Thief Bug"),
+        new(GeneratedMobs.Seaanemone, "harboro2", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/rockridge.txt", 29), X: 50, Y: 259, Xs: 10, Ys: 6, SpawnName: "Sea Anemone"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. Harboro2];

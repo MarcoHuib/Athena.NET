@@ -13,11 +13,11 @@ internal static class BaPw01MobSpawns
 {
     internal static readonly MobSpawnDefinition[] BaPw01 =
     [
-        new(GeneratedMobs.Ep172BetaBasicNg, "ba_pw01", 15, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/ba_pw.txt", 9), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Ep172HeartHunter, "ba_pw01", 15, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/ba_pw.txt", 10), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Ep172Bellare3, "ba_pw01", 90, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/ba_pw.txt", 11), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Ep172Dolor3, "ba_pw01", 80, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/ba_pw.txt", 12), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Ep172PlasmaY, "ba_pw01", 50, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/ba_pw.txt", 13), X: 0, Y: 0, Xs: 0, Ys: 0),
+        new(GeneratedMobs.Ep172BetaBasicNg, "ba_pw01", 15, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/ba_pw.txt", 9), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Broken Beta"),
+        new(GeneratedMobs.Ep172HeartHunter, "ba_pw01", 15, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/ba_pw.txt", 10), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Heart Hunter Skirmisher"),
+        new(GeneratedMobs.Ep172Bellare3, "ba_pw01", 90, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/ba_pw.txt", 11), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Elite Bellare"),
+        new(GeneratedMobs.Ep172Dolor3, "ba_pw01", 80, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/ba_pw.txt", 12), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Spell Addicted Dolor"),
+        new(GeneratedMobs.Ep172PlasmaY, "ba_pw01", 50, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/ba_pw.txt", 13), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Released Spell"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. BaPw01];

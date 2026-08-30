@@ -13,11 +13,11 @@ internal static class JawaiiMobSpawns
 {
     internal static readonly MobSpawnDefinition[] Jawaii =
     [
-        new(GeneratedMobs.Phen, "jawaii", 3, 3600000, 1800000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/mobs/towns.txt", 23), X: 207, Y: 290, Xs: 10, Ys: 10),
-        new(GeneratedMobs.Aster, "jawaii", 2, 3600000, 2400000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/mobs/towns.txt", 24), X: 221, Y: 220, Xs: 30, Ys: 30),
-        new(GeneratedMobs.Aster, "jawaii", 1, 7200000, 3600000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/mobs/towns.txt", 25), X: 276, Y: 163, Xs: 20, Ys: 20),
-        new(GeneratedMobs.Shellfish, "jawaii", 1, 4800000, 3000000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/mobs/towns.txt", 26), X: 221, Y: 220, Xs: 30, Ys: 30),
-        new(GeneratedMobs.Shellfish, "jawaii", 2, 4200000, 2400000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/mobs/towns.txt", 27), X: 276, Y: 163, Xs: 20, Ys: 30),
+        new(GeneratedMobs.Phen, "jawaii", 3, 3600000, 1800000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/mobs/towns.txt", 23), X: 207, Y: 290, Xs: 10, Ys: 10, SpawnName: "Phen"),
+        new(GeneratedMobs.Aster, "jawaii", 2, 3600000, 2400000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/mobs/towns.txt", 24), X: 221, Y: 220, Xs: 30, Ys: 30, SpawnName: "Aster"),
+        new(GeneratedMobs.Aster, "jawaii", 1, 7200000, 3600000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/mobs/towns.txt", 25), X: 276, Y: 163, Xs: 20, Ys: 20, SpawnName: "Aster"),
+        new(GeneratedMobs.Shellfish, "jawaii", 1, 4800000, 3000000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/mobs/towns.txt", 26), X: 221, Y: 220, Xs: 30, Ys: 30, SpawnName: "Shellfish"),
+        new(GeneratedMobs.Shellfish, "jawaii", 2, 4200000, 2400000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/mobs/towns.txt", 27), X: 276, Y: 163, Xs: 20, Ys: 30, SpawnName: "Shellfish"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. Jawaii];

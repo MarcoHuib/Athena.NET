@@ -630,18 +630,53 @@ rAthena mob_db.yml
 
 rAthena npc/**/*.txt `monster` declarations
       ↓
-9,844 generated MobSpawnDefinitions (GeneratedMobSpawnRegistry)
+10,068 generated MobSpawnDefinitions (GeneratedMobSpawnRegistry, repository-wide source coverage)
       ↓
-9,841 valid map-bound declarations (3 evt_zombie declarations remain generated but
-       map-invalid, see below)
+10,065 valid map-bound declarations (3 evt_zombie declarations remain generated but
+        map-invalid, see below)
+      ↓
+RathenaScriptConfigGraph (pinned npc/re/scripts_main.conf) + AthenaOverlaySourceFiles
+      ↓
+GeneratedMobSpawnLoadProfiles: RathenaRenewalDefault / AthenaIroEffective
+      (the profile-filtered subset runtime registration actually consumes - see
+      "Renewal source-load profile" below)
 ```
 
-**Generated source coverage is not the same as full runtime gameplay behavior compatibility.**
-Every pinned ordinary `monster` declaration is now represented as production C# data and resolves
-through `GeneratedMobRegistry`, but Drops runtime, Mob Skills runtime, most `ModeRuntime` flags,
-`RaceGroups` combat semantics, MVP/`boss_monster` runtime, spawn-area randomized placement in every
-code path, and full respawn-timing parity remain unimplemented or partial - see "Still missing"
-notes throughout this file and `ai/map-server.md`.
+Count corrected from an earlier 9,844 to 10,068 by a genuine parser bug fix: pinned
+`npc_parse_mob`'s own w1 `sscanf` success condition is `w1count >= 1` (`npc.cpp:5233`) - a bare
+`<map>\tmonster\t...` declaration with NO `,x,y` coordinates at all is valid pinned syntax (x/y/xs/ys
+stay at their memset-zero `spawn_data` default), but the prior `SpawnLine` regex required `,x,y`
+unconditionally and silently dropped every such declaration. 224 real ordinary `monster`
+declarations use this bare form (12 more real bare-form declarations are `boss_monster`, out of this
+project's ordinary-monster scope entirely - see "Still missing" below); `9844 + 224 = 10068`. This
+bare form is also the ONLY form any real pinned AegisName mob token (as opposed to a numeric MobId)
+appears in - see "Pinned syntax and modeled fields" below.
+
+**10,068 is the count reachable by the currently-supported `SpawnLine` grammar, not a claim of
+exhaustive pinned ordinary-`monster` coverage.** A known, deliberately-not-yet-fixed gap remains:
+`SpawnLine`'s `map` token character class (`[A-Za-z0-9_]+`) rejects real pinned map names containing
+`-` or `@` (e.g. `pvp_n_1-2`, `new_1-3`, `1@md_gef`) - 171 real active declarations across 8 files are
+currently silently unmatched (analyzer-side, this surfaces as an explicit `mob-spawn:parse-failure`
+diagnostic per declaration rather than a silent disappearance; generator-side it remains an invisible
+gap, since `generate-mob-spawns` doesn't consume the failure-isolated path). See
+`ai/follow-up/mob-spawn-map-token-gap.md` for the full deterministic inventory (exact
+file/line/map-token/spawn-name/MobId-token/load-class/resolution-status for all 171), the reasoning
+for why this was deliberately NOT fixed in the same branch as the analyzer hardening that discovered
+it (widening the shared regex affects `generate-mob-spawns`' own resolved/generated set, which is a
+separate, larger scope), and the recommended follow-up plan (including a required
+`PascalCaseMapName` sanitization fix, since `pvp_n_1-2`/`1@md_gef` do not produce valid C# identifiers
+today).
+
+**Generated source coverage is not the same as full runtime gameplay behavior compatibility, and is
+not the same as default runtime activation.** Every pinned ordinary `monster` declaration is
+represented as production C# data and resolves through `GeneratedMobRegistry`, but Drops runtime,
+Mob Skills runtime, most `ModeRuntime` flags, `RaceGroups` combat semantics, MVP/`boss_monster`
+runtime, spawn-area randomized placement in every code path, level-override runtime, and full
+respawn-timing parity remain unimplemented or partial - see "Still missing" notes throughout this
+file and `ai/map-server.md`. Separately, which of these 10,068 REPRESENTED declarations are actually
+part of the DEFAULT RUNTIME LOADOUT is governed by the Renewal source-load profile - see below; a
+declaration can be fully source-represented and fully mob-resolved while still being correctly
+INACTIVE at runtime (e.g. a pinned-disabled historical event, or genuine pre-Renewal-only content).
 
 Regenerate from the current pinned SHA (never edit generated output):
 
@@ -685,6 +720,35 @@ parser" preference already held before this branch and remains true). `MobSpawnD
   parser/model do not assume that stays true forever - a future 6th/7th `w4` field fails generation
   loudly rather than being silently truncated (the OLD `SpawnLine` regex used to stop capturing
   after `delay2`, silently dropping any event field present).
+- `SpawnName` (`string`, always present) and `DeclaredLevel` (`int?`) - the pinned `w3` field
+  (`<mob name>{,<mob level>}`). `SpawnName` is the exact source name token verbatim, deliberately
+  independent of `MobDefinition.Name` (they are not guaranteed to be identical - 1,369 real pinned
+  declarations diverge, e.g. Mob Id 1182's db `Name` is "Thief Mushroom" but
+  `npc/custom/etc/penal_servitude.txt:186` declares it as "Toadstool"). `DeclaredLevel` follows
+  pinned `npc_parse_mob`'s exact signed-`%d` semantics verified directly against source
+  (`npc.cpp:5220,5234,5301-5315`): the sentinel `mob_lv = -1` before `sscanf` means OMITTED (stored
+  as `null`); a present value of exactly `0` or greater than pinned `MAX_LEVEL` (275,
+  `map.hpp:78`) is a hard parse-time rejection (this compiler fails generation closed the same way);
+  a present value in `(0, MAX_LEVEL]` both parses successfully AND overrides `mob.level`; any OTHER
+  negative value parses successfully (fails neither pinned rejection check) but never overrides
+  `mob.level` - a genuine pinned quirk, reproduced exactly rather than approximated. The overwriting
+  concept is deliberately split: `DeclaredLevel` is the raw stored source fact (never collapsing
+  "omitted" and "present-but-non-effective" into one state), while `MobSpawnDefinition
+  .EffectiveLevelOverride` (a computed, never-stored property) is the pinned EFFECTIVE override -
+  no runtime consumes it yet (level-override runtime remains explicitly out of scope). **Zero real
+  pinned ordinary-monster declarations use the optional level field at all today** (verified
+  exhaustively across all 10,068) - the field/model exist losslessly regardless, per the same
+  "future pinned revision" rationale as `DeathEvent`/`Size`/`Ai` above.
+- `mobid`'s w4 token accepts either a numeric MobId or a pinned AegisName string (pinned
+  `npc_parse_mob` tries `strtol` first, then falls back to `mobdb_search_aegisname`,
+  `npc.cpp:5258-5275` - case-insensitive, matching pinned `strcmpi`). Resolved via an
+  AegisName→MobId lookup built once from the same `mob_db.yml` parse already used for MobId
+  resolution (`MobDataCompiler.BuildAegisNameLookup`); an unresolvable AegisName token fails
+  generation closed (`ArgumentException`, never silently skipped). Exactly 15 real pinned
+  declarations use an AegisName token (e.g. `npc/re/mobs/dungeons/sp_rudus.txt:26`,
+  `GIANT_CAPUT,75`) - all 15 use the bare-map-name form (no `,x,y`), i.e. they were entirely
+  unreachable by any parser in this project before the bare-map-name fix above, regardless of
+  AegisName support on its own.
 
 ### Generated registry and map-oriented physical layout
 
@@ -796,15 +860,167 @@ deterministic (canonical relative source path, then source line).
 
 - `boss_monster` declarations, MVP spawning/rewards, and Mob Skills/Drops/RaceGroups/AI/size-override
   runtime - none of these exist anywhere in this project; only ordinary `monster` SOURCE
-  representation is complete.
+  representation is complete. `boss_monster` is excluded even from the bare-map-name fix above - the
+  12 real bare-form `boss_monster` declarations (e.g.
+  `npc/re/mobs/dungeons/sp_rudus.txt:31`) are genuinely out of scope, not merely unrecovered.
 - `RespawnRandomDelay` (pinned `delay2`) is preserved as data but not yet consumed by
   `MonsterRegistry.ScheduleRespawnIfNeeded` - real respawn timing still uses only the base delay.
+- `DeclaredLevel`/`EffectiveLevelOverride` are preserved losslessly as data but no runtime consumes
+  a level override - see "Pinned syntax and modeled fields" above.
 - Fixed/rectangular spawn-area placement (`Xs`/`Ys` > 0) still throws `NotSupportedException` from
   `RathenaCompatibleMobSpawnCellSelector` for maps with real collision data (see that type's own
   doc comment) - only map-wide-random (`Xs=Ys=0`) declarations resolve real collision-backed cells
   today.
 - No new maps were added to `MapServerHostingScope.ServedMaps` by this branch - registry
   completeness does not imply a map is actually hosted.
+- This project resolves only the RENEWAL script-config graph (`RathenaScriptConfigGraph`, rooted at
+  `npc/re/scripts_main.conf`) - the pre-Renewal graph is never parsed, so `PreRenewalSource`
+  classification means only "not part of the resolved Renewal graph", never a proven claim about
+  actual pre-Renewal activation. A future pre-Renewal profile would need its own graph resolution.
+
+## Renewal source-load profile
+
+Generated source coverage (10,068 declarations, all of `npc/**/*.txt`, discovered by
+filesystem-wide scanning) is NOT the same as which declarations a real pinned rAthena Renewal
+server actually loads by default, which is NOT the same as which declarations Athena.NET's own
+runtime activates. Three distinct concepts, kept fully independent:
+
+1. **Repository source coverage / generated representation** - `GeneratedMobSpawnRegistry.All`
+   (10,068). Every pinned ordinary `monster` declaration findable anywhere under `npc/`, regardless
+   of whether any rAthena config file would ever load it. Useful for research, compatibility
+   analysis, event support, and pre-Renewal comparison - never itself a runtime activation claim.
+2. **Pinned rAthena Renewal default loadout** - `GeneratedMobSpawnLoadProfiles.RathenaRenewalDefault`.
+   The subset of (1) whose source file is reachable through the ACTIVE `npc:`/`import:` directive
+   graph rooted at pinned `npc/re/scripts_main.conf` (`RathenaScriptConfigGraph
+   .ResolveActiveNpcFiles`) - commented (`//npc:`/`//import:`) directives are never followed.
+3. **Athena.NET effective iRO loadout** - `GeneratedMobSpawnLoadProfiles.AthenaIroEffective`.
+   (2) plus explicit Athena.NET overlay declarations (`AthenaOverlaySourceFiles.Files`) - the ONLY
+   sanctioned mechanism for activating pinned-disabled content. `GeneratedScriptRegistry.Register`
+   feeds THIS profile (not `GeneratedMobSpawnRegistry.All`) into `WorldRegistryBuilder.AddMobSpawn`;
+   `servedMaps`/`MapServerHostingScope.ServedMaps` remains the separate, unchanged, final
+   map-hosting boundary applied after profile filtering.
+
+```text
+pinned rAthena repository
+        ↓
+GeneratedMobSpawnRegistry.All (10,068 - all discoverable source declarations)
+        ↓
+RathenaScriptConfigGraph (npc/re/scripts_main.conf) + AthenaOverlaySourceFiles
+        ↓
+┌───────────────────────────────────────────────┐
+│ GeneratedMobSpawnLoadProfiles                  │
+│   .RathenaRenewalDefault (config-graph-active) │
+│   .AthenaIroEffective (+ explicit overlay)     │
+└───────────────────────────────────────────────┘
+        ↓
+GeneratedScriptRegistry.Register -> WorldRegistryBuilder.AddMobSpawn
+        ↓
+servedMaps (MapServerHostingScope.ServedMaps)
+        ↓
+MonsterRuntime
+```
+
+**Profile membership is deliberately NOT a field on `MobSpawnDefinition`.** Whether a declaration is
+Renewal-active, Athena-overlay-active, both, or neither is metadata ABOUT the declaration, not a
+property that changes what the declaration IS - `MobSpawnDefinition` stays exactly what it always
+was (plus the lossless `SpawnName`/`DeclaredLevel` fields above), profile-neutral. Classification
+(`MobSpawnLoadClass`: `RenewalDefault` | `AthenaOverlay` | `PreRenewalSource` | `Disabled`) is
+computed once, deterministically, at generation time, purely to build the two filtered
+`GeneratedMobSpawnLoadProfiles` arrays - the classification value itself is never emitted onto a
+`MobSpawnDefinition`'s generated `new(...)` call. Classification is decided by real config-graph/
+allow-list membership FIRST, never primarily by path prefix (an `npc/pre-re/`-prefix check is only
+the LAST fallback, for the leftover bucket, and even then only as a descriptive label - see
+`MobSpawnLoadClassifier.Classify`).
+
+`GeneratedMobSpawnLoadProfiles` builds its two arrays (`RathenaRenewalDefault`, `AthenaIroEffective`)
+by indexing BY POSITION into `GeneratedMobSpawnRegistry.All` (`GeneratedMobSpawnRegistry.All[i]` for
+each classified index, computed once at generation time) - guaranteeing true CLR reference identity
+to the SAME canonical instances, never a duplicate copy (verified by
+`GeneratedMobSpawnLoadProfilesTests.AthenaIroEffective_ReferencesTheSameInstancesAsTheRegistry_NeverCopies`).
+`GeneratedMobSpawnRegistry.GetForMap(map)` keeps its EXISTING meaning (every represented declaration
+for that map, regardless of profile); `GeneratedMobSpawnLoadProfiles.GetForMap(map, profile)` is the
+new profile-filtered lookup.
+
+### `RathenaScriptConfigGraph`
+
+Parses and follows the real rAthena npc script-config directive graph (`npc:`/`import:` lines in
+`*.conf` files) - the config-driven authority for "which source files does a real rAthena server
+actually load", as opposed to `Directory.EnumerateFiles(..., AllDirectories)`'s filesystem-wide
+discovery (still the authority for repository source COVERAGE, never for default activation).
+`ParseFile` recognizes active vs `//`-commented directives per-file, in source order.
+`ResolveActiveNpcFiles(root, entryConfRelativePath = "npc/re/scripts_main.conf")` recursively
+follows only ACTIVE `import:` directives, using proper `currentlyVisiting`/`completed` DFS sets (not
+a single flat visited set) - a file reached twice via two different import branches (a legitimate
+DAG diamond, e.g. two conf files both importing one shared common conf) is silently skipped on
+re-visit, matching pinned `npc_addsrcfile`'s own real semantics
+(`util::vector_exists(npc_src_files, name)` is a silent no-op re-add, `src/map/npc.cpp:3605-3629`);
+a cycle (a conf file reached again while still on the active recursion stack) throws with the exact
+chain. A referenced-but-missing ACTIVE file (`import:` or `npc:`) throws with the referencing conf
+file/line; a file referenced only by a COMMENTED directive is never even read. All pinned `import:`/
+`npc:` target paths are root-relative (verified: `npc/re/scripts_main.conf` itself lives directly
+under `npc/`, yet its own `import:` targets read `npc/scripts_athena.conf`/
+`npc/re/scripts_athena.conf`, never a path relative to the importing file's own directory).
+
+**Real discovered facts** (pinned commit `e985006171d2eb320ee512a653f4c83aea3d81b6`): the Renewal
+graph traverses 13 conf files total (`npc/re/scripts_main.conf` plus 12 `import:`-reachable files -
+both `npc/re/scripts_*.conf` Renewal files AND their non-`re/` `npc/scripts_*.conf` common
+counterparts are imported together; "Renewal default" is not `npc/re/**` alone). 835 distinct active
+`npc:` source files resolve from that graph. `npc/re/mobs/academy.txt` (Athena's tutorial content) is
+confirmed commented out at `npc/re/scripts_monsters.conf:5` (`//npc: npc/re/mobs/academy.txt`); the 5
+event files named in earlier task drafts (`christmas_2013.txt`, `halloween_2008.txt`,
+`halloween_2013.txt`, `RWC_2011.txt`, `StPatrick_2008.txt`) are all commented out at
+`npc/scripts_athena.conf` (the non-`re/` common conf, still imported by the Renewal graph);
+`npc/scripts_custom.conf` (Athena's own custom-script hook point) has ZERO active `npc:` lines in
+pinned source - nothing there is active by default, confirming Athena's Academy activation must be
+its own explicit overlay, never routed through this file.
+
+### `AthenaOverlaySourceFiles`
+
+A small, explicit, auditable allow-list (`tools/WorldDataImporter/Compiler
+/AthenaOverlaySourceFiles.cs`) of source files Athena.NET deliberately activates beyond the pinned
+Renewal default. Currently one entry: `npc/re/mobs/academy.txt` (the tutorial content -
+`iz_int`/`int_land` family - already generated and registered into the runtime world; this makes
+that pre-existing intentional deviation explicit and test-covered rather than an unrecorded side
+effect of filesystem scanning). Adding an entry here is the ONLY sanctioned way pinned-disabled
+source content becomes active in `AthenaIroEffective`.
+
+### Discovered real counts (pinned commit `e985006171d2eb320ee512a653f4c83aea3d81b6`)
+
+- Repository ordinary spawn declarations: **10,068** (`GeneratedMobSpawnRegistry.All`/`.Count`) -
+  the count reachable by the currently-supported `SpawnLine` grammar; see
+  `ai/follow-up/mob-spawn-map-token-gap.md` for 171 additional real, active, fully-resolvable
+  declarations this grammar does not yet recognize (a known map-token character-class gap,
+  deliberately not fixed alongside the analyzer hardening that surfaced it).
+- `RenewalDefault`: **3,802**. `AthenaOverlay`: **73** (all from `academy.txt`).
+  `PreRenewalSource`: **3,374**. `Disabled`: **2,819**. (Sum: 10,068.)
+- `AthenaIroEffective` (RenewalDefault ∪ AthenaOverlay): **3,875**.
+- Active Renewal config-graph source files: **835** (out of 13 traversed conf files).
+- Declarations with `DeclaredLevel` present: **0** (verified exhaustively; see "Pinned syntax and
+  modeled fields" above).
+- Declarations using a numeric MobId token: **10,053**. Declarations using a real AegisName mob
+  token: **15** (all bare-map-name form; see above).
+- `evt_zombie` (3 declarations, `npc/events/halloween_2008.txt:267-269`): still represented in
+  `GeneratedMobSpawnRegistry.All`, `Disabled` classification (the referencing directive is commented
+  out), absent from both profiles, and `RuntimeValid: false` per its existing organizational
+  Events-module placement - unchanged by this branch.
+- Real Renewal-vs-pre-Renewal collision example: `pay_fild01` receives WILOW/PORING/POPORING (10
+  each) from `npc/pre-re/mobs/fields/payon.txt` (`PreRenewalSource`, inactive) AND
+  WILOW(181)/PORING(38)/FABRE(38) from `npc/re/mobs/fields/payon.txt` (`RenewalDefault`, active) -
+  `GeneratedMobSpawnRegistry.GetForMap("pay_fild01")` includes both; `GeneratedMobSpawnLoadProfiles
+  .GetForMap("pay_fild01", AthenaIroEffective)` includes only the active subset
+  (`GeneratedMobSpawnRegistryTests.RuntimeActivation_PreviouslyUnservedRealMap_...`).
+- Real disabled-event example: `prt_fild08d` receives 15 declarations (5 Smokey's Gift Box + 5
+  Smokey's Sock from `npc/events/christmas_2013.txt`, 1 Organic Jakk + 4 Inorganic Jakk from
+  `npc/events/halloween_2013.txt`) that remain represented but never runtime-active (both files are
+  commented out at `npc/scripts_athena.conf`) - only `academy.txt`'s 340 (Athena-overlay-active)
+  actually instantiate on `prt_fild08d` at runtime
+  (`MapServerWorldGameplayRulesTests.PrtFild08d_ServedAndCollisionBacked_...`).
+
+The analyzer's `mob-spawns` domain (`domains/mob-spawns.jsonl`) stamps each entity's `Provenance`
+field with its load-class string (`"RenewalDefault"`/`"AthenaOverlay"`/`"PreRenewalSource"`/
+`"Disabled"`) - the domain's own entity count/identity scheme is completely unaffected (still
+exactly 10,068 entities, one per declaration); this is additive metadata, never a redefinition of
+the existing metric.
 
 ## Travel corridor: Izlude -> prt_fild08d -> Prontera
 

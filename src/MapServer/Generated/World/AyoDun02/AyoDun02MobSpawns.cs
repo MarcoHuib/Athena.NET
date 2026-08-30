@@ -13,19 +13,19 @@ internal static class AyoDun02MobSpawns
 {
     internal static readonly MobSpawnDefinition[] AyoDun02 =
     [
-        new(GeneratedMobs.Goldporing, "ayo_dun02", 3, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/RWC_2011.txt", 294), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.XmasSmokeyGift, "ayo_dun02", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1154), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.XmasSmokeySock, "ayo_dun02", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1445), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.EventLude, "ayo_dun02", 3, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2006.txt", 1185), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.OrganicJakk, "ayo_dun02", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 581), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.InorganicJakk, "ayo_dun02", 4, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 884), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Tamruan, "ayo_dun02", 100, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/ayo_dun.txt", 28), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Whisper, "ayo_dun02", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/ayo_dun.txt", 29), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Kraben, "ayo_dun02", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/ayo_dun.txt", 30), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.C4Tamruan, "ayo_dun02", 2, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 33), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Tamruan, "ayo_dun02", 116, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/ayo_dun.txt", 29), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Whisper, "ayo_dun02", 23, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/ayo_dun.txt", 30), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Kraben, "ayo_dun02", 23, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/ayo_dun.txt", 31), X: 0, Y: 0, Xs: 0, Ys: 0),
+        new(GeneratedMobs.Goldporing, "ayo_dun02", 3, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/RWC_2011.txt", 294), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Golden Poring"),
+        new(GeneratedMobs.XmasSmokeyGift, "ayo_dun02", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1154), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Gift Stealing Raccoon"),
+        new(GeneratedMobs.XmasSmokeySock, "ayo_dun02", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1445), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Sock Stealing Raccoon"),
+        new(GeneratedMobs.EventLude, "ayo_dun02", 3, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2006.txt", 1185), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Lude"),
+        new(GeneratedMobs.OrganicJakk, "ayo_dun02", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 581), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Organic Pumpkin"),
+        new(GeneratedMobs.InorganicJakk, "ayo_dun02", 4, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 884), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Inorganic Pumpkin"),
+        new(GeneratedMobs.Tamruan, "ayo_dun02", 100, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/ayo_dun.txt", 28), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Tamruan"),
+        new(GeneratedMobs.Whisper, "ayo_dun02", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/ayo_dun.txt", 29), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Whisper"),
+        new(GeneratedMobs.Kraben, "ayo_dun02", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/ayo_dun.txt", 30), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Kraben"),
+        new(GeneratedMobs.C4Tamruan, "ayo_dun02", 2, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 33), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Furious Tamruan"),
+        new(GeneratedMobs.Tamruan, "ayo_dun02", 116, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/ayo_dun.txt", 29), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Tamruan"),
+        new(GeneratedMobs.Whisper, "ayo_dun02", 23, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/ayo_dun.txt", 30), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Whisper"),
+        new(GeneratedMobs.Kraben, "ayo_dun02", 23, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/ayo_dun.txt", 31), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Kraben"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. AyoDun02];

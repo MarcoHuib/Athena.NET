@@ -13,22 +13,22 @@ internal static class AyoFild01MobSpawns
 {
     internal static readonly MobSpawnDefinition[] AyoFild01 =
     [
-        new(GeneratedMobs.Goldporing, "ayo_fild01", 3, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/RWC_2011.txt", 295), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.XmasSmokeyGift, "ayo_fild01", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1155), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.XmasSmokeySock, "ayo_fild01", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1446), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.EventLude, "ayo_fild01", 3, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2006.txt", 1182), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.OrganicJakk, "ayo_fild01", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 582), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.InorganicJakk, "ayo_fild01", 4, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 885), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Coco, "ayo_fild01", 30, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/ayothaya.txt", 19), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Yoyo, "ayo_fild01", 30, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/ayothaya.txt", 20), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Smokie, "ayo_fild01", 30, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/ayothaya.txt", 21), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.LeafCat, "ayo_fild01", 3, 3600000, 1800000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/ayothaya.txt", 22), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.GreenPlant, "ayo_fild01", 10, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/ayothaya.txt", 23), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.C4Smokie, "ayo_fild01", 2, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 34), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Smokie, "ayo_fild01", 40, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/ayothaya.txt", 22), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Coco, "ayo_fild01", 40, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/ayothaya.txt", 23), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Yoyo, "ayo_fild01", 40, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/ayothaya.txt", 24), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.GreenPlant, "ayo_fild01", 10, 10000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/ayothaya.txt", 25), X: 0, Y: 0, Xs: 0, Ys: 0),
+        new(GeneratedMobs.Goldporing, "ayo_fild01", 3, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/RWC_2011.txt", 295), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Golden Poring"),
+        new(GeneratedMobs.XmasSmokeyGift, "ayo_fild01", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1155), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Gift Stealing Raccoon"),
+        new(GeneratedMobs.XmasSmokeySock, "ayo_fild01", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1446), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Sock Stealing Raccoon"),
+        new(GeneratedMobs.EventLude, "ayo_fild01", 3, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2006.txt", 1182), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Lude"),
+        new(GeneratedMobs.OrganicJakk, "ayo_fild01", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 582), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Organic Pumpkin"),
+        new(GeneratedMobs.InorganicJakk, "ayo_fild01", 4, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 885), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Inorganic Pumpkin"),
+        new(GeneratedMobs.Coco, "ayo_fild01", 30, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/ayothaya.txt", 19), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Coco"),
+        new(GeneratedMobs.Yoyo, "ayo_fild01", 30, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/ayothaya.txt", 20), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Yoyo"),
+        new(GeneratedMobs.Smokie, "ayo_fild01", 30, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/ayothaya.txt", 21), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Smokie"),
+        new(GeneratedMobs.LeafCat, "ayo_fild01", 3, 3600000, 1800000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/ayothaya.txt", 22), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Leaf Cat"),
+        new(GeneratedMobs.GreenPlant, "ayo_fild01", 10, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/ayothaya.txt", 23), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Green Plant"),
+        new(GeneratedMobs.C4Smokie, "ayo_fild01", 2, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 34), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Furious Smokie"),
+        new(GeneratedMobs.Smokie, "ayo_fild01", 40, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/ayothaya.txt", 22), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Smokie"),
+        new(GeneratedMobs.Coco, "ayo_fild01", 40, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/ayothaya.txt", 23), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Coco"),
+        new(GeneratedMobs.Yoyo, "ayo_fild01", 40, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/ayothaya.txt", 24), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Yoyo"),
+        new(GeneratedMobs.GreenPlant, "ayo_fild01", 10, 10000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/ayothaya.txt", 25), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Green Plant"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. AyoFild01];

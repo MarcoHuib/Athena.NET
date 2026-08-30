@@ -360,7 +360,36 @@ public sealed record MobDropEntry(string Item, int Rate, bool StealProtected = f
 // (pinned SZ_SMALL/SZ_MEDIUM/SZ_BIG); Ai mirrors pinned `enum mob_ai` numerically -
 // no symbolic enum exists for it since the pinned ordinary-monster domain currently
 // has zero real occurrences of either field.
-public sealed record MobSpawnDefinition(MobDefinition Mob, string Map, int Count, int RespawnDelay, int RespawnRandomDelay, WorldSourceInfo Source, short X = 0, short Y = 0, short Xs = 0, short Ys = 0, string? DeathEvent = null, MobSize? Size = null, int? Ai = null);
+// SpawnName/DeclaredLevel are the pinned `w3` field (`<mob name>{,<mob level>}` -
+// npc_parse_mob, npc.cpp:5218-5317). SpawnName is the exact source name token,
+// ALWAYS present, deliberately independent of Mob.Name (they are not guaranteed to be
+// identical - pinned rAthena retains the declared spawn name unless server config
+// overrides mob names). DeclaredLevel is null when the source line genuinely omits the
+// level field (pinned's own `mob_lv = -1` sentinel) and the raw signed parsed value
+// when present - this can include a value pinned accepts as syntactically valid but
+// that never actually overrides the mob's level (any negative value other than the
+// omitted sentinel; see EffectiveLevelOverride below). Generation itself rejects (fails
+// closed) a present value of exactly 0 or greater than pinned MAX_LEVEL (275), matching
+// pinned's own hard parse-time rejection - so DeclaredLevel never stores one of those
+// two specific values. No real pinned ordinary-monster declaration exercises this field
+// today (verified exhaustively - zero of 10,243 real spawn lines use the optional
+// level), but the field/model exist so a future pinned revision that adds one is
+// captured losslessly rather than silently dropped.
+// SpawnName defaults to "" only for hand-written test fixtures that predate this field and
+// construct a MobSpawnDefinition positionally without it - every GENERATED declaration always
+// supplies its real source-verbatim SpawnName explicitly (AppendSpawnEntry, MobDataCompiler.cs),
+// so the default is never silently relied upon for real generated data.
+public sealed record MobSpawnDefinition(MobDefinition Mob, string Map, int Count, int RespawnDelay, int RespawnRandomDelay, WorldSourceInfo Source, string SpawnName = "", short X = 0, short Y = 0, short Xs = 0, short Ys = 0, int? DeclaredLevel = null, string? DeathEvent = null, MobSize? Size = null, int? Ai = null)
+{
+    // The pinned EFFECTIVE override (`mob.level = mob_lv` only when `mob_lv > 0 &&
+    // mob_lv <= MAX_LEVEL` - npc.cpp:5314-5315), deliberately DERIVED rather than
+    // stored: pinned's validity gate (what makes a present value accepted at parse
+    // time) is strictly wider than its override gate (what actually changes mob.level),
+    // so a present DeclaredLevel is not automatically "the" effective level. No runtime
+    // in this project currently consumes this (task: level-override runtime is
+    // out of scope unless already supported - see ai/world-data.md).
+    public int? EffectiveLevelOverride => DeclaredLevel is > 0 and <= 275 ? DeclaredLevel : null;
+}
 
 // One pinned quest_db.yml `Drops:` entry (quest.cpp QuestDatabase::parseBodyNode
 // / quest_update_objective's drop-processing loop). This is intentionally NOT a

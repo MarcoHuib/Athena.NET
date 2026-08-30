@@ -13,8 +13,8 @@ internal static class JobMonkMobSpawns
 {
     internal static readonly MobSpawnDefinition[] JobMonk =
     [
-        new(GeneratedMobs.ThiefMushroom, "job_monk", 70, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/jobs/2-2/monk.txt", 2606), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.ThiefBug, "job_monk", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/jobs/2-2/monk.txt", 2607), X: 0, Y: 0, Xs: 0, Ys: 0),
+        new(GeneratedMobs.ThiefMushroom, "job_monk", 70, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/jobs/2-2/monk.txt", 2606), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Thief Mushroom"),
+        new(GeneratedMobs.ThiefBug, "job_monk", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/jobs/2-2/monk.txt", 2607), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Thief Bug Larva"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. JobMonk];

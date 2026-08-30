@@ -13,14 +13,14 @@ internal static class UnBunkerMobSpawns
 {
     internal static readonly MobSpawnDefinition[] UnBunker =
     [
-        new(GeneratedMobs.ThiefBug, "un_bunker", 6, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/verus.txt", 30), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.GhoulH, "un_bunker", 68, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/verus.txt", 31), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.ZombieH, "un_bunker", 80, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/verus.txt", 32), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.ScrMtRobots, "un_bunker", 28, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/verus.txt", 33), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Dr815, "un_bunker", 14, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/verus.txt", 34), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Gc109, "un_bunker", 10, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/verus.txt", 35), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.BlackMushroom, "un_bunker", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/verus.txt", 36), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Chonchon, "un_bunker", 2, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/verus.txt", 37), X: 0, Y: 0, Xs: 0, Ys: 0),
+        new(GeneratedMobs.ThiefBug, "un_bunker", 6, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/verus.txt", 30), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Thief Bug"),
+        new(GeneratedMobs.GhoulH, "un_bunker", 68, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/verus.txt", 31), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Smelly Ghoul"),
+        new(GeneratedMobs.ZombieH, "un_bunker", 80, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/verus.txt", 32), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Smelly Zombie"),
+        new(GeneratedMobs.ScrMtRobots, "un_bunker", 28, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/verus.txt", 33), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Machine Component"),
+        new(GeneratedMobs.Dr815, "un_bunker", 14, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/verus.txt", 34), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "DR815"),
+        new(GeneratedMobs.Gc109, "un_bunker", 10, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/verus.txt", 35), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "GC109"),
+        new(GeneratedMobs.BlackMushroom, "un_bunker", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/verus.txt", 36), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Black Mushroom"),
+        new(GeneratedMobs.Chonchon, "un_bunker", 2, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/verus.txt", 37), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Chonchon"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. UnBunker];

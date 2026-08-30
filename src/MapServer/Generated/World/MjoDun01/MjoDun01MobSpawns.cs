@@ -13,19 +13,19 @@ internal static class MjoDun01MobSpawns
 {
     internal static readonly MobSpawnDefinition[] MjoDun01 =
     [
-        new(GeneratedMobs.Goldporing, "mjo_dun01", 3, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/RWC_2011.txt", 398), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.XmasSmokeyGift, "mjo_dun01", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1258), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.XmasSmokeySock, "mjo_dun01", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1549), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.EventLude, "mjo_dun01", 3, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2006.txt", 1397), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.OrganicJakk, "mjo_dun01", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 685), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.InorganicJakk, "mjo_dun01", 4, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 988), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Farmiliar, "mjo_dun01", 30, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/mjo_dun.txt", 16), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Tarou, "mjo_dun01", 60, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/mjo_dun.txt", 17), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Martin, "mjo_dun01", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/mjo_dun.txt", 18), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.C3Tarou, "mjo_dun01", 2, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 181), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Tarou, "mjo_dun01", 63, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/mjo_dun.txt", 17), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Farmiliar, "mjo_dun01", 31, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/mjo_dun.txt", 18), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Martin, "mjo_dun01", 21, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/mjo_dun.txt", 19), X: 0, Y: 0, Xs: 0, Ys: 0),
+        new(GeneratedMobs.Goldporing, "mjo_dun01", 3, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/RWC_2011.txt", 398), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Golden Poring"),
+        new(GeneratedMobs.XmasSmokeyGift, "mjo_dun01", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1258), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Gift Stealing Raccoon"),
+        new(GeneratedMobs.XmasSmokeySock, "mjo_dun01", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1549), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Sock Stealing Raccoon"),
+        new(GeneratedMobs.EventLude, "mjo_dun01", 3, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2006.txt", 1397), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Lude"),
+        new(GeneratedMobs.OrganicJakk, "mjo_dun01", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 685), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Organic Pumpkin"),
+        new(GeneratedMobs.InorganicJakk, "mjo_dun01", 4, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 988), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Inorganic Pumpkin"),
+        new(GeneratedMobs.Farmiliar, "mjo_dun01", 30, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/mjo_dun.txt", 16), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Familiar"),
+        new(GeneratedMobs.Tarou, "mjo_dun01", 60, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/mjo_dun.txt", 17), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Tarou"),
+        new(GeneratedMobs.Martin, "mjo_dun01", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/mjo_dun.txt", 18), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Martin"),
+        new(GeneratedMobs.C3Tarou, "mjo_dun01", 2, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 181), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Tarou Ringleader"),
+        new(GeneratedMobs.Tarou, "mjo_dun01", 63, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/mjo_dun.txt", 17), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Tarou"),
+        new(GeneratedMobs.Farmiliar, "mjo_dun01", 31, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/mjo_dun.txt", 18), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Familiar"),
+        new(GeneratedMobs.Martin, "mjo_dun01", 21, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/mjo_dun.txt", 19), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Martin"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. MjoDun01];

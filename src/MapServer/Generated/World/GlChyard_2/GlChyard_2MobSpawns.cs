@@ -13,15 +13,15 @@ internal static class GlChyard_2MobSpawns
 {
     internal static readonly MobSpawnDefinition[] GlChyard_2 =
     [
-        new(GeneratedMobs.XmasSmokeyGift, "gl_chyard_", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1708), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.XmasSmokeySock, "gl_chyard_", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1709), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.OrganicJakk, "gl_chyard_", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 832), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.InorganicJakk, "gl_chyard_", 4, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 1135), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.C5NgWraithDead, "gl_chyard_", 2, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 102), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.NgWraithDead, "gl_chyard_", 91, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/glastheim.txt", 201), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.WraithDead, "gl_chyard_", 31, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/glastheim.txt", 202), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.NgEvilDruid, "gl_chyard_", 22, 60000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/glastheim.txt", 203), X: 0, Y: 0, Xs: 0, Ys: 0, DeathEvent: "0"),
-        new(GeneratedMobs.NgMimic, "gl_chyard_", 34, 60000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/glastheim.txt", 204), X: 0, Y: 0, Xs: 0, Ys: 0, DeathEvent: "0"),
+        new(GeneratedMobs.XmasSmokeyGift, "gl_chyard_", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1708), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Gift Stealing Raccoon"),
+        new(GeneratedMobs.XmasSmokeySock, "gl_chyard_", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1709), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Sock Stealing Raccoon"),
+        new(GeneratedMobs.OrganicJakk, "gl_chyard_", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 832), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Organic Pumpkin"),
+        new(GeneratedMobs.InorganicJakk, "gl_chyard_", 4, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 1135), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Inorganic Pumpkin"),
+        new(GeneratedMobs.C5NgWraithDead, "gl_chyard_", 2, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 102), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Elusive Wraith Dead (Nightmare)"),
+        new(GeneratedMobs.NgWraithDead, "gl_chyard_", 91, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/glastheim.txt", 201), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Wraith Dead (Nightmare)"),
+        new(GeneratedMobs.WraithDead, "gl_chyard_", 31, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/glastheim.txt", 202), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Wraith Dead"),
+        new(GeneratedMobs.NgEvilDruid, "gl_chyard_", 22, 60000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/glastheim.txt", 203), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Evil Druid (Nightmare)", DeathEvent: "0"),
+        new(GeneratedMobs.NgMimic, "gl_chyard_", 34, 60000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/glastheim.txt", 204), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Mimic (Nightmare)", DeathEvent: "0"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. GlChyard_2];

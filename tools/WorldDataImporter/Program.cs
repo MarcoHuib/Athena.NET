@@ -672,6 +672,7 @@ internal static class WorldDataImporterCli
         const string RegistryFileName = "GeneratedMobSpawnRegistry.cs";
         const string RegistryNamespace = "Athena.Net.MapServer.Generated.World";
         const string RegistryClassName = "GeneratedMobSpawnRegistry";
+        const string ProfilesFileName = "GeneratedMobSpawnLoadProfiles.cs";
 
         // Mob-definition resolution: same source/pipeline generate-mobs itself uses, kept
         // independent of any already-generated MapServer output.
@@ -679,6 +680,17 @@ internal static class WorldDataImporterCli
         var mobDefinitions = MobDataCompiler.ReadAllMobDefinitions(await File.ReadAllTextAsync(mobDbPath));
         var mobSymbols = MobDataCompiler.CreateGeneratedSymbols(mobDefinitions);
         var mobSymbolById = mobSymbols.ToDictionary(item => item.Mob.Id, item => item.Symbol);
+        var aegisNameToId = MobDataCompiler.BuildAegisNameLookup(mobDefinitions);
+
+        // Renewal source-load classification (ai/world-data.md's "Generated mob spawns" section) -
+        // resolved once, from the real pinned config graph, and used ONLY to build the
+        // GeneratedMobSpawnLoadProfiles views below; never stored onto MobSpawnDefinition itself
+        // (task section 4/5: a spawn's source representation stays profile-neutral).
+        // ResolveActiveNpcFiles returns paths relative to `root` (e.g. "npc/re/mobs/towns.txt");
+        // MobSpawnLoadClassifier.Classify normalizes a canonical "legacy/rathena/npc/..." source
+        // file (WorldSourceInfo.File/MobSpawnData.SourceFile) down to this same root-relative form
+        // before comparing, so renewalActiveFiles stays in ResolveActiveNpcFiles' own natural shape.
+        var renewalActiveFiles = RathenaScriptConfigGraph.ResolveActiveNpcFiles(root).ToHashSet(StringComparer.Ordinal);
 
         // Map resolution: the SAME canonical map-cache layering RepositoryDomainAnalyzers.AnalyzeMaps
         // and MapCollisionStartupLoader use (RathenaMapCacheLayers.Merge) - generated spawn map
@@ -706,7 +718,7 @@ internal static class WorldDataImporterCli
         {
             var relative = CanonicalSourceFile(path);
             var text = await File.ReadAllTextAsync(path);
-            discovered.AddRange(MobDataCompiler.ReadAllMobSpawns(text, relative));
+            discovered.AddRange(MobDataCompiler.ReadAllMobSpawns(text, relative, aegisNameToId));
         }
 
         // Fail closed: every discovered MobId must resolve (task section 10).
@@ -771,18 +783,25 @@ internal static class WorldDataImporterCli
         // "*Spawn.cs" file from this generator's own earlier (now-renamed) naming convention -
         // IsOwnedGeneratedMobSpawnFile recognizes both suffixes specifically for this one-time
         // migration cleanup (see that method's own doc comment).
-        foreach (var stale in Directory.EnumerateFiles(outputDir, "*.cs", SearchOption.AllDirectories).Where(path => MobDataCompiler.IsOwnedGeneratedMobSpawnFile(path, RegistryFileName)))
+        foreach (var stale in Directory.EnumerateFiles(outputDir, "*.cs", SearchOption.AllDirectories).Where(path => MobDataCompiler.IsOwnedGeneratedMobSpawnFile(path, RegistryFileName, ProfilesFileName)))
             File.Delete(stale);
         // Remove the RETIRED source-file-sharded layout's directory entirely if it still exists
         // from a prior generation (this branch's own earlier iteration used
         // Generated/World/MobSpawns/GeneratedMobSpawns.<SourceFileSuffix>.cs - never kept alongside
         // the new map-oriented layout).
         var staleSourceShardedDir = Path.Combine(outputDir, "MobSpawns");
-        if (Directory.Exists(staleSourceShardedDir) && Directory.EnumerateFiles(staleSourceShardedDir, "*.cs").All(path => MobDataCompiler.IsOwnedGeneratedMobSpawnFile(path, RegistryFileName)))
+        if (Directory.Exists(staleSourceShardedDir) && Directory.EnumerateFiles(staleSourceShardedDir, "*.cs").All(path => MobDataCompiler.IsOwnedGeneratedMobSpawnFile(path, RegistryFileName, ProfilesFileName)))
             Directory.Delete(staleSourceShardedDir, recursive: true);
 
         var encoding = new System.Text.UTF8Encoding(false);
         var arrayExpressions = new List<string>();
+        // Tracks, per emitted array EXPRESSION, its own flattened MobSpawnData in the EXACT order
+        // that expression's generated `All` array holds them - needed below to reconstruct
+        // GeneratedMobSpawnRegistry.All's own flattened element order (a plain concatenation of
+        // arrayExpressions in the SAME OrderBy(expr) order used at the registry-source-generation
+        // call site) so GeneratedMobSpawnLoadProfiles can reference registry elements BY INDEX
+        // rather than re-`new`-ing a second copy of any MobSpawnDefinition (task section 22).
+        var spawnsByExpression = new Dictionary<string, IReadOnlyList<MobDataCompiler.MobSpawnData>>(StringComparer.Ordinal);
         foreach (var fileGroup in byFile)
         {
             var (folderPath, className, ns) = fileGroup.Key;
@@ -796,11 +815,34 @@ internal static class WorldDataImporterCli
             Directory.CreateDirectory(fileDir);
             var filePath = Path.Combine(fileDir, $"{className}MobSpawns.cs");
             await File.WriteAllTextAsync(filePath, source, encoding);
-            arrayExpressions.Add($"{ns}.{className}MobSpawns.All");
+            var arrayExpression = $"{ns}.{className}MobSpawns.All";
+            arrayExpressions.Add(arrayExpression);
+            spawnsByExpression[arrayExpression] = mapEntries.SelectMany(entry => entry.Item2.Select(pair => pair.Spawn)).ToArray();
         }
 
-        var registrySource = GenerateMobSpawnRegistry(arrayExpressions.OrderBy(expr => expr, StringComparer.Ordinal).ToArray(), RegistryClassName, RegistryNamespace, commit, "npc/**/*.txt (all pinned ordinary monster declarations)");
+        var orderedArrayExpressions = arrayExpressions.OrderBy(expr => expr, StringComparer.Ordinal).ToArray();
+        var registrySource = GenerateMobSpawnRegistry(orderedArrayExpressions, RegistryClassName, RegistryNamespace, commit, "npc/**/*.txt (all pinned ordinary monster declarations)");
         await File.WriteAllTextAsync(Path.Combine(outputDir, RegistryFileName), registrySource, encoding);
+
+        // GeneratedMobSpawnRegistry.All's exact flattened element order (reconstructed here, not
+        // re-scanned from the emitted source) - the authority GeneratedMobSpawnLoadProfiles indexes
+        // into by position, guaranteeing true CLR reference identity to the SAME canonical
+        // MobSpawnDefinition instances (task section 22 - views/indices, never duplicate copies).
+        var registryAllOrder = orderedArrayExpressions.SelectMany(expr => spawnsByExpression[expr]).ToArray();
+        var renewalIndices = new List<int>();
+        var overlayOnlyIndices = new List<int>();
+        var loadClassCounts = new Dictionary<MobSpawnLoadClass, int>();
+        for (var i = 0; i < registryAllOrder.Length; i++)
+        {
+            var loadClass = MobSpawnLoadClassifier.Classify(registryAllOrder[i].SourceFile, renewalActiveFiles);
+            loadClassCounts[loadClass] = loadClassCounts.GetValueOrDefault(loadClass) + 1;
+            if (loadClass == MobSpawnLoadClass.RenewalDefault) renewalIndices.Add(i);
+            else if (loadClass == MobSpawnLoadClass.AthenaOverlay) overlayOnlyIndices.Add(i);
+        }
+        var effectiveIndices = renewalIndices.Concat(overlayOnlyIndices).Order().ToArray();
+
+        var profilesSource = GenerateMobSpawnLoadProfiles(renewalIndices, effectiveIndices, RegistryClassName, RegistryNamespace, commit);
+        await File.WriteAllTextAsync(Path.Combine(outputDir, ProfilesFileName), profilesSource, encoding);
 
         var validCount = discovered.Count - invalidMapDeclarationCount;
         Console.WriteLine($"Pinned ordinary mob-spawn declarations: {discovered.Count}");
@@ -809,6 +851,12 @@ internal static class WorldDataImporterCli
         Console.WriteLine($"Valid map dependencies:                {validCount}");
         Console.WriteLine($"Invalid map dependencies:              {invalidMapDeclarationCount}");
         Console.WriteLine($"Generated map/family modules:          {byFile.Length}");
+        Console.WriteLine($"Active Renewal source files (config graph): {renewalActiveFiles.Count}");
+        Console.WriteLine($"RenewalDefault declarations:           {loadClassCounts.GetValueOrDefault(MobSpawnLoadClass.RenewalDefault)}");
+        Console.WriteLine($"AthenaOverlay declarations:            {loadClassCounts.GetValueOrDefault(MobSpawnLoadClass.AthenaOverlay)}");
+        Console.WriteLine($"PreRenewalSource declarations:         {loadClassCounts.GetValueOrDefault(MobSpawnLoadClass.PreRenewalSource)}");
+        Console.WriteLine($"Disabled declarations:                 {loadClassCounts.GetValueOrDefault(MobSpawnLoadClass.Disabled)}");
+        Console.WriteLine($"AthenaIroEffective declarations:       {effectiveIndices.Length}");
         return 0;
     }
 
@@ -848,7 +896,64 @@ internal static class WorldDataImporterCli
             .AppendLine("        if (ByMap.TryGetValue(map, out var found)) { spawns = found; return true; }")
             .AppendLine("        spawns = []; return false;")
             .AppendLine("    }")
+            .AppendLine("    // Returns EVERY represented source declaration for this map, regardless of Renewal")
+            .AppendLine("    // source-load profile activation (see GeneratedMobSpawnLoadProfiles.GetForMap for a")
+            .AppendLine("    // profile-filtered view - RathenaRenewalDefault/AthenaIroEffective).")
             .AppendLine("    internal static IReadOnlyList<MobSpawnDefinition> GetForMap(string map) => ByMap.TryGetValue(map, out var found) ? found : [];")
+            .AppendLine("}");
+        return output.ToString();
+    }
+
+    // GeneratedMobSpawnLoadProfiles: a profile-neutral MobSpawnDefinition's Renewal source-load
+    // classification is deliberately NOT a field on the record itself (ai/world-data.md's "Generated
+    // mob spawns" - RathenaScriptConfigGraph). Instead, this emits two filtered VIEWS over
+    // GeneratedMobSpawnRegistry.All, indexed BY POSITION into that same array - guaranteeing true CLR
+    // reference identity to the SAME canonical instances (task section 22: never a duplicate copy).
+    // renewalIndices/effectiveIndices are pre-computed by the caller (GenerateMobSpawnsAsync) from
+    // registryAllOrder, which reconstructs GeneratedMobSpawnRegistry.All's own exact flattened
+    // element order - both index lists are already ascending/deterministic by construction.
+    private static string GenerateMobSpawnLoadProfiles(IReadOnlyList<int> renewalIndices, IReadOnlyList<int> effectiveIndices, string registryClassName, string worldNamespace, string commit)
+    {
+        var output = new System.Text.StringBuilder()
+            .AppendLine("// <auto-generated>")
+            .AppendLine("// Generated by Athena.WorldCompiler.")
+            .AppendLine("// Source: npc/re/scripts_main.conf (pinned Renewal script-config graph) + AthenaOverlaySourceFiles")
+            .Append("// rAthena commit: ").AppendLine(commit)
+            .AppendLine("// Do not edit this file directly.")
+            .AppendLine("// </auto-generated>")
+            .AppendLine("using System.Collections.Frozen;")
+            .AppendLine("using Athena.Net.MapServer.World;")
+            .AppendLine()
+            .Append("namespace ").Append(worldNamespace).AppendLine(";")
+            .AppendLine()
+            .AppendLine("// RathenaRenewalDefault: declarations reachable through the active npc:/import: graph rooted")
+            .AppendLine("// at pinned npc/re/scripts_main.conf. AthenaIroEffective: RathenaRenewalDefault plus explicit")
+            .AppendLine("// Athena.NET overlay declarations (AthenaOverlaySourceFiles) - the profile runtime registration")
+            .AppendLine("// consumes (GeneratedScriptRegistry.Register). See ai/world-data.md for the full model.")
+            .AppendLine("internal enum MobSpawnLoadProfile { RathenaRenewalDefault, AthenaIroEffective }")
+            .AppendLine()
+            .AppendLine("internal static class GeneratedMobSpawnLoadProfiles")
+            .AppendLine("{")
+            .Append("    internal static readonly MobSpawnDefinition[] RathenaRenewalDefault = [")
+            .Append(string.Join(", ", renewalIndices.Select(index => $"{registryClassName}.All[{index}]")))
+            .AppendLine("];")
+            .Append("    internal static readonly MobSpawnDefinition[] AthenaIroEffective = [")
+            .Append(string.Join(", ", effectiveIndices.Select(index => $"{registryClassName}.All[{index}]")))
+            .AppendLine("];")
+            .AppendLine()
+            .AppendLine("    private static readonly FrozenDictionary<string, MobSpawnDefinition[]> RenewalByMap = RathenaRenewalDefault")
+            .AppendLine("        .GroupBy(spawn => spawn.Map, StringComparer.OrdinalIgnoreCase)")
+            .AppendLine("        .ToFrozenDictionary(group => group.Key, group => group.ToArray(), StringComparer.OrdinalIgnoreCase);")
+            .AppendLine("    private static readonly FrozenDictionary<string, MobSpawnDefinition[]> EffectiveByMap = AthenaIroEffective")
+            .AppendLine("        .GroupBy(spawn => spawn.Map, StringComparer.OrdinalIgnoreCase)")
+            .AppendLine("        .ToFrozenDictionary(group => group.Key, group => group.ToArray(), StringComparer.OrdinalIgnoreCase);")
+            .AppendLine()
+            .AppendLine("    internal static IReadOnlyList<MobSpawnDefinition> GetForMap(string map, MobSpawnLoadProfile profile) => profile switch")
+            .AppendLine("    {")
+            .AppendLine("        MobSpawnLoadProfile.RathenaRenewalDefault => RenewalByMap.TryGetValue(map, out var renewal) ? renewal : [],")
+            .AppendLine("        MobSpawnLoadProfile.AthenaIroEffective => EffectiveByMap.TryGetValue(map, out var effective) ? effective : [],")
+            .AppendLine("        _ => throw new ArgumentOutOfRangeException(nameof(profile)),")
+            .AppendLine("    };")
             .AppendLine("}");
         return output.ToString();
     }

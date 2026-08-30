@@ -13,11 +13,11 @@ internal static class PrtQMobSpawns
 {
     internal static readonly MobSpawnDefinition[] PrtQ =
     [
-        new(GeneratedMobs.ZombieGuard, "prt_q", 60, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/prt_q.txt", 15), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Ghoul, "prt_q", 10, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/prt_q.txt", 16), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.ImmotalCorps, "prt_q", 30, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/prt_q.txt", 17), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.HunterFly, "prt_q", 10, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/prt_q.txt", 18), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.ImmortalCoCmder, "prt_q", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/prt_q.txt", 19), X: 0, Y: 0, Xs: 0, Ys: 0),
+        new(GeneratedMobs.ZombieGuard, "prt_q", 60, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/prt_q.txt", 15), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Zombie Guard"),
+        new(GeneratedMobs.Ghoul, "prt_q", 10, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/prt_q.txt", 16), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Ghoul"),
+        new(GeneratedMobs.ImmotalCorps, "prt_q", 30, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/prt_q.txt", 17), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Immortal Corps"),
+        new(GeneratedMobs.HunterFly, "prt_q", 10, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/prt_q.txt", 18), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Hunter Fly"),
+        new(GeneratedMobs.ImmortalCoCmder, "prt_q", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/prt_q.txt", 19), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Immortal Commander"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. PrtQ];

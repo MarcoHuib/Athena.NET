@@ -27,7 +27,21 @@ internal static class RepositoryDomainAnalyzers
         var items = AnalyzeItems(root); var itemIds = items.Select(item => ParseNumericId(item.Id)).Where(item => item.HasValue).Select(item => item!.Value).ToHashSet();
         var entities = new List<DomainEntity>();
         Add("maps", maps); Add("mobs", mobs); Add("mvp", AnalyzeMvp(root, mobs)); Add("items", items);
-        var mobSpawns = AnalyzeMobSpawns(root, mapNames, mobIds); Add("mob-spawns", mobSpawns);
+        // Renewal source-load classification (ai/world-data.md's "Generated mob spawns" -
+        // RathenaRenewalDefault/AthenaIroEffective profiles): resolved once per Analyze call and
+        // threaded into AnalyzeMobSpawns purely to stamp each entity's Provenance with its load
+        // class - this never changes the mob-spawns domain's own entity count/identity scheme (task
+        // section 32). A missing pinned mob_db.yml (mobSymbolsPath absent) degrades to no AegisName
+        // resolution rather than failing the whole analyzer run, matching AnalyzeMobs' own
+        // File.Exists guard immediately above.
+        var mobDbPath = Path.Combine(root, "db/re/mob_db.yml");
+        var aegisNameToId = File.Exists(mobDbPath)
+            ? MobDataCompiler.BuildAegisNameLookup(MobDataCompiler.ReadAllMobDefinitions(File.ReadAllText(mobDbPath)))
+            : null;
+        var renewalActiveFiles = File.Exists(Path.Combine(root, "npc/re/scripts_main.conf"))
+            ? RathenaScriptConfigGraph.ResolveActiveNpcFiles(root).ToHashSet(StringComparer.Ordinal)
+            : (IReadOnlySet<string>)new HashSet<string>(StringComparer.Ordinal);
+        var mobSpawns = AnalyzeMobSpawns(root, mapNames, mobIds, aegisNameToId, file => MobSpawnLoadClassifier.Classify(file, renewalActiveFiles)); Add("mob-spawns", mobSpawns);
         Add("quests", AnalyzeQuests(root));
         Add("shops", AnalyzeShops(root, itemIds));
         var mapFlags = AnalyzeMapFlags(root, mapNames); Add("mapflags", mapFlags);
@@ -417,24 +431,45 @@ internal static class RepositoryDomainAnalyzers
         return result;
     }
 
-    private static IReadOnlyList<DomainEntity> AnalyzeMobSpawns(string root, IReadOnlySet<string> maps, IReadOnlySet<int> mobs)
+    // renewalActiveFiles/loadClassifier let the mob-spawns domain stamp each entity's Provenance
+    // with its Renewal source-load classification (task section 20/35) without changing the
+    // domain's own entity count/identity scheme - both are optional so every OTHER Analyze call
+    // site (and every existing test that constructs a narrower domain selection) keeps working
+    // unchanged when profile classification is not needed.
+    //
+    // Single whole-file scan via MobDataCompiler.TryReadAllMobSpawns (NOT the old per-distinct-name
+    // loop over ReadMobSpawns) - deliberately fixes a real fail-closed regression: ReadMobSpawns'
+    // TryParseSpawnLine call runs UNCONDITIONALLY on every line of the file before that line's mob
+    // name is even compared against the name being looked up, so a single genuinely malformed line
+    // (an unknown AegisName token, an invalid declared level, or any future pinned syntax/value
+    // drift) threw for EVERY name lookup that reached it - and the previous blanket
+    // `try { ... } catch { continue; }` silently dropped that entire name's declarations from
+    // analyzer coverage, file-wide, with zero diagnostic. TryReadAllMobSpawns isolates a failure to
+    // its own exact line instead: every OTHER line in the same file is still parsed and reported
+    // normally, and the failing line becomes its own explicit `Unsupported` DomainEntity (matching
+    // AnalyzeMobs' own established try/catch-per-entity convention below) rather than vanishing.
+    private static IReadOnlyList<DomainEntity> AnalyzeMobSpawns(string root, IReadOnlySet<string> maps, IReadOnlySet<int> mobs, IReadOnlyDictionary<string, int>? aegisNameToId = null, Func<string, MobSpawnLoadClass>? loadClassifier = null)
     {
         var npc = Path.Combine(root, "npc"); if (!Directory.Exists(npc)) return [];
         var result = new List<DomainEntity>();
         foreach (var path in Directory.EnumerateFiles(npc, "*.txt", SearchOption.AllDirectories).Order(StringComparer.Ordinal))
         {
-            var text = File.ReadAllText(path); var names = Regex.Matches(text, @"(?m)^[^/\r\n]+\t(?:monster|boss_monster)\t(?<name>[^\t]+)\t")
-                .Select(match => match.Groups["name"].Value).Distinct(StringComparer.Ordinal).ToArray();
-            foreach (var name in names)
+            var text = File.ReadAllText(path);
+            var relative = Relative(root, path);
+            var provenance = loadClassifier is null ? null : loadClassifier(relative).ToString();
+            var (spawns, failures) = MobDataCompiler.TryReadAllMobSpawns(text, relative, aegisNameToId);
+            foreach (var spawn in spawns)
             {
-                IReadOnlyList<MobDataCompiler.MobSpawnData> spawns; try { spawns = MobDataCompiler.ReadMobSpawns(text, Relative(root, path), name); } catch { continue; }
-                foreach (var spawn in spawns)
-                {
-                    var blockers = new List<string>(); if (!maps.Contains(spawn.Map)) blockers.Add("dependency:map"); if (!mobs.Contains(spawn.MobId)) blockers.Add("dependency:mob");
-                    var status = blockers.Count == 0 ? DomainCompatibilityStatus.FullyCompatible : DomainCompatibilityStatus.Unsupported;
-                    result.Add(Entity("mob-spawns", $"mob-spawn:{Relative(root, path)}:{spawn.SourceLine}", name, root, path, spawn.SourceLine, status,
-                        [new("Spawn", status, blockers)], [$"map:{spawn.Map}", $"mob:{spawn.MobId}"], blockers, spawn.Map));
-                }
+                var blockers = new List<string>(); if (!maps.Contains(spawn.Map)) blockers.Add("dependency:map"); if (!mobs.Contains(spawn.MobId)) blockers.Add("dependency:mob");
+                var status = blockers.Count == 0 ? DomainCompatibilityStatus.FullyCompatible : DomainCompatibilityStatus.Unsupported;
+                result.Add(Entity("mob-spawns", $"mob-spawn:{relative}:{spawn.SourceLine}", spawn.SpawnName, root, path, spawn.SourceLine, status,
+                    [new("Spawn", status, blockers)], [$"map:{spawn.Map}", $"mob:{spawn.MobId}"], blockers, spawn.Map, provenance));
+            }
+            foreach (var failure in failures)
+            {
+                var blockers = new[] { "mob-spawn:parse-failure" };
+                result.Add(Entity("mob-spawns", $"mob-spawn:{relative}:{failure.Line}", failure.Message, root, path, failure.Line, DomainCompatibilityStatus.Unsupported,
+                    [new("Spawn", DomainCompatibilityStatus.Unsupported, blockers)], [], blockers, null, provenance));
             }
         }
         return result;

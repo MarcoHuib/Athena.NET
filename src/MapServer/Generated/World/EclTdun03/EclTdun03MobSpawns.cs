@@ -13,15 +13,15 @@ internal static class EclTdun03MobSpawns
 {
     internal static readonly MobSpawnDefinition[] EclTdun03 =
     [
-        new(GeneratedMobs.XmasSmokeyGift, "ecl_tdun03", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1692), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.XmasSmokeySock, "ecl_tdun03", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1693), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.OrganicJakk, "ecl_tdun03", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 825), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.InorganicJakk, "ecl_tdun03", 4, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 1128), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.C1AntiqueBook, "ecl_tdun03", 1, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 67), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.AntiqueBook, "ecl_tdun03", 15, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/ecl_tdun.txt", 35), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.LichternY, "ecl_tdun03", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/ecl_tdun.txt", 36), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.LichternG, "ecl_tdun03", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/ecl_tdun.txt", 37), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.FaithfulManager, "ecl_tdun03", 3, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/ecl_tdun.txt", 38), X: 0, Y: 0, Xs: 0, Ys: 0),
+        new(GeneratedMobs.XmasSmokeyGift, "ecl_tdun03", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1692), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Gift Stealing Raccoon"),
+        new(GeneratedMobs.XmasSmokeySock, "ecl_tdun03", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1693), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Sock Stealing Raccoon"),
+        new(GeneratedMobs.OrganicJakk, "ecl_tdun03", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 825), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Organic Pumpkin"),
+        new(GeneratedMobs.InorganicJakk, "ecl_tdun03", 4, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 1128), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Inorganic Pumpkin"),
+        new(GeneratedMobs.C1AntiqueBook, "ecl_tdun03", 1, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 67), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Swift Antique Book"),
+        new(GeneratedMobs.AntiqueBook, "ecl_tdun03", 15, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/ecl_tdun.txt", 35), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Antique Book"),
+        new(GeneratedMobs.LichternY, "ecl_tdun03", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/ecl_tdun.txt", 36), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Yellow Lichtern"),
+        new(GeneratedMobs.LichternG, "ecl_tdun03", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/ecl_tdun.txt", 37), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Green Lichtern"),
+        new(GeneratedMobs.FaithfulManager, "ecl_tdun03", 3, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/ecl_tdun.txt", 38), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Faithful Manager"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. EclTdun03];

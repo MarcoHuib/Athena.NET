@@ -13,22 +13,22 @@ internal static class RaFild01MobSpawns
 {
     internal static readonly MobSpawnDefinition[] RaFild01 =
     [
-        new(GeneratedMobs.Goldporing, "ra_fild01", 3, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/RWC_2011.txt", 479), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.XmasSmokeyGift, "ra_fild01", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1338), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.XmasSmokeySock, "ra_fild01", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1629), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.EventLude, "ra_fild01", 3, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2006.txt", 1083), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.OrganicJakk, "ra_fild01", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 765), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.InorganicJakk, "ra_fild01", 4, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 1068), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Muscipular, "ra_fild01", 60, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/rachel.txt", 19), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Geographer, "ra_fild01", 30, 300000, 120000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/rachel.txt", 20), X: 173, Y: 170, Xs: 106, Ys: 80),
-        new(GeneratedMobs.Drosera, "ra_fild01", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/rachel.txt", 21), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Galion, "ra_fild01", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/rachel.txt", 22), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Gryphon, "ra_fild01", 3, 3600000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/rachel.txt", 23), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.C3DesertWolfB, "ra_fild01", 2, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 268), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.DesertWolf, "ra_fild01", 145, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/rachel.txt", 22), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Roween, "ra_fild01", 33, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/rachel.txt", 23), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.DesertWolfB, "ra_fild01", 22, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/rachel.txt", 24), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Anopheles, "ra_fild01", 11, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/rachel.txt", 25), X: 0, Y: 0, Xs: 0, Ys: 0),
+        new(GeneratedMobs.Goldporing, "ra_fild01", 3, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/RWC_2011.txt", 479), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Golden Poring"),
+        new(GeneratedMobs.XmasSmokeyGift, "ra_fild01", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1338), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Gift Stealing Raccoon"),
+        new(GeneratedMobs.XmasSmokeySock, "ra_fild01", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1629), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Sock Stealing Raccoon"),
+        new(GeneratedMobs.EventLude, "ra_fild01", 3, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2006.txt", 1083), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Lude"),
+        new(GeneratedMobs.OrganicJakk, "ra_fild01", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 765), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Organic Pumpkin"),
+        new(GeneratedMobs.InorganicJakk, "ra_fild01", 4, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 1068), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Inorganic Pumpkin"),
+        new(GeneratedMobs.Muscipular, "ra_fild01", 60, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/rachel.txt", 19), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Muscipular"),
+        new(GeneratedMobs.Geographer, "ra_fild01", 30, 300000, 120000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/rachel.txt", 20), X: 173, Y: 170, Xs: 106, Ys: 80, SpawnName: "Geographer"),
+        new(GeneratedMobs.Drosera, "ra_fild01", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/rachel.txt", 21), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Drosera"),
+        new(GeneratedMobs.Galion, "ra_fild01", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/rachel.txt", 22), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Galion"),
+        new(GeneratedMobs.Gryphon, "ra_fild01", 3, 3600000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/rachel.txt", 23), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Gryphon"),
+        new(GeneratedMobs.C3DesertWolfB, "ra_fild01", 2, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 268), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Baby Desert Wolf Ringleader"),
+        new(GeneratedMobs.DesertWolf, "ra_fild01", 145, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/rachel.txt", 22), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Desert Wolf"),
+        new(GeneratedMobs.Roween, "ra_fild01", 33, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/rachel.txt", 23), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Roween"),
+        new(GeneratedMobs.DesertWolfB, "ra_fild01", 22, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/rachel.txt", 24), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Baby Desert Wolf"),
+        new(GeneratedMobs.Anopheles, "ra_fild01", 11, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/rachel.txt", 25), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Anopheles"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. RaFild01];

@@ -13,12 +13,12 @@ internal static class MaFild02MobSpawns
 {
     internal static readonly MobSpawnDefinition[] MaFild02 =
     [
-        new(GeneratedMobs.C2Bungisngis, "ma_fild02", 2, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 174), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Bungisngis, "ma_fild02", 54, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/malaya.txt", 28), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Engkanto, "ma_fild02", 34, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/malaya.txt", 29), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Mangkukulam, "ma_fild02", 41, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/malaya.txt", 30), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Jejeling, "ma_fild02", 27, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/malaya.txt", 31), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Wakwak, "ma_fild02", 34, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/malaya.txt", 32), X: 0, Y: 0, Xs: 0, Ys: 0),
+        new(GeneratedMobs.C2Bungisngis, "ma_fild02", 2, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 174), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Solid Bungisngis"),
+        new(GeneratedMobs.Bungisngis, "ma_fild02", 54, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/malaya.txt", 28), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Bungisngis"),
+        new(GeneratedMobs.Engkanto, "ma_fild02", 34, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/malaya.txt", 29), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Engkanto"),
+        new(GeneratedMobs.Mangkukulam, "ma_fild02", 41, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/malaya.txt", 30), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Mangkukulam"),
+        new(GeneratedMobs.Jejeling, "ma_fild02", 27, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/malaya.txt", 31), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Jejeling"),
+        new(GeneratedMobs.Wakwak, "ma_fild02", 34, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/malaya.txt", 32), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Wakwak"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. MaFild02];

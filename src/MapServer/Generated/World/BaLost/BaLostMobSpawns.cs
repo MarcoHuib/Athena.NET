@@ -13,11 +13,11 @@ internal static class BaLostMobSpawns
 {
     internal static readonly MobSpawnDefinition[] BaLost =
     [
-        new(GeneratedMobs.Ep172PitayaR, "ba_lost", 50, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/ba_lost.txt", 9), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Ep172PitayaY, "ba_lost", 50, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/ba_lost.txt", 10), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Ep172PitayaB, "ba_lost", 50, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/ba_lost.txt", 11), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Ep172PitayaV, "ba_lost", 50, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/ba_lost.txt", 12), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Ep172PitayaG, "ba_lost", 30, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/ba_lost.txt", 13), X: 0, Y: 0, Xs: 0, Ys: 0),
+        new(GeneratedMobs.Ep172PitayaR, "ba_lost", 50, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/ba_lost.txt", 9), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Pitaya"),
+        new(GeneratedMobs.Ep172PitayaY, "ba_lost", 50, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/ba_lost.txt", 10), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Pitaya"),
+        new(GeneratedMobs.Ep172PitayaB, "ba_lost", 50, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/ba_lost.txt", 11), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Pitaya"),
+        new(GeneratedMobs.Ep172PitayaV, "ba_lost", 50, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/ba_lost.txt", 12), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Pitaya"),
+        new(GeneratedMobs.Ep172PitayaG, "ba_lost", 30, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/ba_lost.txt", 13), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Pitaya"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. BaLost];

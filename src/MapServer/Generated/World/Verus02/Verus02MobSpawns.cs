@@ -13,8 +13,8 @@ internal static class Verus02MobSpawns
 {
     internal static readonly MobSpawnDefinition[] Verus02 =
     [
-        new(GeneratedMobs.RepairRobotT, "verus02", 50, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/verus.txt", 22), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.ExplorationRoverT, "verus02", 50, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/verus.txt", 23), X: 0, Y: 0, Xs: 0, Ys: 0),
+        new(GeneratedMobs.RepairRobotT, "verus02", 50, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/verus.txt", 22), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Repair Robot Turbo"),
+        new(GeneratedMobs.ExplorationRoverT, "verus02", 50, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/verus.txt", 23), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Explorer Robot Turbo"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. Verus02];

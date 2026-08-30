@@ -13,21 +13,21 @@ internal static class TurDun02MobSpawns
 {
     internal static readonly MobSpawnDefinition[] TurDun02 =
     [
-        new(GeneratedMobs.Goldporing, "tur_dun02", 3, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/RWC_2011.txt", 510), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.XmasSmokeyGift, "tur_dun02", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1369), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.XmasSmokeySock, "tur_dun02", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1660), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.EventLude, "tur_dun02", 3, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2006.txt", 1337), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.OrganicJakk, "tur_dun02", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 796), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.InorganicJakk, "tur_dun02", 4, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 1099), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Permeter, "tur_dun02", 40, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/tur_dun.txt", 25), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Solider, "tur_dun02", 40, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/tur_dun.txt", 26), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Freezer, "tur_dun02", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/tur_dun.txt", 27), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Pest, "tur_dun02", 15, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/tur_dun.txt", 28), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.C2Solider, "tur_dun02", 2, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 311), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Solider, "tur_dun02", 41, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/tur_dun.txt", 27), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Permeter, "tur_dun02", 41, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/tur_dun.txt", 28), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Freezer, "tur_dun02", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/tur_dun.txt", 29), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Pest, "tur_dun02", 15, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/tur_dun.txt", 30), X: 0, Y: 0, Xs: 0, Ys: 0),
+        new(GeneratedMobs.Goldporing, "tur_dun02", 3, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/RWC_2011.txt", 510), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Golden Poring"),
+        new(GeneratedMobs.XmasSmokeyGift, "tur_dun02", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1369), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Gift Stealing Raccoon"),
+        new(GeneratedMobs.XmasSmokeySock, "tur_dun02", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1660), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Sock Stealing Raccoon"),
+        new(GeneratedMobs.EventLude, "tur_dun02", 3, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2006.txt", 1337), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Lude"),
+        new(GeneratedMobs.OrganicJakk, "tur_dun02", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 796), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Organic Pumpkin"),
+        new(GeneratedMobs.InorganicJakk, "tur_dun02", 4, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 1099), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Inorganic Pumpkin"),
+        new(GeneratedMobs.Permeter, "tur_dun02", 40, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/tur_dun.txt", 25), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Permeter"),
+        new(GeneratedMobs.Solider, "tur_dun02", 40, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/tur_dun.txt", 26), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Solider"),
+        new(GeneratedMobs.Freezer, "tur_dun02", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/tur_dun.txt", 27), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Freezer"),
+        new(GeneratedMobs.Pest, "tur_dun02", 15, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/tur_dun.txt", 28), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Pest"),
+        new(GeneratedMobs.C2Solider, "tur_dun02", 2, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 311), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Solid Solider"),
+        new(GeneratedMobs.Solider, "tur_dun02", 41, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/tur_dun.txt", 27), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Solider"),
+        new(GeneratedMobs.Permeter, "tur_dun02", 41, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/tur_dun.txt", 28), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Permeter"),
+        new(GeneratedMobs.Freezer, "tur_dun02", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/tur_dun.txt", 29), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Freezer"),
+        new(GeneratedMobs.Pest, "tur_dun02", 15, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/tur_dun.txt", 30), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Pest"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. TurDun02];

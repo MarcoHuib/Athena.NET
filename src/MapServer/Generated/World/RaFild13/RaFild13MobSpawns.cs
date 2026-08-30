@@ -13,10 +13,10 @@ internal static class RaFild13MobSpawns
 {
     internal static readonly MobSpawnDefinition[] RaFild13 =
     [
-        new(GeneratedMobs.EventLude, "ra_fild13", 3, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2006.txt", 1095), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Stapo, "ra_fild13", 60, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/rachel.txt", 115), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Drops, "ra_fild13", 40, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/rachel.txt", 116), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Roween, "ra_fild13", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/rachel.txt", 117), X: 0, Y: 0, Xs: 0, Ys: 0),
+        new(GeneratedMobs.EventLude, "ra_fild13", 3, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2006.txt", 1095), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Lude"),
+        new(GeneratedMobs.Stapo, "ra_fild13", 60, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/rachel.txt", 115), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Stapo"),
+        new(GeneratedMobs.Drops, "ra_fild13", 40, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/rachel.txt", 116), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Drops"),
+        new(GeneratedMobs.Roween, "ra_fild13", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/rachel.txt", 117), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Roween"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. RaFild13];

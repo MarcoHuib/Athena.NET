@@ -13,18 +13,18 @@ internal static class NiflheimMobSpawns
 {
     internal static readonly MobSpawnDefinition[] Niflheim =
     [
-        new(GeneratedMobs.Dullahan, "niflheim", 5, 1800000, 1200000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/niflheim.txt", 51), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Gibbet, "niflheim", 10, 1200000, 600000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/niflheim.txt", 52), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Hylozoist, "niflheim", 10, 1200000, 600000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/niflheim.txt", 53), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Quve, "niflheim", 20, 300000, 150000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/niflheim.txt", 54), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Lude, "niflheim", 20, 300000, 150000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/niflheim.txt", 55), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.SSuccubus, "niflheim", 1, 1000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/jobs/3-2/shadow_chaser.txt", 2511), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.C4Lude, "niflheim", 1, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 224), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Lude, "niflheim", 35, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/niflheim.txt", 23), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Quve, "niflheim", 35, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/niflheim.txt", 24), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Gibbet, "niflheim", 17, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/niflheim.txt", 25), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Hylozoist, "niflheim", 17, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/niflheim.txt", 26), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Dullahan, "niflheim", 8, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/niflheim.txt", 27), X: 0, Y: 0, Xs: 0, Ys: 0),
+        new(GeneratedMobs.Dullahan, "niflheim", 5, 1800000, 1200000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/niflheim.txt", 51), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Dullahan"),
+        new(GeneratedMobs.Gibbet, "niflheim", 10, 1200000, 600000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/niflheim.txt", 52), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Gibbet"),
+        new(GeneratedMobs.Hylozoist, "niflheim", 10, 1200000, 600000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/niflheim.txt", 53), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Heirozoist"),
+        new(GeneratedMobs.Quve, "niflheim", 20, 300000, 150000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/niflheim.txt", 54), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Quve"),
+        new(GeneratedMobs.Lude, "niflheim", 20, 300000, 150000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/niflheim.txt", 55), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Lude"),
+        new(GeneratedMobs.SSuccubus, "niflheim", 1, 1000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/jobs/3-2/shadow_chaser.txt", 2511), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Shadow of Pleasure"),
+        new(GeneratedMobs.C4Lude, "niflheim", 1, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 224), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Furious Lude"),
+        new(GeneratedMobs.Lude, "niflheim", 35, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/niflheim.txt", 23), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Lude"),
+        new(GeneratedMobs.Quve, "niflheim", 35, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/niflheim.txt", 24), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Quve"),
+        new(GeneratedMobs.Gibbet, "niflheim", 17, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/niflheim.txt", 25), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Gibbet"),
+        new(GeneratedMobs.Hylozoist, "niflheim", 17, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/niflheim.txt", 26), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Heirozoist"),
+        new(GeneratedMobs.Dullahan, "niflheim", 8, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/niflheim.txt", 27), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Dullahan"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. Niflheim];

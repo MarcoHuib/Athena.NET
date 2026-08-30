@@ -13,10 +13,10 @@ internal static class SpRudus2MobSpawns
 {
     internal static readonly MobSpawnDefinition[] SpRudus2 =
     [
-        new(GeneratedMobs.Ep171Bellare2, "sp_rudus2", 40, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/sp_rudus.txt", 15), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Ep171Sanare2, "sp_rudus2", 37, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/sp_rudus.txt", 16), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Ep171Plaga1, "sp_rudus2", 58, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/sp_rudus.txt", 17), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Ep171Dolor2, "sp_rudus2", 45, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/sp_rudus.txt", 18), X: 0, Y: 0, Xs: 0, Ys: 0),
+        new(GeneratedMobs.Ep171Bellare2, "sp_rudus2", 40, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/sp_rudus.txt", 15), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "High Hunter Bellare"),
+        new(GeneratedMobs.Ep171Sanare2, "sp_rudus2", 37, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/sp_rudus.txt", 16), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "High Hunter Sanare"),
+        new(GeneratedMobs.Ep171Plaga1, "sp_rudus2", 58, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/sp_rudus.txt", 17), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Plaga"),
+        new(GeneratedMobs.Ep171Dolor2, "sp_rudus2", 45, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/sp_rudus.txt", 18), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Mutant Dolor"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. SpRudus2];

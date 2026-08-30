@@ -13,21 +13,21 @@ internal static class GlPrisonMobSpawns
 {
     internal static readonly MobSpawnDefinition[] GlPrison =
     [
-        new(GeneratedMobs.Goldporing, "gl_prison", 3, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/RWC_2011.txt", 350), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.XmasSmokeyGift, "gl_prison", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1210), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.XmasSmokeySock, "gl_prison", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1501), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.EventLude, "gl_prison", 3, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2006.txt", 1328), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.OrganicJakk, "gl_prison", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 637), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.InorganicJakk, "gl_prison", 4, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 940), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Injustice, "gl_prison", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/glastheim.txt", 91), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.HunterFly, "gl_prison", 10, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/glastheim.txt", 92), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.ZombiePrisoner, "gl_prison", 30, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/glastheim.txt", 93), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Rybio, "gl_prison", 15, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/glastheim.txt", 94), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.C2ZombiePrisoner, "gl_prison", 1, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 109), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.ZombiePrisoner, "gl_prison", 38, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/glastheim.txt", 136), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Injustice, "gl_prison", 25, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/glastheim.txt", 137), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Rybio, "gl_prison", 19, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/glastheim.txt", 138), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.HunterFly, "gl_prison", 12, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/glastheim.txt", 139), X: 0, Y: 0, Xs: 0, Ys: 0),
+        new(GeneratedMobs.Goldporing, "gl_prison", 3, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/RWC_2011.txt", 350), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Golden Poring"),
+        new(GeneratedMobs.XmasSmokeyGift, "gl_prison", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1210), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Gift Stealing Raccoon"),
+        new(GeneratedMobs.XmasSmokeySock, "gl_prison", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1501), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Sock Stealing Raccoon"),
+        new(GeneratedMobs.EventLude, "gl_prison", 3, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2006.txt", 1328), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Lude"),
+        new(GeneratedMobs.OrganicJakk, "gl_prison", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 637), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Organic Pumpkin"),
+        new(GeneratedMobs.InorganicJakk, "gl_prison", 4, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 940), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Inorganic Pumpkin"),
+        new(GeneratedMobs.Injustice, "gl_prison", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/glastheim.txt", 91), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Injustice"),
+        new(GeneratedMobs.HunterFly, "gl_prison", 10, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/glastheim.txt", 92), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Hunter Fly"),
+        new(GeneratedMobs.ZombiePrisoner, "gl_prison", 30, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/glastheim.txt", 93), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Zombie Prisoner"),
+        new(GeneratedMobs.Rybio, "gl_prison", 15, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/glastheim.txt", 94), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Rybio"),
+        new(GeneratedMobs.C2ZombiePrisoner, "gl_prison", 1, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 109), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Solid Zombie Prisoner"),
+        new(GeneratedMobs.ZombiePrisoner, "gl_prison", 38, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/glastheim.txt", 136), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Zombie Prisoner"),
+        new(GeneratedMobs.Injustice, "gl_prison", 25, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/glastheim.txt", 137), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Injustice"),
+        new(GeneratedMobs.Rybio, "gl_prison", 19, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/glastheim.txt", 138), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Rybio"),
+        new(GeneratedMobs.HunterFly, "gl_prison", 12, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/glastheim.txt", 139), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Hunter Fly"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. GlPrison];

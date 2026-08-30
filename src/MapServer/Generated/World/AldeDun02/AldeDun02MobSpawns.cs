@@ -13,22 +13,22 @@ internal static class AldeDun02MobSpawns
 {
     internal static readonly MobSpawnDefinition[] AldeDun02 =
     [
-        new(GeneratedMobs.Goldporing, "alde_dun02", 3, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/RWC_2011.txt", 284), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.XmasSmokeyGift, "alde_dun02", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1144), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.XmasSmokeySock, "alde_dun02", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1435), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.EventLude, "alde_dun02", 3, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2006.txt", 1342), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.OrganicJakk, "alde_dun02", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 571), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.InorganicJakk, "alde_dun02", 4, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 874), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.OrcXmas, "alde_dun02", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/xmas.txt", 360), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.HighOrc, "alde_dun02", 50, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/alde_dun.txt", 24), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.OrcArcher, "alde_dun02", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/alde_dun.txt", 25), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Brilight, "alde_dun02", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/alde_dun.txt", 26), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Arclouse, "alde_dun02", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/alde_dun.txt", 27), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.C2HighOrc, "alde_dun02", 2, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 22), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.HighOrc, "alde_dun02", 50, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/alde_dun.txt", 25), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Brilight, "alde_dun02", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/alde_dun.txt", 26), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Arclouse, "alde_dun02", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/alde_dun.txt", 27), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.OrcArcher, "alde_dun02", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/alde_dun.txt", 28), X: 0, Y: 0, Xs: 0, Ys: 0),
+        new(GeneratedMobs.Goldporing, "alde_dun02", 3, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/RWC_2011.txt", 284), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Golden Poring"),
+        new(GeneratedMobs.XmasSmokeyGift, "alde_dun02", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1144), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Gift Stealing Raccoon"),
+        new(GeneratedMobs.XmasSmokeySock, "alde_dun02", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1435), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Sock Stealing Raccoon"),
+        new(GeneratedMobs.EventLude, "alde_dun02", 3, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2006.txt", 1342), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Lude"),
+        new(GeneratedMobs.OrganicJakk, "alde_dun02", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 571), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Organic Pumpkin"),
+        new(GeneratedMobs.InorganicJakk, "alde_dun02", 4, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 874), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Inorganic Pumpkin"),
+        new(GeneratedMobs.OrcXmas, "alde_dun02", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/xmas.txt", 360), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Christmas Orc"),
+        new(GeneratedMobs.HighOrc, "alde_dun02", 50, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/alde_dun.txt", 24), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "High Orc"),
+        new(GeneratedMobs.OrcArcher, "alde_dun02", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/alde_dun.txt", 25), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Orc Archer"),
+        new(GeneratedMobs.Brilight, "alde_dun02", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/alde_dun.txt", 26), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Brilight"),
+        new(GeneratedMobs.Arclouse, "alde_dun02", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/alde_dun.txt", 27), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Arclouze"),
+        new(GeneratedMobs.C2HighOrc, "alde_dun02", 2, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 22), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Solid High Orc"),
+        new(GeneratedMobs.HighOrc, "alde_dun02", 50, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/alde_dun.txt", 25), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "High Orc"),
+        new(GeneratedMobs.Brilight, "alde_dun02", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/alde_dun.txt", 26), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Brilight"),
+        new(GeneratedMobs.Arclouse, "alde_dun02", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/alde_dun.txt", 27), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Arclouze"),
+        new(GeneratedMobs.OrcArcher, "alde_dun02", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/alde_dun.txt", 28), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Orc Archer"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. AldeDun02];

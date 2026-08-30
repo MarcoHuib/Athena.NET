@@ -13,10 +13,10 @@ internal static class BaLibMobSpawns
 {
     internal static readonly MobSpawnDefinition[] BaLib =
     [
-        new(GeneratedMobs.Ep172BetaBasicNg, "ba_lib", 10, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/ba_lib.txt", 9), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Ep172HeartHunter, "ba_lib", 15, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/ba_lib.txt", 10), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Ep172Bookworm, "ba_lib", 80, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/ba_lib.txt", 11), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Ep172RoamingSplbook, "ba_lib", 70, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/ba_lib.txt", 12), X: 0, Y: 0, Xs: 0, Ys: 0),
+        new(GeneratedMobs.Ep172BetaBasicNg, "ba_lib", 10, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/ba_lib.txt", 9), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Broken Beta"),
+        new(GeneratedMobs.Ep172HeartHunter, "ba_lib", 15, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/ba_lib.txt", 10), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Heart Hunter Skirmisher"),
+        new(GeneratedMobs.Ep172Bookworm, "ba_lib", 80, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/ba_lib.txt", 11), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Bookworm"),
+        new(GeneratedMobs.Ep172RoamingSplbook, "ba_lib", 70, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/ba_lib.txt", 12), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Roaming Spellbook"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. BaLib];

@@ -13,21 +13,21 @@ internal static class CTower1MobSpawns
 {
     internal static readonly MobSpawnDefinition[] CTower1 =
     [
-        new(GeneratedMobs.Goldporing, "c_tower1", 3, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/RWC_2011.txt", 300), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.XmasSmokeyGift, "c_tower1", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1160), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.XmasSmokeySock, "c_tower1", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1451), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.EventLude, "c_tower1", 3, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2006.txt", 1345), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.OrganicJakk, "c_tower1", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 587), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.InorganicJakk, "c_tower1", 4, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 890), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Punk, "c_tower1", 70, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/c_tower.txt", 16), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Rideword, "c_tower1", 70, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/c_tower.txt", 17), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.CTowerManager, "c_tower1", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/c_tower.txt", 18), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Bathory, "c_tower1", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/c_tower.txt", 19), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.C2Rideword, "c_tower1", 2, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 44), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Rideword, "c_tower1", 107, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/c_tower.txt", 18), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Punk, "c_tower1", 107, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/c_tower.txt", 19), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Bathory, "c_tower1", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/c_tower.txt", 20), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.CTowerManager, "c_tower1", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/c_tower.txt", 21), X: 0, Y: 0, Xs: 0, Ys: 0),
+        new(GeneratedMobs.Goldporing, "c_tower1", 3, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/RWC_2011.txt", 300), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Golden Poring"),
+        new(GeneratedMobs.XmasSmokeyGift, "c_tower1", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1160), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Gift Stealing Raccoon"),
+        new(GeneratedMobs.XmasSmokeySock, "c_tower1", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1451), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Sock Stealing Raccoon"),
+        new(GeneratedMobs.EventLude, "c_tower1", 3, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2006.txt", 1345), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Lude"),
+        new(GeneratedMobs.OrganicJakk, "c_tower1", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 587), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Organic Pumpkin"),
+        new(GeneratedMobs.InorganicJakk, "c_tower1", 4, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 890), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Inorganic Pumpkin"),
+        new(GeneratedMobs.Punk, "c_tower1", 70, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/c_tower.txt", 16), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Punk"),
+        new(GeneratedMobs.Rideword, "c_tower1", 70, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/c_tower.txt", 17), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Rideword"),
+        new(GeneratedMobs.CTowerManager, "c_tower1", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/c_tower.txt", 18), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Clock Tower Manager"),
+        new(GeneratedMobs.Bathory, "c_tower1", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/c_tower.txt", 19), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Bathory"),
+        new(GeneratedMobs.C2Rideword, "c_tower1", 2, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 44), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Solid Rideword"),
+        new(GeneratedMobs.Rideword, "c_tower1", 107, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/c_tower.txt", 18), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Rideword"),
+        new(GeneratedMobs.Punk, "c_tower1", 107, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/c_tower.txt", 19), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Punk"),
+        new(GeneratedMobs.Bathory, "c_tower1", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/c_tower.txt", 20), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Bathory"),
+        new(GeneratedMobs.CTowerManager, "c_tower1", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/c_tower.txt", 21), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Clock Tower Manager"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. CTower1];

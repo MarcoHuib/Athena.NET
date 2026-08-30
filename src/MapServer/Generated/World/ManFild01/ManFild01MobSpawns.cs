@@ -13,20 +13,20 @@ internal static class ManFild01MobSpawns
 {
     internal static readonly MobSpawnDefinition[] ManFild01 =
     [
-        new(GeneratedMobs.Goldporing, "man_fild01", 3, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/RWC_2011.txt", 261), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.XmasSmokeyGift, "man_fild01", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1121), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.XmasSmokeySock, "man_fild01", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1412), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.OrganicJakk, "man_fild01", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 548), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.InorganicJakk, "man_fild01", 4, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 851), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Nepenthes, "man_fild01", 105, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/manuk.txt", 18), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Hillsrion, "man_fild01", 10, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/manuk.txt", 19), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.CentipedeLarva, "man_fild01", 30, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/manuk.txt", 20), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Centipede, "man_fild01", 2, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/manuk.txt", 21), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.C2Nepenthes, "man_fild01", 2, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 178), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Nepenthes, "man_fild01", 148, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/manuk.txt", 19), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.CentipedeLarva, "man_fild01", 42, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/manuk.txt", 20), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Hillsrion, "man_fild01", 14, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/manuk.txt", 21), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Centipede, "man_fild01", 2, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/manuk.txt", 22), X: 0, Y: 0, Xs: 0, Ys: 0),
+        new(GeneratedMobs.Goldporing, "man_fild01", 3, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/RWC_2011.txt", 261), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Golden Poring"),
+        new(GeneratedMobs.XmasSmokeyGift, "man_fild01", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1121), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Gift Stealing Raccoon"),
+        new(GeneratedMobs.XmasSmokeySock, "man_fild01", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1412), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Sock Stealing Raccoon"),
+        new(GeneratedMobs.OrganicJakk, "man_fild01", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 548), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Organic Pumpkin"),
+        new(GeneratedMobs.InorganicJakk, "man_fild01", 4, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 851), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Inorganic Pumpkin"),
+        new(GeneratedMobs.Nepenthes, "man_fild01", 105, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/manuk.txt", 18), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Nepenthes"),
+        new(GeneratedMobs.Hillsrion, "man_fild01", 10, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/manuk.txt", 19), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Hillthion"),
+        new(GeneratedMobs.CentipedeLarva, "man_fild01", 30, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/manuk.txt", 20), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Centipede Larva"),
+        new(GeneratedMobs.Centipede, "man_fild01", 2, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/manuk.txt", 21), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Centipede"),
+        new(GeneratedMobs.C2Nepenthes, "man_fild01", 2, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 178), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Solid Nephentes"),
+        new(GeneratedMobs.Nepenthes, "man_fild01", 148, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/manuk.txt", 19), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Nepenthes"),
+        new(GeneratedMobs.CentipedeLarva, "man_fild01", 42, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/manuk.txt", 20), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Centipede Larva"),
+        new(GeneratedMobs.Hillsrion, "man_fild01", 14, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/manuk.txt", 21), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Hillslion"),
+        new(GeneratedMobs.Centipede, "man_fild01", 2, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/manuk.txt", 22), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Centipede"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. ManFild01];

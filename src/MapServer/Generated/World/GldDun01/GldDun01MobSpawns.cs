@@ -13,15 +13,15 @@ internal static class GldDun01MobSpawns
 {
     internal static readonly MobSpawnDefinition[] GldDun01 =
     [
-        new(GeneratedMobs.SkeletonGeneral, "gld_dun01", 10, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/gld_dun.txt", 17), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.AmMut, "gld_dun01", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/gld_dun.txt", 18), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.CatONineTail, "gld_dun01", 3, 1200000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/gld_dun.txt", 19), X: 0, Y: 0, Xs: 0, Ys: 0, DeathEvent: "0"),
-        new(GeneratedMobs.Gajomart, "gld_dun01", 10, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/gld_dun.txt", 20), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.VagabondWolf, "gld_dun01", 1, 14400000, 7200000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/gld_dun.txt", 22), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.C2LeibOlmai, "gld_dun01", 2, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 118), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Gullinbursti, "gld_dun01", 30, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_re.txt", 16), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.LeibOlmai, "gld_dun01", 55, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_re.txt", 17), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.CatONineTail, "gld_dun01", 3, 1200000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_re.txt", 18), X: 0, Y: 0, Xs: 0, Ys: 0, DeathEvent: "0"),
+        new(GeneratedMobs.SkeletonGeneral, "gld_dun01", 10, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/gld_dun.txt", 17), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Skeleton General"),
+        new(GeneratedMobs.AmMut, "gld_dun01", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/gld_dun.txt", 18), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Am Mut"),
+        new(GeneratedMobs.CatONineTail, "gld_dun01", 3, 1200000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/gld_dun.txt", 19), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Cat o' Nine Tails", DeathEvent: "0"),
+        new(GeneratedMobs.Gajomart, "gld_dun01", 10, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/gld_dun.txt", 20), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Gajomart"),
+        new(GeneratedMobs.VagabondWolf, "gld_dun01", 1, 14400000, 7200000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/gld_dun.txt", 22), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Vagabond Wolf"),
+        new(GeneratedMobs.C2LeibOlmai, "gld_dun01", 2, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 118), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Solid Leib Olmai"),
+        new(GeneratedMobs.Gullinbursti, "gld_dun01", 30, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_re.txt", 16), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Gullinbursti"),
+        new(GeneratedMobs.LeibOlmai, "gld_dun01", 55, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_re.txt", 17), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Leib Olmai"),
+        new(GeneratedMobs.CatONineTail, "gld_dun01", 3, 1200000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_re.txt", 18), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Cat O' Nine Tails", DeathEvent: "0"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. GldDun01];

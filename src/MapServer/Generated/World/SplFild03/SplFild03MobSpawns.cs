@@ -13,20 +13,20 @@ internal static class SplFild03MobSpawns
 {
     internal static readonly MobSpawnDefinition[] SplFild03 =
     [
-        new(GeneratedMobs.Goldporing, "spl_fild03", 3, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/RWC_2011.txt", 264), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.XmasSmokeyGift, "spl_fild03", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1124), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.XmasSmokeySock, "spl_fild03", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1415), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.OrganicJakk, "spl_fild03", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 551), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.InorganicJakk, "spl_fild03", 4, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 854), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.LuciolaVespa, "spl_fild03", 35, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/splendide.txt", 29), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Cornus, "spl_fild03", 25, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/splendide.txt", 30), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Naga, "spl_fild03", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/splendide.txt", 31), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Tendrilrion, "spl_fild03", 1, 3600000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/splendide.txt", 32), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.C5LuciolaVespa, "spl_fild03", 1, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 283), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.LuciolaVespa, "spl_fild03", 74, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/splendide.txt", 31), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Cornus, "spl_fild03", 52, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/splendide.txt", 32), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Naga, "spl_fild03", 42, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/splendide.txt", 33), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Tendrilrion, "spl_fild03", 2, 3600000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/splendide.txt", 34), X: 0, Y: 0, Xs: 0, Ys: 0),
+        new(GeneratedMobs.Goldporing, "spl_fild03", 3, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/RWC_2011.txt", 264), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Golden Poring"),
+        new(GeneratedMobs.XmasSmokeyGift, "spl_fild03", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1124), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Gift Stealing Raccoon"),
+        new(GeneratedMobs.XmasSmokeySock, "spl_fild03", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1415), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Sock Stealing Raccoon"),
+        new(GeneratedMobs.OrganicJakk, "spl_fild03", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 551), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Organic Pumpkin"),
+        new(GeneratedMobs.InorganicJakk, "spl_fild03", 4, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 854), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Inorganic Pumpkin"),
+        new(GeneratedMobs.LuciolaVespa, "spl_fild03", 35, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/splendide.txt", 29), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Luciola Vespa"),
+        new(GeneratedMobs.Cornus, "spl_fild03", 25, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/splendide.txt", 30), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Cornus"),
+        new(GeneratedMobs.Naga, "spl_fild03", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/splendide.txt", 31), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Naga"),
+        new(GeneratedMobs.Tendrilrion, "spl_fild03", 1, 3600000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/splendide.txt", 32), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Tendril Lion"),
+        new(GeneratedMobs.C5LuciolaVespa, "spl_fild03", 1, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 283), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Elusive Luciola Vespa"),
+        new(GeneratedMobs.LuciolaVespa, "spl_fild03", 74, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/splendide.txt", 31), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Luciola Vespa"),
+        new(GeneratedMobs.Cornus, "spl_fild03", 52, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/splendide.txt", 32), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Cornus"),
+        new(GeneratedMobs.Naga, "spl_fild03", 42, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/splendide.txt", 33), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Naga"),
+        new(GeneratedMobs.Tendrilrion, "spl_fild03", 2, 3600000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/splendide.txt", 34), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Tendrilion"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. SplFild03];

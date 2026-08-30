@@ -13,19 +13,19 @@ internal static class GlSew04MobSpawns
 {
     internal static readonly MobSpawnDefinition[] GlSew04 =
     [
-        new(GeneratedMobs.Goldporing, "gl_sew04", 3, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/RWC_2011.txt", 355), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.XmasSmokeyGift, "gl_sew04", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1215), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.XmasSmokeySock, "gl_sew04", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1506), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.EventLude, "gl_sew04", 3, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2006.txt", 1317), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.OrganicJakk, "gl_sew04", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 642), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.InorganicJakk, "gl_sew04", 4, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 945), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Anolian, "gl_sew04", 100, 120000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/glastheim.txt", 164), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Gargoyle, "gl_sew04", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/glastheim.txt", 165), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Drainliar, "gl_sew04", 10, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/glastheim.txt", 166), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.C4Anolian, "gl_sew04", 2, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 114), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Anolian, "gl_sew04", 126, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/glastheim.txt", 174), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Gargoyle, "gl_sew04", 25, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/glastheim.txt", 175), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Drainliar, "gl_sew04", 12, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/glastheim.txt", 176), X: 0, Y: 0, Xs: 0, Ys: 0),
+        new(GeneratedMobs.Goldporing, "gl_sew04", 3, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/RWC_2011.txt", 355), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Golden Poring"),
+        new(GeneratedMobs.XmasSmokeyGift, "gl_sew04", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1215), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Gift Stealing Raccoon"),
+        new(GeneratedMobs.XmasSmokeySock, "gl_sew04", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1506), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Sock Stealing Raccoon"),
+        new(GeneratedMobs.EventLude, "gl_sew04", 3, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2006.txt", 1317), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Lude"),
+        new(GeneratedMobs.OrganicJakk, "gl_sew04", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 642), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Organic Pumpkin"),
+        new(GeneratedMobs.InorganicJakk, "gl_sew04", 4, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 945), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Inorganic Pumpkin"),
+        new(GeneratedMobs.Anolian, "gl_sew04", 100, 120000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/glastheim.txt", 164), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Anolian"),
+        new(GeneratedMobs.Gargoyle, "gl_sew04", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/glastheim.txt", 165), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Gargoyle"),
+        new(GeneratedMobs.Drainliar, "gl_sew04", 10, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/glastheim.txt", 166), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Drainliar"),
+        new(GeneratedMobs.C4Anolian, "gl_sew04", 2, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 114), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Furious Anolian"),
+        new(GeneratedMobs.Anolian, "gl_sew04", 126, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/glastheim.txt", 174), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Anolian"),
+        new(GeneratedMobs.Gargoyle, "gl_sew04", 25, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/glastheim.txt", 175), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Gargoyle"),
+        new(GeneratedMobs.Drainliar, "gl_sew04", 12, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/glastheim.txt", 176), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Drainliar"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. GlSew04];

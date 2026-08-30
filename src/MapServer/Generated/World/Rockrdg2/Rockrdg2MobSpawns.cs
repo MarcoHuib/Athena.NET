@@ -13,14 +13,14 @@ internal static class Rockrdg2MobSpawns
 {
     internal static readonly MobSpawnDefinition[] Rockrdg2 =
     [
-        new(GeneratedMobs.Cowraiders2, "rockrdg2", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/rockridge.txt", 20), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Cowraiders3, "rockrdg2", 60, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/rockridge.txt", 21), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Coyote, "rockrdg2", 10, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/rockridge.txt", 22), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.GreenPlant, "rockrdg2", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/rockridge.txt", 23), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.YellowPlant, "rockrdg2", 4, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/rockridge.txt", 24), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.WhitePlant, "rockrdg2", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/rockridge.txt", 25), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.ShiningPlant, "rockrdg2", 4, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/rockridge.txt", 26), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.ThiefBug, "rockrdg2", 10, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/rockridge.txt", 27), X: 0, Y: 0, Xs: 0, Ys: 0),
+        new(GeneratedMobs.Cowraiders2, "rockrdg2", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/rockridge.txt", 20), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Buffalo Bandit Duelist"),
+        new(GeneratedMobs.Cowraiders3, "rockrdg2", 60, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/rockridge.txt", 21), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Bowie Buffalo Bandit"),
+        new(GeneratedMobs.Coyote, "rockrdg2", 10, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/rockridge.txt", 22), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Coyote"),
+        new(GeneratedMobs.GreenPlant, "rockrdg2", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/rockridge.txt", 23), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Green Plant"),
+        new(GeneratedMobs.YellowPlant, "rockrdg2", 4, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/rockridge.txt", 24), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Yellow Plant"),
+        new(GeneratedMobs.WhitePlant, "rockrdg2", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/rockridge.txt", 25), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "White Plant"),
+        new(GeneratedMobs.ShiningPlant, "rockrdg2", 4, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/rockridge.txt", 26), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Shining Plant"),
+        new(GeneratedMobs.ThiefBug, "rockrdg2", 10, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/rockridge.txt", 27), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Thief Bug"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. Rockrdg2];

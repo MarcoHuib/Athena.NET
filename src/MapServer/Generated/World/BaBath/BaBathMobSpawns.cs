@@ -13,12 +13,12 @@ internal static class BaBathMobSpawns
 {
     internal static readonly MobSpawnDefinition[] BaBath =
     [
-        new(GeneratedMobs.Ep172BetaCleanerA, "ba_bath", 30, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/ba_bath.txt", 9), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Ep172BetaCleanerB, "ba_bath", 30, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/ba_bath.txt", 10), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Ep172Phen, "ba_bath", 70, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/ba_bath.txt", 11), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Ep172Marc, "ba_bath", 50, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/ba_bath.txt", 12), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Ep172SwordFish, "ba_bath", 50, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/ba_bath.txt", 13), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Ep172Piranha, "ba_bath", 70, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/ba_bath.txt", 14), X: 0, Y: 0, Xs: 0, Ys: 0),
+        new(GeneratedMobs.Ep172BetaCleanerA, "ba_bath", 30, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/ba_bath.txt", 9), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Broken Cleaner"),
+        new(GeneratedMobs.Ep172BetaCleanerB, "ba_bath", 30, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/ba_bath.txt", 10), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Broken Cleaner"),
+        new(GeneratedMobs.Ep172Phen, "ba_bath", 70, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/ba_bath.txt", 11), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Boiling Water Phen"),
+        new(GeneratedMobs.Ep172Marc, "ba_bath", 50, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/ba_bath.txt", 12), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Boiling Water Marc"),
+        new(GeneratedMobs.Ep172SwordFish, "ba_bath", 50, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/ba_bath.txt", 13), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Boiling Water Swordfish"),
+        new(GeneratedMobs.Ep172Piranha, "ba_bath", 70, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/ba_bath.txt", 14), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Boiling Water Piranha"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. BaBath];

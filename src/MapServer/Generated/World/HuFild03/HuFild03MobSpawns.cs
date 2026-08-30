@@ -13,19 +13,19 @@ internal static class HuFild03MobSpawns
 {
     internal static readonly MobSpawnDefinition[] HuFild03 =
     [
-        new(GeneratedMobs.EventLude, "hu_fild03", 3, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2006.txt", 1125), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.GreenIguana, "hu_fild03", 70, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/hugel.txt", 50), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Novus, "hu_fild03", 30, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/hugel.txt", 51), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Poporing, "hu_fild03", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/hugel.txt", 52), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.ThiefBug, "hu_fild03", 10, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/hugel.txt", 53), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.RedMushroom, "hu_fild03", 2, 300000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/hugel.txt", 54), X: 40, Y: 157, Xs: 3, Ys: 3),
-        new(GeneratedMobs.RedMushroom, "hu_fild03", 3, 300000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/hugel.txt", 55), X: 219, Y: 211, Xs: 7, Ys: 5),
-        new(GeneratedMobs.RedMushroom, "hu_fild03", 2, 300000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/hugel.txt", 56), X: 285, Y: 230, Xs: 5, Ys: 4),
-        new(GeneratedMobs.RedMushroom, "hu_fild03", 3, 300000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/hugel.txt", 57), X: 247, Y: 118, Xs: 9, Ys: 4),
-        new(GeneratedMobs.BlackMushroom, "hu_fild03", 3, 300000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/hugel.txt", 58), X: 96, Y: 156, Xs: 5, Ys: 5),
-        new(GeneratedMobs.BlackMushroom, "hu_fild03", 3, 300000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/hugel.txt", 59), X: 170, Y: 220, Xs: 5, Ys: 4),
-        new(GeneratedMobs.BlackMushroom, "hu_fild03", 2, 300000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/hugel.txt", 60), X: 212, Y: 328, Xs: 5, Ys: 4),
-        new(GeneratedMobs.BlackMushroom, "hu_fild03", 2, 300000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/hugel.txt", 61), X: 231, Y: 151, Xs: 3, Ys: 3),
+        new(GeneratedMobs.EventLude, "hu_fild03", 3, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2006.txt", 1125), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Lude"),
+        new(GeneratedMobs.GreenIguana, "hu_fild03", 70, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/hugel.txt", 50), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Grove"),
+        new(GeneratedMobs.Novus, "hu_fild03", 30, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/hugel.txt", 51), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Novus"),
+        new(GeneratedMobs.Poporing, "hu_fild03", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/hugel.txt", 52), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Poporing"),
+        new(GeneratedMobs.ThiefBug, "hu_fild03", 10, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/hugel.txt", 53), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Thief Bug"),
+        new(GeneratedMobs.RedMushroom, "hu_fild03", 2, 300000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/hugel.txt", 54), X: 40, Y: 157, Xs: 3, Ys: 3, SpawnName: "Red Mushroom"),
+        new(GeneratedMobs.RedMushroom, "hu_fild03", 3, 300000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/hugel.txt", 55), X: 219, Y: 211, Xs: 7, Ys: 5, SpawnName: "Red Mushroom"),
+        new(GeneratedMobs.RedMushroom, "hu_fild03", 2, 300000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/hugel.txt", 56), X: 285, Y: 230, Xs: 5, Ys: 4, SpawnName: "Red Mushroom"),
+        new(GeneratedMobs.RedMushroom, "hu_fild03", 3, 300000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/hugel.txt", 57), X: 247, Y: 118, Xs: 9, Ys: 4, SpawnName: "Red Mushroom"),
+        new(GeneratedMobs.BlackMushroom, "hu_fild03", 3, 300000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/hugel.txt", 58), X: 96, Y: 156, Xs: 5, Ys: 5, SpawnName: "Black Mushroom"),
+        new(GeneratedMobs.BlackMushroom, "hu_fild03", 3, 300000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/hugel.txt", 59), X: 170, Y: 220, Xs: 5, Ys: 4, SpawnName: "Black Mushroom"),
+        new(GeneratedMobs.BlackMushroom, "hu_fild03", 2, 300000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/hugel.txt", 60), X: 212, Y: 328, Xs: 5, Ys: 4, SpawnName: "Black Mushroom"),
+        new(GeneratedMobs.BlackMushroom, "hu_fild03", 2, 300000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/hugel.txt", 61), X: 231, Y: 151, Xs: 3, Ys: 3, SpawnName: "Black Mushroom"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. HuFild03];

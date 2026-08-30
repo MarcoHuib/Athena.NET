@@ -13,13 +13,13 @@ internal static class LasaFild01MobSpawns
 {
     internal static readonly MobSpawnDefinition[] LasaFild01 =
     [
-        new(GeneratedMobs.DrEggring, "lasa_fild01", 30, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/custom/lasagna/lasa_fild.txt", 11), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.DrLunatic, "lasa_fild01", 30, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/custom/lasagna/lasa_fild.txt", 12), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.DrFabre, "lasa_fild01", 30, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/custom/lasagna/lasa_fild.txt", 13), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.DrEggring, "lasa_fild01", 50, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/custom/lasagna/lasa_fild.txt", 14), X: 100, Y: 330, Xs: 75, Ys: 50),
-        new(GeneratedMobs.DrLunatic, "lasa_fild01", 50, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/custom/lasagna/lasa_fild.txt", 15), X: 100, Y: 330, Xs: 75, Ys: 50),
-        new(GeneratedMobs.DrFabre, "lasa_fild01", 50, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/custom/lasagna/lasa_fild.txt", 16), X: 100, Y: 330, Xs: 75, Ys: 50),
-        new(GeneratedMobs.RedPlant, "lasa_fild01", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/custom/lasagna/lasa_fild.txt", 17), X: 140, Y: 365, Xs: 15, Ys: 15),
+        new(GeneratedMobs.DrEggring, "lasa_fild01", 30, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/custom/lasagna/lasa_fild.txt", 11), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Eggring"),
+        new(GeneratedMobs.DrLunatic, "lasa_fild01", 30, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/custom/lasagna/lasa_fild.txt", 12), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Leaf Lunatic"),
+        new(GeneratedMobs.DrFabre, "lasa_fild01", 30, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/custom/lasagna/lasa_fild.txt", 13), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Grass Fabre"),
+        new(GeneratedMobs.DrEggring, "lasa_fild01", 50, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/custom/lasagna/lasa_fild.txt", 14), X: 100, Y: 330, Xs: 75, Ys: 50, SpawnName: "Eggring"),
+        new(GeneratedMobs.DrLunatic, "lasa_fild01", 50, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/custom/lasagna/lasa_fild.txt", 15), X: 100, Y: 330, Xs: 75, Ys: 50, SpawnName: "Leaf Lunatic"),
+        new(GeneratedMobs.DrFabre, "lasa_fild01", 50, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/custom/lasagna/lasa_fild.txt", 16), X: 100, Y: 330, Xs: 75, Ys: 50, SpawnName: "Grass Fabre"),
+        new(GeneratedMobs.RedPlant, "lasa_fild01", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/custom/lasagna/lasa_fild.txt", 17), X: 140, Y: 365, Xs: 15, Ys: 15, SpawnName: "Red Plant"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. LasaFild01];
