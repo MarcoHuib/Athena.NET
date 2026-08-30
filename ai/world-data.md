@@ -619,6 +619,193 @@ dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- \
   --output src/MapServer/Generated
 ```
 
+## Generated mob spawns
+
+The pipeline is now complete for every pinned ordinary rAthena `monster` spawn declaration:
+
+```text
+rAthena mob_db.yml
+      ↓
+2,675 generated MobDefinitions (GeneratedMobRegistry)
+
+rAthena npc/**/*.txt `monster` declarations
+      ↓
+9,844 generated MobSpawnDefinitions (GeneratedMobSpawnRegistry)
+      ↓
+9,841 valid map-bound declarations (3 evt_zombie declarations remain generated but
+       map-invalid, see below)
+```
+
+**Generated source coverage is not the same as full runtime gameplay behavior compatibility.**
+Every pinned ordinary `monster` declaration is now represented as production C# data and resolves
+through `GeneratedMobRegistry`, but Drops runtime, Mob Skills runtime, most `ModeRuntime` flags,
+`RaceGroups` combat semantics, MVP/`boss_monster` runtime, spawn-area randomized placement in every
+code path, and full respawn-timing parity remain unimplemented or partial - see "Still missing"
+notes throughout this file and `ai/map-server.md`.
+
+Regenerate from the current pinned SHA (never edit generated output):
+
+```bash
+dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- generate-mob-spawns \
+  --rathena-root legacy/rathena \
+  --rathena-commit e985006171d2eb320ee512a653f4c83aea3d81b6 \
+  --output src/MapServer/Generated/World
+```
+
+### Pinned syntax and modeled fields
+
+Verified against pinned `npc_parse_mob` (`legacy/rathena/src/map/npc.cpp:5218`):
+
+```text
+<map>{,<x>,<y>{,<xs>,<ys>}}\tmonster\t<name>{,<level>}\t<mobid>,<count>{,<delay1>{,<delay2>{,<event>{,<size>{,<ai>}}}}}
+```
+
+`MobDataCompiler.ReadMobSpawns`/`ReadAllMobSpawns` is the ONE shared spawn-line parser both
+`RepositoryDomainAnalyzers.AnalyzeMobSpawns` and `generate-mob-spawns` use (task's "one shared
+parser" preference already held before this branch and remains true). `MobSpawnDefinition` models:
+
+- `Map`/`X`/`Y`/`Xs`/`Ys` - the declaration's own position/area fields, losslessly preserved exactly
+  as before this branch (see `IMobSpawnCellSelector` for how a map-wide-random declaration,
+  `X=Y=Xs=Ys=0`, is distinguished from a fixed/rectangular area).
+- `RespawnDelay` (pinned `mob.delay1`, defaulting to `5000` when the 3rd `w4` field is omitted -
+  matching pinned `int32 delay = 5000`'s init, a real bug fix from this branch: the delay used to
+  default to `0`, not `5000`, when omitted) and `RespawnRandomDelay` (pinned `mob.delay2`, defaulting
+  to `0`). Pinned `mob_delay_amount` (`mob.cpp:1071-1073`) computes the actual respawn time as
+  `delay1 + rnd()%delay2` when `delay2` is nonzero - genuine random-variance data, not noise. Both
+  are preserved losslessly and independently; `MonsterRegistry.ScheduleRespawnIfNeeded` currently
+  consumes only `RespawnDelay` (the random component is a documented RUNTIME gap, not a data gap -
+  see "Still missing" below).
+- `DeathEvent` (`string?`), `Size` (`MobSize?`), `Ai` (`int?`) - the pinned `w4` format's remaining
+  optional positions. Preserved losslessly as SOURCE DATA even though no death-event dispatch,
+  size-override, or AI-override runtime exists in this project (none is added by this branch). An
+  exhaustive scan of the pinned ordinary-`monster` domain found 44 real declarations with a quoted
+  death-event label (e.g. `"ant_d02_i_boss::OnMobDead"`, `"lhz_dun_n::OnRegularDead32xx"`) and 474
+  with an inert literal `"0"`/`"1"` placeholder in that position (preserved verbatim, never
+  normalized away); zero declarations supply a size or AI override field at all today, but the
+  parser/model do not assume that stays true forever - a future 6th/7th `w4` field fails generation
+  loudly rather than being silently truncated (the OLD `SpawnLine` regex used to stop capturing
+  after `delay2`, silently dropping any event field present).
+
+### Generated registry and map-oriented physical layout
+
+`MobSpawnDefinition` is world/map-owned content (map identity, coordinates/area, count, respawn
+timing, death-event binding, size/AI override) - NOT global game data. Unlike `MobDefinition`
+(under `Generated/GameData/Mobs`, keyed purely by MobId, with no world/placement concept), the
+physical generated spawn C# lives under `Generated/World`, grouped by the map/world module that
+owns it - never by which pinned source file happened to declare it. If several pinned source files
+target the same map (e.g. `prt_fild08d` receives declarations from `academy.txt`,
+`christmas_2013.txt`, and `halloween_2013.txt`), all of them merge into that ONE map's generated
+array; `WorldSourceInfo` still carries the exact per-declaration file/line, so no provenance is
+lost even though the physical file is shared.
+
+`GeneratedMobSpawnRegistry` (`src/MapServer/Generated/World/GeneratedMobSpawnRegistry.cs`) is the
+map-keyed production INDEX - it never owns spawn definitions itself, only composes/references the
+map-owned arrays:
+
+```csharp
+GeneratedMobSpawnRegistry.TryGetMap(string map, out IReadOnlyList<MobSpawnDefinition> spawns)
+GeneratedMobSpawnRegistry.GetForMap(string map) // [] for an unknown map, never throws
+GeneratedMobSpawnRegistry.All // flattened, stable order, backed by a FrozenDictionary<string, MobSpawnDefinition[]>
+```
+
+Physical placement rules, applied per map:
+
+1. **Existing world-family module** - a map that already belongs to an established generated
+   World-family folder (one with its own NPCs/warps/scripts) gets its spawn array added to that
+   SAME folder, never a new one. Two families exist today: `PrtFild08` (`prt_fild08`,
+   `prt_fild08a..d`) and `Izlude/Academy` (`int_land`, `int_land01..04`) - e.g.
+   `src/MapServer/Generated/World/PrtFild08/PrtFild08MobSpawns.cs` sits alongside
+   `PrtFild08Npcs.cs`/`PrtFild08Warps.cs`/`PrtFild08World.cs`, exposing
+   `PrtFild08`/`PrtFild08A`/`PrtFild08B`/`PrtFild08C`/`PrtFild08D` arrays plus a composed `All`
+   (byte-for-byte the same shape the original hand-authored `PrtFild08MobSpawns.cs` used, restored
+   here rather than duplicated). `Izlude/Academy/AcademyMobSpawns.cs` mirrors this for the tutorial
+   family (`IntLand`/`IntLand01..04`/`All`).
+2. **New map, no existing family** - every other resolvable map gets a deterministic, freshly
+   created single-map folder named after the map itself (PascalCase, matching the repository's
+   existing map-name convention), e.g. `src/MapServer/Generated/World/PayFild01/PayFild01MobSpawns.cs`
+   for `pay_fild01`. A genuine PascalCase collision between two DISTINCT real maps (a real pinned
+   case: `gl_cas02` and `gl_cas02_`, a trailing-underscore variant, both resolve and both
+   PascalCase to `GlCas02`) gets a deterministic numeric folder suffix (`GlCas02`, `GlCas02_2`) -
+   each raw map string still gets its own file/array, never silently merged.
+3. **Unresolved event-map declarations** - a map that does NOT resolve through the canonical
+   map-cache layers, but whose every declaration originates from a source file under `npc/events/`
+   AND whose map token starts with `evt_`, is classified under
+   `src/MapServer/Generated/World/Events/<PascalMap>/<PascalMap>MobSpawns.cs` - an organizational
+   placement only, proving nothing about runtime loadability (see "Invalid map dependencies"
+   below). `evt_` alone is never a blanket escape hatch; the events-directory source-context
+   requirement must also hold.
+4. **Anything else unresolved fails generation closed** - a genuinely new unresolved map that
+   doesn't qualify for rule 3 is a hard `generate-mob-spawns` error, not a silent guess.
+
+Total generated size is ~3.0 MiB across 432 map/family modules (largest file is `PrtFild08MobSpawns.cs`,
+since `prt_fild08` itself absorbs many pre-Renewal `prontera.txt` field-mob declarations that
+target it as their base map).
+
+`GeneratedScriptRegistry.Register` feeds `GeneratedMobSpawnRegistry.All` into
+`WorldRegistryBuilder.AddMobSpawn` for every entry - the SOLE mob-spawn source
+`MapServerWorld.Build` sees. The two originally hand-picked slices (`AcademyMobSpawns.GPoringSpawns`
+for `int_land*`, `PrtFild08MobSpawns.All` for the `prt_fild08*` family) are retired as independent
+files: their content is a strict subset of `PrtFild08MobSpawns`/`AcademyMobSpawns`'s own data (verified
+byte-identical - same MobId/map/count/delay/source-line - before deletion), and their API shape is
+restored under the map-oriented layout rather than duplicated, so registering both an old and new
+path would have double-registered the same physical source declarations.
+
+### Runtime activation stays map-lifecycle-scoped
+
+`MapServerWorld.Build`'s existing `servedMaps` parameter already implements "definition availability
+is global, runtime instantiation follows the map lifecycle" - no new filtering concept was needed:
+`world.MobSpawns.Where(spawn => servedMaps.Contains(spawn.Map))` runs before `MonsterRegistry`
+construction. `MapServerHostingScope.ServedMaps` remains the single hand-declared runtime hosting
+scope; this branch does not expand it. All 9,841 valid declarations are always available through
+`GeneratedMobSpawnRegistry`, but only a served map's declarations are ever instantiated into live
+`MobInstance`s - MapServer does not blindly spawn the entire Ragnarok world into one process.
+
+### Invalid map dependencies (evt_zombie)
+
+Three declarations (`legacy/rathena/npc/events/halloween_2008.txt:267-269`, Zombie/Ghoul/Zombie
+Master on map `evt_zombie`) target a map that resolves through no pinned map-cache layer at all
+(confirmed via the same canonical `RathenaMapCacheLayers.Merge` resolver
+`RepositoryDomainAnalyzers.AnalyzeMaps` uses - generated spawn map validation and analyzer map
+validation agree by construction). Because every one of these three declarations originates from a
+source file under `npc/events/` and the map token starts with `evt_`, they are classified under the
+dedicated `src/MapServer/Generated/World/Events/EvtZombie/EvtZombieMobSpawns.cs` organizational module
+(placement rule 3 above) rather than failing generation - source declaration and mob reference stay
+valid, but map dependency and runtime activation stay invalid. This placement is ORGANIZATIONAL
+ONLY and never implies `evt_zombie` is a loadable map: it is never a member of
+`MapServerHostingScope.ServedMaps` and never will be (it is not a real pinned map).
+`generate-mob-spawns` treats any OTHER unresolvable map that doesn't qualify for this exact
+classification as a hard generation failure - these three are the only tolerated exception, and a
+regression test locks their exact identities.
+
+### Multiple source files targeting the same map
+
+A map can receive declarations from several different pinned source files - they are never
+organized by source file (see placement rules above); all of them merge into that ONE map's single
+generated array. `prt_fild08d` (already served, on the Izlude-Prontera travel corridor) is a real
+example: its original travel-corridor population from `academy.txt` (8 declarations, Count summing
+to 340 - Poring/Lunatic/Fabre/Little Poring) is joined by Christmas 2013 and Halloween 2013 event
+declarations from two entirely different files (4 more declarations, Count summing to 15 -
+Smokey's Gift/Sock, Organic/Inorganic Jakk), for 8 total declarations whose Counts sum to 355 -
+`GeneratedMobSpawnRegistry.GetForMap("prt_fild08d")` returns all 8, not merely the original 4 the
+old hand-picked slice had. Declarations are never deduplicated by content - two spawn lines with
+identical Map/MobId/coordinates at different source locations remain two distinct entities,
+matching pinned rAthena's own behavior; declaration merge order within one map's array is
+deterministic (canonical relative source path, then source line).
+
+### Still missing (explicitly deferred, out of scope for this branch)
+
+- `boss_monster` declarations, MVP spawning/rewards, and Mob Skills/Drops/RaceGroups/AI/size-override
+  runtime - none of these exist anywhere in this project; only ordinary `monster` SOURCE
+  representation is complete.
+- `RespawnRandomDelay` (pinned `delay2`) is preserved as data but not yet consumed by
+  `MonsterRegistry.ScheduleRespawnIfNeeded` - real respawn timing still uses only the base delay.
+- Fixed/rectangular spawn-area placement (`Xs`/`Ys` > 0) still throws `NotSupportedException` from
+  `RathenaCompatibleMobSpawnCellSelector` for maps with real collision data (see that type's own
+  doc comment) - only map-wide-random (`Xs=Ys=0`) declarations resolve real collision-backed cells
+  today.
+- No new maps were added to `MapServerHostingScope.ServedMaps` by this branch - registry
+  completeness does not imply a map is actually hosted.
+
 ## Travel corridor: Izlude -> prt_fild08d -> Prontera
 
 `izlude-prontera-travel-trace.txt` documents the capture evidence for the next slice beyond

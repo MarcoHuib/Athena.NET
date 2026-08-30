@@ -333,8 +333,14 @@ public sealed record MobRaceGroupEntry(string Name, bool Value);
 public sealed record MobDropEntry(string Item, int Rate, bool StealProtected = false, string? RandomOptionGroup = null);
 
 // One pinned `monster` spawn-line declaration (npc/re/mobs/*.txt), scoped to
-// a single map. `Count` instances are maintained on that map; `RespawnDelayMs`
-// is the pinned mob.delay1 (npc_parse_mob defaults to 5000 when unspecified).
+// a single map. `Count` instances are maintained on that map; `RespawnDelay`
+// is the pinned mob.delay1 (npc_parse_mob defaults to 5000 when the 3rd `w4`
+// field - delay1 - is omitted; see MobDataCompiler.ReadMobSpawns). `RespawnRandomDelay`
+// is the pinned mob.delay2 - pinned mob_delay_amount (mob.cpp:1071-1073) computes
+// the actual respawn time as `delay1 + rnd()%delay2` (only when delay2 is nonzero) -
+// genuine random-variance source data, not noise, and preserved losslessly here even
+// though MonsterRegistry.ScheduleRespawnIfNeeded currently only consumes RespawnDelay
+// (the random component is a documented runtime gap, not a data gap).
 // X/Y/Xs/Ys are the pinned declaration's own `<map>,<x>,<y>[,<xs>,<ys>]` fields
 // (mob.cpp mob_spawn / npc_parse_mob), preserved losslessly rather than
 // discarded at compile time - see IMobSpawnCellSelector for how a
@@ -344,7 +350,17 @@ public sealed record MobDropEntry(string Item, int Rate, bool StealProtected = f
 // pinned parser leaving spawn->xs/ys at their zero-initialized default in
 // that case (npc_parse_mob only assigns them when the optional 4th/5th
 // columns are present).
-public sealed record MobSpawnDefinition(MobDefinition Mob, string Map, int Count, int RespawnDelayMs, WorldSourceInfo Source, short X = 0, short Y = 0, short Xs = 0, short Ys = 0);
+// DeathEvent/Size/Ai are the pinned `w4` format's remaining optional positions
+// (`<mobid>,<count>,<delay1>,<delay2>,<event>,<size>,<ai>` - npc_parse_mob's own
+// sscanf format string). Preserved losslessly as SOURCE DATA even though no
+// death-event/size-override/AI-override runtime exists in this project (and none
+// is added here) - see ai/world-data.md. `null` means the field was OMITTED from
+// the source line; a present DeathEvent (including the pinned tree's own inert
+// literal "0" placeholder values) is stored verbatim. Size reuses MobSize exactly
+// (pinned SZ_SMALL/SZ_MEDIUM/SZ_BIG); Ai mirrors pinned `enum mob_ai` numerically -
+// no symbolic enum exists for it since the pinned ordinary-monster domain currently
+// has zero real occurrences of either field.
+public sealed record MobSpawnDefinition(MobDefinition Mob, string Map, int Count, int RespawnDelay, int RespawnRandomDelay, WorldSourceInfo Source, short X = 0, short Y = 0, short Xs = 0, short Ys = 0, string? DeathEvent = null, MobSize? Size = null, int? Ai = null);
 
 // One pinned quest_db.yml `Drops:` entry (quest.cpp QuestDatabase::parseBodyNode
 // / quest_update_objective's drop-processing loop). This is intentionally NOT a

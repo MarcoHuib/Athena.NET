@@ -56,7 +56,7 @@ public sealed class MapServerWorldGameplayRulesTests
         var maps = new[]
             {
                 "int_land", "int_land01", "int_land02", "int_land03", "int_land04",
-                "prt_fild08d",
+                "prt_fild08d", "prontera",
             }
             .Select(name => new MapCollisionMap(name, 100, 100, Enumerable.Repeat(MapCellFlags.Walkable, 100 * 100).ToArray()));
         var provider = new MapCollisionProvider(maps);
@@ -89,12 +89,18 @@ public sealed class MapServerWorldGameplayRulesTests
         // Covers every int_land family member EXCEPT the generic base map, so this specifically
         // guards against silently tolerating a missing generic/base map (the exact shape of the
         // regression this task fixes) rather than an arbitrary uncovered instanced duplicate.
-        var maps = new[] { "int_land01", "int_land02", "int_land03", "int_land04" }
+        // servedMaps is now REQUIRED here (generate-mob-spawns/ai/world-data.md: production
+        // generated spawn coverage now includes all 9,841 valid pinned declarations across ~800
+        // maps, not just the tutorial/travel-corridor slice) - matching real production composition
+        // (MapServerApp.RunAsync always passes MapServerHostingScope.ServedMaps) so this test still
+        // exercises exactly the intended int_land gap rather than tripping on an unrelated served
+        // map (e.g. "prontera") this fixture never intended to cover.
+        var maps = new[] { "int_land01", "int_land02", "int_land03", "int_land04", "prt_fild08d", "prontera" }
             .Select(name => new MapCollisionMap(name, 100, 100, Enumerable.Repeat(MapCellFlags.Walkable, 100 * 100).ToArray()));
         var provider = new MapCollisionProvider(maps); // Generic int_land deliberately uncovered.
 
         var exception = Assert.Throws<InvalidOperationException>(
-            () => MapServerWorld.Build(new GameplayRuleServices(new RenewalBasicAttackRules()), collisionProvider: provider));
+            () => MapServerWorld.Build(new GameplayRuleServices(new RenewalBasicAttackRules()), collisionProvider: provider, servedMaps: MapServerHostingScope.ServedMaps));
         Assert.Contains("int_land", exception.Message);
     }
 
@@ -190,24 +196,31 @@ public sealed class MapServerHostingScopeStartupValidationTests
     private static MapCollisionProvider CollisionProviderFor(params string[] mapNames) =>
         new(mapNames.Select(name => new MapCollisionMap(name, 100, 100, Enumerable.Repeat(MapCellFlags.Walkable, 100 * 100).ToArray())));
 
-    // The exact real regression: "prontera" is declared served (MapServerHostingScope.ServedMaps)
-    // but has zero generated MobSpawnDefinition rows anywhere - proving this validation catches a
-    // gap the mob-spawn-only guard genuinely cannot see. Every other served map is covered so this
-    // isolates prontera specifically as the missing one.
+    // The exact real regression this validation guards against: a served map
+    // (MapServerHostingScope.ServedMaps) with zero generated MobSpawnDefinition rows anywhere -
+    // proving this validation catches a gap the mob-spawn-only guard genuinely cannot see. "izlude_d"
+    // is the served example now that generate-mob-spawns (ai/world-data.md's "Generated mob spawns"
+    // section) generates all 9,841 valid pinned declarations: "prontera" - this test's ORIGINAL
+    // zero-spawn example - now genuinely has real spawns (e.g. WILD_ROSE,
+    // npc/pre-re/mobs/citycleaners.txt) and is exactly the kind of map this whole branch was meant
+    // to stop being zero-spawn, so it can no longer serve as a "zero mob spawns" example; izlude_d
+    // remains genuinely zero-spawn (it is reached only via #intro_to_izlude_d's scripted WarpAsync
+    // call, not any monster.txt declaration - verified exhaustively across every generated file).
+    // Every other served map is covered so this isolates izlude_d specifically as the missing one.
     [Fact]
     public void RequireCollisionForAllServedMaps_ProponentServedMapWithZeroMobSpawns_StillFailsWhenCollisionAbsent()
     {
-        Assert.DoesNotContain(GeneratedScriptRegistry.MobSpawns, spawn => string.Equals(spawn.Map, "prontera", StringComparison.OrdinalIgnoreCase));
-        Assert.Contains("prontera", MapServerHostingScope.ServedMaps);
+        Assert.DoesNotContain(GeneratedScriptRegistry.MobSpawns, spawn => string.Equals(spawn.Map, "izlude_d", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains("izlude_d", MapServerHostingScope.ServedMaps);
 
         var provider = CollisionProviderFor(
             "int_land", "int_land01", "int_land02", "int_land03", "int_land04",
             "iz_int", "iz_int01", "iz_int02", "iz_int03", "iz_int04",
-            "izlude_d", "prt_fild08d"); // prontera deliberately absent.
+            "prontera", "prt_fild08d"); // izlude_d deliberately absent.
 
         var exception = Assert.Throws<InvalidOperationException>(() =>
             MapServerHostingScope.RequireCollisionForAllServedMaps(provider));
-        Assert.Contains("prontera", exception.Message);
+        Assert.Contains("izlude_d", exception.Message);
     }
 
     [Fact]
@@ -272,9 +285,15 @@ public sealed class MapServerWorldProductionCollisionCompositionTests
     [Fact]
     public void Build_WithRealPinnedMapCache_ProducesGenuinelyCollisionBackedPositions_NotTheFallbackRaster()
     {
+        // MapCollisionStartupLoader.Load merges the same three ruleset-layered map_cache.dat files
+        // (db/import, db/re, db/) production MapServerApp.RunAsync composes against - matching that
+        // exact production path is now load-bearing here: "prontera" (a now-real spawn-bearing
+        // served map, generate-mob-spawns/ai/world-data.md) exists ONLY in the Renewal-specific
+        // db/re/map_cache.dat, not the generic root db/map_cache.dat this test used to read directly
+        // (see MapCollisionStartupLoader's own doc comment for the prior live-crash trace that first
+        // established this). Reading only the root file here would silently miss it again.
         var mapCachePath = Path.Combine(FindRepositoryRoot(), "legacy/rathena/db/map_cache.dat");
-        var maps = RathenaMapCacheReader.ReadAllFromFile(mapCachePath);
-        var provider = new MapCollisionProvider(maps);
+        var provider = MapCollisionStartupLoader.Load([], mapCachePath, RagnarokRuleSet.Renewal);
 
         // servedMaps: pinned map_cache.dat genuinely has no collision data for plain prt_fild08
         // (only its a/b/c/d instanced duplicates - see MapServerHostingScope's own doc comment), so
@@ -323,7 +342,7 @@ public sealed class MapServerWorldServedMapsTests
     [Fact]
     public void ServedStartMapWithNoStaticWarp_IsInstantiatedNormally()
     {
-        var provider = CollisionProviderFor("int_land", "int_land01", "int_land02", "int_land03", "int_land04", "prt_fild08d");
+        var provider = CollisionProviderFor("int_land", "int_land01", "int_land02", "int_land03", "int_land04", "prt_fild08d", "prontera");
 
         var world = MapServerWorld.Build(new GameplayRuleServices(new RenewalBasicAttackRules()), collisionProvider: provider, servedMaps: MapServerHostingScope.ServedMaps);
 
@@ -339,7 +358,7 @@ public sealed class MapServerWorldServedMapsTests
     [Fact]
     public void ServedScriptedWarpMap_DoesNotBlockCompositionOfTheRestOfTheWorld()
     {
-        var provider = CollisionProviderFor("int_land", "int_land01", "int_land02", "int_land03", "int_land04", "prt_fild08d");
+        var provider = CollisionProviderFor("int_land", "int_land01", "int_land02", "int_land03", "int_land04", "prt_fild08d", "prontera");
 
         var world = MapServerWorld.Build(new GameplayRuleServices(new RenewalBasicAttackRules()), collisionProvider: provider, servedMaps: MapServerHostingScope.ServedMaps);
 
@@ -354,7 +373,7 @@ public sealed class MapServerWorldServedMapsTests
     [Fact]
     public void UnservedMapWithGeneratedMobs_IsNotInstantiated()
     {
-        var provider = CollisionProviderFor("int_land", "int_land01", "int_land02", "int_land03", "int_land04", "prt_fild08d");
+        var provider = CollisionProviderFor("int_land", "int_land01", "int_land02", "int_land03", "int_land04", "prt_fild08d", "prontera");
 
         var world = MapServerWorld.Build(new GameplayRuleServices(new RenewalBasicAttackRules()), collisionProvider: provider, servedMaps: MapServerHostingScope.ServedMaps);
 
@@ -380,7 +399,7 @@ public sealed class MapServerWorldServedMapsTests
     public void ServedMapWithMissingCollisionData_FailsLoudly()
     {
         // prt_fild08d IS served but deliberately not covered by this provider.
-        var provider = CollisionProviderFor("int_land", "int_land01", "int_land02", "int_land03", "int_land04");
+        var provider = CollisionProviderFor("int_land", "int_land01", "int_land02", "int_land03", "int_land04", "prontera");
 
         var exception = Assert.Throws<InvalidOperationException>(() =>
             MapServerWorld.Build(new GameplayRuleServices(new RenewalBasicAttackRules()), collisionProvider: provider, servedMaps: MapServerHostingScope.ServedMaps));
@@ -389,21 +408,33 @@ public sealed class MapServerWorldServedMapsTests
     }
 
     // prt_fild08d IS served and IS covered by collision data - its full source-backed population
-    // (110 Poring + 100 Lunatic + 100 Fabre + 30 Little Poring = 340, matching
-    // izlude-prontera-travel-trace.txt/legacy/rathena/npc/re/mobs/academy.txt) must instantiate.
+    // must instantiate. The travel-corridor's own academy.txt content (110 Poring + 100 Lunatic +
+    // 100 Fabre + 30 Little Poring = 340, izlude-prontera-travel-trace.txt) was the complete picture
+    // when only that one source file was generated; now that generate-mob-spawns scans every pinned
+    // npc/**/*.txt (ai/world-data.md's "Generated mob spawns" section), TWO more real pinned
+    // declarations targeting this exact map surface from OTHER source files that were never
+    // generated before: npc/events/christmas_2013.txt:1706-1707 (5 Smokey's Gift Box + 5 Smokey's
+    // Sock = 10) and npc/events/halloween_2013.txt:831,1134 (1 Organic Jakk + 4 Inorganic Jakk = 5),
+    // for a true total of 355 - never silently dropped/merged (task section 42/43: multiple source
+    // files targeting the same map must union deterministically, and distinct declarations at
+    // distinct source locations are never deduplicated).
     [Fact]
     public void PrtFild08d_ServedAndCollisionBacked_InstantiatesFullSourceBackedPopulation()
     {
-        var provider = CollisionProviderFor("int_land", "int_land01", "int_land02", "int_land03", "int_land04", "prt_fild08d");
+        var provider = CollisionProviderFor("int_land", "int_land01", "int_land02", "int_land03", "int_land04", "prt_fild08d", "prontera");
 
         var world = MapServerWorld.Build(new GameplayRuleServices(new RenewalBasicAttackRules()), collisionProvider: provider, servedMaps: MapServerHostingScope.ServedMaps);
 
         var onPrtFild08d = world.Monsters.AllInstances.Where(instance => instance.Map == "prt_fild08d").ToArray();
-        Assert.Equal(340, onPrtFild08d.Length);
+        Assert.Equal(355, onPrtFild08d.Length);
         Assert.Equal(110, onPrtFild08d.Count(instance => instance.Spawn.Mob.AegisName == "PORING"));
         Assert.Equal(100, onPrtFild08d.Count(instance => instance.Spawn.Mob.AegisName == "LUNATIC"));
         Assert.Equal(100, onPrtFild08d.Count(instance => instance.Spawn.Mob.AegisName == "FABRE"));
         Assert.Equal(30, onPrtFild08d.Count(instance => instance.Spawn.Mob.AegisName == "LITTLE_PORING"));
+        Assert.Equal(5, onPrtFild08d.Count(instance => instance.Spawn.Mob.AegisName == "XMAS_SMOKEY_GIFT"));
+        Assert.Equal(5, onPrtFild08d.Count(instance => instance.Spawn.Mob.AegisName == "XMAS_SMOKEY_SOCK"));
+        Assert.Equal(1, onPrtFild08d.Count(instance => instance.Spawn.Mob.AegisName == "ORGANIC_JAKK"));
+        Assert.Equal(4, onPrtFild08d.Count(instance => instance.Spawn.Mob.AegisName == "INORGANIC_JAKK"));
         Assert.All(onPrtFild08d, instance => Assert.True(instance.IsAlive));
     }
 }

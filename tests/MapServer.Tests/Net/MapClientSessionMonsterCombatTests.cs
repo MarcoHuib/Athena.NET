@@ -164,7 +164,7 @@ public sealed class MapClientSessionMonsterCombatTests
         var stream = client.GetStream();
 
         var allocator = new WorldActorIdAllocator();
-        var spawnDefinition = new MobSpawnDefinition(mobDefinition ?? GeneratedMobs.GPoring, "int_land03", 1, 5000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "test", 0));
+        var spawnDefinition = new MobSpawnDefinition(mobDefinition ?? GeneratedMobs.GPoring, "int_land03", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "test", 0));
         var registry = new MonsterRegistry([spawnDefinition], allocator, new FixedCellSelector(75, 51), TimeProvider.System);
         var questDrops = new QuestDropResolver(Generated.GameData.Quests.GeneratedQuestDrops.All);
         var combat = new MonsterCombatCoordinator(registry, questDrops, new RenewalBasicAttackRules(rollWeaponAtk));
@@ -921,8 +921,8 @@ public sealed class MapClientSessionMonsterCombatTests
         using var _ = client;
 
         var allocator = new WorldActorIdAllocator();
-        var spawnA = new MobSpawnDefinition(GeneratedMobs.GPoring, "int_land03", 1, 5000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "test", 0));
-        var spawnB = new MobSpawnDefinition(GeneratedMobs.GPoring, "int_land03", 1, 5000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "test", 0));
+        var spawnA = new MobSpawnDefinition(GeneratedMobs.GPoring, "int_land03", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "test", 0));
+        var spawnB = new MobSpawnDefinition(GeneratedMobs.GPoring, "int_land03", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "test", 0));
         var registry = new MonsterRegistry([spawnA, spawnB], allocator, new SequentialCellSelector((75, 51), (80, 55)), TimeProvider.System);
         var questDrops = new QuestDropResolver(Generated.GameData.Quests.GeneratedQuestDrops.All);
         var combat = new MonsterCombatCoordinator(registry, questDrops, new RenewalBasicAttackRules(MinWeaponAtkRoll));

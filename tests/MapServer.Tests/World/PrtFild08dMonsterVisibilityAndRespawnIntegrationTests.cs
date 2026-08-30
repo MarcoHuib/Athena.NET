@@ -4,7 +4,7 @@ using System.Net.Sockets;
 using Athena.Net.MapServer.Config;
 using Athena.Net.MapServer.Gameplay.Rules.Renewal;
 using Athena.Net.MapServer.Generated.GameData.Mobs;
-using Athena.Net.MapServer.Generated.World.PrtFild08;
+using Athena.Net.MapServer.Generated.World;
 using Athena.Net.MapServer.Net;
 using Athena.Net.MapServer.World;
 
@@ -87,10 +87,10 @@ public sealed class PrtFild08dMonsterVisibilityAndRespawnIntegrationTests
         // ordinary Poring/1002, count 110, delay 5000 for prt_fild08d - ai/world-data.md), not a
         // hand-authored test fixture. Only the CELL SELECTOR is a test double (deterministic
         // placement), matching every other MapClientSession integration test's own convention.
-        var spawn = PrtFild08MobSpawns.PrtFild08D.Single(s => s.Mob == GeneratedMobs.Poring);
+        var spawn = GeneratedMobSpawnRegistry.GetForMap("prt_fild08d").Single(s => s.Mob == GeneratedMobs.Poring);
         Assert.Same(GeneratedMobs.Poring, spawn.Mob);
         Assert.Equal(110, spawn.Count);
-        Assert.Equal(5000, spawn.RespawnDelayMs);
+        Assert.Equal(5000, spawn.RespawnDelay);
 
         var clock = new FakeTimeProvider();
         var allocator = new WorldActorIdAllocator();
@@ -181,7 +181,7 @@ public sealed class PrtFild08dMonsterVisibilityAndRespawnIntegrationTests
         Assert.False(target.IsAlive);
 
         // --- Respawn through the EXISTING generic respawn pipeline (same as every other map) ---
-        clock.Advance(TimeSpan.FromMilliseconds(target.Spawn.RespawnDelayMs + 1));
+        clock.Advance(TimeSpan.FromMilliseconds(target.Spawn.RespawnDelay + 1));
         var respawned = registry.ProcessDueRespawns();
         Assert.Single(respawned);
         Assert.Same(target, respawned[0]);

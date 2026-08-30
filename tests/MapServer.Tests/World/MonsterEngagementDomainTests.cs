@@ -19,7 +19,7 @@ public sealed class MonsterEngagementDomainTests
 
     private static MobInstance MakeEngagedInstance(ushort x, ushort y, uint targetAccountId = 500, int attackRange = 1)
     {
-        var spawn = new MobSpawnDefinition(MakeMob(attackRange), "int_land01", 40, 5000, new("rAthena", "abc", "x.txt", 1));
+        var spawn = new MobSpawnDefinition(MakeMob(attackRange), "int_land01", 40, 5000, 0, new("rAthena", "abc", "x.txt", 1));
         var instance = new MobInstance(1, spawn, x, y);
         instance.TryAcquireTarget(targetAccountId, mode: MobMode.None);
         return instance;

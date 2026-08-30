@@ -13,10 +13,10 @@ public sealed class RathenaCompatibleMobSpawnCellSelectorTests
         Source: new("rAthena", "abc", "db/re/mob_db.yml", 1));
 
     private static MobSpawnDefinition MapWideSpawn(string map = "test_map", int count = 1) =>
-        new(MakeMob(), map, count, 5000, new("rAthena", "abc", "x.txt", 1)); // X=Y=Xs=Ys default 0.
+        new(MakeMob(), map, count, 5000, 0, new("rAthena", "abc", "x.txt", 1)); // X=Y=Xs=Ys default 0.
 
     private static MobSpawnDefinition RectangularSpawn() =>
-        new(MakeMob(), "test_map", 1, 5000, new("rAthena", "abc", "x.txt", 1), X: 150, Y: 180, Xs: 10, Ys: 12);
+        new(MakeMob(), "test_map", 1, 5000, 0, new("rAthena", "abc", "x.txt", 1), X: 150, Y: 180, Xs: 10, Ys: 12);
 
     // All-walkable square map with the given side length, so every cell inside pinned traversal
     // bounds (0 <= x < side-1, 0 <= y < side-1) is a valid candidate.

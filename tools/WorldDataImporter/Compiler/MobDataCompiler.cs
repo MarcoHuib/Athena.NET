@@ -132,7 +132,16 @@ internal static class MobDataCompiler
         ["27"] = 0x8084, ["ABR_PASSIVE"] = 0x21, ["ABR_OFFENSIVE"] = 0xA5,
     };
 
-    internal sealed record MobSpawnData(string Map, int MobId, int Count, int RespawnDelayMs, string SourceFile, int SourceLine, short X, short Y, short Xs, short Ys);
+    // DeathEvent/Size/Ai mirror pinned npc_parse_mob's `w4` format's remaining optional positions
+    // (`<mobid>,<count>,<delay1>,<delay2>,<event>,<size>,<ai>`) - preserved losslessly as source
+    // data even though no death-event/size-override/AI-override runtime exists in this project.
+    // `null` means the field was omitted from the source line; a present DeathEvent (including the
+    // pinned tree's own inert literal "0" placeholder values, see ReadMobSpawns) is stored verbatim.
+    // Size reuses this file's own MobSizeData (mirrors Athena.Net.MapServer.World.MobSize exactly -
+    // see MobSizeData's own doc comment) rather than a raw int, for the same reason mob.Size does
+    // above: a present-but-out-of-[0,2]-range source value should fail generation loudly instead of
+    // being silently cast into a meaningless enum member.
+    internal sealed record MobSpawnData(string Map, int MobId, int Count, int RespawnDelay, int RespawnRandomDelay, string SourceFile, int SourceLine, short X, short Y, short Xs, short Ys, string? DeathEvent = null, MobSizeData? Size = null, int? Ai = null);
 
     // Parses one `- Id: <n>` block out of mob_db.yml up to (not including) the
     // next top-level `- Id:` line. Defaults for fields absent from the pinned
@@ -560,31 +569,90 @@ internal static class MobDataCompiler
         var lines = spawnScriptText.Split('\n');
         for (var i = 0; i < lines.Length; i++)
         {
-            var match = SpawnLineRegex().Match(lines[i]);
-            if (!match.Success) continue;
-            if (!string.Equals(match.Groups["name"].Value, mobName, StringComparison.Ordinal)) continue;
-            var map = match.Groups["map"].Value;
-            if (excludedMaps is not null && excludedMaps.Contains(map)) continue;
-            var count = int.Parse(match.Groups["count"].Value, CultureInfo.InvariantCulture);
-            var delayGroup = match.Groups["delay1"];
-            var delay = delayGroup.Success ? int.Parse(delayGroup.Value, CultureInfo.InvariantCulture) : 0;
-            var x = short.Parse(match.Groups["x"].Value, CultureInfo.InvariantCulture);
-            var y = short.Parse(match.Groups["y"].Value, CultureInfo.InvariantCulture);
-            var xsGroup = match.Groups["xs"];
-            var ysGroup = match.Groups["ys"];
-            var xs = xsGroup.Success ? short.Parse(xsGroup.Value, CultureInfo.InvariantCulture) : (short)0;
-            var ys = ysGroup.Success ? short.Parse(ysGroup.Value, CultureInfo.InvariantCulture) : (short)0;
-            results.Add(new MobSpawnData(
-                map,
-                int.Parse(match.Groups["mobid"].Value, CultureInfo.InvariantCulture),
-                count,
-                delay,
-                sourceFile,
-                i + 1,
-                x, y, xs, ys));
+            if (!TryParseSpawnLine(lines[i], sourceFile, i + 1, out var spawn, out var name)) continue;
+            if (!string.Equals(name, mobName, StringComparison.Ordinal)) continue;
+            if (excludedMaps is not null && excludedMaps.Contains(spawn.Map)) continue;
+            results.Add(spawn);
         }
         if (results.Count == 0) throw new ArgumentException($"No '{mobName}' monster spawn declarations were found in the pinned source.");
         return results;
+    }
+
+    // Every ordinary `monster` declaration in the file, regardless of mob name/id - the
+    // generate-mob-spawns CLI command's own scan needs every declaration, not one name at a time
+    // like ReadMobSpawns (which single-mob callers such as compile-mob-spawn still use). Shares the
+    // SAME TryParseSpawnLine helper as ReadMobSpawns so there remains exactly one spawn-line parser
+    // (task's "strong preference: one shared parser" - RepositoryDomainAnalyzers.AnalyzeMobSpawns
+    // already calls ReadMobSpawns per-name; a future cleanup could switch it to this all-at-once
+    // form too, but that is not required for parser unification since both paths already bottom out
+    // in TryParseSpawnLine).
+    internal static IReadOnlyList<MobSpawnData> ReadAllMobSpawns(string spawnScriptText, string sourceFile)
+    {
+        var results = new List<MobSpawnData>();
+        var lines = spawnScriptText.Split('\n');
+        for (var i = 0; i < lines.Length; i++)
+            if (TryParseSpawnLine(lines[i], sourceFile, i + 1, out var spawn, out _))
+                results.Add(spawn);
+        return results;
+    }
+
+    // Pinned npc_parse_mob (npc.cpp:5218): delay1 defaults to 5000 when the 3rd `w4` field is
+    // absent (the local `int32 delay = 5000` initializer, never overwritten by sscanf when that
+    // field is missing) - NOT 0. delay2 defaults to 0 (spawn_data is memset to 0 before parsing).
+    // DeathEvent/Size/Ai follow the SAME omitted-means-null rule as Xs/Ys above; a present
+    // DeathEvent has its optional surrounding quotes (the pinned tree's own convention for real
+    // event labels - see SpawnLine's own doc comment) stripped so callers always see one logical
+    // string regardless of source quoting style.
+    private static bool TryParseSpawnLine(string line, string sourceFile, int sourceLine, out MobSpawnData spawn, out string name)
+    {
+        var match = SpawnLineRegex().Match(line);
+        if (!match.Success) { spawn = null!; name = string.Empty; return false; }
+        name = match.Groups["name"].Value;
+        var map = match.Groups["map"].Value;
+        var count = int.Parse(match.Groups["count"].Value, CultureInfo.InvariantCulture);
+        var delay1Group = match.Groups["delay1"];
+        var delay1 = delay1Group.Success ? int.Parse(delay1Group.Value, CultureInfo.InvariantCulture) : 5000;
+        var delay2Group = match.Groups["delay2"];
+        var delay2 = delay2Group.Success ? int.Parse(delay2Group.Value, CultureInfo.InvariantCulture) : 0;
+        var x = short.Parse(match.Groups["x"].Value, CultureInfo.InvariantCulture);
+        var y = short.Parse(match.Groups["y"].Value, CultureInfo.InvariantCulture);
+        var xsGroup = match.Groups["xs"];
+        var ysGroup = match.Groups["ys"];
+        var xs = xsGroup.Success ? short.Parse(xsGroup.Value, CultureInfo.InvariantCulture) : (short)0;
+        var ys = ysGroup.Success ? short.Parse(ysGroup.Value, CultureInfo.InvariantCulture) : (short)0;
+        var eventGroup = match.Groups["event"];
+        var deathEvent = eventGroup.Success ? StripQuotes(eventGroup.Value) : null;
+        var sizeGroup = match.Groups["size"];
+        var size = sizeGroup.Success ? ParseSize(sizeGroup.Value, sourceFile, sourceLine) : (MobSizeData?)null;
+        var aiGroup = match.Groups["ai"];
+        var ai = aiGroup.Success ? int.Parse(aiGroup.Value, CultureInfo.InvariantCulture) : (int?)null;
+        spawn = new MobSpawnData(
+            map,
+            int.Parse(match.Groups["mobid"].Value, CultureInfo.InvariantCulture),
+            count,
+            delay1,
+            delay2,
+            sourceFile,
+            sourceLine,
+            x, y, xs, ys,
+            deathEvent, size, ai);
+        return true;
+    }
+
+    private static string StripQuotes(string value) =>
+        value.Length >= 2 && value[0] == '"' && value[^1] == '"' ? value[1..^1] : value;
+
+    // Fail closed (task section 21): a present spawn-line size field outside pinned SZ_SMALL(0)..
+    // SZ_BIG(2) is a genuine unsupported-syntax case, not silently coerced into a meaningless enum
+    // member. No real pinned ordinary-monster declaration exercises this today (verified
+    // exhaustively - zero rows have a 6th `w4` field at all), but a future pinned revision that adds
+    // one must be caught here rather than corrupting generated output.
+    private static MobSizeData ParseSize(string raw, string sourceFile, int sourceLine)
+    {
+        var value = int.Parse(raw, CultureInfo.InvariantCulture);
+        if (!Enum.IsDefined(typeof(MobSizeData), value))
+            throw new ArgumentException($"Unsupported mob spawn size {value} at {sourceFile}:{sourceLine}; expected 0 (Small), 1 (Medium), or 2 (Big).");
+        return (MobSizeData)value;
     }
 
     internal static string GenerateMobDefinition(MobDefinitionData mob, string commit, string className, string constantName, string sourceFile, int sourceLine) =>
@@ -702,6 +770,37 @@ internal static class MobDataCompiler
                string.Equals(reader.ReadLine(), "// Generated by Athena.WorldCompiler.", StringComparison.Ordinal);
     }
 
+    // Same safe-stale-cleanup contract as IsOwnedGeneratedMobFile (task section 36: delete only
+    // files this generator owns, by filename-prefix PLUS header validation) - adapted for
+    // generate-mob-spawns' own one-file-per-source-file shape (`<className>.<Suffix>.cs` for every
+    // pinned NPC source file, `<className>.Registry.cs` for the map-keyed aggregation), where
+    // "category" has no meaning (there is only ever one category: mob spawns).
+    // Map-oriented spawn generation (ai/world-data.md's "Generated mob spawns" section) emits one
+    // physical file per map/world-family module (e.g. "PrtFild08MobSpawns.cs",
+    // "PayFild01MobSpawns.cs", "EvtZombieMobSpawns.cs") rather than the earlier source-file-sharded
+    // "<className>.<Suffix>.cs" shape - every generated spawn file's own basename ends with the
+    // fixed "MobSpawns.cs" suffix (explicit plural: each file/class owns a COLLECTION of
+    // MobSpawnDefinition records, and "Spawn" alone was ambiguous against future NPC/boss/dynamic
+    // spawn concepts), distinguishing it unambiguously from hand-maintained sibling files in the
+    // same folder (*Npcs.cs/*Warps.cs/*World.cs, Scripts/) which never end that way. The bare
+    // "Spawn.cs" suffix is ALSO recognized here purely so a one-time regeneration after this rename
+    // can safely delete the previous generation's now-stale files - the generator itself never
+    // emits that suffix anymore. The registry itself is named literally `registryFileName` (e.g.
+    // "GeneratedMobSpawnRegistry.cs", deliberately unchanged - "MobSpawn" was already the correct
+    // compound noun there). Both still require the standard auto-generated header before deletion -
+    // filename pattern alone is not proof of ownership.
+    internal static bool IsOwnedGeneratedMobSpawnFile(string path, string registryFileName)
+    {
+        var name = Path.GetFileName(path);
+        if (!(name == registryFileName ||
+              name.EndsWith("MobSpawns.cs", StringComparison.Ordinal) ||
+              name.EndsWith("Spawn.cs", StringComparison.Ordinal)))
+            return false;
+        using var reader = new StreamReader(path);
+        return string.Equals(reader.ReadLine(), "// <auto-generated>", StringComparison.Ordinal) &&
+               string.Equals(reader.ReadLine(), "// Generated by Athena.WorldCompiler.", StringComparison.Ordinal);
+    }
+
     internal static string GenerateMobSpawns(IReadOnlyList<MobSpawnData> spawns, string mobDefinitionExpression, string commit, string className, string arrayName, string worldNamespace = "Athena.Net.MapServer.Generated.World.Izlude.Academy") =>
         GenerateMobSpawnGroups([(spawns, mobDefinitionExpression, arrayName)], commit, className, worldNamespace);
 
@@ -728,13 +827,7 @@ internal static class MobDataCompiler
             .AppendLine("{")
             .AppendLine("    internal static readonly MobSpawnDefinition[] All =")
             .AppendLine("    [");
-        foreach (var (spawn, mobDefinitionExpression) in entries)
-        {
-            output.Append("        new(").Append(mobDefinitionExpression).Append(", \"").Append(spawn.Map).Append("\", ")
-                .Append(spawn.Count).Append(", ").Append(spawn.RespawnDelayMs)
-                .Append(", new WorldSourceInfo(\"rAthena\", \"").Append(commit).Append("\", \"").Append(spawn.SourceFile).Append("\", ").Append(spawn.SourceLine).Append(')')
-                .Append(", X: ").Append(spawn.X).Append(", Y: ").Append(spawn.Y).Append(", Xs: ").Append(spawn.Xs).Append(", Ys: ").Append(spawn.Ys).AppendLine("),");
-        }
+        foreach (var (spawn, mobDefinitionExpression) in entries) AppendSpawnEntry(output, spawn, mobDefinitionExpression, commit);
         output.AppendLine("    ];").AppendLine("}");
         return output.ToString();
     }
@@ -773,13 +866,7 @@ internal static class MobDataCompiler
             output
                 .Append("    internal static readonly MobSpawnDefinition[] ").Append(arrayName).AppendLine(" =")
                 .AppendLine("    [");
-            foreach (var (spawn, mobDefinitionExpression) in entries)
-            {
-                output.Append("        new(").Append(mobDefinitionExpression).Append(", \"").Append(spawn.Map).Append("\", ")
-                    .Append(spawn.Count).Append(", ").Append(spawn.RespawnDelayMs)
-                    .Append(", new WorldSourceInfo(\"rAthena\", \"").Append(commit).Append("\", \"").Append(spawn.SourceFile).Append("\", ").Append(spawn.SourceLine).Append(')')
-                    .Append(", X: ").Append(spawn.X).Append(", Y: ").Append(spawn.Y).Append(", Xs: ").Append(spawn.Xs).Append(", Ys: ").Append(spawn.Ys).AppendLine("),");
-            }
+            foreach (var (spawn, mobDefinitionExpression) in entries) AppendSpawnEntry(output, spawn, mobDefinitionExpression, commit);
             output.AppendLine("    ];");
         }
         output
@@ -816,17 +903,28 @@ internal static class MobDataCompiler
             output
                 .Append("    internal static readonly MobSpawnDefinition[] ").Append(arrayName).AppendLine(" =")
                 .AppendLine("    [");
-            foreach (var spawn in spawns)
-            {
-                output.Append("        new(").Append(mobDefinitionExpression).Append(", \"").Append(spawn.Map).Append("\", ")
-                    .Append(spawn.Count).Append(", ").Append(spawn.RespawnDelayMs)
-                    .Append(", new WorldSourceInfo(\"rAthena\", \"").Append(commit).Append("\", \"").Append(spawn.SourceFile).Append("\", ").Append(spawn.SourceLine).Append(')')
-                    .Append(", X: ").Append(spawn.X).Append(", Y: ").Append(spawn.Y).Append(", Xs: ").Append(spawn.Xs).Append(", Ys: ").Append(spawn.Ys).AppendLine("),");
-            }
+            foreach (var spawn in spawns) AppendSpawnEntry(output, spawn, mobDefinitionExpression, commit);
             output.AppendLine("    ];");
         }
         output.AppendLine("}");
         return output.ToString();
+    }
+
+    // Shared `new(...)` emission for one MobSpawnDefinition, reused by every GenerateMobSpawn*
+    // shape above so the emitted argument list/formatting can never drift between them. Only emits
+    // DeathEvent/Size/Ai as named arguments when the source actually supplied a value - keeps the
+    // overwhelming majority (declarations with none of these three fields) exactly as compact as
+    // before this branch added them.
+    private static void AppendSpawnEntry(StringBuilder output, MobSpawnData spawn, string mobDefinitionExpression, string commit)
+    {
+        output.Append("        new(").Append(mobDefinitionExpression).Append(", \"").Append(spawn.Map).Append("\", ")
+            .Append(spawn.Count).Append(", ").Append(spawn.RespawnDelay).Append(", ").Append(spawn.RespawnRandomDelay)
+            .Append(", new WorldSourceInfo(\"rAthena\", \"").Append(commit).Append("\", \"").Append(spawn.SourceFile).Append("\", ").Append(spawn.SourceLine).Append(')')
+            .Append(", X: ").Append(spawn.X).Append(", Y: ").Append(spawn.Y).Append(", Xs: ").Append(spawn.Xs).Append(", Ys: ").Append(spawn.Ys);
+        if (spawn.DeathEvent is not null) output.Append(", DeathEvent: \"").Append(spawn.DeathEvent.Replace("\"", "\\\"")).Append('"');
+        if (spawn.Size is not null) output.Append(", Size: MobSize.").Append(spawn.Size);
+        if (spawn.Ai is not null) output.Append(", Ai: ").Append(spawn.Ai);
+        output.AppendLine("),");
     }
 
     // Emits a C# MobMode expression matching the generated definition's flags exactly - "None"
@@ -937,7 +1035,17 @@ internal static class MobDataCompiler
     private static readonly Regex TrailingComment = new(@"\s+#.*$", RegexOptions.None);
     private static string StripTrailingComment(string raw) => TrailingComment.Replace(raw, string.Empty);
 
-    private static readonly Regex SpawnLine = new(@"^(?<map>[A-Za-z0-9_]+),(?<x>-?\d+),(?<y>-?\d+)(?:,(?<xs>\d+),(?<ys>\d+))?\t+monster\t+(?<name>[^\t]+)\t+(?<mobid>\d+),(?<count>\d+)(?:,(?<delay1>\d+))?(?:,(?<delay2>\d+))?", RegexOptions.None);
+    // `event` mirrors pinned sscanf's `%77[^,]` - it stops at the next comma (never containing one
+    // itself), so `[^,\t\r\n]+` is a faithful capture whether or not the source line wraps it in
+    // literal quotes (the pinned tree's own convention for real death-event labels, verified: every
+    // real event value found in the inventory is `"map::Label"`-quoted; the inert `0`/`1`
+    // placeholder values are bare). Quotes, if present, are stripped by the caller so DeathEvent
+    // always stores the same logical string regardless of source quoting style. `size`/`ai` are
+    // bare non-negative integers per pinned `%11d` - zero real occurrences exist in the pinned
+    // ordinary-monster domain today (verified exhaustively), but the groups exist so a future
+    // pinned revision that adds one is captured, not silently truncated the way this regex used to
+    // drop everything past delay2.
+    private static readonly Regex SpawnLine = new(@"^(?<map>[A-Za-z0-9_]+),(?<x>-?\d+),(?<y>-?\d+)(?:,(?<xs>\d+),(?<ys>\d+))?\t+monster\t+(?<name>[^\t]+)\t+(?<mobid>\d+),(?<count>\d+)(?:,(?<delay1>\d+)(?:,(?<delay2>\d+)(?:,(?<event>[^,\t\r\n]+)(?:,(?<size>\d+)(?:,(?<ai>\d+))?)?)?)?)?", RegexOptions.None);
     private static Regex SpawnLineRegex() => SpawnLine;
 
     private static Regex ScalarRegex(string field) => new($@"^    {Regex.Escape(field)}: (.+)$", RegexOptions.Multiline);

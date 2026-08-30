@@ -17,7 +17,7 @@ public sealed class MonsterRuntimeTests
         Source: new("rAthena", "abc", "db/re/mob_db.yml", 1));
 
     private static MobSpawnDefinition MakeSpawn(MobMode mode = MobMode.CanMove, int walkSpeed = 400, string map = "test_map") =>
-        new(MakeMob(mode, walkSpeed), map, 40, 5000, new("rAthena", "abc", "npc/re/mobs/int_land.txt", 12));
+        new(MakeMob(mode, walkSpeed), map, 40, 5000, 0, new("rAthena", "abc", "npc/re/mobs/int_land.txt", 12));
 
     private static MapCollisionMap MakeAllWalkableMap(string name, int side) =>
         new(name, side, side, Enumerable.Repeat(MapCellFlags.Walkable, side * side).ToArray());
@@ -215,7 +215,7 @@ public sealed class MonsterRuntimeTests
     public void ProcessTick_RespawnedMonster_CanWalkAgain()
     {
         var map = MakeAllWalkableMap("test_map", 40);
-        var spawn = MakeSpawn(walkSpeed: 400) with { RespawnDelayMs = 1000 };
+        var spawn = MakeSpawn(walkSpeed: 400) with { RespawnDelay = 1000 };
         var clock = new FakeTimeProvider();
         var registry = new MonsterRegistry([spawn], new WorldActorIdAllocator(), new FixedCellSelector(20, 20), clock);
         var provider = new MapCollisionProvider([map]);

@@ -1,5 +1,5 @@
 using Athena.Net.MapServer.Generated.GameData.Mobs;
-using Athena.Net.MapServer.Generated.World.Izlude.Academy;
+using Athena.Net.MapServer.Generated.World;
 using Athena.Net.MapServer.World;
 
 namespace Athena.Net.MapServer.Tests.World;
@@ -18,6 +18,13 @@ namespace Athena.Net.MapServer.Tests.World;
 public sealed class PoringRandomSpawnIntegrationTests
 {
     public static TheoryData<string> Suffixes => new("", "01", "02", "03", "04");
+
+    // Equivalent to the retired GPoringSpawns (see ai/world-data.md's "Generated
+    // mob spawns" section): every int_land*/G_PORING declaration from the now-complete
+    // GeneratedMobSpawnRegistry, in the same map order the old hand-picked array used.
+    private static MobSpawnDefinition[] GPoringSpawns => new[] { "int_land", "int_land01", "int_land02", "int_land03", "int_land04" }
+        .SelectMany(map => GeneratedMobSpawnRegistry.GetForMap(map).Where(spawn => spawn.Mob.Id == GeneratedMobs.GPoring.Id))
+        .ToArray();
 
     private static string FindRepositoryRoot()
     {
@@ -51,11 +58,11 @@ public sealed class PoringRandomSpawnIntegrationTests
     {
         var mapName = "int_land" + suffix;
 
-        var spawn = Assert.Single(AcademyMobSpawns.GPoringSpawns, s => s.Map == mapName);
+        var spawn = Assert.Single(GPoringSpawns, s => s.Map == mapName);
         Assert.Same(GeneratedMobs.GPoring, spawn.Mob);
         Assert.Equal(2401, spawn.Mob.Id);
         Assert.Equal(40, spawn.Count);
-        Assert.Equal(5000, spawn.RespawnDelayMs);
+        Assert.Equal(5000, spawn.RespawnDelay);
         Assert.Equal(0, spawn.X);
         Assert.Equal(0, spawn.Y);
         Assert.Equal(0, spawn.Xs);
@@ -71,7 +78,7 @@ public sealed class PoringRandomSpawnIntegrationTests
         var mapName = "int_land" + suffix;
         provider.TryGetMap(mapName, out var map);
 
-        var spawn = Assert.Single(AcademyMobSpawns.GPoringSpawns, s => s.Map == mapName);
+        var spawn = Assert.Single(GPoringSpawns, s => s.Map == mapName);
 
         var positions = new List<(ushort X, ushort Y)>();
         for (var i = 0; i < spawn.Count; i++)
@@ -112,7 +119,7 @@ public sealed class PoringRandomSpawnIntegrationTests
         var mapName = "int_land" + suffix;
         provider.TryGetMap(mapName, out var map);
         var selector = new RathenaCompatibleMobSpawnCellSelector(provider);
-        var spawns = AcademyMobSpawns.GPoringSpawns.Where(s => s.Map == mapName).ToArray();
+        var spawns = GPoringSpawns.Where(s => s.Map == mapName).ToArray();
 
         var registry = new MonsterRegistry(spawns, new WorldActorIdAllocator(), selector, TimeProvider.System);
 
@@ -133,7 +140,7 @@ public sealed class PoringRandomSpawnIntegrationTests
         var mapName = "int_land" + suffix;
         provider.TryGetMap(mapName, out var map);
         var selector = new RathenaCompatibleMobSpawnCellSelector(provider);
-        var spawn = new MobSpawnDefinition(GeneratedMobs.GPoring, mapName, 1, 5000, new("rAthena", "abc", "x.txt", 1));
+        var spawn = new MobSpawnDefinition(GeneratedMobs.GPoring, mapName, 1, 5000, 0, new("rAthena", "abc", "x.txt", 1));
         var clock = new FakeTimeProvider();
         var registry = new MonsterRegistry([spawn], new WorldActorIdAllocator(), selector, clock);
         var instance = registry.AllInstances.Single();
@@ -159,17 +166,17 @@ public sealed class PoringRandomSpawnIntegrationTests
 
         foreach (var mapName in intLandFamily)
         {
-            var spawn = Assert.Single(AcademyMobSpawns.GPoringSpawns, s => s.Map == mapName);
+            var spawn = Assert.Single(GPoringSpawns, s => s.Map == mapName);
             Assert.Equal(40, spawn.Count);
         }
 
-        var totalGPoringInstances = AcademyMobSpawns.GPoringSpawns
+        var totalGPoringInstances = GPoringSpawns
             .Where(s => intLandFamily.Contains(s.Map))
             .Sum(s => s.Count);
         Assert.Equal(200, totalGPoringInstances);
 
         // No stray sixth entry and no map outside the family sneaking into GPoringSpawns.
-        Assert.Equal(intLandFamily.Length, AcademyMobSpawns.GPoringSpawns.Length);
+        Assert.Equal(intLandFamily.Length, GPoringSpawns.Length);
     }
 
     // Spawn diagnostics regression coverage (ai/world-data.md's "Investigation (in progress):

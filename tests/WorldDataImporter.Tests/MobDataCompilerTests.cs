@@ -328,7 +328,7 @@ public sealed class MobDataCompilerTests
         {
             Assert.Equal(2401, spawn.MobId);
             Assert.Equal(40, spawn.Count);
-            Assert.Equal(5000, spawn.RespawnDelayMs);
+            Assert.Equal(5000, spawn.RespawnDelay);
         });
         Assert.Equal(["int_land", "int_land01", "int_land02", "int_land03", "int_land04"], spawns.Select(s => s.Map));
     }
