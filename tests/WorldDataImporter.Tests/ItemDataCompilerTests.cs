@@ -229,7 +229,7 @@ public sealed class ItemDataCompilerTests
     [Fact]
     public void ReadItemDefinition_UnrecognizedSubType_ThrowsRatherThanSilentlyDefaulting()
     {
-        Assert.Throws<NotSupportedException>(() => ItemDataCompiler.ReadItemDefinition(ItemDbFixture, 1203));
+        Assert.Throws<Athena.WorldCompiler.Generation.ItemDefinitionUnsupportedException>(() => ItemDataCompiler.ReadItemDefinition(ItemDbFixture, 1203));
     }
 
     [Fact]
@@ -284,7 +284,7 @@ public sealed class ItemDataCompilerTests
     public void Generate_UnsupportedType_ThrowsRatherThanCollapsingIntoEtc()
     {
         var item = ItemDataCompiler.ReadItemDefinition(ItemDbFixture, 4001);
-        Assert.Throws<NotSupportedException>(() => ItemDataCompiler.Generate(item, "abc123", "AcademyItems", "PoringCard", "db/re/item_db_card.yml", 3));
+        Assert.Throws<Athena.WorldCompiler.Generation.ItemDefinitionUnsupportedException>(() => ItemDataCompiler.Generate(item, "abc123", "AcademyItems", "PoringCard", "db/re/item_db_card.yml", 3));
     }
 
     [Fact]
@@ -350,7 +350,7 @@ public sealed class ItemDataCompilerTests
         // Once a script commits to looking like a container (first statement IS getitem), every
         // remaining statement must also be getitem - a trailing non-getitem statement must fail
         // generation loudly rather than silently representing only the getitem prefix.
-        Assert.Throws<NotSupportedException>(() => ItemDataCompiler.ReadItemDefinition(ItemDbFixture, 23487));
+        Assert.Throws<Athena.WorldCompiler.Generation.ItemDefinitionUnsupportedException>(() => ItemDataCompiler.ReadItemDefinition(ItemDbFixture, 23487));
     }
 
     [Fact]

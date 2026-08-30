@@ -498,6 +498,82 @@ event diagnostics. The official baseline defaults to runtime `npc/` content, and
 definition-level status fails closed: future compatible-only generation may select
 only definitions whose complete executable event set is compatible.
 
+### Multi-domain analysis
+
+The NPC/warp event scan above is one input to `analyze`, not the whole picture.
+`RepositoryDomainAnalyzers` independently evaluates several other pinned rAthena
+content domains (`maps`, `items`, `mobs`, `mvp`, `mob-spawns`, `quests`, `shops`,
+`mapflags`, `functions`, `map-world`), each written to its own
+`domains/<domain>.jsonl` and folded into `result.Summary.Domains` for the
+report's multi-domain table - see `tools/WorldDataImporter/README.md`'s
+"Multi-domain analysis" section for the per-domain reference (component names,
+capability-id conventions, `--domain` filtering). The governing rule throughout:
+wherever a real compiler/converter already exists (`ItemDataCompiler`,
+`MobDataCompiler`, `QuestDropDataCompiler`, `RathenaMapCacheLayers`), use it, but
+respect its actual scope - a successful compile proves only what that specific
+converter actually converts, never a broader claim than that.
+
+`summary.json`'s `NpcSourceFilesAnalyzed`/`NpcEventsAnalyzed`/`NpcCompatible`/
+`NpcUnsupported` fields (and the matching "NPC ..." lines at the top of
+`report.md`) are scoped to the NPC/warp declaration scan ONLY - they were
+previously named `FilesAnalyzed`/`EntitiesAnalyzed`/`Compatible`/`Unsupported`,
+which read as global repository totals even though the report also covers tens
+of thousands of domain entities. There is no single meaningful blended
+compatibility percentage across every domain; `result.Summary.Domains` (the
+report's "Conversion overview" table) is the correct place to look for the
+multi-domain picture.
+
+Two static-vs-runtime splits recur across domains and must not be conflated with
+each other: an item's `StaticData` (are its database fields represented at all)
+is independent of its `RuntimeBehavior` (does its Script/EquipScript/UnEquipScript
+convert) - neither is inferred from the other, so e.g. a fully-scripted item with
+unmodeled static fields is `StaticData: PartiallyCompatible` /
+`RuntimeBehavior: FullyCompatible`, never the reverse conflation. Mobs mirror
+this with `StaticData`/`Modes`/`Drops`/`Skills` components, each deriving its
+status only from its own blockers (Priority 3/5 fixed a prior bug where
+`StaticData` was hardcoded `FullyCompatible` regardless of real gaps).
+
+Mob skills (`db/re/mob_skill_db.txt` - plain tab/comma-delimited text, not YAML)
+are a mob's `Skills` component, populated by a second pass separate from
+`mob_db.yml` parsing; there is no mob-skill runtime anywhere in this project, so
+any mob with a source-defined skill row is unconditionally `Skills: Unsupported`.
+MVP classification is derived directly from pinned `Class: Boss` +
+`Modes: Mvp: true` (verified against a real MVP mob, e.g. Golden Thief Bug) -
+not from grepping unrelated blocker strings, which is how an earlier version of
+this detection silently never fired against real data.
+
+Quest analysis distinguishes the quest's overall `Definition` (there is no
+general quest-definition converter in this project, so most non-`Targets`
+quests are honestly `NotYetAnalyzed`, not `Unsupported`) from `DropRule`
+(exactly what the narrow, single-mob/single-item `QuestDropDataCompiler`
+converts) and `Targets` (`Unsupported` only when the quest genuinely declares a
+kill-count `Targets:` block - there is no such runtime). A `DropRule` success
+never implies `Definition: FullyCompatible` for the quest as a whole.
+
+Map geometry (the `maps` domain's `Geometry` component - whether a map's
+`map_cache.dat` collision data parsed, via the shared, pure
+`Athena.Rathena.Data.RathenaMapCacheLayers.Merge` resolver also used by
+`MapCollisionStartupLoader` at MapServer startup) is distinct from map-WORLD
+completeness (the separate `map-world` domain - a per-map rollup of that map's
+own `mob-spawns`/`mapflags` entity compatibility, computed only over domains
+actually selected for the run and never claiming `FullyCompatible` when a
+considered domain has a `NotYetAnalyzed` entity anywhere on that map).
+
+Every domain entity's own `Dependencies` (mob-spawn -> map/mob, shop -> item,
+quest -> mob/item, item -> item via `Grants`) fold into the same
+`dependencies.json` the NPC/warp scan populates - one complete cross-domain
+dependency graph, not fragmented per-domain output. `--domain <name>` (repeatable)
+restricts analysis to specific domains; omitting it analyzes all of them.
+`--scope runtime` (the default) analyzes only the real runtime `npc/` tree;
+`--scope all` additionally includes `doc/`-style content for parser stress
+analysis. The complete repository-wide dry run (never run casually - it is
+intentionally excluded from normal tests) is:
+
+```bash
+dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- analyze \
+  --rathena-root legacy/rathena --scope runtime --output artifacts/world-analysis
+```
+
 Regenerate complete character data from the current pinned SHA (never edit generated output):
 
 ```bash

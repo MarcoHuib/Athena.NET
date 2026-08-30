@@ -23,7 +23,14 @@ internal sealed record CompatibilityEntity(
 internal sealed record CategorySummary(string Category, int Discovered, int Compatible, int Unsupported, int NotYetAnalyzed, int NotApplicable);
 internal sealed record EventSummary(string Event, int Compatible, int Unsupported);
 internal sealed record DefinitionCompatibilitySummary(int Total, int FullyCompatible, int PartiallyCompatible, int Unsupported, int NotApplicable);
-internal sealed record AnalysisSummary(int FilesAnalyzed, int EntitiesAnalyzed, int Compatible, int Unsupported,
+// Priority 9 (ai/world-data.md): these four fields are the NPC/warp-declaration scan's OWN
+// counts, not global multi-domain totals - the report also covers tens of thousands of domain
+// entities (items/mobs/quests/etc, see Domains below) that this record does not aggregate into
+// one blended number. Named Npc*-prefixed deliberately so a reader of summary.json/report.md
+// cannot mistake "Compatible: 41" for "41 out of everything in this repository is compatible".
+// The per-domain picture lives in Domains (RepositoryDomainAnalyzers.Summaries) - that is the
+// correct place to look for a multi-domain view; there is no single meaningful blended percentage.
+internal sealed record AnalysisSummary(int NpcSourceFilesAnalyzed, int NpcEventsAnalyzed, int NpcCompatible, int NpcUnsupported,
     IReadOnlyList<CategorySummary> Categories, IReadOnlyList<EventSummary> Events,
     DefinitionCompatibilitySummary NpcDefinitions, DefinitionCompatibilitySummary WarpNpcDefinitions,
     IReadOnlyList<DomainSummary> Domains);
@@ -116,7 +123,18 @@ internal static class RepositoryCompatibilityAnalyzer
         AddDefinitionDomain("warpnpc-definitions", warpNpcDefinitions);
         AddEventDomain("warps", ordered.Where(item => item.EntityType == "warp"));
         domainSummaries = domainSummaries.OrderBy(item => item.Domain, StringComparer.Ordinal).ToList();
-        var dependencies = ordered.Where(item => item.Dependencies is { Count: > 0 }).Select(item => new EntityDependencies(item.Id, item.Dependencies!)).ToArray();
+        // Cross-domain dependency graph: folds together the NPC/warp scan's own Dependencies
+        // (setquest/getitem/warp resolved from lowered script commands) AND every domain entity's
+        // Dependencies (mob-spawn -> map/mob, shop -> item, quest -> mob/item, item -> item via
+        // Grants) into one deterministic array - see Priority 8/ai/world-data.md. Individual
+        // dependency lists are already deduped/sorted (Entity()'s own helper for domain entities,
+        // Dependencies() above for NPC/warp events); grouping by Entity id here additionally merges
+        // the rare case where the same entity id is reported from both scans.
+        var dependencies = ordered.Where(item => item.Dependencies is { Count: > 0 }).Select(item => (item.Id, Dependencies: item.Dependencies!))
+            .Concat(domainEntities.Where(item => item.Dependencies.Count > 0).Select(item => (item.Id, item.Dependencies)))
+            .GroupBy(item => item.Id, StringComparer.Ordinal).OrderBy(group => group.Key, StringComparer.Ordinal)
+            .Select(group => new EntityDependencies(group.Key, group.SelectMany(item => item.Dependencies).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray()))
+            .ToArray();
         return new(new(files.Length, ordered.Length, compatible.Length, unsupported.Length, categories, eventSummary, npcDefinitions, warpNpcDefinitions, domainSummaries), compatible, unsupported, blockers, work, dependencies, domainEntities);
 
         void AddDefinitionDomain(string name, DefinitionCompatibilitySummary summary) => domainSummaries.Add(new(name, summary.Total, summary.FullyCompatible, summary.PartiallyCompatible, summary.Unsupported, 0, summary.NotApplicable));
@@ -313,9 +331,10 @@ internal static class RepositoryCompatibilityAnalyzer
     private static string Markdown(RepositoryAnalysisResult result)
     {
         var text = new StringBuilder("# Athena.NET rAthena Compatibility Report\n\n## Summary\n\n");
-        text.AppendLine($"Files analyzed: {result.Summary.FilesAnalyzed}");
-        text.AppendLine($"Entities/events analyzed: {result.Summary.EntitiesAnalyzed}");
-        text.AppendLine($"Compatible: {result.Summary.Compatible}"); text.AppendLine($"Unsupported: {result.Summary.Unsupported}");
+        text.AppendLine("_The counts below are scoped to the NPC/warp declaration scan only - they are NOT a global compatibility percentage. See \"Conversion overview\" for the multi-domain picture (items, mobs, quests, maps, and more)._\n");
+        text.AppendLine($"NPC source files analyzed: {result.Summary.NpcSourceFilesAnalyzed}");
+        text.AppendLine($"NPC entities/events analyzed: {result.Summary.NpcEventsAnalyzed}");
+        text.AppendLine($"NPC compatible: {result.Summary.NpcCompatible}"); text.AppendLine($"NPC unsupported: {result.Summary.NpcUnsupported}");
         text.AppendLine("\n## Conversion overview\n\n| Domain | Total | Full | Partial | Unsupported | Not analyzed | N/A |\n|---|---:|---:|---:|---:|---:|---:|");
         foreach (var domain in result.Summary.Domains) text.AppendLine($"| {domain.Domain} | {domain.Total} | {domain.FullyCompatible} | {domain.PartiallyCompatible} | {domain.Unsupported} | {domain.NotYetAnalyzed} | {domain.NotApplicable} |");
         AppendDefinitionSummary(text, "NPC definitions", result.Summary.NpcDefinitions);

@@ -217,9 +217,9 @@ public sealed class RepositoryCompatibilityAnalyzerTests
         var runtime = RepositoryCompatibilityAnalyzer.Analyze(new(fixture.Directory, fixture.Output));
         var all = RepositoryCompatibilityAnalyzer.Analyze(new(fixture.Directory, fixture.Output, Scope: AnalysisScope.All));
 
-        Assert.Equal(1, runtime.Summary.FilesAnalyzed);
+        Assert.Equal(1, runtime.Summary.NpcSourceFilesAnalyzed);
         Assert.DoesNotContain(runtime.Unsupported, item => item.EntityName == "Sample");
-        Assert.Equal(2, all.Summary.FilesAnalyzed);
+        Assert.Equal(2, all.Summary.NpcSourceFilesAnalyzed);
         Assert.Contains(all.Unsupported, item => item.EntityName == "Sample");
     }
 
@@ -244,6 +244,11 @@ public sealed class RepositoryCompatibilityAnalyzerTests
         Assert.All(result.WorkItems, item => CompatibilityDiagnosticNormalizer.Validate(item.Feature));
     }
 
+    // Priority 8's cross-domain dependencies.json coverage (NPC + mob-spawn + quest + shop + item
+    // dependencies folding into one deterministic global graph) lives in
+    // RepositoryCompatibilityAnalyzerDomainTests.cs, alongside a matching multi-domain determinism
+    // check - not duplicated here.
+
     private sealed class AnalysisFixture : IDisposable
     {
         public string Directory { get; } = Path.Combine(Path.GetTempPath(), "athena-analysis-" + Guid.NewGuid().ToString("N"));
@@ -267,6 +272,10 @@ public sealed class RepositoryCompatibilityAnalyzerTests
         public void Write(string relativePath, string text)
         {
             var path = Path.Combine(Directory, relativePath); System.IO.Directory.CreateDirectory(Path.GetDirectoryName(path)!); File.WriteAllText(path, text);
+        }
+        public void WriteBytes(string relativePath, byte[] bytes)
+        {
+            var path = Path.Combine(Directory, relativePath); System.IO.Directory.CreateDirectory(Path.GetDirectoryName(path)!); File.WriteAllBytes(path, bytes);
         }
         public void Dispose() => System.IO.Directory.Delete(Directory, true);
     }

@@ -1,6 +1,7 @@
 using Athena.Net.MapServer.Config;
 using Athena.Net.MapServer.Gameplay.Rules;
 using Athena.Net.MapServer.Logging;
+using Athena.Rathena.Data;
 
 namespace Athena.Net.MapServer.World;
 
@@ -90,44 +91,45 @@ public static class MapCollisionStartupLoader
         }
 
         var dbDirectory = Path.GetDirectoryName(resolvedPath);
-        var byMapName = new Dictionary<string, MapCollisionMap>(StringComparer.OrdinalIgnoreCase);
-
-        // Highest-to-lowest priority, matching pinned map_readallmaps' own load order exactly -
-        // each layer wins on collision over every layer loaded after it.
-        var importPath = dbDirectory is null ? null : Path.Combine(dbDirectory, "import", "map_cache.dat");
-        var importCount = importPath is null ? 0 : LoadLayeredOverlay(importPath, "import", byMapName);
-
         var rulesetSubdirectory = ruleSet switch
         {
             RagnarokRuleSet.Renewal => "re",
             RagnarokRuleSet.PreRenewal => "pre-re",
             _ => throw new ArgumentOutOfRangeException(nameof(ruleSet), ruleSet, "Unknown ruleset."),
         };
+        var importPath = dbDirectory is null ? null : Path.Combine(dbDirectory, "import", "map_cache.dat");
         var rulesetPath = dbDirectory is null ? null : Path.Combine(dbDirectory, rulesetSubdirectory, "map_cache.dat");
-        var rulesetCount = rulesetPath is null ? 0 : LoadLayeredOverlay(rulesetPath, $"ruleset-specific ({ruleSet})", byMapName);
 
-        IReadOnlyList<MapCollisionMap> baseMaps;
+        // Layering/merge semantics (first-match-wins, import > ruleset-specific > base) live in the
+        // shared, pure RathenaMapCacheLayers so this loader and WorldDataImporter's repository-wide
+        // compatibility analyzer consult exactly the same merged map index - see that type's own
+        // doc comment and ai/world-data.md. This loader owns only I/O, logging, and translating the
+        // parsed layers into runtime MapCollisionMap instances.
+        var importBytes = importPath is not null && File.Exists(importPath) ? File.ReadAllBytes(importPath) : null;
+        var rulesetBytes = rulesetPath is not null && File.Exists(rulesetPath) ? File.ReadAllBytes(rulesetPath) : null;
+        var baseBytes = File.ReadAllBytes(resolvedPath);
+
+        IReadOnlyList<RathenaMapCacheLayers.ResolvedMap> merged;
         try
         {
-            baseMaps = RathenaMapCacheReader.ReadAllFromFile(resolvedPath);
+            merged = RathenaMapCacheLayers.Merge(baseBytes, rulesetBytes, importBytes);
         }
-        catch (Exception ex) when (ex is InvalidDataException or IOException)
+        catch (MapCacheLayerException ex)
         {
-            throw new InvalidOperationException($"Configured map_cache_path '{mapCachePath}' (resolved to '{resolvedPath}') could not be read: {ex.Message}", ex);
+            throw new InvalidOperationException($"Map cache layer '{ex.Layer}' (resolved relative to '{resolvedPath}') could not be read: {ex.Message}", ex);
         }
 
-        var baseCount = 0;
-        foreach (var map in baseMaps)
+        var byMapName = new Dictionary<string, MapCollisionMap>(StringComparer.OrdinalIgnoreCase);
+        var baseCount = 0; var rulesetCount = 0; var importCount = 0;
+        foreach (var resolved in merged)
         {
-            // A higher-priority layer already won for this name (TryAdd fails silently on a real
-            // cross-layer collision - NOT the same as the duplicate-within-one-file error below,
-            // which only fires for a genuine same-file duplicate).
-            if (byMapName.ContainsKey(map.MapName)) continue;
-            if (!byMapName.TryAdd(map.MapName, map))
+            byMapName.Add(resolved.Entry.Name, ToMapCollisionMap(resolved.Entry));
+            switch (resolved.Source)
             {
-                throw new InvalidOperationException($"map_cache.dat contains duplicate map name '{map.MapName}'.");
+                case RathenaMapCacheLayers.Provenance.ImportOverlay: importCount++; break;
+                case RathenaMapCacheLayers.Provenance.RenewalOverlay: rulesetCount++; break;
+                default: baseCount++; break;
             }
-            baseCount++;
         }
 
         MapLogger.Status(
@@ -136,52 +138,21 @@ public static class MapCollisionStartupLoader
         return new MapCollisionProvider(byMapName);
     }
 
-    // One optional higher-priority overlay layer (db/import/map_cache.dat or
-    // db/{re|pre-re}/map_cache.dat), resolved RELATIVE TO the configured base map_cache_path's own
-    // containing "db" directory - e.g. configured ".../db/map_cache.dat" resolves the ruleset
-    // overlay to ".../db/re/map_cache.dat" for Renewal, the same relative "db/" + DBPATH +
-    // "map_cache.dat" layout pinned source itself uses (and "db/import/map_cache.dat" for the
-    // import layer). Absence of this file is NOT an error (silently skipped, zero maps loaded from
-    // it, `byMapName` untouched) - a deployment might genuinely lack it, and pinned rAthena's own
-    // checked-in tree ships no db/import/map_cache.dat at all (only the db/import-tmpl/ template
-    // directory) - but a PRESENT, malformed overlay file still fails startup loudly, matching
-    // every other collision-source failure mode in this loader. A duplicate map name WITHIN this
-    // one file still fails loudly (a genuine same-file authoring error); a name this layer shares
-    // with an already-loaded higher-priority layer is normal first-match-wins layering, not an
-    // error - the caller passes maps in strict priority order and relies on `TryAdd`'s no-op
-    // failure for that case, never overwriting what a higher-priority layer already contributed.
-    private static int LoadLayeredOverlay(string overlayPath, string layerDescription, Dictionary<string, MapCollisionMap> byMapName)
+    // Mirrors RathenaMapCacheReader.ReadAll's own private cell-mapping (map_gat2cell,
+    // map.cpp:3280-3299), duplicated here rather than exposed there because this loader decodes
+    // through RathenaMapCacheLayers.Merge directly (to recover per-map provenance for logging),
+    // bypassing RathenaMapCacheReader's single-file, no-provenance convenience path.
+    private static MapCollisionMap ToMapCollisionMap(RathenaMapCacheFormat.Entry entry) =>
+        new(entry.Name, entry.Width, entry.Height, entry.RawCells.Select((cell, index) => GatTypeToFlags(cell, entry.Name, index)).ToArray());
+
+    private static MapCellFlags GatTypeToFlags(byte gatType, string mapName, int cellIndex) => gatType switch
     {
-        if (!File.Exists(overlayPath)) return 0;
-
-        IReadOnlyList<MapCollisionMap> overlayMaps;
-        try
-        {
-            overlayMaps = RathenaMapCacheReader.ReadAllFromFile(overlayPath);
-        }
-        catch (Exception ex) when (ex is InvalidDataException or IOException)
-        {
-            throw new InvalidOperationException($"{layerDescription} map cache '{overlayPath}' could not be read: {ex.Message}", ex);
-        }
-
-        var seenInThisFile = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var added = 0;
-        foreach (var map in overlayMaps)
-        {
-            if (!seenInThisFile.Add(map.MapName))
-            {
-                throw new InvalidOperationException($"{layerDescription} map cache '{overlayPath}' contains duplicate map name '{map.MapName}'.");
-            }
-
-            // A higher-priority layer (or an earlier call for this same layer type) already won
-            // this name - normal first-match-wins layering, not an error.
-            byMapName.TryAdd(map.MapName, map);
-            added++;
-        }
-
-        MapLogger.Status($"Loaded {layerDescription} map cache '{overlayPath}': {added} maps.");
-        return added;
-    }
+        0 or 2 or 4 or 6 => MapCellFlags.Walkable | MapCellFlags.Shootable,
+        1 => MapCellFlags.None,
+        3 => MapCellFlags.Walkable | MapCellFlags.Shootable | MapCellFlags.Water,
+        5 => MapCellFlags.Shootable,
+        _ => throw new InvalidDataException($"map_cache.dat map '{mapName}' cell {cellIndex} has unrecognized GAT type {gatType}."),
+    };
 
     // A configured artifact that fails to load (missing file, malformed bytes, duplicate logical
     // map name across artifacts) throws rather than silently falling back - an operator who

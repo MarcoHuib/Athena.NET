@@ -68,7 +68,7 @@ internal static class WorldDataImporterCli
             types.Count == 0 ? null : types, options.Optional("map"), options.Optional("source"), scope, domains.Count == 0 ? null : domains);
         var result = RepositoryCompatibilityAnalyzer.Analyze(analysisOptions);
         await RepositoryCompatibilityAnalyzer.WriteAsync(analysisOptions, result);
-        Console.WriteLine($"Analyzed {result.Summary.FilesAnalyzed} files and {result.Summary.EntitiesAnalyzed} entities/events: {result.Summary.Compatible} compatible, {result.Summary.Unsupported} unsupported.");
+        Console.WriteLine($"NPC scan: analyzed {result.Summary.NpcSourceFilesAnalyzed} files and {result.Summary.NpcEventsAnalyzed} entities/events: {result.Summary.NpcCompatible} compatible, {result.Summary.NpcUnsupported} unsupported. See the domain table in report.md for the multi-domain (items/mobs/quests/maps/...) picture.");
         return 0;
     }
 
@@ -626,7 +626,7 @@ internal static class WorldDataImporterCli
     private static void PrintUsage()
     {
         Console.Error.WriteLine("WorldDataImporter audit --source-root <folder> [--source-root <folder>] --output <report.json>");
-        Console.Error.WriteLine("WorldDataImporter analyze --rathena-root <folder> --output <folder> [--scope runtime|all] [--domain <maps|mobs|mob-spawns|mvp|items|quests|shops|mapflags|functions>] [--type <npc|warp|mob|boss|shop|function|mapflag>] [--map <map>] [--source <path-filter>] [--source-context-lines 5]");
+        Console.Error.WriteLine("WorldDataImporter analyze --rathena-root <folder> --output <folder> [--scope runtime|all] [--domain <maps|mobs|mob-spawns|mvp|items|quests|shops|mapflags|functions|map-world>] [--type <npc|warp|mob|boss|shop|function|mapflag>] [--map <map>] [--source <path-filter>] [--source-context-lines 5]");
         Console.Error.WriteLine("WorldDataImporter convert --source-root <folder> --output <entities-folder> [--source-file <path>] [--map <map>] [--name <name>] [--kind warp]");
         Console.Error.WriteLine("WorldDataImporter convert --source-root <folder> --all-compatible true --output <entities-folder> --report <report.json>");
         Console.Error.WriteLine("WorldDataImporter capabilities --source-root <folder> [--source-root <folder>] --output <report.json>");

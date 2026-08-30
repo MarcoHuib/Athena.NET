@@ -8,7 +8,7 @@ internal enum DomainCompatibilityStatus { FullyCompatible, PartiallyCompatible, 
 internal sealed record DomainComponent(string Name, DomainCompatibilityStatus Status, IReadOnlyList<string>? Blockers = null);
 internal sealed record DomainEntity(string Domain, string Id, string Name, string SourceFile, int SourceLine,
     DomainCompatibilityStatus Status, IReadOnlyList<DomainComponent> Components,
-    IReadOnlyList<string> Dependencies, IReadOnlyList<string> Blockers, string? Map = null);
+    IReadOnlyList<string> Dependencies, IReadOnlyList<string> Blockers, string? Map = null, string? Provenance = null);
 internal sealed record DomainSummary(string Domain, int Total, int FullyCompatible, int PartiallyCompatible, int Unsupported, int NotYetAnalyzed, int NotApplicable);
 
 internal static class RepositoryDomainAnalyzers
@@ -16,15 +16,17 @@ internal static class RepositoryDomainAnalyzers
     public static IReadOnlyList<DomainEntity> Analyze(string root, IReadOnlySet<string>? selectedDomains)
     {
         var maps = AnalyzeMaps(root); var mapNames = maps.Select(item => item.Name).ToHashSet(StringComparer.Ordinal);
-        var mobs = AnalyzeMobs(root); var mobIds = mobs.Select(item => ParseNumericId(item.Id)).Where(item => item.HasValue).Select(item => item!.Value).ToHashSet();
+        var mobs = AnalyzeMobSkills(root, AnalyzeMobs(root));
+        var mobIds = mobs.Select(item => ParseNumericId(item.Id)).Where(item => item.HasValue).Select(item => item!.Value).ToHashSet();
         var items = AnalyzeItems(root); var itemIds = items.Select(item => ParseNumericId(item.Id)).Where(item => item.HasValue).Select(item => item!.Value).ToHashSet();
         var entities = new List<DomainEntity>();
-        Add("maps", maps); Add("mobs", mobs); Add("mvp", AnalyzeMvp(mobs)); Add("items", items);
-        Add("mob-spawns", AnalyzeMobSpawns(root, mapNames, mobIds));
+        Add("maps", maps); Add("mobs", mobs); Add("mvp", AnalyzeMvp(root, mobs)); Add("items", items);
+        var mobSpawns = AnalyzeMobSpawns(root, mapNames, mobIds); Add("mob-spawns", mobSpawns);
         Add("quests", AnalyzeQuests(root));
         Add("shops", AnalyzeShops(root, itemIds));
-        Add("mapflags", AnalyzeMapFlags(root, mapNames));
+        var mapFlags = AnalyzeMapFlags(root, mapNames); Add("mapflags", mapFlags);
         Add("functions", AnalyzeFunctions(root));
+        Add("map-world", AnalyzeMapWorld(root, selectedDomains, maps, mobSpawns, mapFlags));
         return entities.OrderBy(item => item.Domain, StringComparer.Ordinal).ThenBy(item => item.SourceFile, StringComparer.Ordinal)
             .ThenBy(item => item.SourceLine).ThenBy(item => item.Id, StringComparer.Ordinal).ToArray();
 
@@ -45,21 +47,39 @@ internal static class RepositoryDomainAnalyzers
 
     private static IReadOnlyList<DomainEntity> AnalyzeMaps(string root)
     {
-        var path = FirstExisting(Path.Combine(root, "db/import/map_cache.dat"), Path.Combine(root, "db/re/map_cache.dat"), Path.Combine(root, "db/map_cache.dat"));
-        if (path is null) return [];
+        var basePath = Path.Combine(root, "db/map_cache.dat");
+        if (!File.Exists(basePath)) return [];
+        var renewalPath = Path.Combine(root, "db/re/map_cache.dat");
+        var importPath = Path.Combine(root, "db/import/map_cache.dat");
         try
         {
-            return RathenaMapCacheFormat.ReadAll(File.ReadAllBytes(path)).Select(entry =>
-                Entity("maps", $"map:{entry.Name}", entry.Name, root, path, 0, DomainCompatibilityStatus.FullyCompatible,
-                    [new("Geometry", DomainCompatibilityStatus.FullyCompatible)], [], [])).ToArray();
+            var baseBytes = File.ReadAllBytes(basePath);
+            var renewalBytes = File.Exists(renewalPath) ? File.ReadAllBytes(renewalPath) : null;
+            var importBytes = File.Exists(importPath) ? File.ReadAllBytes(importPath) : null;
+            var merged = RathenaMapCacheLayers.Merge(baseBytes, renewalBytes, importBytes);
+            return merged.Select(resolved =>
+                Entity("maps", $"map:{resolved.Entry.Name}", resolved.Entry.Name, root, basePath, 0, DomainCompatibilityStatus.FullyCompatible,
+                    [new("Geometry", DomainCompatibilityStatus.FullyCompatible)], [], [], provenance: resolved.Source.ToString())).ToArray();
         }
-        catch (Exception)
+        catch (MapCacheLayerException exception)
         {
-            return [Entity("maps", "map:map-cache", "map_cache.dat", root, path, 0, DomainCompatibilityStatus.Unsupported,
-                [new("Geometry", DomainCompatibilityStatus.Unsupported, ["map:collision-cache"])], [], ["map:collision-cache"] )];
+            return [Entity("maps", "map:map-cache", "map_cache.dat", root, basePath, 0, DomainCompatibilityStatus.Unsupported,
+                [new("Geometry", DomainCompatibilityStatus.Unsupported, ["map:collision-cache"])], [], ["map:collision-cache:" + Kebab(exception.Layer)] )];
         }
     }
 
+    // Priority 5 (ai/world-data.md): StaticData and Modes are independent components, exactly like
+    // items' StaticData/RuntimeBehavior split - each derives its status ONLY from its own blockers.
+    // Fields the generated MobDefinition actually carries (MobDataCompiler.MobDefinitionData) are
+    // MobSupportedKeys; anything else present in the pinned block (Size, Race, Element,
+    // ElementLevel, Class, SkillRange, ChaseRange, ClientAttackMotion, DamageTaken, MvpExp,
+    // MvpDrops, Drops, ...) is real source data this project silently drops today and can never be
+    // reported FullyCompatible merely because MobDataCompiler.ReadMobDefinition/GenerateMobDefinition
+    // didn't throw. Drops is its own component (Unsupported when the mob has a Drops: table at all -
+    // there is no drop-table compiler/runtime anywhere in this project outside the single-quest
+    // QuestDropDataCompiler slice, which is unrelated general monster drop data). Skills starts as
+    // NotApplicable here and is populated by AnalyzeMobSkills afterward (a second pass over the
+    // differently-formatted mob_skill_db.txt, Priority 6).
     private static IReadOnlyList<DomainEntity> AnalyzeMobs(string root)
     {
         var path = Path.Combine(root, "db/re/mob_db.yml"); if (!File.Exists(path)) return [];
@@ -68,32 +88,131 @@ internal static class RepositoryDomainAnalyzers
         {
             var id = BlockId(block.Text); if (id is null) continue;
             var name = Scalar(block.Text, "AegisName") ?? id.Value.ToString(CultureInfo.InvariantCulture);
-            var blockers = new HashSet<string>(StringComparer.Ordinal);
             try
             {
                 var mob = MobDataCompiler.ReadMobDefinition(yaml, id.Value);
                 _ = MobDataCompiler.GenerateMobDefinition(mob, "analysis", "CompatibilityProbe", "Mob", Relative(root, path), block.Line);
-                foreach (var key in TopLevelKeys(block.Text).Except(MobSupportedKeys, StringComparer.Ordinal)) blockers.Add("mob-field:" + Kebab(key));
-                foreach (var mode in NestedBooleanKeys(block.Text, "Modes").Except(MobSupportedModes, StringComparer.Ordinal)) blockers.Add("mob-mode:" + Kebab(mode));
-                var status = blockers.Count == 0 ? DomainCompatibilityStatus.FullyCompatible : DomainCompatibilityStatus.PartiallyCompatible;
-                result.Add(Entity("mobs", $"mob:{id}", name, root, path, block.Line, status,
-                    [new("StaticData", DomainCompatibilityStatus.FullyCompatible), new("RuntimeBehavior", status, blockers.ToArray())], [], blockers));
+
+                var staticBlockers = TopLevelKeys(block.Text).Except(MobSupportedKeys, StringComparer.Ordinal).Select(key => "mob-field:" + Kebab(key)).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
+                var staticStatus = staticBlockers.Length == 0 ? DomainCompatibilityStatus.FullyCompatible : DomainCompatibilityStatus.PartiallyCompatible;
+
+                var modeBlockers = NestedBooleanKeys(block.Text, "Modes").Except(MobSupportedModes, StringComparer.Ordinal).Select(mode => "mob-mode:" + Kebab(mode)).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
+                var modeStatus = modeBlockers.Length == 0 ? DomainCompatibilityStatus.FullyCompatible : DomainCompatibilityStatus.PartiallyCompatible;
+
+                var hasDrops = HasBlock(block.Text, "Drops");
+                var dropsStatus = hasDrops ? DomainCompatibilityStatus.Unsupported : DomainCompatibilityStatus.NotApplicable;
+                var dropsBlockers = hasDrops ? new[] { "mob-drops:runtime" } : [];
+
+                var components = new DomainComponent[]
+                {
+                    new("StaticData", staticStatus, staticBlockers),
+                    new("Modes", modeStatus, modeBlockers),
+                    new("Drops", dropsStatus, dropsBlockers),
+                    new("Skills", DomainCompatibilityStatus.NotApplicable, []),
+                };
+                var allBlockers = staticBlockers.Concat(modeBlockers).Concat(dropsBlockers).ToArray();
+                var overall = RollupComponents(components);
+                result.Add(Entity("mobs", $"mob:{id}", name, root, path, block.Line, overall, components, [], allBlockers));
             }
             catch (Exception exception)
             {
-                blockers.Add("mob-definition:" + ExceptionCapability(exception));
-                result.Add(Entity("mobs", $"mob:{id}", name, root, path, block.Line, DomainCompatibilityStatus.Unsupported,
-                    [new("StaticData", DomainCompatibilityStatus.Unsupported, blockers.ToArray())], [], blockers));
+                var blockers = new[] { "mob-definition:" + ExceptionCapability(exception) };
+                var components = new DomainComponent[]
+                {
+                    new("StaticData", DomainCompatibilityStatus.Unsupported, blockers),
+                    new("Modes", DomainCompatibilityStatus.NotApplicable, []),
+                    new("Drops", DomainCompatibilityStatus.NotApplicable, []),
+                    new("Skills", DomainCompatibilityStatus.NotApplicable, []),
+                };
+                result.Add(Entity("mobs", $"mob:{id}", name, root, path, block.Line, DomainCompatibilityStatus.Unsupported, components, [], blockers));
             }
         }
         return result;
     }
 
-    private static IReadOnlyList<DomainEntity> AnalyzeMvp(IReadOnlyList<DomainEntity> mobs) => mobs
-        .Where(item => item.Blockers.Any(blocker => blocker.StartsWith("mob-field:mvp", StringComparison.Ordinal) || blocker == "mob-mode:mvp"))
-        .Select(item => item with { Domain = "mvp", Id = item.Id.Replace("mob:", "mvp:", StringComparison.Ordinal), Status = DomainCompatibilityStatus.PartiallyCompatible,
-            Components = item.Components.Concat([new DomainComponent("MvpBehavior", DomainCompatibilityStatus.Unsupported, ["mvp:runtime-behavior"])]).ToArray(),
-            Blockers = item.Blockers.Append("mvp:runtime-behavior").Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray() }).ToArray();
+    // Priority 6 (ai/world-data.md): legacy/rathena/db/re/mob_skill_db.txt is a plain
+    // tab/comma-delimited text file (NOT YAML - see the file's own header comment), format:
+    // MobID,Dummy,State,SkillID,SkillLv,Rate,CastTime,Delay,Cancelable,Target,ConditionType,
+    // ConditionValue,val1..val5,Emotion,Chat. No compiler/runtime anywhere in this project reads
+    // this file or executes mob skills at all, so every mob referenced here gets an Unsupported
+    // Skills component - a full, honest gap measurement, not a partial score. A mob absent from
+    // this file keeps its NotApplicable Skills component from AnalyzeMobs untouched.
+    private static IReadOnlyList<DomainEntity> AnalyzeMobSkills(string root, IReadOnlyList<DomainEntity> mobs)
+    {
+        var path = Path.Combine(root, "db/re/mob_skill_db.txt"); if (!File.Exists(path)) return mobs;
+        var skillIdsByMob = new Dictionary<int, HashSet<int>>();
+        foreach (var line in File.ReadLines(path))
+        {
+            var trimmed = line.Trim();
+            if (trimmed.Length == 0 || trimmed.StartsWith("//", StringComparison.Ordinal)) continue;
+            var columns = trimmed.Split(',');
+            if (columns.Length < 4) continue;
+            if (!int.TryParse(columns[0].Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out var mobId)) continue;
+            if (!int.TryParse(columns[3].Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out var skillId)) continue;
+            (skillIdsByMob.TryGetValue(mobId, out var set) ? set : skillIdsByMob[mobId] = []).Add(skillId);
+        }
+        if (skillIdsByMob.Count == 0) return mobs;
+
+        return mobs.Select(mob =>
+        {
+            var numericId = ParseNumericId(mob.Id);
+            if (numericId is null || !skillIdsByMob.TryGetValue(numericId.Value, out var skillIds)) return mob;
+            var skillBlockers = skillIds.OrderBy(item => item).Select(skillId => "mob-skill:" + skillId.ToString(CultureInfo.InvariantCulture))
+                .Append("mob-skill:runtime").Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
+            var skillsComponent = new DomainComponent("Skills", DomainCompatibilityStatus.Unsupported, skillBlockers);
+            var components = mob.Components.Where(component => component.Name != "Skills").Append(skillsComponent).ToArray();
+            var blockers = mob.Blockers.Concat(skillBlockers).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
+            return mob with { Components = components, Blockers = blockers, Status = RollupComponents(components) };
+        }).ToArray();
+    }
+
+    // Priority 10 (ai/world-data.md): pinned mob_db.yml marks MVP status via
+    // `Class: Boss` + `Modes: Mvp: true` + a dedicated MvpExp/MvpDrops pair (verified against
+    // Golden Thief Bug, db/re/mob_db.yml Id 1086) - NOT a "mob-field:mvp*"/"mob-mode:mvp" blocker
+    // string. mob_db.yml never declares a top-level field literally named "Mvp" (it only ever
+    // appears nested under Modes:, and MobSupportedModes never excluded it either), so the earlier
+    // detection (grepping AnalyzeMobs' own blocker strings for that pattern) never actually fired
+    // against a real file - dead code inspecting a field name mob_db.yml doesn't use. Detected here
+    // directly from the pinned source instead, independent of whatever StaticData/Modes/Drops
+    // happens to report for unrelated reasons, so a fully-modeled MVP mob is still correctly
+    // classified as MVP.
+    private static IReadOnlyList<DomainEntity> AnalyzeMvp(string root, IReadOnlyList<DomainEntity> mobs)
+    {
+        var path = Path.Combine(root, "db/re/mob_db.yml"); if (!File.Exists(path)) return [];
+        var yaml = File.ReadAllText(path);
+        var mvpIds = YamlBlocks(yaml).Where(block => IsMvpBlock(block.Text)).Select(block => BlockId(block.Text)).Where(id => id.HasValue).Select(id => id!.Value).ToHashSet();
+        if (mvpIds.Count == 0) return [];
+
+        return mobs.Where(mob => ParseNumericId(mob.Id) is { } numericId && mvpIds.Contains(numericId))
+            .Select(mob =>
+            {
+                var components = mob.Components.Append(new DomainComponent("MvpBehavior", DomainCompatibilityStatus.Unsupported, ["mvp:runtime-behavior"])).ToArray();
+                var blockers = mob.Blockers.Append("mvp:runtime-behavior").Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
+                return mob with
+                {
+                    Domain = "mvp", Id = mob.Id.Replace("mob:", "mvp:", StringComparison.Ordinal),
+                    Status = DomainCompatibilityStatus.Unsupported, Components = components, Blockers = blockers,
+                };
+            }).ToArray();
+    }
+
+    private static bool IsMvpBlock(string block) =>
+        Regex.IsMatch(block, @"(?m)^    Class:\s*Boss\s*$") && Regex.IsMatch(block, @"(?ms)^    Modes:.*?^      Mvp:\s*true\s*$");
+
+    // Shared component-status rollup (mobs/items alike): the overall entity status is
+    // FullyCompatible only when every component is FullyCompatible or NotApplicable (a component
+    // that doesn't apply can never drag the overall status down); Unsupported when every
+    // NON-not-applicable component is Unsupported; otherwise PartiallyCompatible. This is what
+    // Priorities 3/5 fix - the overall status is now genuinely derived from every component instead
+    // of a hardcoded-compatible StaticData masking a real sibling-component gap.
+    private static DomainCompatibilityStatus RollupComponents(IReadOnlyList<DomainComponent> components)
+    {
+        var relevant = components.Select(component => component.Status).Where(status => status != DomainCompatibilityStatus.NotApplicable).ToArray();
+        if (relevant.Length == 0) return DomainCompatibilityStatus.NotApplicable;
+        if (relevant.All(status => status == DomainCompatibilityStatus.FullyCompatible)) return DomainCompatibilityStatus.FullyCompatible;
+        if (relevant.All(status => status == DomainCompatibilityStatus.Unsupported)) return DomainCompatibilityStatus.Unsupported;
+        return DomainCompatibilityStatus.PartiallyCompatible;
+    }
 
     private static IReadOnlyList<DomainEntity> AnalyzeItems(string root)
     {
@@ -105,54 +224,124 @@ internal static class RepositoryDomainAnalyzers
             foreach (var block in YamlBlocks(yaml))
             {
                 var id = BlockId(block.Text); if (id is null) continue;
-                var name = Scalar(block.Text, "AegisName") ?? id.Value.ToString(CultureInfo.InvariantCulture); var blockers = new HashSet<string>(StringComparer.Ordinal);
+                var name = Scalar(block.Text, "AegisName") ?? id.Value.ToString(CultureInfo.InvariantCulture);
                 try
                 {
                     var item = ItemDataCompiler.ReadItemDefinition(yaml, id.Value);
                     _ = ItemDataCompiler.Generate(item, "analysis", "CompatibilityProbe", "Item", Relative(root, path), block.Line);
+
+                    // StaticData and RuntimeBehavior are independent components: a missing/unmodeled
+                    // database field (item-field:*) is a StaticData gap and must never taint
+                    // RuntimeBehavior, and vice versa - see ai/world-data.md's item static-vs-runtime
+                    // compatibility section. Each component's own status is derived only from its own
+                    // blockers.
+                    var staticBlockers = new HashSet<string>(StringComparer.Ordinal);
                     foreach (var key in TopLevelKeys(block.Text).Except(ItemSupportedKeys, StringComparer.Ordinal))
-                        if (key is not "Script" and not "EquipScript" and not "UnEquipScript") blockers.Add("item-field:" + Kebab(key));
-                    if (HasBlock(block.Text, "Script") && item.Grants is null) blockers.Add("item-script:use");
-                    if (HasBlock(block.Text, "EquipScript")) blockers.Add("item-script:equip");
-                    if (HasBlock(block.Text, "UnEquipScript")) blockers.Add("item-script:unequip");
+                        if (key is not "Script" and not "EquipScript" and not "UnEquipScript") staticBlockers.Add("item-field:" + Kebab(key));
+
+                    var runtimeBlockers = new HashSet<string>(StringComparer.Ordinal);
+                    var hasScript = HasBlock(block.Text, "Script") || HasBlock(block.Text, "EquipScript") || HasBlock(block.Text, "UnEquipScript");
+                    if (HasBlock(block.Text, "Script") && item.Grants is null) runtimeBlockers.Add("item-script:use");
+                    if (HasBlock(block.Text, "EquipScript")) runtimeBlockers.Add("item-script:equip");
+                    if (HasBlock(block.Text, "UnEquipScript")) runtimeBlockers.Add("item-script:unequip");
+
+                    var staticStatus = staticBlockers.Count == 0 ? DomainCompatibilityStatus.FullyCompatible : DomainCompatibilityStatus.PartiallyCompatible;
+                    var runtimeStatus = !hasScript ? DomainCompatibilityStatus.NotApplicable
+                        : runtimeBlockers.Count == 0 ? DomainCompatibilityStatus.FullyCompatible : DomainCompatibilityStatus.PartiallyCompatible;
+                    var blockers = staticBlockers.Concat(runtimeBlockers).ToArray();
+                    var status = staticStatus == DomainCompatibilityStatus.FullyCompatible && runtimeStatus is DomainCompatibilityStatus.FullyCompatible or DomainCompatibilityStatus.NotApplicable
+                        ? DomainCompatibilityStatus.FullyCompatible : DomainCompatibilityStatus.PartiallyCompatible;
                     var dependencies = item.Grants?.Select(grant => $"item:{grant.ItemId}").ToArray() ?? [];
-                    var status = blockers.Count == 0 ? DomainCompatibilityStatus.FullyCompatible : DomainCompatibilityStatus.PartiallyCompatible;
                     result.Add(Entity("items", $"item:{id}", name, root, path, block.Line, status,
-                        [new("StaticData", DomainCompatibilityStatus.FullyCompatible), new("RuntimeBehavior", status, blockers.Where(x => x.StartsWith("item-script:", StringComparison.Ordinal)).ToArray())], dependencies, blockers));
+                        [new("StaticData", staticStatus, staticBlockers.ToArray()), new("RuntimeBehavior", runtimeStatus, runtimeBlockers.ToArray())], dependencies, blockers));
                 }
                 catch (Exception exception)
                 {
-                    blockers.Add("item-definition:" + ExceptionCapability(exception));
+                    var blockers = new[] { ItemCapability(exception) };
                     result.Add(Entity("items", $"item:{id}", name, root, path, block.Line, DomainCompatibilityStatus.Unsupported,
-                        [new("StaticData", DomainCompatibilityStatus.Unsupported, blockers.ToArray())], [], blockers));
+                        [new("StaticData", DomainCompatibilityStatus.Unsupported, blockers), new("RuntimeBehavior", DomainCompatibilityStatus.NotYetAnalyzed, [])], [], blockers));
                 }
             }
         }
         return result;
     }
 
+    // QuestDropDataCompiler (see its own header comment) is authoritative ONLY for one narrow
+    // single-mob/single-item Drops rule - it has no Targets (kill-count objective) support and is
+    // not a general quest-definition converter. Priority 7 (ai/world-data.md): a quest's overall
+    // "Definition" component must never be claimed FullyCompatible merely because the specialized
+    // drop compiler happened to succeed. Components:
+    //   - DropRule: exactly what QuestDropDataCompiler converts (FullyCompatible on success,
+    //     Unsupported only when the block genuinely has a Drops shape the compiler rejects, e.g. a
+    //     malformed/multi-entry Drops block; NotApplicable when the quest has no Drops block at all).
+    //   - Targets: Unsupported when the quest has a Targets block (positively known unconvertible -
+    //     there is no kill-count runtime), NotApplicable otherwise.
+    //   - Definition: the quest-as-a-whole conversion. There is no general quest-definition
+    //     converter in this project, so Definition is NotYetAnalyzed unless a component establishes
+    //     a genuine, positive fact: Unsupported if Targets is Unsupported (a real, known gap);
+    //     PartiallyCompatible if DropRule is FullyCompatible (at least one meaningful component
+    //     really does convert) and Targets is not itself Unsupported; otherwise NotYetAnalyzed.
     private static IReadOnlyList<DomainEntity> AnalyzeQuests(string root)
     {
         var path = Path.Combine(root, "db/re/quest_db.yml"); var mobPath = Path.Combine(root, "db/re/mob_db.yml");
-        var itemPath = Path.Combine(root, "db/re/item_db_etc.yml"); if (!File.Exists(path) || !File.Exists(mobPath) || !File.Exists(itemPath)) return [];
-        var yaml = File.ReadAllText(path); var mobs = File.ReadAllText(mobPath); var items = File.ReadAllText(itemPath); var result = new List<DomainEntity>();
+        if (!File.Exists(path) || !File.Exists(mobPath)) return [];
+        var itemFiles = Directory.Exists(Path.Combine(root, "db/re")) ? Directory.EnumerateFiles(Path.Combine(root, "db/re"), "item_db*.yml").Order(StringComparer.Ordinal).ToArray() : [];
+        if (itemFiles.Length == 0) return [];
+        var yaml = File.ReadAllText(path); var mobs = File.ReadAllText(mobPath);
+        var itemTexts = itemFiles.Select(File.ReadAllText).ToArray();
+        var result = new List<DomainEntity>();
         foreach (var block in YamlBlocks(yaml))
         {
-            var id = BlockId(block.Text); if (id is null) continue; var blockers = new List<string>(); var dependencies = new List<string>();
-            try
+            var id = BlockId(block.Text); if (id is null) continue;
+            var title = Scalar(block.Text, "Title") ?? id.Value.ToString(CultureInfo.InvariantCulture);
+            var hasTargets = HasBlock(block.Text, "Targets"); var hasDrops = HasBlock(block.Text, "Drops");
+            var dependencies = new List<string>(); var blockers = new List<string>();
+            DomainComponent targetsComponent = hasTargets
+                ? new("Targets", DomainCompatibilityStatus.Unsupported, ["quest:targets"])
+                : new("Targets", DomainCompatibilityStatus.NotApplicable);
+            if (hasTargets) blockers.Add("quest:targets");
+
+            DomainComponent dropRuleComponent;
+            if (!hasDrops)
             {
-                var quest = QuestDropDataCompiler.ReadSingleDrop(yaml, (uint)id.Value, mobs, items);
-                _ = QuestDropDataCompiler.Generate(quest, "analysis", Relative(root, path), block.Line);
-                dependencies.Add($"mob:{quest.MobId}"); dependencies.Add($"item:{quest.ItemId}"); blockers.Add("quest:playability-not-evaluated");
-                result.Add(Entity("quests", $"quest:{id}", quest.Title, root, path, block.Line, DomainCompatibilityStatus.PartiallyCompatible,
-                    [new("Definition", DomainCompatibilityStatus.FullyCompatible), new("RuntimeReadiness", DomainCompatibilityStatus.NotYetAnalyzed, blockers)], dependencies, blockers));
+                dropRuleComponent = new("DropRule", DomainCompatibilityStatus.NotApplicable);
             }
-            catch (Exception)
+            else
             {
-                blockers.Add(HasBlock(block.Text, "Targets") ? "quest:targets" : HasBlock(block.Text, "Drops") ? "quest:drops" : "quest:definition");
-                result.Add(Entity("quests", $"quest:{id}", Scalar(block.Text, "Title") ?? id.Value.ToString(CultureInfo.InvariantCulture), root, path, block.Line, DomainCompatibilityStatus.Unsupported,
-                    [new("Definition", DomainCompatibilityStatus.Unsupported, blockers)], dependencies, blockers));
+                // Resolve item AegisName across ALL pinned db/re/item_db*.yml files (not just
+                // item_db_etc.yml) so a quest drop item declared in item_db_equip.yml or another
+                // sibling file still resolves - QuestDropDataCompiler.ReadSingleDrop only accepts
+                // one item_db document at a time, so try each until one resolves the AegisName.
+                Exception? lastFailure = null; QuestDropDataCompiler.QuestDropData? quest = null;
+                foreach (var itemText in itemTexts)
+                {
+                    try { quest = QuestDropDataCompiler.ReadSingleDrop(yaml, (uint)id.Value, mobs, itemText); break; }
+                    catch (Exception exception) { lastFailure = exception; }
+                }
+                if (quest is not null)
+                {
+                    _ = QuestDropDataCompiler.Generate(quest, "analysis", Relative(root, path), block.Line);
+                    dependencies.Add($"mob:{quest.MobId}"); dependencies.Add($"item:{quest.ItemId}");
+                    dropRuleComponent = new("DropRule", DomainCompatibilityStatus.FullyCompatible);
+                }
+                else
+                {
+                    blockers.Add("quest:drops"); dropRuleComponent = new("DropRule", DomainCompatibilityStatus.Unsupported, ["quest:drops"]);
+                    _ = lastFailure; // Genuinely unresolvable (bad Drops shape or unresolvable Mob/Item name across every item_db file) - not classified further; "quest:drops" is the honest, coarse signal.
+                }
             }
+
+            blockers.Add("quest:playability-not-evaluated");
+            var runtimeComponent = new DomainComponent("RuntimeReadiness", DomainCompatibilityStatus.NotYetAnalyzed, ["quest:playability-not-evaluated"]);
+            var definitionStatus = hasTargets ? DomainCompatibilityStatus.Unsupported
+                : dropRuleComponent.Status == DomainCompatibilityStatus.FullyCompatible ? DomainCompatibilityStatus.PartiallyCompatible
+                : DomainCompatibilityStatus.NotYetAnalyzed;
+            var definitionComponent = new DomainComponent("Definition", definitionStatus, definitionStatus == DomainCompatibilityStatus.Unsupported ? ["quest:targets"] : []);
+            var overall = hasTargets ? DomainCompatibilityStatus.Unsupported
+                : dropRuleComponent.Status == DomainCompatibilityStatus.FullyCompatible ? DomainCompatibilityStatus.PartiallyCompatible
+                : DomainCompatibilityStatus.NotYetAnalyzed;
+            result.Add(Entity("quests", $"quest:{id}", title, root, path, block.Line, overall,
+                [definitionComponent, targetsComponent, dropRuleComponent, runtimeComponent], dependencies, blockers));
         }
         return result;
     }
@@ -232,15 +421,85 @@ internal static class RepositoryDomainAnalyzers
         return result;
     }
 
+    // Priority 15 (ai/world-data.md): a map-level "World status" aggregate distinct from map
+    // GEOMETRY compatibility (the "maps" domain's own Geometry component, which is purely about
+    // map_cache.dat collision data). This rolls up how much of everything that should exist on a
+    // map has actually been evaluated and is compatible - mob spawns and mapflags, the two
+    // per-map domains RepositoryDomainAnalyzers itself produces. Warps/NPC placements are produced
+    // one layer up by RepositoryCompatibilityAnalyzer (a different entity model, CompatibilityEntity,
+    // not DomainEntity) and are therefore intentionally NOT rolled up here - this aggregate is
+    // scoped to what this analyzer can see; folding warps/NPCs in as well is a natural future
+    // extension at that outer layer, not a fabrication here.
+    //
+    // Only computed for maps whose relevant domains were actually selected in this run
+    // (--domain filtering respected): a map row is only emitted when at least one of
+    // mob-spawns/mapflags was selected, and only that/those domain's counts are rolled up - never a
+    // fabricated 0/0 for a domain the caller didn't ask to analyze. A map's World status can only be
+    // FullyCompatible when every considered domain's own entities for that map are all
+    // FullyCompatible/NotApplicable; any NotYetAnalyzed entity anywhere in a considered domain makes
+    // the map NotFullyEvaluated (surfaced as DomainCompatibilityStatus.NotYetAnalyzed on the
+    // returned entity) rather than FullyCompatible - shops, for example, are always NotYetAnalyzed
+    // today, so a map that also had shops folded into this rollup could never be truthfully
+    // FullyCompatible; shops are not currently one of this method's considered domains for exactly
+    // that reason (mob-spawns/mapflags are the two domains actually rolled up here today).
+    private static IReadOnlyList<DomainEntity> AnalyzeMapWorld(string root, IReadOnlySet<string>? selectedDomains,
+        IReadOnlyList<DomainEntity> maps, IReadOnlyList<DomainEntity> mobSpawns, IReadOnlyList<DomainEntity> mapFlags)
+    {
+        bool Selected(string domain) => selectedDomains is null || selectedDomains.Count == 0 || selectedDomains.Contains(domain);
+        if (!Selected("maps") || maps.Count == 0) return [];
+        var mobSpawnsSelected = Selected("mob-spawns"); var mapFlagsSelected = Selected("mapflags");
+        if (!mobSpawnsSelected && !mapFlagsSelected) return [];
+
+        var result = new List<DomainEntity>();
+        foreach (var map in maps.Select(item => item.Name).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal))
+        {
+            var components = new List<DomainComponent>();
+            var consideredStatuses = new List<DomainCompatibilityStatus>();
+
+            if (mobSpawnsSelected)
+            {
+                var forMap = mobSpawns.Where(item => item.Map == map).ToArray();
+                var (status, full, total) = RollupCounted(forMap.Select(item => item.Status));
+                components.Add(new("MobSpawns", status, [$"{full}/{total}"]));
+                consideredStatuses.Add(status);
+            }
+            if (mapFlagsSelected)
+            {
+                var forMap = mapFlags.Where(item => item.Map == map).ToArray();
+                var (status, full, total) = RollupCounted(forMap.Select(item => item.Status));
+                components.Add(new("MapFlags", status, [$"{full}/{total}"]));
+                consideredStatuses.Add(status);
+            }
+
+            var overall = consideredStatuses.Any(status => status == DomainCompatibilityStatus.NotYetAnalyzed) ? DomainCompatibilityStatus.NotYetAnalyzed
+                : consideredStatuses.All(status => status is DomainCompatibilityStatus.FullyCompatible or DomainCompatibilityStatus.NotApplicable) ? DomainCompatibilityStatus.FullyCompatible
+                : DomainCompatibilityStatus.PartiallyCompatible;
+            result.Add(Entity("map-world", $"map-world:{map}", map, root, Path.Combine(root, "db/map_cache.dat"), 0, overall, components, [], [], map));
+        }
+        return result;
+    }
+
+    // A map with zero entities in a considered domain (e.g. no mob spawns at all on that map)
+    // rolls up to NotApplicable, not FullyCompatible-by-vacuous-truth or NotYetAnalyzed - there is
+    // simply nothing there for that component to report.
+    private static (DomainCompatibilityStatus Status, int Full, int Total) RollupCounted(IEnumerable<DomainCompatibilityStatus> statuses)
+    {
+        var array = statuses.ToArray();
+        var full = array.Count(item => item == DomainCompatibilityStatus.FullyCompatible);
+        if (array.Length == 0) return (DomainCompatibilityStatus.NotApplicable, 0, 0);
+        if (array.Any(item => item == DomainCompatibilityStatus.NotYetAnalyzed)) return (DomainCompatibilityStatus.NotYetAnalyzed, full, array.Length);
+        return (full == array.Length ? DomainCompatibilityStatus.FullyCompatible : DomainCompatibilityStatus.PartiallyCompatible, full, array.Length);
+    }
+
     private static IEnumerable<RathenaDeclaration> PositionedDeclarations(string root)
     {
         var npc = Path.Combine(root, "npc"); return Directory.Exists(npc) ? RathenaSourceParser.Parse([npc]) : [];
     }
 
     private static DomainEntity Entity(string domain, string id, string name, string root, string path, int line, DomainCompatibilityStatus status,
-        IReadOnlyList<DomainComponent> components, IEnumerable<string> dependencies, IEnumerable<string> blockers, string? map = null) =>
+        IReadOnlyList<DomainComponent> components, IEnumerable<string> dependencies, IEnumerable<string> blockers, string? map = null, string? provenance = null) =>
         new(domain, id, name, Relative(root, path), line, status, components,
-            dependencies.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray(), blockers.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray(), map);
+            dependencies.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray(), blockers.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray(), map, provenance);
 
     private static readonly string[] MobSupportedKeys = ["Id", "AegisName", "Name", "Level", "Hp", "Attack", "Attack2", "Defense", "MagicDefense", "Str", "Agi", "Vit", "Int", "Dex", "Luk", "AttackRange", "WalkSpeed", "AttackDelay", "AttackMotion", "DamageMotion", "BaseExp", "JobExp", "Ai", "Modes"];
     private static readonly string[] MobSupportedModes = ["CanMove", "NoRandomWalk", "CanAttack", "ChangeTargetMelee", "ChangeTargetChase"];
@@ -263,8 +522,19 @@ internal static class RepositoryDomainAnalyzers
     private static bool HasBlock(string block, string key) => Regex.IsMatch(block, $@"(?m)^    {Regex.Escape(key)}:");
     private static int? ParseNumericId(string id) => int.TryParse(id[(id.IndexOf(':') + 1)..], out var value) ? value : null;
     private static string ExceptionCapability(Exception exception) => Kebab(exception.GetType().Name.Replace("Exception", "", StringComparison.Ordinal));
+
+    // Classifies ItemDataCompiler.ReadItemDefinition/Generate failures into stable semantic
+    // capability IDs instead of collapsing every failure into one generic
+    // "item-definition:not-supported" bucket (Priority 4). ItemDataCompiler now throws the typed
+    // ItemDefinitionUnsupportedException (see that type's own doc comment) carrying an
+    // already-classified CapabilityId (e.g. "item-type:card", "item-subtype:whatever",
+    // "item-location:whatever", "item-script:unsupported-shape") for every genuinely unmodeled
+    // construct it recognizes - so this reads that id directly rather than parsing prose. Only a
+    // truly unclassified failure (a missing required field via ArgumentException, or any other
+    // exception type) falls back to the generic exception-type bucket as a last resort.
+    private static string ItemCapability(Exception exception) =>
+        exception is ItemDefinitionUnsupportedException typed ? typed.CapabilityId : "item-definition:" + ExceptionCapability(exception);
     private static string Kebab(string value) => Regex.Replace(value, "([a-z0-9])([A-Z])", "$1-$2").Replace('_', '-').ToLowerInvariant();
-    private static string? FirstExisting(params string[] paths) => paths.FirstOrDefault(File.Exists);
     private static string Relative(string root, string path) => Path.GetRelativePath(root, path).Replace('\\', '/');
     private static string Resolve(string root, string source) => File.Exists(source) ? source : Path.Combine(root, source.Replace("legacy/rathena/", "", StringComparison.Ordinal));
 }

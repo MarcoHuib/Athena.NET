@@ -267,13 +267,33 @@ dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- analyze
 
 The output contains:
 
-- `summary.json`: category and event totals;
-- `compatible.jsonl`: one fully compatible logical entity/event per line;
-- `unsupported.jsonl`: unsupported events, all known blockers, and bounded source context;
-- `blockers.json`: feature/stage aggregates and representative sources;
-- `work-items.json`: roadmap ordered by the amount of content a capability alone unlocks;
-- `dependencies.json`: literal quest/item/map references proven by lowered source;
+- `summary.json`: NPC/warp-scan totals (`NpcSourceFilesAnalyzed`/`NpcEventsAnalyzed`/`NpcCompatible`/
+  `NpcUnsupported` - deliberately NPC-scope-prefixed, see "Multi-domain architecture" below) plus the
+  full `Domains` table (one row per domain, including every multi-domain entry described below);
+- `compatible.jsonl`: one fully compatible logical NPC/warp entity/event per line;
+- `unsupported.jsonl`: unsupported NPC/warp events, all known blockers, and bounded source context;
+- `blockers.json`: feature/stage aggregates and representative sources, across BOTH the NPC/warp
+  scan and every domain entity's own blockers;
+- `work-items.json`: roadmap ordered by the amount of content a capability alone unlocks - stable
+  semantic capability IDs only (see "Work-item meaning" below), never a raw exception type name;
+- `dependencies.json`: the cross-domain dependency graph - literal quest/item/map/mob references
+  proven by lowered NPC source AND every domain entity's own dependencies (mob-spawn -> map/mob,
+  shop -> item, quest -> mob/item, item -> item via `Grants`), deduplicated and deterministically
+  sorted by entity id;
+- `domains/<domain>.jsonl`: one file per domain (`maps`, `mobs`, `mvp`, `items`, `mob-spawns`,
+  `quests`, `shops`, `mapflags`, `functions`, `map-world`), each line one `DomainEntity`;
 - `report.md`: concise human-readable summary.
+
+`analyze` evaluates two independent layers that are composed into one report, never blended into
+one meaningless percentage: the NPC/warp event scan (`RepositoryCompatibilityAnalyzer`,
+`CompatibilityEntity`, the original trusted compiler boundary, unmodified by the work below) and
+domain analysis (`RepositoryDomainAnalyzers`, `DomainEntity` - `maps`, `mobs`, `mvp`, `items`,
+`mob-spawns`, `quests`, `shops`, `mapflags`, `functions`, `map-world`). See "Multi-domain analysis"
+below for the full domain-by-domain breakdown, including static-vs-runtime compatibility (items,
+mobs), map geometry vs map-world completeness, mob definition vs spawn vs skill, MVP
+classification, and quest drop-rule vs full quest definition. Every `DomainEntity` decomposes into
+named `Components`, each deriving its status ONLY from its own blockers - one component being
+unsupported never taints a sibling.
 
 `Compatible` means the complete event passes the current real compilation boundary;
 unsupported statements are never omitted. `soleBlockerFor` counts events whose
