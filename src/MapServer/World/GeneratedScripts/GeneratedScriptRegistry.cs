@@ -1,6 +1,6 @@
-using Athena.Net.MapServer.Generated.GameData.MobSpawns;
 using Athena.Net.MapServer.Generated.World.Izlude.Academy;
 using Athena.Net.MapServer.Generated.World.Izlude.IzludeCity;
+using Athena.Net.MapServer.Generated.World;
 using Athena.Net.MapServer.Generated.World.Prontera;
 using Athena.Net.MapServer.Generated.World.PrtFild08;
 

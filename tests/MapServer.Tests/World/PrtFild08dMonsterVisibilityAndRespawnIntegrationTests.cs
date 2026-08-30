@@ -3,8 +3,8 @@ using System.Net;
 using System.Net.Sockets;
 using Athena.Net.MapServer.Config;
 using Athena.Net.MapServer.Gameplay.Rules.Renewal;
-using Athena.Net.MapServer.Generated.GameData.MobSpawns;
 using Athena.Net.MapServer.Generated.GameData.Mobs;
+using Athena.Net.MapServer.Generated.World;
 using Athena.Net.MapServer.Net;
 using Athena.Net.MapServer.World;
 

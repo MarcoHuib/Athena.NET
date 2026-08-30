@@ -1,5 +1,5 @@
-using Athena.Net.MapServer.Generated.GameData.MobSpawns;
 using Athena.Net.MapServer.Generated.GameData.Mobs;
+using Athena.Net.MapServer.Generated.World;
 using Athena.Net.MapServer.World;
 
 namespace Athena.Net.MapServer.Tests.World;

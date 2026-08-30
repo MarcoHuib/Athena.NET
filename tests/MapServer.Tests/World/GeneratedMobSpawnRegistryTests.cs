@@ -1,7 +1,7 @@
 using Athena.Net.MapServer.Gameplay.Rules;
 using Athena.Net.MapServer.Gameplay.Rules.Renewal;
-using Athena.Net.MapServer.Generated.GameData.MobSpawns;
 using Athena.Net.MapServer.Generated.GameData.Mobs;
+using Athena.Net.MapServer.Generated.World;
 using Athena.Net.MapServer.World;
 
 namespace Athena.Net.MapServer.Tests.World;
@@ -98,5 +98,93 @@ public sealed class GeneratedMobSpawnRegistryTests
         // global (GeneratedMobSpawnRegistry.All has thousands more), but runtime instantiation
         // follows the explicit servedMaps set exactly.
         Assert.All(world.Monsters.AllInstances, instance => Assert.Equal(Map, instance.Map, ignoreCase: true));
+    }
+
+    // No source declaration exists in more than one generated array - the physical
+    // map/family-oriented layout must still produce exactly one canonical representation per
+    // declaration (source file + line, the stable identity - task's "no source identity exists in
+    // more than one generated spawn file"), even though several source files can contribute to the
+    // same map's single array (task section 42/43).
+    [Fact]
+    public void NoSourceDeclarationIsDuplicated()
+    {
+        var identities = GeneratedMobSpawnRegistry.All.Select(spawn => (spawn.Source.File, spawn.Source.Line)).ToArray();
+        Assert.Equal(identities.Length, identities.Distinct().Count());
+    }
+
+    // Existing world-family folders are reused, never duplicated as new PrtFild08A/PrtFild08B/...
+    // folders (the retired hand-authored PrtFild08MobSpawns.cs precedent this restores) - PrtFild08
+    // is the canonical example named explicitly by this correction.
+    [Fact]
+    public void PrtFild08Family_IsOneModuleCoveringAllFiveConcreteMaps()
+    {
+        Assert.True(GeneratedMobSpawnRegistry.TryGetMap("prt_fild08", out var baseMap));
+        Assert.True(GeneratedMobSpawnRegistry.TryGetMap("prt_fild08a", out var a));
+        Assert.True(GeneratedMobSpawnRegistry.TryGetMap("prt_fild08b", out var b));
+        Assert.True(GeneratedMobSpawnRegistry.TryGetMap("prt_fild08c", out var c));
+        Assert.True(GeneratedMobSpawnRegistry.TryGetMap("prt_fild08d", out var d));
+
+        Assert.NotEmpty(baseMap); Assert.NotEmpty(a); Assert.NotEmpty(b); Assert.NotEmpty(c); Assert.NotEmpty(d);
+
+        // Every one of these five maps' declarations is drawn from the SAME physical array set
+        // (PrtFild08Spawn.All) - proven indirectly: the union of the five per-map lookups accounts
+        // for every "prt_fild08*" entry in the flattened registry, with no leftover and no overlap.
+        var expectedMaps = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "prt_fild08", "prt_fild08a", "prt_fild08b", "prt_fild08c", "prt_fild08d" };
+        var allPrtFild08Entries = GeneratedMobSpawnRegistry.All.Where(spawn => expectedMaps.Contains(spawn.Map)).ToArray();
+        var lookedUp = baseMap.Concat(a).Concat(b).Concat(c).Concat(d).ToArray();
+        Assert.Equal(allPrtFild08Entries.Length, lookedUp.Length);
+    }
+
+    // prt_fild08d's complete real population (task: "must include every source declaration
+    // targeting prt_fild08d, including event contributions" - not the historical hand-picked
+    // academy.txt-only subset of 340). Christmas 2013 (Smokey Gift/Sock) and Halloween 2013
+    // (Organic/Inorganic Jakk) event content also targets this exact map, discovered only once
+    // generation scanned every pinned source file instead of one hand-picked one.
+    [Fact]
+    public void PrtFild08d_ContainsCompleteRealPopulationAcrossAllContributingSourceFiles()
+    {
+        Assert.True(GeneratedMobSpawnRegistry.TryGetMap("prt_fild08d", out var spawns));
+        var sourceFiles = spawns.Select(spawn => spawn.Source.File).ToHashSet(StringComparer.Ordinal);
+
+        Assert.Contains("legacy/rathena/npc/re/mobs/academy.txt", sourceFiles);
+        Assert.Contains("legacy/rathena/npc/events/christmas_2013.txt", sourceFiles);
+        Assert.Contains("legacy/rathena/npc/events/halloween_2013.txt", sourceFiles);
+        // 8 distinct source DECLARATIONS (task section 6: a declaration with Count=N stays one
+        // source-backed spawn definition, never expanded into N generated rows); their Count fields
+        // sum to 355 total simultaneously-managed monster instances at runtime.
+        Assert.Equal(8, spawns.Count);
+        Assert.Equal(355, spawns.Sum(spawn => spawn.Count));
+        Assert.Equal(110, spawns.Single(spawn => spawn.Mob.AegisName == "PORING").Count);
+        Assert.Equal(100, spawns.Single(spawn => spawn.Mob.AegisName == "LUNATIC").Count);
+        Assert.Equal(100, spawns.Single(spawn => spawn.Mob.AegisName == "FABRE").Count);
+        Assert.Equal(30, spawns.Single(spawn => spawn.Mob.AegisName == "LITTLE_PORING").Count);
+        Assert.Equal(5, spawns.Single(spawn => spawn.Mob.AegisName == "XMAS_SMOKEY_GIFT").Count);
+        Assert.Equal(5, spawns.Single(spawn => spawn.Mob.AegisName == "XMAS_SMOKEY_SOCK").Count);
+        Assert.Equal(1, spawns.Single(spawn => spawn.Mob.AegisName == "ORGANIC_JAKK").Count);
+        Assert.Equal(4, spawns.Single(spawn => spawn.Mob.AegisName == "INORGANIC_JAKK").Count);
+    }
+
+    // The three known evt_zombie declarations are generated under the dedicated Events/EvtZombie
+    // organizational module (task's classification rule: source under npc/events/ AND a map token
+    // starting with "evt_") - present in GeneratedMobSpawnRegistry.All (source coverage preserved),
+    // but this placement is organizational ONLY and must never imply evt_zombie is a valid loaded
+    // map (task's explicit "Event classification does NOT make the map runtime-valid" rule).
+    [Fact]
+    public void EvtZombieDeclarations_AreClassifiedUnderTheEventsModule_ButRemainRuntimeInvalid()
+    {
+        var evtZombieSpawns = GeneratedMobSpawnRegistry.All.Where(spawn => spawn.Map == "evt_zombie").OrderBy(spawn => spawn.Source.Line).ToArray();
+        Assert.Equal(3, evtZombieSpawns.Length);
+        Assert.Equal([267, 268, 269], evtZombieSpawns.Select(spawn => spawn.Source.Line));
+        Assert.All(evtZombieSpawns, spawn => Assert.Equal("legacy/rathena/npc/events/halloween_2008.txt", spawn.Source.File));
+
+        // Every generated mob reference still resolves (source declaration valid, mob reference
+        // valid) even though the map dependency itself is unresolved.
+        Assert.All(evtZombieSpawns, spawn => Assert.True(GeneratedMobRegistry.TryGet(spawn.Mob.Id, out var resolved) && ReferenceEquals(resolved, spawn.Mob)));
+
+        // Never a valid/served map - runtime activation stays disabled regardless of the
+        // organizational Events/ placement used to generate these three declarations.
+        Assert.DoesNotContain("evt_zombie", MapServerHostingScope.ServedMaps);
+        var world = MapServerWorld.Build(new GameplayRuleServices(new RenewalBasicAttackRules()), servedMaps: MapServerHostingScope.ServedMaps);
+        Assert.DoesNotContain(world.Monsters.AllInstances, instance => instance.Map == "evt_zombie");
     }
 }

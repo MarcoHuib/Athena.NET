@@ -587,23 +587,6 @@ internal static class WorldDataImporterCli
     private static string PascalCaseMapName(string mapName) =>
         string.Concat(mapName.Split('_', StringSplitOptions.RemoveEmptyEntries).Select(part => char.ToUpperInvariant(part[0]) + part[1..]));
 
-    // Deterministic PascalCase class-name suffix from a pinned NPC source file's relative path
-    // (e.g. "npc/re/mobs/dungeons/abbey.txt" -> "ReMobsDungeonsAbbey", "npc/pre-re/mobs/dungeons/
-    // abbey.txt" -> "PreReMobsDungeonsAbbey") - splits on '/', '_', '-', and '.', so two files with
-    // the same base name under different directories (a real case: re/mobs/dungeons/abbey.txt vs
-    // pre-re/mobs/dungeons/abbey.txt) never collide. Used only for GENERATED FILE/CLASS naming
-    // (task section 8's source-file sharding, chosen after inventorying 195 pinned source files
-    // against 820 distinct map tokens - source-file sharding keeps file count near the pinned
-    // source-file count and retains provenance per file, rather than either one 9,844-entry flat
-    // file or ~800 near-empty per-map files) - never a runtime map-name transform.
-    private static string PascalCaseSourceFileSuffix(string relativeSourceFile)
-    {
-        const string npcMarker = "/npc/";
-        var npcIndex = relativeSourceFile.IndexOf(npcMarker, StringComparison.Ordinal);
-        var withoutNpcPrefix = npcIndex >= 0 ? relativeSourceFile[(npcIndex + npcMarker.Length)..] : relativeSourceFile;
-        var withoutExtension = withoutNpcPrefix.EndsWith(".txt", StringComparison.Ordinal) ? withoutNpcPrefix[..^".txt".Length] : withoutNpcPrefix;
-        return string.Concat(withoutExtension.Split(['/', '_', '-', '.'], StringSplitOptions.RemoveEmptyEntries).Select(part => char.ToUpperInvariant(part[0]) + part[1..]));
-    }
 
     // Task's own generation summary shape (task section 38): "Pinned ordinary mob-spawn
     // declarations discovered" / "Generated" / "Mob definitions resolved" / "Valid map
@@ -619,15 +602,76 @@ internal static class WorldDataImporterCli
     // error (task section 10), never a silently-dropped or null MobDefinition reference.
     private static readonly IReadOnlySet<string> KnownInvalidMapDependencies = new HashSet<string>(StringComparer.Ordinal) { "evt_zombie" };
 
+    // Explicit family placement for maps that already belong to an established generated
+    // World-family module with its own Npcs/Warps/World content (never inferred - a new family
+    // must be added here deliberately). (FolderPath relative to the World output root, ClassName
+    // prefix, Namespace suffix appended to "Athena.Net.MapServer.Generated.World."). PrtFild08
+    // covers the pinned prt_fild08{,a,b,c,d} duplicate family; Izlude/Academy covers the pinned
+    // int_land{,01,02,03,04} tutorial family (both already host real NPC/warp/script content under
+    // these exact folders - see ai/world-data.md's "Generated mob spawns" section).
+    // ArrayName is an explicit per-map override (never re-derived from PascalCaseMapName, which
+    // would produce "PrtFild08a" - lowercase - for the trailing instanced-duplicate letter):
+    // matches the pinned "prt_fild08{,a,b,c,d}" family's established capitalization convention,
+    // the SAME one the retired hand-authored PrtFild08MobSpawns.cs used
+    // ("PrtFild08"/"PrtFild08A"/"PrtFild08B"/"PrtFild08C"/"PrtFild08D").
+    private static readonly IReadOnlyDictionary<string, (string FolderPath, string ClassPrefix, string NamespaceSuffix, string ArrayName)> MapFamilies =
+        new Dictionary<string, (string, string, string, string)>(StringComparer.Ordinal)
+        {
+            ["prt_fild08"] = ("PrtFild08", "PrtFild08", "PrtFild08", "PrtFild08"),
+            ["prt_fild08a"] = ("PrtFild08", "PrtFild08", "PrtFild08", "PrtFild08A"),
+            ["prt_fild08b"] = ("PrtFild08", "PrtFild08", "PrtFild08", "PrtFild08B"),
+            ["prt_fild08c"] = ("PrtFild08", "PrtFild08", "PrtFild08", "PrtFild08C"),
+            ["prt_fild08d"] = ("PrtFild08", "PrtFild08", "PrtFild08", "PrtFild08D"),
+            ["int_land"] = ("Izlude/Academy", "Academy", "Izlude.Academy", "IntLand"),
+            ["int_land01"] = ("Izlude/Academy", "Academy", "Izlude.Academy", "IntLand01"),
+            ["int_land02"] = ("Izlude/Academy", "Academy", "Izlude.Academy", "IntLand02"),
+            ["int_land03"] = ("Izlude/Academy", "Academy", "Izlude.Academy", "IntLand03"),
+            ["int_land04"] = ("Izlude/Academy", "Academy", "Izlude.Academy", "IntLand04"),
+        };
+
+    // Map-oriented placement (ai/world-data.md's "Generated mob spawns" section): one canonical
+    // spawn file per map/world-family module, never per pinned source file - if several source
+    // files target the same map, their declarations are merged into that one map's file
+    // (WorldSourceInfo still carries the EXACT per-declaration file/line, so no provenance is
+    // lost). Classification, in order:
+    //   1. map resolves through the canonical map-cache layers -> its MapFamilies entry if one
+    //      exists, otherwise a fresh single-map folder named after the map itself;
+    //   2. map does NOT resolve, but every declaration for it originates from a source file under
+    //      npc/events/ AND the map token starts with "evt_" -> World/Events/<PascalMap>/ (source
+    //      declaration/mob-reference stay valid; map dependency/runtime activation stay invalid -
+    //      this is an organizational placement only, never a claim the map is loadable);
+    //   3. anything else unresolved is a hard generation failure - "evt_" is never a blanket
+    //      escape hatch on its own; the source-context requirement (events directory) must also
+    //      hold, and any genuinely new unresolved map fails closed rather than silently guessing a
+    //      classification for it.
+    private readonly record struct MapPlacement(string FolderPath, string ClassName, string Namespace, string ArrayName, bool RuntimeValid);
+
+    private static MapPlacement ClassifyMap(string map, bool mapResolves, bool everyDeclarationIsFromEventsDirectory)
+    {
+        if (mapResolves)
+        {
+            if (MapFamilies.TryGetValue(map, out var family))
+                return new MapPlacement(family.FolderPath, family.ClassPrefix, $"Athena.Net.MapServer.Generated.World.{family.NamespaceSuffix}", family.ArrayName, true);
+            var pascal = PascalCaseMapName(map);
+            return new MapPlacement(pascal, pascal, $"Athena.Net.MapServer.Generated.World.{pascal}", pascal, true);
+        }
+        if (map.StartsWith("evt_", StringComparison.Ordinal) && everyDeclarationIsFromEventsDirectory)
+        {
+            var pascal = PascalCaseMapName(map);
+            return new MapPlacement($"Events/{pascal}", pascal, $"Athena.Net.MapServer.Generated.World.Events.{pascal}", pascal, false);
+        }
+        throw new ArgumentException($"generate-mob-spawns found spawn declaration(s) targeting unresolved map '{map}' that do not qualify for the known event-map placement (source file under npc/events/ AND a map token starting with \"evt_\") - this is a genuinely new unresolved map dependency and must be investigated, not silently classified.");
+    }
+
     private static async Task<int> GenerateMobSpawnsAsync(string[] args)
     {
         var options = CliOptions.Parse(args);
         var root = Path.GetFullPath(options.Required("rathena-root"));
         var outputDir = Path.GetFullPath(options.Required("output"));
         var commit = options.Optional("rathena-commit") ?? ReadPinnedCommit(root);
-        const string ClassName = "GeneratedMobSpawns";
+        const string RegistryFileName = "GeneratedMobSpawnRegistry.cs";
+        const string RegistryNamespace = "Athena.Net.MapServer.Generated.World";
         const string RegistryClassName = "GeneratedMobSpawnRegistry";
-        const string Namespace = "Athena.Net.MapServer.Generated.GameData.MobSpawns";
 
         // Mob-definition resolution: same source/pipeline generate-mobs itself uses, kept
         // independent of any already-generated MapServer output.
@@ -651,20 +695,18 @@ internal static class WorldDataImporterCli
 
         // Deterministic ordinal source-file enumeration (task section 19) - identical to
         // RepositoryDomainAnalyzers.AnalyzeMobSpawns' own enumeration, so both analyzer and
-        // generator agree on which files exist and in what order.
+        // generator agree on which files exist and in what order. Declarations are collected here
+        // in (file, line) order but immediately regrouped BY MAP below - source-file order only
+        // matters as the deterministic tie-break within one map's own merged declaration list.
         var npcRoot = Path.Combine(root, "npc");
         var sourceFiles = Directory.EnumerateFiles(npcRoot, "*.txt", SearchOption.AllDirectories).Order(StringComparer.Ordinal).ToArray();
 
         var discovered = new List<MobDataCompiler.MobSpawnData>();
-        var perFile = new List<(string RelativeFile, string ClassName, IReadOnlyList<MobDataCompiler.MobSpawnData> Spawns)>();
         foreach (var path in sourceFiles)
         {
             var relative = CanonicalSourceFile(path);
             var text = await File.ReadAllTextAsync(path);
-            var spawns = MobDataCompiler.ReadAllMobSpawns(text, relative);
-            if (spawns.Count == 0) continue;
-            discovered.AddRange(spawns);
-            perFile.Add((relative, $"{ClassName}.{PascalCaseSourceFileSuffix(relative)}", spawns));
+            discovered.AddRange(MobDataCompiler.ReadAllMobSpawns(text, relative));
         }
 
         // Fail closed: every discovered MobId must resolve (task section 10).
@@ -672,61 +714,98 @@ internal static class WorldDataImporterCli
         if (unresolvedMobIds.Length > 0)
             throw new ArgumentException($"generate-mob-spawns found {unresolvedMobIds.Length} spawn MobId(s) with no resolvable generated MobDefinition: {string.Join(", ", unresolvedMobIds)}. Regenerate mob definitions (generate-mobs) first, or confirm these are genuinely absent from pinned mob_db.yml.");
 
-        // Fail closed: any invalid map dependency outside the known evt_zombie set is unexpected
-        // (task section 38).
-        var invalidMapDeclarations = discovered.Where(item => !mapNames.Contains(item.Map)).ToArray();
-        var unexpectedInvalidMaps = invalidMapDeclarations.Where(item => !KnownInvalidMapDependencies.Contains(item.Map)).ToArray();
-        if (unexpectedInvalidMaps.Length > 0)
+        // Group by map (deterministic source-file-then-line order within each map - task section
+        // 18) and classify each map's placement. A map's declarations may span multiple source
+        // files (task section 42) - they still resolve to ONE physical file/array.
+        var byMap = discovered.GroupBy(spawn => spawn.Map, StringComparer.Ordinal).OrderBy(group => group.Key, StringComparer.Ordinal)
+            .Select(group => (Map: group.Key, Spawns: (IReadOnlyList<MobDataCompiler.MobSpawnData>)group.OrderBy(spawn => spawn.SourceFile, StringComparer.Ordinal).ThenBy(spawn => spawn.SourceLine).ToArray()))
+            .ToArray();
+
+        var placements = new List<(string Map, MapPlacement Placement, IReadOnlyList<MobDataCompiler.MobSpawnData> Spawns)>();
+        var invalidMapDeclarationCount = 0;
+        // Two DISTINCT real maps can still collide onto the same PascalCase folder/class name for a
+        // fresh single-map placement - a real pinned case: "gl_cas02" and "gl_cas02_" (trailing
+        // underscore, championmobs.txt:99-100) are both genuinely resolvable maps and both
+        // PascalCaseMapName to "GlCas02" (empty split segments are dropped). Family-member maps
+        // never hit this (they already have a distinct ArrayName per map within one shared file),
+        // so this only guards fresh single-map folders: a colliding folder/class name gets a
+        // deterministic numeric suffix in stable (already map-name-ordered) iteration order -
+        // each raw map string still gets its OWN file/array, never silently merged.
+        var usedSingleMapFolders = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var (map, spawns) in byMap)
         {
-            var summary = string.Join(", ", unexpectedInvalidMaps.Select(item => $"{item.SourceFile}:{item.SourceLine} (map '{item.Map}')").Take(10));
-            throw new ArgumentException($"generate-mob-spawns found {unexpectedInvalidMaps.Length} spawn declaration(s) with an unexpected invalid map dependency (only the known evt_zombie declarations are tolerated): {summary}{(unexpectedInvalidMaps.Length > 10 ? ", ..." : "")}.");
+            var resolves = mapNames.Contains(map);
+            if (!resolves) invalidMapDeclarationCount += spawns.Count;
+            var everyDeclarationFromEvents = spawns.All(spawn => spawn.SourceFile.Contains("/npc/events/", StringComparison.Ordinal));
+            var placement = ClassifyMap(map, resolves, everyDeclarationFromEvents);
+            if (!MapFamilies.ContainsKey(map))
+            {
+                var folder = placement.FolderPath;
+                var suffix = 2;
+                while (!usedSingleMapFolders.Add(folder))
+                {
+                    folder = $"{placement.FolderPath}_{suffix}";
+                    suffix++;
+                }
+                if (folder != placement.FolderPath)
+                    placement = placement with { FolderPath = folder, ClassName = folder, Namespace = placement.Namespace + "_" + (suffix - 1), ArrayName = folder };
+            }
+            placements.Add((map, placement, spawns));
         }
+
+        // Group individual map placements into physical FILES: family folders (PrtFild08, Academy)
+        // combine several maps' arrays into one file with a composed `All`; every other map gets
+        // its own single-map file (still emitted via the same family-shaped generator, with one
+        // named array plus a trivial composed `All`, for a uniform generated shape everywhere).
+        var byFile = placements.GroupBy(item => (item.Placement.FolderPath, item.Placement.ClassName, item.Placement.Namespace), item => item)
+            .OrderBy(group => group.Key.FolderPath, StringComparer.Ordinal)
+            .ToArray();
 
         Directory.CreateDirectory(outputDir);
-        foreach (var stale in Directory.EnumerateFiles(outputDir, $"{ClassName}.*.cs").Where(path => MobDataCompiler.IsOwnedGeneratedMobSpawnFile(path, ClassName))) File.Delete(stale);
-        var registryPath = Path.Combine(outputDir, $"{ClassName}.Registry.cs");
-        if (File.Exists(registryPath) && MobDataCompiler.IsOwnedGeneratedMobSpawnFile(registryPath, ClassName)) File.Delete(registryPath);
+        // Stale-file cleanup spans the ENTIRE output tree (every existing map/family folder may
+        // contain a previously-generated *Spawn.cs alongside hand-maintained *Npcs.cs/*Warps.cs/
+        // *World.cs/Scripts/ siblings - task's safe-cleanup requirement) - filename suffix
+        // ("...Spawn.cs") plus the auto-generated header are BOTH required before deletion
+        // (MobDataCompiler.IsOwnedGeneratedMobSpawnFile), so a hand-maintained file can never be
+        // swept up even if it coincidentally ends in "Spawn.cs".
+        foreach (var stale in Directory.EnumerateFiles(outputDir, "*.cs", SearchOption.AllDirectories).Where(path => MobDataCompiler.IsOwnedGeneratedMobSpawnFile(path, RegistryFileName)))
+            File.Delete(stale);
+        // Remove the RETIRED source-file-sharded layout's directory entirely if it still exists
+        // from a prior generation (this branch's own earlier iteration used
+        // Generated/World/MobSpawns/GeneratedMobSpawns.<SourceFileSuffix>.cs - never kept alongside
+        // the new map-oriented layout).
+        var staleSourceShardedDir = Path.Combine(outputDir, "MobSpawns");
+        if (Directory.Exists(staleSourceShardedDir) && Directory.EnumerateFiles(staleSourceShardedDir, "*.cs").All(path => MobDataCompiler.IsOwnedGeneratedMobSpawnFile(path, RegistryFileName)))
+            Directory.Delete(staleSourceShardedDir, recursive: true);
 
         var encoding = new System.Text.UTF8Encoding(false);
-        var fileClassNames = new List<(string ArrayExpression, string RelativeFile)>();
-        foreach (var (relativeFile, fileClassName, spawns) in perFile)
+        var arrayExpressions = new List<string>();
+        foreach (var fileGroup in byFile)
         {
-            var entries = spawns.Select(spawn => (spawn, $"GeneratedMobs.{mobSymbolById[spawn.MobId]}")).ToArray();
-            var byMap = entries.GroupBy(item => item.spawn.Map, StringComparer.Ordinal).OrderBy(group => group.Key, StringComparer.Ordinal).ToArray();
-            // Two DISTINCT raw map strings can collide onto the same PascalCase array name - a real
-            // pinned case: "gl_cas02" and "gl_cas02_" (trailing underscore, championmobs.txt:99-100)
-            // both normalize to "GlCas02" (PascalCaseMapName strips empty split segments). Each raw
-            // map string still needs its OWN array (never silently merged - task section 43: two
-            // declarations are distinct entities unless pinned rAthena itself treats them as one,
-            // and a bare map-name collision is not that), so a colliding name gets a deterministic
-            // numeric suffix in stable (already map-name-ordered) iteration order.
-            var usedArrayNames = new HashSet<string>(StringComparer.Ordinal);
-            var mapEntries = byMap.Select(group =>
-            {
-                var baseName = PascalCaseMapName(group.Key);
-                var arrayName = baseName;
-                var suffix = 2;
-                while (!usedArrayNames.Add(arrayName)) arrayName = $"{baseName}_{suffix++}";
-                return (arrayName, (IReadOnlyList<(MobDataCompiler.MobSpawnData Spawn, string MobDefinitionExpression)>)group.ToArray());
-            }).ToArray();
-            var source = mapEntries.Length == 1
-                ? MobDataCompiler.GenerateMobSpawnsForMap(mapEntries[0].Item2, commit, fileClassName.Split('.')[^1], Namespace)
-                : MobDataCompiler.GenerateMobSpawnFamily(mapEntries, commit, fileClassName.Split('.')[^1], Namespace);
-            var filePath = Path.Combine(outputDir, $"{fileClassName}.cs");
+            var (folderPath, className, ns) = fileGroup.Key;
+            var mapEntries = fileGroup.Select(item => (
+                item.Placement.ArrayName,
+                (IReadOnlyList<(MobDataCompiler.MobSpawnData Spawn, string MobDefinitionExpression)>)item.Spawns.Select(spawn => (spawn, $"GeneratedMobs.{mobSymbolById[spawn.MobId]}")).ToArray()
+            )).OrderBy(item => item.ArrayName, StringComparer.Ordinal).ToArray();
+
+            var source = MobDataCompiler.GenerateMobSpawnFamily(mapEntries, commit, $"{className}Spawn", ns);
+            var fileDir = Path.Combine(outputDir, folderPath.Replace('/', Path.DirectorySeparatorChar));
+            Directory.CreateDirectory(fileDir);
+            var filePath = Path.Combine(fileDir, $"{className}Spawn.cs");
             await File.WriteAllTextAsync(filePath, source, encoding);
-            fileClassNames.Add(($"{Namespace}.{fileClassName.Split('.')[^1]}.All", relativeFile));
+            arrayExpressions.Add($"{ns}.{className}Spawn.All");
         }
 
-        var registrySource = GenerateMobSpawnRegistry(fileClassNames.Select(item => item.ArrayExpression).ToArray(), RegistryClassName, Namespace, commit, "npc/**/*.txt (all pinned ordinary monster declarations)");
-        await File.WriteAllTextAsync(registryPath, registrySource, encoding);
+        var registrySource = GenerateMobSpawnRegistry(arrayExpressions.OrderBy(expr => expr, StringComparer.Ordinal).ToArray(), RegistryClassName, RegistryNamespace, commit, "npc/**/*.txt (all pinned ordinary monster declarations)");
+        await File.WriteAllTextAsync(Path.Combine(outputDir, RegistryFileName), registrySource, encoding);
 
-        var validCount = discovered.Count - invalidMapDeclarations.Length;
+        var validCount = discovered.Count - invalidMapDeclarationCount;
         Console.WriteLine($"Pinned ordinary mob-spawn declarations: {discovered.Count}");
         Console.WriteLine($"Generated:                             {discovered.Count}");
         Console.WriteLine($"Mob definitions resolved:              {discovered.Count} / {discovered.Count}");
         Console.WriteLine($"Valid map dependencies:                {validCount}");
-        Console.WriteLine($"Invalid map dependencies:              {invalidMapDeclarations.Length}");
-        Console.WriteLine($"Generated files:                       {perFile.Count + 1}");
+        Console.WriteLine($"Invalid map dependencies:              {invalidMapDeclarationCount}");
+        Console.WriteLine($"Generated map/family modules:          {byFile.Length}");
         return 0;
     }
 
@@ -875,7 +954,7 @@ internal static class WorldDataImporterCli
         Console.Error.WriteLine("WorldDataImporter generate-mobs --rathena-root <folder> [--rathena-commit <sha>] --output <MapServer/Generated/GameData/Mobs directory>");
         Console.Error.WriteLine("WorldDataImporter compile-progression --rathena-root <folder> --rathena-commit <sha> --output <MapServer/Generated/Progression directory> (compatibility alias)");
         Console.Error.WriteLine("WorldDataImporter compile-mob-spawn --rathena-root <folder> --rathena-commit <sha> --mob-id <id> --name <spawn-name> --spawn-file <path> [--exclude-map <map>] --class-name <n> --constant-name <n> --spawn-class-name <n> --spawn-array-name <n> --output-definition <Mob.cs> --output-spawns <MobSpawns.cs>");
-        Console.Error.WriteLine("WorldDataImporter generate-mob-spawns --rathena-root <folder> [--rathena-commit <sha>] --output <MapServer/Generated/GameData/MobSpawns directory>");
+        Console.Error.WriteLine("WorldDataImporter generate-mob-spawns --rathena-root <folder> [--rathena-commit <sha>] --output <MapServer/Generated/World directory>");
         Console.Error.WriteLine("WorldDataImporter compile-quest-drop --rathena-root <folder> --rathena-commit <sha> --quest-id <id> --output <QuestDrops.cs>");
         Console.Error.WriteLine("WorldDataImporter compile-item --rathena-root <folder> --rathena-commit <sha> --item-id <id> [--item-db-file <path>] --class-name <n> --constant-name <n> --output <Item.cs>");
         Console.Error.WriteLine("WorldDataImporter compile-map-collision --input <local.gat> --map <name> --output <local.athmap>");

@@ -649,7 +649,7 @@ Regenerate from the current pinned SHA (never edit generated output):
 dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- generate-mob-spawns \
   --rathena-root legacy/rathena \
   --rathena-commit e985006171d2eb320ee512a653f4c83aea3d81b6 \
-  --output src/MapServer/Generated/GameData/MobSpawns
+  --output src/MapServer/Generated/World
 ```
 
 ### Pinned syntax and modeled fields
@@ -686,10 +686,21 @@ parser" preference already held before this branch and remains true). `MobSpawnD
   loudly rather than being silently truncated (the OLD `SpawnLine` regex used to stop capturing
   after `delay2`, silently dropping any event field present).
 
-### Generated registry
+### Generated registry and map-oriented physical layout
 
-`GeneratedMobSpawnRegistry` (`src/MapServer/Generated/GameData/MobSpawns/GeneratedMobSpawns.Registry.cs`)
-is the map-keyed production registry:
+`MobSpawnDefinition` is world/map-owned content (map identity, coordinates/area, count, respawn
+timing, death-event binding, size/AI override) - NOT global game data. Unlike `MobDefinition`
+(under `Generated/GameData/Mobs`, keyed purely by MobId, with no world/placement concept), the
+physical generated spawn C# lives under `Generated/World`, grouped by the map/world module that
+owns it - never by which pinned source file happened to declare it. If several pinned source files
+target the same map (e.g. `prt_fild08d` receives declarations from `academy.txt`,
+`christmas_2013.txt`, and `halloween_2013.txt`), all of them merge into that ONE map's generated
+array; `WorldSourceInfo` still carries the exact per-declaration file/line, so no provenance is
+lost even though the physical file is shared.
+
+`GeneratedMobSpawnRegistry` (`src/MapServer/Generated/World/GeneratedMobSpawnRegistry.cs`) is the
+map-keyed production INDEX - it never owns spawn definitions itself, only composes/references the
+map-owned arrays:
 
 ```csharp
 GeneratedMobSpawnRegistry.TryGetMap(string map, out IReadOnlyList<MobSpawnDefinition> spawns)
@@ -697,23 +708,47 @@ GeneratedMobSpawnRegistry.GetForMap(string map) // [] for an unknown map, never 
 GeneratedMobSpawnRegistry.All // flattened, stable order, backed by a FrozenDictionary<string, MobSpawnDefinition[]>
 ```
 
-Partitioning: one generated file per pinned NPC source file (195 pinned files map to 183 non-empty
-generated `GeneratedMobSpawns.<PascalCasedSourceFileSuffix>.cs` files, e.g.
-`GeneratedMobSpawns.ReMobsFieldsPayon.cs` from `npc/re/mobs/fields/payon.txt`), each internally
-grouped by map, plus one `GeneratedMobSpawns.Registry.cs` that flattens everything into the
-map-keyed dictionary - chosen after inventorying the real distribution (195 source files vs. 820
-distinct map tokens among the 9,844 declarations): source-file sharding keeps file count near the
-pinned source-file count and retains clean per-file provenance, avoiding both one 9,844-entry flat
-file and ~800 near-empty per-map files. Total generated size is ~2.8 MiB across 183 files (largest
-~160 KiB), comparable to the earlier all-mob-definition generation's ~3.27 MiB.
+Physical placement rules, applied per map:
+
+1. **Existing world-family module** - a map that already belongs to an established generated
+   World-family folder (one with its own NPCs/warps/scripts) gets its spawn array added to that
+   SAME folder, never a new one. Two families exist today: `PrtFild08` (`prt_fild08`,
+   `prt_fild08a..d`) and `Izlude/Academy` (`int_land`, `int_land01..04`) - e.g.
+   `src/MapServer/Generated/World/PrtFild08/PrtFild08Spawn.cs` sits alongside
+   `PrtFild08Npcs.cs`/`PrtFild08Warps.cs`/`PrtFild08World.cs`, exposing
+   `PrtFild08`/`PrtFild08A`/`PrtFild08B`/`PrtFild08C`/`PrtFild08D` arrays plus a composed `All`
+   (byte-for-byte the same shape the original hand-authored `PrtFild08MobSpawns.cs` used, restored
+   here rather than duplicated). `Izlude/Academy/AcademySpawn.cs` mirrors this for the tutorial
+   family (`IntLand`/`IntLand01..04`/`All`).
+2. **New map, no existing family** - every other resolvable map gets a deterministic, freshly
+   created single-map folder named after the map itself (PascalCase, matching the repository's
+   existing map-name convention), e.g. `src/MapServer/Generated/World/PayFild01/PayFild01Spawn.cs`
+   for `pay_fild01`. A genuine PascalCase collision between two DISTINCT real maps (a real pinned
+   case: `gl_cas02` and `gl_cas02_`, a trailing-underscore variant, both resolve and both
+   PascalCase to `GlCas02`) gets a deterministic numeric folder suffix (`GlCas02`, `GlCas02_2`) -
+   each raw map string still gets its own file/array, never silently merged.
+3. **Unresolved event-map declarations** - a map that does NOT resolve through the canonical
+   map-cache layers, but whose every declaration originates from a source file under `npc/events/`
+   AND whose map token starts with `evt_`, is classified under
+   `src/MapServer/Generated/World/Events/<PascalMap>/<PascalMap>Spawn.cs` - an organizational
+   placement only, proving nothing about runtime loadability (see "Invalid map dependencies"
+   below). `evt_` alone is never a blanket escape hatch; the events-directory source-context
+   requirement must also hold.
+4. **Anything else unresolved fails generation closed** - a genuinely new unresolved map that
+   doesn't qualify for rule 3 is a hard `generate-mob-spawns` error, not a silent guess.
+
+Total generated size is ~3.0 MiB across 432 map/family modules (largest file is `PrtFild08Spawn.cs`,
+since `prt_fild08` itself absorbs many pre-Renewal `prontera.txt` field-mob declarations that
+target it as their base map).
 
 `GeneratedScriptRegistry.Register` feeds `GeneratedMobSpawnRegistry.All` into
 `WorldRegistryBuilder.AddMobSpawn` for every entry - the SOLE mob-spawn source
-`MapServerWorld.Build` sees. The two previously hand-picked slices (`AcademyMobSpawns.GPoringSpawns`
-for `int_land*`, `PrtFild08MobSpawns.All` for the `prt_fild08*` family) are retired: their content
-is a strict subset of the complete registry's own `int_land*`/`prt_fild08*` entries (verified
-byte-identical - same MobId/map/count/delay/source-line - before deletion), so keeping both would
-have double-registered the same physical source declarations.
+`MapServerWorld.Build` sees. The two originally hand-picked slices (`AcademyMobSpawns.GPoringSpawns`
+for `int_land*`, `PrtFild08MobSpawns.All` for the `prt_fild08*` family) are retired as independent
+files: their content is a strict subset of `PrtFild08Spawn`/`AcademySpawn`'s own data (verified
+byte-identical - same MobId/map/count/delay/source-line - before deletion), and their API shape is
+restored under the map-oriented layout rather than duplicated, so registering both an old and new
+path would have double-registered the same physical source declarations.
 
 ### Runtime activation stays map-lifecycle-scoped
 
@@ -731,22 +766,31 @@ Three declarations (`legacy/rathena/npc/events/halloween_2008.txt:267-269`, Zomb
 Master on map `evt_zombie`) target a map that resolves through no pinned map-cache layer at all
 (confirmed via the same canonical `RathenaMapCacheLayers.Merge` resolver
 `RepositoryDomainAnalyzers.AnalyzeMaps` uses - generated spawn map validation and analyzer map
-validation agree by construction). These three declarations ARE generated (source coverage is never
-silently dropped for a bad map dependency) but can never be runtime-activated, since `evt_zombie` is
-never a member of `MapServerHostingScope.ServedMaps` and never will be (it is not a real pinned
-map). `generate-mob-spawns` treats any OTHER unresolvable map as a hard generation failure -
-these three are the only tolerated exception, and a regression test locks their exact identities.
+validation agree by construction). Because every one of these three declarations originates from a
+source file under `npc/events/` and the map token starts with `evt_`, they are classified under the
+dedicated `src/MapServer/Generated/World/Events/EvtZombie/EvtZombieSpawn.cs` organizational module
+(placement rule 3 above) rather than failing generation - source declaration and mob reference stay
+valid, but map dependency and runtime activation stay invalid. This placement is ORGANIZATIONAL
+ONLY and never implies `evt_zombie` is a loadable map: it is never a member of
+`MapServerHostingScope.ServedMaps` and never will be (it is not a real pinned map).
+`generate-mob-spawns` treats any OTHER unresolvable map that doesn't qualify for this exact
+classification as a hard generation failure - these three are the only tolerated exception, and a
+regression test locks their exact identities.
 
 ### Multiple source files targeting the same map
 
-A map can receive declarations from several different pinned source files - e.g. `prt_fild08d`
-(already served, on the Izlude-Prontera travel corridor) has its original travel-corridor
-population from `academy.txt` PLUS Christmas 2013 and Halloween 2013 event spawns from two entirely
-different files, all merged deterministically into one `GeneratedMobSpawnRegistry.GetForMap
-("prt_fild08d")` result (355 total declarations, not merely the 340 the old hand-picked slice used
-to have). Declarations are never deduplicated by content - two spawn lines with identical
-Map/MobId/coordinates at different source locations remain two distinct entities, matching pinned
-rAthena's own behavior.
+A map can receive declarations from several different pinned source files - they are never
+organized by source file (see placement rules above); all of them merge into that ONE map's single
+generated array. `prt_fild08d` (already served, on the Izlude-Prontera travel corridor) is a real
+example: its original travel-corridor population from `academy.txt` (8 declarations, Count summing
+to 340 - Poring/Lunatic/Fabre/Little Poring) is joined by Christmas 2013 and Halloween 2013 event
+declarations from two entirely different files (4 more declarations, Count summing to 15 -
+Smokey's Gift/Sock, Organic/Inorganic Jakk), for 8 total declarations whose Counts sum to 355 -
+`GeneratedMobSpawnRegistry.GetForMap("prt_fild08d")` returns all 8, not merely the original 4 the
+old hand-picked slice had. Declarations are never deduplicated by content - two spawn lines with
+identical Map/MobId/coordinates at different source locations remain two distinct entities,
+matching pinned rAthena's own behavior; declaration merge order within one map's array is
+deterministic (canonical relative source path, then source line).
 
 ### Still missing (explicitly deferred, out of scope for this branch)
 
