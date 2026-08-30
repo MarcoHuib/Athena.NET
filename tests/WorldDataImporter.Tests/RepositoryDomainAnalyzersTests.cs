@@ -170,6 +170,48 @@ public sealed class RepositoryDomainAnalyzersTests
         Assert.Contains(spawns, item => item.Status == DomainCompatibilityStatus.FullyCompatible && item.Name == "Poring");
     }
 
+    // The remaining gap this hardening pass closes: TryParseSpawnLine returning FALSE previously
+    // meant only "not a spawn declaration" - even for a line that plainly IS one by a broader
+    // "does this look like an ordinary monster declaration at all" test, just not one the CURRENT
+    // SpawnLine regex grammar happens to understand (e.g. a future/unexpected field separator).
+    // This line deliberately uses semicolons instead of commas - it unambiguously declares an
+    // ordinary `monster` spawn (map/coords/name/mobid/count are all present and recognizable) but
+    // does NOT match the current comma-based SpawnLine grammar - exactly the class of syntax drift
+    // that silently dropped 224 real bare-map-name declarations before the SpawnLine grammar itself
+    // was fixed (a fix that was only possible because the gap was eventually noticed by other
+    // means). It must now be reported as its own explicit parse-failure entity, never silently
+    // absorbed into "not a spawn line" like an ordinary NPC/script/mapflag line.
+    [Fact]
+    public void MobSpawn_OrdinaryMonsterLineNotMatchingCurrentGrammar_IsReportedAsAnExplicitParseFailure()
+    {
+        using var fixture = new DomainFixture();
+        fixture.WriteBytes("db/map_cache.dat", BuildMapCache(("prt_fild08", (short)1, (short)1, OneCell)));
+        fixture.Write("db/re/mob_db.yml", MobBlock(1002, "PORING", "Poring"));
+        fixture.Write("npc/re/mobs/fields.txt", "prt_fild08;0;0\tmonster\tGhost\t1002;10;5000\n");
+
+        var entities = RepositoryDomainAnalyzers.Analyze(fixture.Root, null);
+
+        var spawn = Assert.Single(entities, item => item.Domain == "mob-spawns");
+        Assert.Equal(DomainCompatibilityStatus.Unsupported, spawn.Status);
+        Assert.Contains("mob-spawn:parse-failure", spawn.Blockers);
+    }
+
+    // An unrelated NPC/script line (no "monster" token at all, and no boss_monster either) must
+    // remain silently ignored by the mob-spawns domain - the broadened candidate-line detection must
+    // not turn ordinary non-spawn content into false parse failures.
+    [Fact]
+    public void MobSpawn_UnrelatedNpcScriptLine_RemainsIgnored_NeverBecomesAFalseParseFailure()
+    {
+        using var fixture = new DomainFixture();
+        fixture.WriteBytes("db/map_cache.dat", BuildMapCache(("prt_fild08", (short)1, (short)1, OneCell)));
+        fixture.Write("db/re/mob_db.yml", MobBlock(1002, "PORING", "Poring"));
+        fixture.Write("npc/re/mobs/fields.txt", "prt_fild08,50,50,4\tscript\tGuide#01\t105,{\n\tend;\n}\n");
+
+        var entities = RepositoryDomainAnalyzers.Analyze(fixture.Root, null);
+
+        Assert.DoesNotContain(entities, item => item.Domain == "mob-spawns");
+    }
+
     [Fact]
     public void MapFlag_ReferencingAMapPresentOnlyInTheBaseCache_HasNoFalseDependencyBlocker()
     {
@@ -1061,10 +1103,21 @@ public sealed class RepositoryDomainAnalyzersMobSpawnProvenanceTests
     });
     private static IReadOnlyList<DomainEntity> MobSpawns => LazyMobSpawns.Value;
 
+    // 10,068 successfully-parsed declarations plus 171 explicit mob-spawn:parse-failure diagnostic
+    // entities (a known, currently-unsupported map-token character-class gap - real, active,
+    // fully-resolvable pinned declarations that MobDataCompiler.SpawnLine cannot yet parse at all;
+    // see ai/follow-up/mob-spawn-map-token-gap.md for the full inventory and why this is
+    // deliberately not fixed in the same change as this hardening pass) = 10,239 total mob-spawns
+    // domain entities. This count is NOT redefining the "10,068 repository ordinary spawn
+    // declarations" metric (task: never redefine that metric) - it is the analyzer's own domain
+    // total, which now HONESTLY includes explicit failure diagnostics instead of silently
+    // undercounting by omitting them.
     [Fact]
-    public void Count_RemainsExactly10068RegardlessOfProvenance()
+    public void Count_Is10068SuccessesPlus171KnownParseFailures()
     {
-        Assert.Equal(10068, MobSpawns.Count);
+        Assert.Equal(10239, MobSpawns.Count);
+        Assert.Equal(10068, MobSpawns.Count(item => !item.Blockers.Contains("mob-spawn:parse-failure")));
+        Assert.Equal(171, MobSpawns.Count(item => item.Blockers.Contains("mob-spawn:parse-failure")));
     }
 
     // Real declaration from a file referenced (active) by npc/re/scripts_monsters.conf.

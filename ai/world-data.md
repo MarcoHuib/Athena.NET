@@ -652,6 +652,21 @@ project's ordinary-monster scope entirely - see "Still missing" below); `9844 + 
 bare form is also the ONLY form any real pinned AegisName mob token (as opposed to a numeric MobId)
 appears in - see "Pinned syntax and modeled fields" below.
 
+**10,068 is the count reachable by the currently-supported `SpawnLine` grammar, not a claim of
+exhaustive pinned ordinary-`monster` coverage.** A known, deliberately-not-yet-fixed gap remains:
+`SpawnLine`'s `map` token character class (`[A-Za-z0-9_]+`) rejects real pinned map names containing
+`-` or `@` (e.g. `pvp_n_1-2`, `new_1-3`, `1@md_gef`) - 171 real active declarations across 8 files are
+currently silently unmatched (analyzer-side, this surfaces as an explicit `mob-spawn:parse-failure`
+diagnostic per declaration rather than a silent disappearance; generator-side it remains an invisible
+gap, since `generate-mob-spawns` doesn't consume the failure-isolated path). See
+`ai/follow-up/mob-spawn-map-token-gap.md` for the full deterministic inventory (exact
+file/line/map-token/spawn-name/MobId-token/load-class/resolution-status for all 171), the reasoning
+for why this was deliberately NOT fixed in the same branch as the analyzer hardening that discovered
+it (widening the shared regex affects `generate-mob-spawns`' own resolved/generated set, which is a
+separate, larger scope), and the recommended follow-up plan (including a required
+`PascalCaseMapName` sanitization fix, since `pvp_n_1-2`/`1@md_gef` do not produce valid C# identifiers
+today).
+
 **Generated source coverage is not the same as full runtime gameplay behavior compatibility, and is
 not the same as default runtime activation.** Every pinned ordinary `monster` declaration is
 represented as production C# data and resolves through `GeneratedMobRegistry`, but Drops runtime,
@@ -971,7 +986,11 @@ source content becomes active in `AthenaIroEffective`.
 
 ### Discovered real counts (pinned commit `e985006171d2eb320ee512a653f4c83aea3d81b6`)
 
-- Repository ordinary spawn declarations: **10,068** (`GeneratedMobSpawnRegistry.All`/`.Count`).
+- Repository ordinary spawn declarations: **10,068** (`GeneratedMobSpawnRegistry.All`/`.Count`) -
+  the count reachable by the currently-supported `SpawnLine` grammar; see
+  `ai/follow-up/mob-spawn-map-token-gap.md` for 171 additional real, active, fully-resolvable
+  declarations this grammar does not yet recognize (a known map-token character-class gap,
+  deliberately not fixed alongside the analyzer hardening that surfaced it).
 - `RenewalDefault`: **3,802**. `AthenaOverlay`: **73** (all from `academy.txt`).
   `PreRenewalSource`: **3,374**. `Disabled`: **2,819**. (Sum: 10,068.)
 - `AthenaIroEffective` (RenewalDefault ∪ AthenaOverlay): **3,875**.

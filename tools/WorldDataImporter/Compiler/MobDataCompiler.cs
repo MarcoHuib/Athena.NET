@@ -624,13 +624,56 @@ internal static class MobDataCompiler
     // existing AnalyzeMobs try/catch-per-entity convention).
     internal sealed record MobSpawnLineFailure(int Line, string Message);
 
-    // Fail-OPEN, line-isolated variant of ReadAllMobSpawns for analyzer use: every line that parses
-    // successfully is returned in Spawns; every line whose TryParseSpawnLine match succeeds but whose
-    // subsequent resolution/validation throws (unknown AegisName, invalid declared level, or any
-    // future pinned syntax/value drift) is captured in Failures instead of being silently skipped OR
-    // aborting the scan for the rest of the file. A non-matching line (not a spawn declaration at
-    // all) is neither a success nor a failure, exactly like ReadAllMobSpawns/TryParseSpawnLine's
-    // existing "continue" semantics for a non-matching line.
+    // Deliberately MUCH broader than the full SpawnLine grammar - this only asks "does this line look
+    // like it is TRYING to be an ordinary `monster` spawn declaration at all", never "is it a
+    // well-formed one" (that remains SpawnLine/TryParseSpawnLine's job). Anchored on pinned
+    // npc_parse's OWN dispatch condition, not merely "contains the word monster anywhere": pinned
+    // splits a source line into tab-delimited w1/w2/w3/w4 fields and dispatches to npc_parse_mob only
+    // when w2 (the SECOND field) is exactly "monster" (case-insensitive) -
+    // `strcmpi(w2,"monster") == 0`, src/map/npc.cpp:5810. `^\S+\t+monster\t` requires a non-empty w1
+    // (tolerating ANY future w1 shape - coordinates, missing coordinates, whatever) immediately
+    // followed by a tab-delimited "monster" field - deliberately NOT a bare substring match, which
+    // would (and, in an earlier draft of this fix, DID) false-positive on the unrelated `monster`
+    // SCRIPT COMMAND (e.g. `monster "bat_a01",273,203,"Neutrality Flag",1911,1,...;` inside an
+    // OnEnable: block - a runtime scripted spawn call, not a source declaration) and on plain English
+    // prose in `mes "..."` dialogue text (e.g. "...the power of monsters..."). Anchoring on the exact
+    // pinned w2-field dispatch position excludes both false-positive classes while still tolerating
+    // ANY future syntax drift in w1's own coordinate shape or w3/w4's own field shape - exactly the
+    // class of syntax drift that silently dropped 224 real bare-map-name declarations before the
+    // SpawnLine grammar itself was fixed (see SpawnLine's own doc comment). `boss_monster` is a
+    // DIFFERENT w2 value entirely (not merely a "monster" substring) and a deliberately separate,
+    // unimplemented domain (task: MVP/boss_monster runtime out of scope) - `^\S+\t+monster\t`
+    // (anchored start-to-end of the w2 field) never matches a `boss_monster` w2 value.
+    private static readonly Regex OrdinaryMonsterCandidateLine = new(@"^\S+\t+monster\t", RegexOptions.IgnoreCase);
+
+    // A commented-out ("//"-prefixed after trimming leading whitespace) or blank line is never a
+    // candidate, regardless of what text follows the comment marker - matches
+    // RepositoryDomainAnalyzers.IsCommentedOrBlank's own convention exactly (real pinned data has
+    // 327 genuinely commented-out "monster"-containing lines, e.g.
+    // "//gef_dun03,0,0\tmonster\tBaphomet\t1039,1,7200000,7200000" in
+    // npc/re/mobs/dungeons/gef_dun.txt - these must stay silently ignored, not become false parse
+    // failures).
+    private static bool IsCommentedOrBlankLine(string line)
+    {
+        var trimmed = line.TrimStart();
+        return trimmed.Length == 0 || trimmed.StartsWith("//", StringComparison.Ordinal);
+    }
+
+    // Fail-OPEN, line-isolated variant of ReadAllMobSpawns for analyzer use. Three outcomes per line:
+    //   1. Not an ordinary-monster candidate line at all (OrdinaryMonsterCandidateLine doesn't
+    //      match) - ignored, exactly like ReadAllMobSpawns/TryParseSpawnLine's existing "continue"
+    //      semantics for an unrelated line (NPC/script/warp/mapflag/comment/blank).
+    //   2. A candidate line whose full SpawnLine grammar ALSO matches and resolves cleanly - a
+    //      parsed MobSpawnData in Spawns.
+    //   3. A candidate line that TryParseSpawnLine either doesn't match (regex-level syntax the
+    //      current grammar doesn't understand) OR matches but whose subsequent
+    //      resolution/validation throws (unknown AegisName, invalid declared level, or any future
+    //      pinned syntax/value drift) - captured in Failures instead of being silently skipped OR
+    //      aborting the scan for the rest of the file. Case 3's two sub-paths (regex non-match vs.
+    //      thrown exception) are the fix for a real remaining gap: TryParseSpawnLine returning false
+    //      previously meant ONLY "not a spawn declaration", even for a line that plainly WAS one by
+    //      the broader OrdinaryMonsterCandidateLine test - collapsing "irrelevant line" and "spawn
+    //      declaration SpawnLine no longer understands" into the same silent no-op.
     internal static (IReadOnlyList<MobSpawnData> Spawns, IReadOnlyList<MobSpawnLineFailure> Failures) TryReadAllMobSpawns(string spawnScriptText, string sourceFile, IReadOnlyDictionary<string, int>? aegisNameToId = null)
     {
         var results = new List<MobSpawnData>();
@@ -638,10 +681,14 @@ internal static class MobDataCompiler
         var lines = spawnScriptText.Split('\n');
         for (var i = 0; i < lines.Length; i++)
         {
+            var line = lines[i];
+            if (IsCommentedOrBlankLine(line) || !OrdinaryMonsterCandidateLine.IsMatch(line)) continue;
             try
             {
-                if (TryParseSpawnLine(lines[i], sourceFile, i + 1, aegisNameToId, out var spawn, out _))
+                if (TryParseSpawnLine(line, sourceFile, i + 1, aegisNameToId, out var spawn, out _))
                     results.Add(spawn);
+                else
+                    failures.Add(new MobSpawnLineFailure(i + 1, $"Line looks like an ordinary 'monster' spawn declaration but does not match the current SpawnLine grammar at {sourceFile}:{i + 1}."));
             }
             catch (Exception exception)
             {
@@ -1157,6 +1204,27 @@ internal static class MobDataCompiler
     // exactly this bare form - an EARLIER version of this regex required `,x,y` unconditionally,
     // which silently dropped these 15 real declarations entirely (never generated, never analyzed) -
     // a genuine parser gap, not a deliberately narrower scope.
+    //
+    // KNOWN FOLLOW-UP GAP (deliberately NOT fixed here - see ai/follow-up/mob-spawn-map-token-gap.md
+    // for the full deterministic inventory): `map` still uses the narrower `[A-Za-z0-9_]+`, not
+    // pinned's actual w1 sscanf grammar (`"%15[^,],%6hd,%6hd,%6hd,%6hd"`, npc.cpp:3901's sibling
+    // parse), which places NO character-class restriction on the map token beyond "not a comma".
+    // Real pinned map names use `-` (e.g. `pvp_n_1-2`..`pvp_n_8-5`, `new_1-3`..`new_5-3`) and `@`
+    // (instance-map convention, e.g. `1@md_gef`) that this narrower class rejects - 171 real, ACTIVE
+    // (non-commented) declarations across 8 files are silently unmatched by SpawnLine today. Every
+    // one of those 171 declarations' map AND MobId tokens independently resolve fine (verified
+    // directly) - resolution is not the blocker, only this regex's character class is. Widening it
+    // is deliberately NOT done in this hardening pass: it is shared by generate-mob-spawns
+    // (Program.cs), so widening it changes that command's own resolved/generated declaration set -
+    // out of scope for an analyzer-only hardening change, and it ALSO requires
+    // `PascalCaseMapName`/folder-naming to be hardened first (`pvp_n_1-2`/`1@md_gef` do not produce
+    // valid C# identifiers today). An earlier, EXPERIMENTAL over-broad widening attempt
+    // (`[^,\t\r\n]+`) was tried and discarded specifically because it also matched commented-out
+    // declarations (`//pvp_n_1-2,0,0\tmonster\t...`, with `map` capturing the literal `"//..."`
+    // prefix) - a real correctness bug in that attempt, not evidence of a SECOND gap; see the
+    // follow-up doc's "False lead" section. 10,068 (this branch's repository ordinary-monster count)
+    // is therefore the count reachable by the CURRENTLY SUPPORTED grammar, not a claim of exhaustive
+    // pinned coverage.
     private static readonly Regex SpawnLine = new(@"^(?<map>[A-Za-z0-9_]+)(?:,(?<x>-?\d+),(?<y>-?\d+)(?:,(?<xs>\d+),(?<ys>\d+))?)?\t+monster\t+(?<spawnname>[^,\t]+)(?:,(?<level>-?\d+))?\t+(?<mobtoken>[^,\t]+),(?<count>\d+)(?:,(?<delay1>\d+)(?:,(?<delay2>\d+)(?:,(?<event>[^,\t\r\n]+)(?:,(?<size>\d+)(?:,(?<ai>\d+))?)?)?)?)?", RegexOptions.None);
     private static Regex SpawnLineRegex() => SpawnLine;
 

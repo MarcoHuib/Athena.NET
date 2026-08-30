@@ -76,8 +76,20 @@ public sealed class MobSpawnGenerationTests
     // identities, not just counts") - both derive from the SAME ReadMobSpawns/SpawnLine parser
     // (task section 23's "strong preference: one shared parser"), so this proves the all-declarations
     // scan path and the name-filtered analyzer path never silently diverge.
+    // ReadAllMobSpawns' successfully-parsed identity set is a SUBSET of (not equal to) the analyzer's
+    // own mob-spawns domain identity set: RepositoryDomainAnalyzers.AnalyzeMobSpawns now uses
+    // MobDataCompiler.TryReadAllMobSpawns (line-isolated, candidate-line-aware), which additionally
+    // reports 171 real, currently-unmatched-by-SpawnLine "ordinary monster declaration" lines as
+    // their own explicit mob-spawn:parse-failure diagnostic entities (see
+    // ai/follow-up/mob-spawn-map-token-gap.md) - REAL declarations that ReadAllMobSpawns/SpawnLine
+    // still cannot parse at all (a known, separate follow-up gap, not something introduced by this
+    // test). Both entity id schemes share the SAME "mob-spawn:{file}:{line}" shape for the
+    // successfully-parsed subset, so ReadAllMobSpawns' ids must be a subset of the analyzer's -
+    // proving the generator's own scan path never silently diverges from what the analyzer
+    // successfully resolves, while still allowing the analyzer to see MORE (as explicit diagnostics,
+    // never silent) than the generator currently can.
     [Fact]
-    public void ReadAllMobSpawns_IdentitySet_ExactlyMatchesAnalyzerMobSpawnDomain()
+    public void ReadAllMobSpawns_IdentitySet_IsASubsetOfTheAnalyzerMobSpawnDomain()
     {
         // Analyzer ids are ROOT-relative (RepositoryDomainAnalyzers.Relative -> "npc/..."), while
         // generated WorldSourceInfo.File is repo-canonical ("legacy/rathena/npc/..." -
@@ -87,8 +99,11 @@ public sealed class MobSpawnGenerationTests
         // mismatch.
         var scannedIds = fixture.Scanned.Select(spawn => $"mob-spawn:{spawn.SourceFile.Replace("legacy/rathena/", string.Empty, StringComparison.Ordinal)}:{spawn.SourceLine}").ToHashSet(StringComparer.Ordinal);
 
-        Assert.Equal(fixture.AnalyzerMobSpawnIds.Count, scannedIds.Count);
-        Assert.Equal(fixture.AnalyzerMobSpawnIds, scannedIds);
+        Assert.True(scannedIds.IsSubsetOf(fixture.AnalyzerMobSpawnIds), "ReadAllMobSpawns' identity set must be a subset of the analyzer's mob-spawns domain.");
+        // Exactly 171 analyzer entities exist that ReadAllMobSpawns could not itself parse (the
+        // known map-token character-class gap, ai/follow-up/mob-spawn-map-token-gap.md) - locked
+        // here so a future fix to either side is a deliberate, visible test update.
+        Assert.Equal(171, fixture.AnalyzerMobSpawnIds.Count - scannedIds.Count);
     }
 
     // Count corrected from the original 9,844 to 10,068 by a genuine parser bug fix (this branch):
