@@ -487,6 +487,13 @@ Generate the current Academy NPC definitions/placements/behaviors: see the
 Compiler audit/capability reports may still scan the complete pinned NPC tree;
 their breadth does not imply runtime support.
 
+`WorldDataImporter analyze` is the repository-wide, read-only compatibility layer.
+It reuses the same per-event parser/semantic/lowering result as NPC generation,
+reports fail-closed event compatibility and staged blockers, and writes deterministic
+JSON/JSONL plus Markdown without generating runtime source. Its result model is the
+intended input boundary for a future compatible-only bulk generator, avoiding an
+independent compatibility parser or duplicated capability list.
+
 Regenerate complete character data from the current pinned SHA (never edit generated output):
 
 ```bash

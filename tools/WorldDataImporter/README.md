@@ -228,6 +228,49 @@ The report is derived from syntax and semantic analysis. It distinguishes parsed
 constructs from fully runtime-supported commands, includes source locations and
 blocking reasons, and does not classify labels or language keywords as commands.
 
+## Repository-wide compatibility analysis
+
+The `analyze` command discovers pinned world declarations and evaluates each NPC
+event through the same lexer, parser, semantic analyzer, and lowerer used by C#
+generation. It is a read-only dry run: it does not emit runtime C#, modify the
+pinned source, update a database, or contact a server.
+
+Run the complete analysis manually (it is intentionally not part of normal tests):
+
+```bash
+dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- analyze \
+  --rathena-root legacy/rathena \
+  --output artifacts/world-analysis
+```
+
+Narrow investigations can repeat `--type` and can use `--map`, `--source`, and
+`--source-context-lines`:
+
+```bash
+dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- analyze \
+  --rathena-root legacy/rathena \
+  --output artifacts/world-analysis-izlude \
+  --type npc --map izlude --source npc/re --source-context-lines 5
+```
+
+The output contains:
+
+- `summary.json`: category and event totals;
+- `compatible.jsonl`: one fully compatible logical entity/event per line;
+- `unsupported.jsonl`: unsupported events, all known blockers, and bounded source context;
+- `blockers.json`: feature/stage aggregates and representative sources;
+- `work-items.json`: roadmap ordered by the amount of content a capability alone unlocks;
+- `dependencies.json`: literal quest/item/map references proven by lowered source;
+- `report.md`: concise human-readable summary.
+
+`Compatible` means the complete event passes the current real compilation boundary;
+unsupported statements are never omitted. `soleBlockerFor` counts events whose
+distinct blocker set contains only that feature and stage, rather than estimating
+from command frequency. Parsing failures, semantic failures, lowering gaps,
+runtime capability gaps, dependencies, and generation failures are separate stages
+because they require different work. Reliably discoverable categories without an
+actual converter are reported as `NotYetAnalyzed`, never as compatible.
+
 ## Top-level content audit
 
 ```bash

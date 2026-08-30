@@ -9,6 +9,7 @@ internal static class DeterministicJson
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
     };
     public static string Serialize<T>(T value) => JsonSerializer.Serialize(value, Options) + "\n";
+    public static string SerializeLine<T>(T value) => JsonSerializer.Serialize(value, new JsonSerializerOptions(Options) { WriteIndented = false });
     public static async Task WriteFileAsync<T>(string path, T value)
     {
         path = Path.GetFullPath(path);
