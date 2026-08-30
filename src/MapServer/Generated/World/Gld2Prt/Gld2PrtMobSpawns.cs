@@ -13,17 +13,17 @@ internal static class Gld2PrtMobSpawns
 {
     internal static readonly MobSpawnDefinition[] Gld2Prt =
     [
-        new(GeneratedMobs.XmasSmokeyGift, "gld2_prt", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1111), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.XmasSmokeySock, "gld2_prt", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1402), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.OrganicJakk, "gld2_prt", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 538), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.InorganicJakk, "gld2_prt", 4, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 841), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.C4GldKobold2, "gld2_prt", 2, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 128), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.GldKobold1, "gld2_prt", 25, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_re.txt", 65), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.GldKobold2, "gld2_prt", 35, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_re.txt", 66), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.GldKobold3, "gld2_prt", 35, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_re.txt", 67), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.GldKoboldArcher, "gld2_prt", 35, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_re.txt", 68), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Lora, "gld2_prt", 1, 1800000, 600000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_re.txt", 70), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.GldTreasure, "gld2_prt", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_re.txt", 99), X: 0, Y: 0, Xs: 0, Ys: 0),
+        new(GeneratedMobs.XmasSmokeyGift, "gld2_prt", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1111), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Gift Stealing Raccoon"),
+        new(GeneratedMobs.XmasSmokeySock, "gld2_prt", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1402), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Sock Stealing Raccoon"),
+        new(GeneratedMobs.OrganicJakk, "gld2_prt", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 538), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Organic Pumpkin"),
+        new(GeneratedMobs.InorganicJakk, "gld2_prt", 4, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 841), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Inorganic Pumpkin"),
+        new(GeneratedMobs.C4GldKobold2, "gld2_prt", 2, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 128), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Furious Dark Hammer Kobold"),
+        new(GeneratedMobs.GldKobold1, "gld2_prt", 25, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_re.txt", 65), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Dark Axe Kobold"),
+        new(GeneratedMobs.GldKobold2, "gld2_prt", 35, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_re.txt", 66), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Dark Hammer Kobold"),
+        new(GeneratedMobs.GldKobold3, "gld2_prt", 35, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_re.txt", 67), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Dark Mace Kobold"),
+        new(GeneratedMobs.GldKoboldArcher, "gld2_prt", 35, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_re.txt", 68), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Dark Kobold Archer"),
+        new(GeneratedMobs.Lora, "gld2_prt", 1, 1800000, 600000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_re.txt", 70), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Warrior Laura"),
+        new(GeneratedMobs.GldTreasure, "gld2_prt", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_re.txt", 99), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Treasure Chest"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. Gld2Prt];

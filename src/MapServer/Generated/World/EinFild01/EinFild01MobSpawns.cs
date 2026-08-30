@@ -13,13 +13,13 @@ internal static class EinFild01MobSpawns
 {
     internal static readonly MobSpawnDefinition[] EinFild01 =
     [
-        new(GeneratedMobs.EventLude, "ein_fild01", 3, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2006.txt", 1119), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.DemonPungus, "ein_fild01", 30, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/einbroch.txt", 28), X: 115, Y: 190, Xs: 80, Ys: 150),
-        new(GeneratedMobs.DemonPungus, "ein_fild01", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/einbroch.txt", 29), X: 264, Y: 318, Xs: 70, Ys: 60),
-        new(GeneratedMobs.DemonPungus, "ein_fild01", 5, 300000, 60000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/einbroch.txt", 30), X: 232, Y: 100, Xs: 25, Ys: 60),
-        new(GeneratedMobs.Punk, "ein_fild01", 25, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/einbroch.txt", 31), X: 115, Y: 190, Xs: 80, Ys: 150),
-        new(GeneratedMobs.Punk, "ein_fild01", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/einbroch.txt", 32), X: 264, Y: 318, Xs: 70, Ys: 60),
-        new(GeneratedMobs.Punk, "ein_fild01", 5, 300000, 60000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/einbroch.txt", 33), X: 232, Y: 100, Xs: 25, Ys: 60),
+        new(GeneratedMobs.EventLude, "ein_fild01", 3, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2006.txt", 1119), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Lude"),
+        new(GeneratedMobs.DemonPungus, "ein_fild01", 30, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/einbroch.txt", 28), X: 115, Y: 190, Xs: 80, Ys: 150, SpawnName: "Demon Pungus"),
+        new(GeneratedMobs.DemonPungus, "ein_fild01", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/einbroch.txt", 29), X: 264, Y: 318, Xs: 70, Ys: 60, SpawnName: "Demon Pungus"),
+        new(GeneratedMobs.DemonPungus, "ein_fild01", 5, 300000, 60000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/einbroch.txt", 30), X: 232, Y: 100, Xs: 25, Ys: 60, SpawnName: "Demon Pungus"),
+        new(GeneratedMobs.Punk, "ein_fild01", 25, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/einbroch.txt", 31), X: 115, Y: 190, Xs: 80, Ys: 150, SpawnName: "Punk"),
+        new(GeneratedMobs.Punk, "ein_fild01", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/einbroch.txt", 32), X: 264, Y: 318, Xs: 70, Ys: 60, SpawnName: "Punk"),
+        new(GeneratedMobs.Punk, "ein_fild01", 5, 300000, 60000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/einbroch.txt", 33), X: 232, Y: 100, Xs: 25, Ys: 60, SpawnName: "Punk"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. EinFild01];

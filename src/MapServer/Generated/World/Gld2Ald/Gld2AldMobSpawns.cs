@@ -13,16 +13,16 @@ internal static class Gld2AldMobSpawns
 {
     internal static readonly MobSpawnDefinition[] Gld2Ald =
     [
-        new(GeneratedMobs.XmasSmokeyGift, "gld2_ald", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1108), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.XmasSmokeySock, "gld2_ald", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1399), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.OrganicJakk, "gld2_ald", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 535), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.InorganicJakk, "gld2_ald", 4, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 838), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.C5AngraMantis, "gld2_ald", 2, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 125), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.KillerMantis, "gld2_ald", 60, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_re.txt", 45), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.AngraMantis, "gld2_ald", 70, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_re.txt", 46), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.MayaPuple, "gld2_ald", 3, 1200000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_re.txt", 47), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Elvira, "gld2_ald", 1, 1800000, 600000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_re.txt", 49), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.GldTreasure, "gld2_ald", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_re.txt", 98), X: 0, Y: 0, Xs: 0, Ys: 0),
+        new(GeneratedMobs.XmasSmokeyGift, "gld2_ald", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1108), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Gift Stealing Raccoon"),
+        new(GeneratedMobs.XmasSmokeySock, "gld2_ald", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1399), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Sock Stealing Raccoon"),
+        new(GeneratedMobs.OrganicJakk, "gld2_ald", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 535), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Organic Pumpkin"),
+        new(GeneratedMobs.InorganicJakk, "gld2_ald", 4, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 838), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Inorganic Pumpkin"),
+        new(GeneratedMobs.C5AngraMantis, "gld2_ald", 2, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 125), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Elusive Angra Mantis"),
+        new(GeneratedMobs.KillerMantis, "gld2_ald", 60, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_re.txt", 45), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Killer Mantis"),
+        new(GeneratedMobs.AngraMantis, "gld2_ald", 70, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_re.txt", 46), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Angra Mantis"),
+        new(GeneratedMobs.MayaPuple, "gld2_ald", 3, 1200000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_re.txt", 47), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Maya Purple"),
+        new(GeneratedMobs.Elvira, "gld2_ald", 1, 1800000, 600000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_re.txt", 49), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Elvira"),
+        new(GeneratedMobs.GldTreasure, "gld2_ald", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_re.txt", 98), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Treasure Chest"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. Gld2Ald];

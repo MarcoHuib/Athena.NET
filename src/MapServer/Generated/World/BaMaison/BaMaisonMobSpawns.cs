@@ -13,11 +13,11 @@ internal static class BaMaisonMobSpawns
 {
     internal static readonly MobSpawnDefinition[] BaMaison =
     [
-        new(GeneratedMobs.Ep172BetaBasicNg, "ba_maison", 15, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/ba_maison.txt", 9), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Ep172OmegaCleaner, "ba_maison", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/ba_maison.txt", 10), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Ep172GuardianParts, "ba_maison", 15, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/ba_maison.txt", 11), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Ep172Bookworm, "ba_maison", 2, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/ba_maison.txt", 12), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Ep172RoamingSplbook, "ba_maison", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/ba_maison.txt", 13), X: 0, Y: 0, Xs: 0, Ys: 0),
+        new(GeneratedMobs.Ep172BetaBasicNg, "ba_maison", 15, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/ba_maison.txt", 9), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Broken Beta"),
+        new(GeneratedMobs.Ep172OmegaCleaner, "ba_maison", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/ba_maison.txt", 10), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Omega Cleaner"),
+        new(GeneratedMobs.Ep172GuardianParts, "ba_maison", 15, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/ba_maison.txt", 11), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Guardian Parts"),
+        new(GeneratedMobs.Ep172Bookworm, "ba_maison", 2, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/ba_maison.txt", 12), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Bookworm"),
+        new(GeneratedMobs.Ep172RoamingSplbook, "ba_maison", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/ba_maison.txt", 13), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Roaming Spellbook"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. BaMaison];

@@ -141,7 +141,25 @@ internal static class MobDataCompiler
     // see MobSizeData's own doc comment) rather than a raw int, for the same reason mob.Size does
     // above: a present-but-out-of-[0,2]-range source value should fail generation loudly instead of
     // being silently cast into a meaningless enum member.
-    internal sealed record MobSpawnData(string Map, int MobId, int Count, int RespawnDelay, int RespawnRandomDelay, string SourceFile, int SourceLine, short X, short Y, short Xs, short Ys, string? DeathEvent = null, MobSizeData? Size = null, int? Ai = null);
+    // SpawnName/DeclaredLevel mirror pinned npc_parse_mob's w3 field
+    // (`<mob name>{,<mob level>}`, npc.cpp:5218-5317) - preserved independently of
+    // MobDefinitionData.Name/Level, which they are not guaranteed to match. SpawnName is the exact
+    // source token verbatim (always present - w3's own mob-name capture never fails to match).
+    // DeclaredLevel is null when the source line genuinely omits the level field (pinned's own
+    // `mob_lv = -1` sentinel before sscanf runs) and the RAW signed parsed value when present -
+    // INCLUDING a value pinned parses as valid but that never actually overrides mob.level (any
+    // negative other than the omitted sentinel; pinned's own effective-override gate is
+    // `mob_lv > 0 && mob_lv <= MAX_LEVEL`, strictly narrower than its validity gate). See
+    // MaxPinnedMobLevel's own doc comment for the exact pinned validity rule this compiler enforces
+    // at parse time, and EffectiveLevelOverride (WorldEntityDefinition.cs) for the separate, derived
+    // "does this actually override" concept - never collapsed into this stored field.
+    internal sealed record MobSpawnData(string Map, int MobId, int Count, int RespawnDelay, int RespawnRandomDelay, string SourceFile, int SourceLine, short X, short Y, short Xs, short Ys, string SpawnName, int? DeclaredLevel = null, string? DeathEvent = null, MobSizeData? Size = null, int? Ai = null);
+
+    // Pinned MAX_LEVEL (src/map/map.hpp:78). npc_parse_mob rejects a present, non-omitted level
+    // field outside (0, MAX_LEVEL] as a hard parse error - this compiler reproduces that exact
+    // pinned validity gate (see MobSpawnData's own doc comment) rather than accepting every signed
+    // integer.
+    internal const int MaxPinnedMobLevel = 275;
 
     // Parses one `- Id: <n>` block out of mob_db.yml up to (not including) the
     // next top-level `- Id:` line. Defaults for fields absent from the pinned
@@ -563,13 +581,13 @@ internal static class MobDataCompiler
     // ai/world-data.md's "Runtime architecture" section and
     // WorldMapRegistryFamilyTests/PoringRandomSpawnIntegrationTests for the
     // regression coverage this caused).
-    internal static IReadOnlyList<MobSpawnData> ReadMobSpawns(string spawnScriptText, string sourceFile, string mobName, IReadOnlySet<string>? excludedMaps = null)
+    internal static IReadOnlyList<MobSpawnData> ReadMobSpawns(string spawnScriptText, string sourceFile, string mobName, IReadOnlySet<string>? excludedMaps = null, IReadOnlyDictionary<string, int>? aegisNameToId = null)
     {
         var results = new List<MobSpawnData>();
         var lines = spawnScriptText.Split('\n');
         for (var i = 0; i < lines.Length; i++)
         {
-            if (!TryParseSpawnLine(lines[i], sourceFile, i + 1, out var spawn, out var name)) continue;
+            if (!TryParseSpawnLine(lines[i], sourceFile, i + 1, aegisNameToId, out var spawn, out var name)) continue;
             if (!string.Equals(name, mobName, StringComparison.Ordinal)) continue;
             if (excludedMaps is not null && excludedMaps.Contains(spawn.Map)) continue;
             results.Add(spawn);
@@ -586,15 +604,21 @@ internal static class MobDataCompiler
     // already calls ReadMobSpawns per-name; a future cleanup could switch it to this all-at-once
     // form too, but that is not required for parser unification since both paths already bottom out
     // in TryParseSpawnLine).
-    internal static IReadOnlyList<MobSpawnData> ReadAllMobSpawns(string spawnScriptText, string sourceFile)
+    internal static IReadOnlyList<MobSpawnData> ReadAllMobSpawns(string spawnScriptText, string sourceFile, IReadOnlyDictionary<string, int>? aegisNameToId = null)
     {
         var results = new List<MobSpawnData>();
         var lines = spawnScriptText.Split('\n');
         for (var i = 0; i < lines.Length; i++)
-            if (TryParseSpawnLine(lines[i], sourceFile, i + 1, out var spawn, out _))
+            if (TryParseSpawnLine(lines[i], sourceFile, i + 1, aegisNameToId, out var spawn, out _))
                 results.Add(spawn);
         return results;
     }
+
+    // Case-insensitive AegisName -> MobId lookup, matching pinned mobdb_search_aegisname's own
+    // strcmpi comparison (src/map/mob.cpp:308-316) - built once by the caller from the same
+    // ReadAllMobDefinitions result already used for MobId resolution elsewhere in this pipeline.
+    internal static IReadOnlyDictionary<string, int> BuildAegisNameLookup(IReadOnlyList<MobDefinitionData> mobs) =>
+        mobs.ToDictionary(mob => mob.AegisName, mob => mob.Id, StringComparer.OrdinalIgnoreCase);
 
     // Pinned npc_parse_mob (npc.cpp:5218): delay1 defaults to 5000 when the 3rd `w4` field is
     // absent (the local `int32 delay = 5000` initializer, never overwritten by sscanf when that
@@ -603,19 +627,27 @@ internal static class MobDataCompiler
     // DeathEvent has its optional surrounding quotes (the pinned tree's own convention for real
     // event labels - see SpawnLine's own doc comment) stripped so callers always see one logical
     // string regardless of source quoting style.
-    private static bool TryParseSpawnLine(string line, string sourceFile, int sourceLine, out MobSpawnData spawn, out string name)
+    // aegisNameToId resolves a non-numeric w4 mob token (pinned npc_parse_mob tries strtol first,
+    // then falls back to mobdb_search_aegisname - src/map/npc.cpp:5258-5275). A null resolver means
+    // the caller has no mob database loaded; a non-numeric token in that case fails closed exactly
+    // like an unresolvable AegisName would (there is no valid interpretation of a non-numeric token
+    // without a database to resolve it against).
+    private static bool TryParseSpawnLine(string line, string sourceFile, int sourceLine, IReadOnlyDictionary<string, int>? aegisNameToId, out MobSpawnData spawn, out string name)
     {
         var match = SpawnLineRegex().Match(line);
         if (!match.Success) { spawn = null!; name = string.Empty; return false; }
-        name = match.Groups["name"].Value;
+        var spawnName = match.Groups["spawnname"].Value;
+        name = spawnName;
         var map = match.Groups["map"].Value;
         var count = int.Parse(match.Groups["count"].Value, CultureInfo.InvariantCulture);
         var delay1Group = match.Groups["delay1"];
         var delay1 = delay1Group.Success ? int.Parse(delay1Group.Value, CultureInfo.InvariantCulture) : 5000;
         var delay2Group = match.Groups["delay2"];
         var delay2 = delay2Group.Success ? int.Parse(delay2Group.Value, CultureInfo.InvariantCulture) : 0;
-        var x = short.Parse(match.Groups["x"].Value, CultureInfo.InvariantCulture);
-        var y = short.Parse(match.Groups["y"].Value, CultureInfo.InvariantCulture);
+        var xGroup = match.Groups["x"];
+        var yGroup = match.Groups["y"];
+        var x = xGroup.Success ? short.Parse(xGroup.Value, CultureInfo.InvariantCulture) : (short)0;
+        var y = yGroup.Success ? short.Parse(yGroup.Value, CultureInfo.InvariantCulture) : (short)0;
         var xsGroup = match.Groups["xs"];
         var ysGroup = match.Groups["ys"];
         var xs = xsGroup.Success ? short.Parse(xsGroup.Value, CultureInfo.InvariantCulture) : (short)0;
@@ -626,15 +658,34 @@ internal static class MobDataCompiler
         var size = sizeGroup.Success ? ParseSize(sizeGroup.Value, sourceFile, sourceLine) : (MobSizeData?)null;
         var aiGroup = match.Groups["ai"];
         var ai = aiGroup.Success ? int.Parse(aiGroup.Value, CultureInfo.InvariantCulture) : (int?)null;
+        var levelGroup = match.Groups["level"];
+        var declaredLevel = levelGroup.Success ? int.Parse(levelGroup.Value, CultureInfo.InvariantCulture) : (int?)null;
+        if (declaredLevel is 0 || declaredLevel > MaxPinnedMobLevel)
+            throw new ArgumentException($"Invalid mob spawn level {declaredLevel} for '{spawnName}' at {sourceFile}:{sourceLine}; pinned rAthena requires 1-{MaxPinnedMobLevel} when the level field is present.");
+        var mobToken = match.Groups["mobtoken"].Value;
+        int mobId;
+        if (int.TryParse(mobToken, NumberStyles.Integer, CultureInfo.InvariantCulture, out var numericId))
+        {
+            mobId = numericId;
+        }
+        else if (aegisNameToId is not null && aegisNameToId.TryGetValue(mobToken, out var resolvedId))
+        {
+            mobId = resolvedId;
+        }
+        else
+        {
+            throw new ArgumentException($"Unknown mob AegisName token '{mobToken}' at {sourceFile}:{sourceLine}; expected a numeric mob ID or a resolvable AegisName.");
+        }
         spawn = new MobSpawnData(
             map,
-            int.Parse(match.Groups["mobid"].Value, CultureInfo.InvariantCulture),
+            mobId,
             count,
             delay1,
             delay2,
             sourceFile,
             sourceLine,
             x, y, xs, ys,
+            spawnName, declaredLevel,
             deathEvent, size, ai);
         return true;
     }
@@ -789,10 +840,11 @@ internal static class MobDataCompiler
     // "GeneratedMobSpawnRegistry.cs", deliberately unchanged - "MobSpawn" was already the correct
     // compound noun there). Both still require the standard auto-generated header before deletion -
     // filename pattern alone is not proof of ownership.
-    internal static bool IsOwnedGeneratedMobSpawnFile(string path, string registryFileName)
+    internal static bool IsOwnedGeneratedMobSpawnFile(string path, string registryFileName, string? profilesFileName = null)
     {
         var name = Path.GetFileName(path);
         if (!(name == registryFileName ||
+              name == profilesFileName ||
               name.EndsWith("MobSpawns.cs", StringComparison.Ordinal) ||
               name.EndsWith("Spawn.cs", StringComparison.Ordinal)))
             return false;
@@ -911,16 +963,19 @@ internal static class MobDataCompiler
     }
 
     // Shared `new(...)` emission for one MobSpawnDefinition, reused by every GenerateMobSpawn*
-    // shape above so the emitted argument list/formatting can never drift between them. Only emits
-    // DeathEvent/Size/Ai as named arguments when the source actually supplied a value - keeps the
-    // overwhelming majority (declarations with none of these three fields) exactly as compact as
-    // before this branch added them.
+    // shape above so the emitted argument list/formatting can never drift between them. SpawnName is
+    // always emitted (a required, always-present source fact - see MobSpawnData's own doc comment).
+    // DeclaredLevel/DeathEvent/Size/Ai are only emitted as named arguments when the source actually
+    // supplied a value - keeps the overwhelming majority (declarations with none of these four
+    // optional fields) exactly as compact as before this branch added them.
     private static void AppendSpawnEntry(StringBuilder output, MobSpawnData spawn, string mobDefinitionExpression, string commit)
     {
         output.Append("        new(").Append(mobDefinitionExpression).Append(", \"").Append(spawn.Map).Append("\", ")
             .Append(spawn.Count).Append(", ").Append(spawn.RespawnDelay).Append(", ").Append(spawn.RespawnRandomDelay)
             .Append(", new WorldSourceInfo(\"rAthena\", \"").Append(commit).Append("\", \"").Append(spawn.SourceFile).Append("\", ").Append(spawn.SourceLine).Append(')')
-            .Append(", X: ").Append(spawn.X).Append(", Y: ").Append(spawn.Y).Append(", Xs: ").Append(spawn.Xs).Append(", Ys: ").Append(spawn.Ys);
+            .Append(", X: ").Append(spawn.X).Append(", Y: ").Append(spawn.Y).Append(", Xs: ").Append(spawn.Xs).Append(", Ys: ").Append(spawn.Ys)
+            .Append(", SpawnName: \"").Append(EscapeForCSharpString(spawn.SpawnName)).Append('"');
+        if (spawn.DeclaredLevel is not null) output.Append(", DeclaredLevel: ").Append(spawn.DeclaredLevel);
         if (spawn.DeathEvent is not null) output.Append(", DeathEvent: \"").Append(spawn.DeathEvent.Replace("\"", "\\\"")).Append('"');
         if (spawn.Size is not null) output.Append(", Size: MobSize.").Append(spawn.Size);
         if (spawn.Ai is not null) output.Append(", Ai: ").Append(spawn.Ai);
@@ -1045,7 +1100,27 @@ internal static class MobDataCompiler
     // ordinary-monster domain today (verified exhaustively), but the groups exist so a future
     // pinned revision that adds one is captured, not silently truncated the way this regex used to
     // drop everything past delay2.
-    private static readonly Regex SpawnLine = new(@"^(?<map>[A-Za-z0-9_]+),(?<x>-?\d+),(?<y>-?\d+)(?:,(?<xs>\d+),(?<ys>\d+))?\t+monster\t+(?<name>[^\t]+)\t+(?<mobid>\d+),(?<count>\d+)(?:,(?<delay1>\d+)(?:,(?<delay2>\d+)(?:,(?<event>[^,\t\r\n]+)(?:,(?<size>\d+)(?:,(?<ai>\d+))?)?)?)?)?", RegexOptions.None);
+    //
+    // w3 = `<mob name>{,<mob level>}` (pinned `sscanf(w3, "%23[^,],%11d", mobname, &mob_lv)`,
+    // npc.cpp:5234): `spawnname` captures the name token up to an optional comma-separated level;
+    // `level` is SIGNED (`-?\d+`, matching pinned's signed `%d`, not an unsigned-only grammar) so a
+    // present negative value is captured distinctly from the field being entirely omitted (handled
+    // in TryParseSpawnLine's own validity/effective-override logic - see MobSpawnData's doc
+    // comment).
+    //
+    // w4's first token (`mobtoken`) is `[^,\t]+` rather than `\d+`-only: pinned npc_parse_mob accepts
+    // either a numeric mob ID or an AegisName token (`strtol` first, `mobdb_search_aegisname`
+    // fallback - npc.cpp:5258-5275) - resolved in TryParseSpawnLine, not by this regex.
+    //
+    // w1's `,<x>,<y>{,<xs>,<ys>}` suffix is ENTIRELY optional: pinned sscanf's own success
+    // condition is `w1count >= 1` (npc.cpp:5233) - a bare map name with no coordinates at all is
+    // valid pinned syntax (x/y/xs/ys all stay at their memset-zero spawn_data default). Every real
+    // AegisName-mob-token declaration in the pinned tree (15 total, e.g.
+    // npc/re/mobs/dungeons/sp_rudus.txt:26 `sp_rudus4\tmonster\tGiant Caput\tGIANT_CAPUT,75`) uses
+    // exactly this bare form - an EARLIER version of this regex required `,x,y` unconditionally,
+    // which silently dropped these 15 real declarations entirely (never generated, never analyzed) -
+    // a genuine parser gap, not a deliberately narrower scope.
+    private static readonly Regex SpawnLine = new(@"^(?<map>[A-Za-z0-9_]+)(?:,(?<x>-?\d+),(?<y>-?\d+)(?:,(?<xs>\d+),(?<ys>\d+))?)?\t+monster\t+(?<spawnname>[^,\t]+)(?:,(?<level>-?\d+))?\t+(?<mobtoken>[^,\t]+),(?<count>\d+)(?:,(?<delay1>\d+)(?:,(?<delay2>\d+)(?:,(?<event>[^,\t\r\n]+)(?:,(?<size>\d+)(?:,(?<ai>\d+))?)?)?)?)?", RegexOptions.None);
     private static Regex SpawnLineRegex() => SpawnLine;
 
     private static Regex ScalarRegex(string field) => new($@"^    {Regex.Escape(field)}: (.+)$", RegexOptions.Multiline);

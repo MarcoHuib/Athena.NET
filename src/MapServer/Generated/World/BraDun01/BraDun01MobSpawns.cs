@@ -13,12 +13,25 @@ internal static class BraDun01MobSpawns
 {
     internal static readonly MobSpawnDefinition[] BraDun01 =
     [
-        new(GeneratedMobs.Goldporing, "bra_dun01", 3, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/RWC_2011.txt", 269), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.XmasSmokeyGift, "bra_dun01", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1129), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.XmasSmokeySock, "bra_dun01", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1420), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.OrganicJakk, "bra_dun01", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 556), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.InorganicJakk, "bra_dun01", 4, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 859), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.C1Piranha, "bra_dun01", 2, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 41), X: 0, Y: 0, Xs: 0, Ys: 0),
+        new(GeneratedMobs.Goldporing, "bra_dun01", 3, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/RWC_2011.txt", 269), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Golden Poring"),
+        new(GeneratedMobs.XmasSmokeyGift, "bra_dun01", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1129), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Gift Stealing Raccoon"),
+        new(GeneratedMobs.XmasSmokeySock, "bra_dun01", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1420), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Sock Stealing Raccoon"),
+        new(GeneratedMobs.OrganicJakk, "bra_dun01", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 556), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Organic Pumpkin"),
+        new(GeneratedMobs.InorganicJakk, "bra_dun01", 4, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 859), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Inorganic Pumpkin"),
+        new(GeneratedMobs.Iara, "bra_dun01", 60, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/bra_dun.txt", 22), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Iara"),
+        new(GeneratedMobs.Piranha, "bra_dun01", 100, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/bra_dun.txt", 23), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Piranha"),
+        new(GeneratedMobs.Hydra, "bra_dun01", 10, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/bra_dun.txt", 24), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Hydra"),
+        new(GeneratedMobs.Plankton, "bra_dun01", 10, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/bra_dun.txt", 25), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Plankton"),
+        new(GeneratedMobs.Marina, "bra_dun01", 10, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/bra_dun.txt", 26), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Marina"),
+        new(GeneratedMobs.BlackMushroom, "bra_dun01", 10, 180000, 90000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/bra_dun.txt", 27), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Black Mushroom"),
+        new(GeneratedMobs.C1Piranha, "bra_dun01", 2, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 41), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Swift Piranha"),
+        new(GeneratedMobs.Piranha, "bra_dun01", 80, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/bra_dun.txt", 10), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Piranha"),
+        new(GeneratedMobs.Iara, "bra_dun01", 30, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/bra_dun.txt", 11), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Iara"),
+        new(GeneratedMobs.BlackMushroom, "bra_dun01", 5, 180000, 90000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/bra_dun.txt", 12), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Black Mushroom"),
+        new(GeneratedMobs.Marina, "bra_dun01", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/bra_dun.txt", 13), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Marina"),
+        new(GeneratedMobs.Kukre, "bra_dun01", 10, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/bra_dun.txt", 14), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Kukre"),
+        new(GeneratedMobs.Plankton, "bra_dun01", 10, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/bra_dun.txt", 15), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Plankton"),
+        new(GeneratedMobs.Hydra, "bra_dun01", 15, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/bra_dun.txt", 16), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Hydra"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. BraDun01];

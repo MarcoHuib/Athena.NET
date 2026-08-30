@@ -13,12 +13,12 @@ internal static class CTower3_2MobSpawns
 {
     internal static readonly MobSpawnDefinition[] CTower3_2 =
     [
-        new(GeneratedMobs.NgMimic, "c_tower3_", 9, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/c_tower.txt", 67), X: 0, Y: 0, Xs: 0, Ys: 0, DeathEvent: "0"),
-        new(GeneratedMobs.NgRideword, "c_tower3_", 8, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/c_tower.txt", 68), X: 0, Y: 0, Xs: 0, Ys: 0, DeathEvent: "0"),
-        new(GeneratedMobs.BigBell, "c_tower3_", 109, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/c_tower.txt", 69), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.TimeKeeper, "c_tower3_", 2, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/c_tower.txt", 70), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.OwlViscount, "c_tower3_", 3, 5000, 1800000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/c_tower.txt", 71), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.OwlMarquees, "c_tower3_", 3, 5000, 5000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/c_tower.txt", 72), X: 0, Y: 0, Xs: 0, Ys: 0),
+        new(GeneratedMobs.NgMimic, "c_tower3_", 9, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/c_tower.txt", 67), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Mimic (Nightmare)", DeathEvent: "0"),
+        new(GeneratedMobs.NgRideword, "c_tower3_", 8, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/c_tower.txt", 68), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Rideword (Nightmare)", DeathEvent: "0"),
+        new(GeneratedMobs.BigBell, "c_tower3_", 109, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/c_tower.txt", 69), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Big Bell"),
+        new(GeneratedMobs.TimeKeeper, "c_tower3_", 2, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/c_tower.txt", 70), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Time Keeper"),
+        new(GeneratedMobs.OwlViscount, "c_tower3_", 3, 5000, 1800000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/c_tower.txt", 71), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Owl Viscount"),
+        new(GeneratedMobs.OwlMarquees, "c_tower3_", 3, 5000, 5000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/c_tower.txt", 72), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Owl Marquis"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. CTower3_2];

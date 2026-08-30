@@ -13,15 +13,15 @@ internal static class SchgDun01MobSpawns
 {
     internal static readonly MobSpawnDefinition[] SchgDun01 =
     [
-        new(GeneratedMobs.HellApocalips, "schg_dun01", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/gld_dunSE.txt", 26), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Zakudam, "schg_dun01", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/gld_dunSE.txt", 27), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.HeavyMetaling, "schg_dun01", 15, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/gld_dunSE.txt", 28), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.CobaltMineral, "schg_dun01", 15, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/gld_dunSE.txt", 29), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.C5Zakudam, "schg_dun01", 2, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 280), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.HellApocalips, "schg_dun01", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_dunSE.txt", 17), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Zakudam, "schg_dun01", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_dunSE.txt", 18), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.HeavyMetaling, "schg_dun01", 15, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_dunSE.txt", 19), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.CobaltMineral, "schg_dun01", 15, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_dunSE.txt", 20), X: 0, Y: 0, Xs: 0, Ys: 0),
+        new(GeneratedMobs.HellApocalips, "schg_dun01", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/gld_dunSE.txt", 26), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Hell Apocalypse"),
+        new(GeneratedMobs.Zakudam, "schg_dun01", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/gld_dunSE.txt", 27), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Zakudam"),
+        new(GeneratedMobs.HeavyMetaling, "schg_dun01", 15, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/gld_dunSE.txt", 28), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Heavy Metaling"),
+        new(GeneratedMobs.CobaltMineral, "schg_dun01", 15, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/gld_dunSE.txt", 29), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Cobalt Mineral"),
+        new(GeneratedMobs.C5Zakudam, "schg_dun01", 2, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 280), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Elusive Zakudam"),
+        new(GeneratedMobs.HellApocalips, "schg_dun01", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_dunSE.txt", 17), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Hell Apocalypse"),
+        new(GeneratedMobs.Zakudam, "schg_dun01", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_dunSE.txt", 18), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Zakudam"),
+        new(GeneratedMobs.HeavyMetaling, "schg_dun01", 15, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_dunSE.txt", 19), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Heavy Metaling"),
+        new(GeneratedMobs.CobaltMineral, "schg_dun01", 15, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_dunSE.txt", 20), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Cobalt Mineral"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. SchgDun01];

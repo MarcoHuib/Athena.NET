@@ -13,21 +13,21 @@ internal static class LouDun02MobSpawns
 {
     internal static readonly MobSpawnDefinition[] LouDun02 =
     [
-        new(GeneratedMobs.Goldporing, "lou_dun02", 3, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/RWC_2011.txt", 392), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.XmasSmokeyGift, "lou_dun02", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1252), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.XmasSmokeySock, "lou_dun02", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1543), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.EventLude, "lou_dun02", 3, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2006.txt", 1197), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.OrganicJakk, "lou_dun02", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 679), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.InorganicJakk, "lou_dun02", 4, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 982), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Hyegun, "lou_dun02", 40, 300000, 120000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/lou_dun.txt", 31), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Munak, "lou_dun02", 25, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/lou_dun.txt", 32), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.DancingDragon, "lou_dun02", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/lou_dun.txt", 33), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Mimic, "lou_dun02", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/lou_dun.txt", 34), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.C3Hyegun, "lou_dun02", 1, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 169), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Hyegun, "lou_dun02", 56, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/lou_dun.txt", 31), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Munak, "lou_dun02", 35, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/lou_dun.txt", 32), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Mimic, "lou_dun02", 7, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/lou_dun.txt", 33), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.DancingDragon, "lou_dun02", 7, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/lou_dun.txt", 34), X: 0, Y: 0, Xs: 0, Ys: 0),
+        new(GeneratedMobs.Goldporing, "lou_dun02", 3, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/RWC_2011.txt", 392), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Golden Poring"),
+        new(GeneratedMobs.XmasSmokeyGift, "lou_dun02", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1252), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Gift Stealing Raccoon"),
+        new(GeneratedMobs.XmasSmokeySock, "lou_dun02", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1543), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Sock Stealing Raccoon"),
+        new(GeneratedMobs.EventLude, "lou_dun02", 3, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2006.txt", 1197), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Lude"),
+        new(GeneratedMobs.OrganicJakk, "lou_dun02", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 679), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Organic Pumpkin"),
+        new(GeneratedMobs.InorganicJakk, "lou_dun02", 4, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 982), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Inorganic Pumpkin"),
+        new(GeneratedMobs.Hyegun, "lou_dun02", 40, 300000, 120000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/lou_dun.txt", 31), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Yao Jun"),
+        new(GeneratedMobs.Munak, "lou_dun02", 25, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/lou_dun.txt", 32), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Munak"),
+        new(GeneratedMobs.DancingDragon, "lou_dun02", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/lou_dun.txt", 33), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Zhu Po Long"),
+        new(GeneratedMobs.Mimic, "lou_dun02", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/lou_dun.txt", 34), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Mimic"),
+        new(GeneratedMobs.C3Hyegun, "lou_dun02", 1, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 169), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Yao Jun Ringleader"),
+        new(GeneratedMobs.Hyegun, "lou_dun02", 56, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/lou_dun.txt", 31), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Yao Jun"),
+        new(GeneratedMobs.Munak, "lou_dun02", 35, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/lou_dun.txt", 32), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Munak"),
+        new(GeneratedMobs.Mimic, "lou_dun02", 7, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/lou_dun.txt", 33), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Mimic"),
+        new(GeneratedMobs.DancingDragon, "lou_dun02", 7, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/lou_dun.txt", 34), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Zhu Po Long"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. LouDun02];

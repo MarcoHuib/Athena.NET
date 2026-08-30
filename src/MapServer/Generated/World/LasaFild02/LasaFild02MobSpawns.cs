@@ -13,10 +13,10 @@ internal static class LasaFild02MobSpawns
 {
     internal static readonly MobSpawnDefinition[] LasaFild02 =
     [
-        new(GeneratedMobs.DrHornet, "lasa_fild02", 90, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/custom/lasagna/lasa_fild.txt", 22), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.DrRodaFrog, "lasa_fild02", 100, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/custom/lasagna/lasa_fild.txt", 23), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.DrDesertWolfB, "lasa_fild02", 100, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/custom/lasagna/lasa_fild.txt", 24), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.DrBasilisk1, "lasa_fild02", 10, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/custom/lasagna/lasa_fild.txt", 25), X: 0, Y: 0, Xs: 0, Ys: 0),
+        new(GeneratedMobs.DrHornet, "lasa_fild02", 90, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/custom/lasagna/lasa_fild.txt", 22), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Wild Hornet"),
+        new(GeneratedMobs.DrRodaFrog, "lasa_fild02", 100, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/custom/lasagna/lasa_fild.txt", 23), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Sweet Roda Frog"),
+        new(GeneratedMobs.DrDesertWolfB, "lasa_fild02", 100, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/custom/lasagna/lasa_fild.txt", 24), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Hunter Desert Wolf"),
+        new(GeneratedMobs.DrBasilisk1, "lasa_fild02", 10, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/custom/lasagna/lasa_fild.txt", 25), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Combat Basilisk"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. LasaFild02];

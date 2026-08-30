@@ -13,17 +13,17 @@ internal static class Gld2GefMobSpawns
 {
     internal static readonly MobSpawnDefinition[] Gld2Gef =
     [
-        new(GeneratedMobs.XmasSmokeyGift, "gld2_gef", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1109), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.XmasSmokeySock, "gld2_gef", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1400), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.OrganicJakk, "gld2_gef", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 536), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.InorganicJakk, "gld2_gef", 4, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 839), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.C1GldDarkShadow, "gld2_gef", 2, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 126), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.GldDarkFrame, "gld2_gef", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_re.txt", 87), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.GldDarkPriest, "gld2_gef", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_re.txt", 88), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.GldDarkShadow, "gld2_gef", 80, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_re.txt", 89), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.DarkIllusion, "gld2_gef", 1, 1200000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_re.txt", 90), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Rudo, "gld2_gef", 1, 1800000, 600000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_re.txt", 92), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.GldTreasure, "gld2_gef", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_re.txt", 100), X: 0, Y: 0, Xs: 0, Ys: 0),
+        new(GeneratedMobs.XmasSmokeyGift, "gld2_gef", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1109), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Gift Stealing Raccoon"),
+        new(GeneratedMobs.XmasSmokeySock, "gld2_gef", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1400), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Sock Stealing Raccoon"),
+        new(GeneratedMobs.OrganicJakk, "gld2_gef", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 536), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Organic Pumpkin"),
+        new(GeneratedMobs.InorganicJakk, "gld2_gef", 4, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 839), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Inorganic Pumpkin"),
+        new(GeneratedMobs.C1GldDarkShadow, "gld2_gef", 2, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 126), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Swift Dark Shadow"),
+        new(GeneratedMobs.GldDarkFrame, "gld2_gef", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_re.txt", 87), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Dark Frame"),
+        new(GeneratedMobs.GldDarkPriest, "gld2_gef", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_re.txt", 88), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Dark Priest"),
+        new(GeneratedMobs.GldDarkShadow, "gld2_gef", 80, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_re.txt", 89), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Dark Shadow"),
+        new(GeneratedMobs.DarkIllusion, "gld2_gef", 1, 1200000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_re.txt", 90), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Dark Illusion"),
+        new(GeneratedMobs.Rudo, "gld2_gef", 1, 1800000, 600000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_re.txt", 92), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Rudo"),
+        new(GeneratedMobs.GldTreasure, "gld2_gef", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_re.txt", 100), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Treasure Chest"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. Gld2Gef];

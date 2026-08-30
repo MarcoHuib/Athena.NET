@@ -13,12 +13,12 @@ internal static class UmDun01MobSpawns
 {
     internal static readonly MobSpawnDefinition[] UmDun01 =
     [
-        new(GeneratedMobs.EventLude, "um_dun01", 3, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2006.txt", 1204), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.StoneShooter, "um_dun01", 70, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/um_dun.txt", 18), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.WootanFighter, "um_dun01", 10, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/um_dun.txt", 19), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.WootanShooter, "um_dun01", 10, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/um_dun.txt", 20), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.YellowPlant, "um_dun01", 5, 180000, 90000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/um_dun.txt", 21), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.GreenPlant, "um_dun01", 5, 180000, 90000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/um_dun.txt", 22), X: 0, Y: 0, Xs: 0, Ys: 0),
+        new(GeneratedMobs.EventLude, "um_dun01", 3, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2006.txt", 1204), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Lude"),
+        new(GeneratedMobs.StoneShooter, "um_dun01", 70, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/um_dun.txt", 18), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Stone Shooter"),
+        new(GeneratedMobs.WootanFighter, "um_dun01", 10, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/um_dun.txt", 19), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Wootan Fighter"),
+        new(GeneratedMobs.WootanShooter, "um_dun01", 10, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/um_dun.txt", 20), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Wootan Shooter"),
+        new(GeneratedMobs.YellowPlant, "um_dun01", 5, 180000, 90000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/um_dun.txt", 21), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Yellow Plant"),
+        new(GeneratedMobs.GreenPlant, "um_dun01", 5, 180000, 90000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/um_dun.txt", 22), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Green Plant"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. UmDun01];

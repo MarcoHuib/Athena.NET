@@ -13,19 +13,19 @@ internal static class MoskFild02MobSpawns
 {
     internal static readonly MobSpawnDefinition[] MoskFild02 =
     [
-        new(GeneratedMobs.Bigfoot, "mosk_fild02", 40, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/moscovia.txt", 15), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Caramel, "mosk_fild02", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/moscovia.txt", 16), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Mantis, "mosk_fild02", 30, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/moscovia.txt", 17), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Poring, "mosk_fild02", 10, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/moscovia.txt", 18), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.YellowPlant, "mosk_fild02", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/moscovia.txt", 19), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.WhitePlant, "mosk_fild02", 5, 10000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/moscovia.txt", 20), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.C2SideWinder, "mosk_fild02", 1, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 219), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.SideWinder, "mosk_fild02", 56, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/moscovia.txt", 19), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Argiope, "mosk_fild02", 42, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/moscovia.txt", 20), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Mantis, "mosk_fild02", 14, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/moscovia.txt", 21), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Geographer, "mosk_fild02", 7, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/moscovia.txt", 22), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.YellowPlant, "mosk_fild02", 5, 10000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/moscovia.txt", 23), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.WhitePlant, "mosk_fild02", 5, 10000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/moscovia.txt", 24), X: 0, Y: 0, Xs: 0, Ys: 0),
+        new(GeneratedMobs.Bigfoot, "mosk_fild02", 40, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/moscovia.txt", 15), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Bigfoot"),
+        new(GeneratedMobs.Caramel, "mosk_fild02", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/moscovia.txt", 16), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Caramel"),
+        new(GeneratedMobs.Mantis, "mosk_fild02", 30, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/moscovia.txt", 17), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Mantis"),
+        new(GeneratedMobs.Poring, "mosk_fild02", 10, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/moscovia.txt", 18), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Poring"),
+        new(GeneratedMobs.YellowPlant, "mosk_fild02", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/moscovia.txt", 19), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Yellow Plant"),
+        new(GeneratedMobs.WhitePlant, "mosk_fild02", 5, 10000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/moscovia.txt", 20), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "White Plant"),
+        new(GeneratedMobs.C2SideWinder, "mosk_fild02", 1, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 219), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Solid Side Winder"),
+        new(GeneratedMobs.SideWinder, "mosk_fild02", 56, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/moscovia.txt", 19), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Side Winder"),
+        new(GeneratedMobs.Argiope, "mosk_fild02", 42, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/moscovia.txt", 20), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Argiope"),
+        new(GeneratedMobs.Mantis, "mosk_fild02", 14, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/moscovia.txt", 21), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Mantis"),
+        new(GeneratedMobs.Geographer, "mosk_fild02", 7, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/moscovia.txt", 22), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Geographer"),
+        new(GeneratedMobs.YellowPlant, "mosk_fild02", 5, 10000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/moscovia.txt", 23), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Yellow Plant"),
+        new(GeneratedMobs.WhitePlant, "mosk_fild02", 5, 10000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/moscovia.txt", 24), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "White Plant"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. MoskFild02];

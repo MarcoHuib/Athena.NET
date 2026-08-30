@@ -90,8 +90,10 @@ public sealed class MapServerWorldGameplayRulesTests
         // guards against silently tolerating a missing generic/base map (the exact shape of the
         // regression this task fixes) rather than an arbitrary uncovered instanced duplicate.
         // servedMaps is now REQUIRED here (generate-mob-spawns/ai/world-data.md: production
-        // generated spawn coverage now includes all 9,841 valid pinned declarations across ~800
-        // maps, not just the tutorial/travel-corridor slice) - matching real production composition
+        // registration now feeds GeneratedMobSpawnLoadProfiles.AthenaIroEffective - the
+        // Renewal-active + explicit Athena-overlay subset of the 10,065 valid pinned declarations
+        // across ~800 maps, not just the tutorial/travel-corridor slice) - matching real production
+        // composition
         // (MapServerApp.RunAsync always passes MapServerHostingScope.ServedMaps) so this test still
         // exercises exactly the intended int_land gap rather than tripping on an unrelated served
         // map (e.g. "prontera") this fixture never intended to cover.
@@ -199,14 +201,17 @@ public sealed class MapServerHostingScopeStartupValidationTests
     // The exact real regression this validation guards against: a served map
     // (MapServerHostingScope.ServedMaps) with zero generated MobSpawnDefinition rows anywhere -
     // proving this validation catches a gap the mob-spawn-only guard genuinely cannot see. "izlude_d"
-    // is the served example now that generate-mob-spawns (ai/world-data.md's "Generated mob spawns"
-    // section) generates all 9,841 valid pinned declarations: "prontera" - this test's ORIGINAL
-    // zero-spawn example - now genuinely has real spawns (e.g. WILD_ROSE,
-    // npc/pre-re/mobs/citycleaners.txt) and is exactly the kind of map this whole branch was meant
-    // to stop being zero-spawn, so it can no longer serve as a "zero mob spawns" example; izlude_d
-    // remains genuinely zero-spawn (it is reached only via #intro_to_izlude_d's scripted WarpAsync
-    // call, not any monster.txt declaration - verified exhaustively across every generated file).
-    // Every other served map is covered so this isolates izlude_d specifically as the missing one.
+    // is the served example (deliberately excluded from the CollisionProviderFor list below). Note:
+    // "prontera"'s only generated spawn source, npc/pre-re/mobs/citycleaners.txt (WILD_ROSE), is
+    // PreRenewalSource - since runtime registration now feeds
+    // GeneratedMobSpawnLoadProfiles.AthenaIroEffective rather than GeneratedMobSpawnRegistry.All
+    // (ai/world-data.md's "Generated mob spawns" section), prontera is ALSO effectively zero-spawn
+    // again at runtime, exactly like izlude_d - both are still covered by this fixture's own
+    // CollisionProviderFor list, so this remains a clean single-map (izlude_d) isolation regardless.
+    // izlude_d remains genuinely zero-spawn under every profile (it is reached only via
+    // #intro_to_izlude_d's scripted WarpAsync call, not any monster.txt declaration - verified
+    // exhaustively across every generated file). Every other served map is covered so this isolates
+    // izlude_d specifically as the missing one.
     [Fact]
     public void RequireCollisionForAllServedMaps_ProponentServedMapWithZeroMobSpawns_StillFailsWhenCollisionAbsent()
     {
@@ -407,17 +412,20 @@ public sealed class MapServerWorldServedMapsTests
         Assert.Contains("prt_fild08d", exception.Message);
     }
 
-    // prt_fild08d IS served and IS covered by collision data - its full source-backed population
-    // must instantiate. The travel-corridor's own academy.txt content (110 Poring + 100 Lunatic +
-    // 100 Fabre + 30 Little Poring = 340, izlude-prontera-travel-trace.txt) was the complete picture
-    // when only that one source file was generated; now that generate-mob-spawns scans every pinned
-    // npc/**/*.txt (ai/world-data.md's "Generated mob spawns" section), TWO more real pinned
-    // declarations targeting this exact map surface from OTHER source files that were never
-    // generated before: npc/events/christmas_2013.txt:1706-1707 (5 Smokey's Gift Box + 5 Smokey's
-    // Sock = 10) and npc/events/halloween_2013.txt:831,1134 (1 Organic Jakk + 4 Inorganic Jakk = 5),
-    // for a true total of 355 - never silently dropped/merged (task section 42/43: multiple source
-    // files targeting the same map must union deterministically, and distinct declarations at
-    // distinct source locations are never deduplicated).
+    // prt_fild08d IS served and IS covered by collision data - its RENEWAL-ACTIVE source-backed
+    // population must instantiate. GeneratedMobSpawnRegistry.All (repository-wide source coverage)
+    // holds 8 declarations for this map: academy.txt's 110 Poring + 100 Lunatic + 100 Fabre + 30
+    // Little Poring = 340 (npc/re/mobs/academy.txt - pinned-disabled at
+    // npc/re/scripts_monsters.conf:5, activated here only via the explicit Athena overlay,
+    // AthenaOverlaySourceFiles), PLUS npc/events/christmas_2013.txt:1706-1707 (5 Smokey's Gift Box +
+    // 5 Smokey's Sock) and npc/events/halloween_2013.txt:831,1134 (1 Organic Jakk + 4 Inorganic
+    // Jakk) - 15 more, for a repository total of 355 (GeneratedMobSpawnRegistryTests locks this).
+    // Runtime activation (GeneratedScriptRegistry.Register) now consumes
+    // GeneratedMobSpawnLoadProfiles.AthenaIroEffective, NOT GeneratedMobSpawnRegistry.All -
+    // christmas_2013.txt/halloween_2013.txt are pinned-disabled (commented `npc:` directives in
+    // npc/scripts_athena.conf) and NOT part of Athena's explicit overlay allow-list, so they are
+    // correctly represented but INACTIVE: only academy.txt's 340 (Renewal-disabled but
+    // Athena-overlay-active) actually instantiate here.
     [Fact]
     public void PrtFild08d_ServedAndCollisionBacked_InstantiatesFullSourceBackedPopulation()
     {
@@ -426,15 +434,15 @@ public sealed class MapServerWorldServedMapsTests
         var world = MapServerWorld.Build(new GameplayRuleServices(new RenewalBasicAttackRules()), collisionProvider: provider, servedMaps: MapServerHostingScope.ServedMaps);
 
         var onPrtFild08d = world.Monsters.AllInstances.Where(instance => instance.Map == "prt_fild08d").ToArray();
-        Assert.Equal(355, onPrtFild08d.Length);
+        Assert.Equal(340, onPrtFild08d.Length);
         Assert.Equal(110, onPrtFild08d.Count(instance => instance.Spawn.Mob.AegisName == "PORING"));
         Assert.Equal(100, onPrtFild08d.Count(instance => instance.Spawn.Mob.AegisName == "LUNATIC"));
         Assert.Equal(100, onPrtFild08d.Count(instance => instance.Spawn.Mob.AegisName == "FABRE"));
         Assert.Equal(30, onPrtFild08d.Count(instance => instance.Spawn.Mob.AegisName == "LITTLE_PORING"));
-        Assert.Equal(5, onPrtFild08d.Count(instance => instance.Spawn.Mob.AegisName == "XMAS_SMOKEY_GIFT"));
-        Assert.Equal(5, onPrtFild08d.Count(instance => instance.Spawn.Mob.AegisName == "XMAS_SMOKEY_SOCK"));
-        Assert.Equal(1, onPrtFild08d.Count(instance => instance.Spawn.Mob.AegisName == "ORGANIC_JAKK"));
-        Assert.Equal(4, onPrtFild08d.Count(instance => instance.Spawn.Mob.AegisName == "INORGANIC_JAKK"));
+        Assert.Equal(0, onPrtFild08d.Count(instance => instance.Spawn.Mob.AegisName == "XMAS_SMOKEY_GIFT"));
+        Assert.Equal(0, onPrtFild08d.Count(instance => instance.Spawn.Mob.AegisName == "XMAS_SMOKEY_SOCK"));
+        Assert.Equal(0, onPrtFild08d.Count(instance => instance.Spawn.Mob.AegisName == "ORGANIC_JAKK"));
+        Assert.Equal(0, onPrtFild08d.Count(instance => instance.Spawn.Mob.AegisName == "INORGANIC_JAKK"));
         Assert.All(onPrtFild08d, instance => Assert.True(instance.IsAlive));
     }
 }

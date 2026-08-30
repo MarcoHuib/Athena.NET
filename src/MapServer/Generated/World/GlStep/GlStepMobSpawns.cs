@@ -13,19 +13,19 @@ internal static class GlStepMobSpawns
 {
     internal static readonly MobSpawnDefinition[] GlStep =
     [
-        new(GeneratedMobs.Goldporing, "gl_step", 3, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/RWC_2011.txt", 356), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.XmasSmokeyGift, "gl_step", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1216), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.XmasSmokeySock, "gl_step", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1507), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.EventLude, "gl_step", 3, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2006.txt", 1315), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.OrganicJakk, "gl_step", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 643), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.InorganicJakk, "gl_step", 4, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 946), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Mimic, "gl_step", 5, 60000, 30000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/glastheim.txt", 171), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.RaydricArcher, "gl_step", 10, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/glastheim.txt", 172), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.WindGhost, "gl_step", 100, 120000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/glastheim.txt", 173), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.C2WindGhost, "gl_step", 2, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 115), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.WindGhost, "gl_step", 138, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/glastheim.txt", 181), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.RaydricArcher, "gl_step", 13, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/glastheim.txt", 182), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Mimic, "gl_step", 6, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/glastheim.txt", 183), X: 0, Y: 0, Xs: 0, Ys: 0),
+        new(GeneratedMobs.Goldporing, "gl_step", 3, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/RWC_2011.txt", 356), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Golden Poring"),
+        new(GeneratedMobs.XmasSmokeyGift, "gl_step", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1216), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Gift Stealing Raccoon"),
+        new(GeneratedMobs.XmasSmokeySock, "gl_step", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1507), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Sock Stealing Raccoon"),
+        new(GeneratedMobs.EventLude, "gl_step", 3, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2006.txt", 1315), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Lude"),
+        new(GeneratedMobs.OrganicJakk, "gl_step", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 643), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Organic Pumpkin"),
+        new(GeneratedMobs.InorganicJakk, "gl_step", 4, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 946), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Inorganic Pumpkin"),
+        new(GeneratedMobs.Mimic, "gl_step", 5, 60000, 30000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/glastheim.txt", 171), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Mimic"),
+        new(GeneratedMobs.RaydricArcher, "gl_step", 10, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/glastheim.txt", 172), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Raydric Archer"),
+        new(GeneratedMobs.WindGhost, "gl_step", 100, 120000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/glastheim.txt", 173), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Wind Ghost"),
+        new(GeneratedMobs.C2WindGhost, "gl_step", 2, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 115), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Solid Wind Ghost"),
+        new(GeneratedMobs.WindGhost, "gl_step", 138, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/glastheim.txt", 181), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Wind Ghost"),
+        new(GeneratedMobs.RaydricArcher, "gl_step", 13, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/glastheim.txt", 182), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Raydric Archer"),
+        new(GeneratedMobs.Mimic, "gl_step", 6, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/glastheim.txt", 183), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Mimic"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. GlStep];

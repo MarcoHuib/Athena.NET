@@ -13,10 +13,10 @@ internal static class JobThief1MobSpawns
 {
     internal static readonly MobSpawnDefinition[] JobThief1 =
     [
-        new(GeneratedMobs.ThiefMushroom, "job_thief1", 180, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/jobs/1-1/thief.txt", 532), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Fabre_1184, "job_thief1", 50, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/jobs/1-1/thief.txt", 533), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Chonchon_1183, "job_thief1", 50, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/jobs/1-1/thief.txt", 534), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Spore, "job_thief1", 30, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/jobs/1-1/thief.txt", 535), X: 0, Y: 0, Xs: 0, Ys: 0),
+        new(GeneratedMobs.ThiefMushroom, "job_thief1", 180, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/jobs/1-1/thief.txt", 532), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Orange Mushroom"),
+        new(GeneratedMobs.Fabre_1184, "job_thief1", 50, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/jobs/1-1/thief.txt", 533), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Fabre"),
+        new(GeneratedMobs.Chonchon_1183, "job_thief1", 50, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/jobs/1-1/thief.txt", 534), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Chonchon"),
+        new(GeneratedMobs.Spore, "job_thief1", 30, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/jobs/1-1/thief.txt", 535), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Spore"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. JobThief1];

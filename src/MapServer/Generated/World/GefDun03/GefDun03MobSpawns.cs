@@ -13,18 +13,18 @@ internal static class GefDun03MobSpawns
 {
     internal static readonly MobSpawnDefinition[] GefDun03 =
     [
-        new(GeneratedMobs.GDarkPriest, "gef_dun03", 1, 600000, 300000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/gef_dun.txt", 67), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Wraith, "gef_dun03", 8, 60000, 30000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/gef_dun.txt", 68), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.WraithDead, "gef_dun03", 2, 60000, 30000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/gef_dun.txt", 69), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.WindGhost, "gef_dun03", 3, 60000, 30000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/gef_dun.txt", 70), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.ShiningPlant, "gef_dun03", 3, 1800000, 900000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/gef_dun.txt", 71), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.WhitePlant, "gef_dun03", 10, 180000, 90000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/gef_dun.txt", 72), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.C2WindGhost, "gef_dun03", 1, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 81), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Wraith, "gef_dun03", 14, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gef_dun.txt", 68), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.WindGhost, "gef_dun03", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gef_dun.txt", 69), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.GDarkPriest, "gef_dun03", 1, 600000, 300000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gef_dun.txt", 70), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.ShiningPlant, "gef_dun03", 5, 1800000, 900000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gef_dun.txt", 71), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.WhitePlant, "gef_dun03", 18, 180000, 90000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gef_dun.txt", 72), X: 0, Y: 0, Xs: 0, Ys: 0),
+        new(GeneratedMobs.GDarkPriest, "gef_dun03", 1, 600000, 300000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/gef_dun.txt", 67), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Hellion Revenant"),
+        new(GeneratedMobs.Wraith, "gef_dun03", 8, 60000, 30000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/gef_dun.txt", 68), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Wraith"),
+        new(GeneratedMobs.WraithDead, "gef_dun03", 2, 60000, 30000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/gef_dun.txt", 69), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Wraith Dead"),
+        new(GeneratedMobs.WindGhost, "gef_dun03", 3, 60000, 30000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/gef_dun.txt", 70), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Wind Ghost"),
+        new(GeneratedMobs.ShiningPlant, "gef_dun03", 3, 1800000, 900000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/gef_dun.txt", 71), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Shining Plant"),
+        new(GeneratedMobs.WhitePlant, "gef_dun03", 10, 180000, 90000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/gef_dun.txt", 72), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "White Plant"),
+        new(GeneratedMobs.C2WindGhost, "gef_dun03", 1, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 81), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Solid Wind Ghost"),
+        new(GeneratedMobs.Wraith, "gef_dun03", 14, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gef_dun.txt", 68), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Wraith"),
+        new(GeneratedMobs.WindGhost, "gef_dun03", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gef_dun.txt", 69), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Wind Ghost"),
+        new(GeneratedMobs.GDarkPriest, "gef_dun03", 1, 600000, 300000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gef_dun.txt", 70), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Hellion Revenant"),
+        new(GeneratedMobs.ShiningPlant, "gef_dun03", 5, 1800000, 900000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gef_dun.txt", 71), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Shining Plant"),
+        new(GeneratedMobs.WhitePlant, "gef_dun03", 18, 180000, 90000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gef_dun.txt", 72), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "White Plant"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. GefDun03];

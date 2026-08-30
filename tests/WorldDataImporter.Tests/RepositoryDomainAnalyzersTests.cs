@@ -104,6 +104,25 @@ public sealed class RepositoryDomainAnalyzersTests
         Assert.Contains("dependency:map", spawn.Blockers);
     }
 
+    // A synthetic fixture with no real npc/re/scripts_main.conf tree degrades gracefully - the
+    // mob-spawns domain's own count/status/blockers are entirely unaffected (task section 32: never
+    // redefine the existing domain metric), and Provenance simply reports "Disabled" (no config
+    // graph resolved, so nothing is classified as Renewal-active) rather than throwing.
+    [Fact]
+    public void MobSpawn_SyntheticFixtureWithNoRealScriptsMainConf_DegradesGracefullyToDisabledProvenance()
+    {
+        using var fixture = new DomainFixture();
+        fixture.WriteBytes("db/map_cache.dat", BuildMapCache(("prt_fild08", (short)1, (short)1, OneCell)));
+        fixture.Write("db/re/mob_db.yml", MobBlock(1002, "PORING", "Poring"));
+        fixture.Write("npc/re/mobs/fields.txt", "prt_fild08,0,0\tmonster\tPoring\t1002,5,5000\n");
+
+        var entities = RepositoryDomainAnalyzers.Analyze(fixture.Root, null);
+
+        var spawn = Assert.Single(entities, item => item.Domain == "mob-spawns");
+        Assert.Equal(DomainCompatibilityStatus.FullyCompatible, spawn.Status);
+        Assert.Equal("Disabled", spawn.Provenance);
+    }
+
     [Fact]
     public void MapFlag_ReferencingAMapPresentOnlyInTheBaseCache_HasNoFalseDependencyBlocker()
     {
@@ -976,4 +995,69 @@ public sealed class RepositoryDomainAnalyzersTests
             Ai: 01_DE_TWFOLLOW
 
         """;
+}
+
+// Real-pinned-data Provenance/load-classification coverage for the mob-spawns domain (task section
+// 20/26/35), against the genuine legacy/rathena tree (commit
+// e985006171d2eb320ee512a653f4c83aea3d81b6) - mirrors MobSpawnGenerationTests' real-tree fixture
+// style; the mob-spawns domain's own entity COUNT stays exactly 10,068 (task section 32), this class
+// covers only the new Provenance field.
+public sealed class RepositoryDomainAnalyzersMobSpawnProvenanceTests
+{
+    private static readonly Lazy<IReadOnlyList<DomainEntity>> LazyMobSpawns = new(() =>
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "Athena.NET.sln"))) directory = directory.Parent;
+        var repositoryRoot = directory?.FullName ?? throw new DirectoryNotFoundException("Athena.NET repository root was not found.");
+        var root = Path.Combine(repositoryRoot, "legacy/rathena");
+        return RepositoryDomainAnalyzers.Analyze(root, new HashSet<string> { "mob-spawns" });
+    });
+    private static IReadOnlyList<DomainEntity> MobSpawns => LazyMobSpawns.Value;
+
+    [Fact]
+    public void Count_RemainsExactly10068RegardlessOfProvenance()
+    {
+        Assert.Equal(10068, MobSpawns.Count);
+    }
+
+    // Real declaration from a file referenced (active) by npc/re/scripts_monsters.conf.
+    [Fact]
+    public void RealActiveRenewalFile_ReportsRenewalDefaultProvenance()
+    {
+        var entity = MobSpawns.First(item => item.SourceFile == "npc/re/mobs/towns.txt");
+        Assert.Equal("RenewalDefault", entity.Provenance);
+    }
+
+    // Real declaration from a pinned-disabled event file (commented in npc/scripts_athena.conf).
+    [Fact]
+    public void RealDisabledEventFile_ReportsDisabledProvenance()
+    {
+        var entity = MobSpawns.First(item => item.SourceFile == "npc/events/christmas_2013.txt");
+        Assert.Equal("Disabled", entity.Provenance);
+    }
+
+    // Real npc/pre-re/... declaration.
+    [Fact]
+    public void RealPreRenewalFile_ReportsPreRenewalSourceProvenance()
+    {
+        var entity = MobSpawns.First(item => item.SourceFile.Contains("/pre-re/", StringComparison.Ordinal));
+        Assert.Equal("PreRenewalSource", entity.Provenance);
+    }
+
+    // Academy overlay: pinned-disabled yet Athena-overlay-active.
+    [Fact]
+    public void AcademyFile_ReportsAthenaOverlayProvenance()
+    {
+        var entity = MobSpawns.First(item => item.SourceFile == "npc/re/mobs/academy.txt");
+        Assert.Equal("AthenaOverlay", entity.Provenance);
+    }
+
+    // evt_zombie: represented, Disabled (halloween_2008.txt is commented out).
+    [Fact]
+    public void EvtZombieDeclarations_ReportDisabledProvenance()
+    {
+        var evtZombie = MobSpawns.Where(item => item.Map == "evt_zombie").ToArray();
+        Assert.Equal(3, evtZombie.Length);
+        Assert.All(evtZombie, item => Assert.Equal("Disabled", item.Provenance));
+    }
 }

@@ -13,15 +13,15 @@ internal static class GldDun02MobSpawns
 {
     internal static readonly MobSpawnDefinition[] GldDun02 =
     [
-        new(GeneratedMobs.OwlBaron, "gld_dun02", 3, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/gld_dun.txt", 27), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.GiantSpider, "gld_dun02", 10, 240000, 120000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/gld_dun.txt", 28), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.AncientWorm, "gld_dun02", 5, 120000, 60000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/gld_dun.txt", 29), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.KillerMantis, "gld_dun02", 5, 120000, 60000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/gld_dun.txt", 30), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.GiantHonet, "gld_dun02", 10, 120000, 60000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/gld_dun.txt", 31), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.C3GiantHonet, "gld_dun02", 2, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 120), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.GiantHonet, "gld_dun02", 30, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_re.txt", 35), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.AncientWorm, "gld_dun02", 25, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_re.txt", 36), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.GiantSpider, "gld_dun02", 15, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_re.txt", 37), X: 0, Y: 0, Xs: 0, Ys: 0),
+        new(GeneratedMobs.OwlBaron, "gld_dun02", 3, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/gld_dun.txt", 27), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Owl Baron"),
+        new(GeneratedMobs.GiantSpider, "gld_dun02", 10, 240000, 120000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/gld_dun.txt", 28), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Giant Spider"),
+        new(GeneratedMobs.AncientWorm, "gld_dun02", 5, 120000, 60000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/gld_dun.txt", 29), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Ancient Worm"),
+        new(GeneratedMobs.KillerMantis, "gld_dun02", 5, 120000, 60000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/gld_dun.txt", 30), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Killer Mantis"),
+        new(GeneratedMobs.GiantHonet, "gld_dun02", 10, 120000, 60000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/gld_dun.txt", 31), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Giant Hornet"),
+        new(GeneratedMobs.C3GiantHonet, "gld_dun02", 2, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 120), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Giant Hornet Ringleader"),
+        new(GeneratedMobs.GiantHonet, "gld_dun02", 30, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_re.txt", 35), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Giant Hornet"),
+        new(GeneratedMobs.AncientWorm, "gld_dun02", 25, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_re.txt", 36), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Ancient Worm"),
+        new(GeneratedMobs.GiantSpider, "gld_dun02", 15, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_re.txt", 37), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Giant Spider"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. GldDun02];

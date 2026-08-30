@@ -13,11 +13,11 @@ internal static class Rockmi1MobSpawns
 {
     internal static readonly MobSpawnDefinition[] Rockmi1 =
     [
-        new(GeneratedMobs.ThiefBug, "rockmi1", 10, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/rockridge.txt", 13), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Gaster, "rockmi1", 40, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/rockridge.txt", 14), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.ECowraiders1, "rockmi1", 10, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/rockridge.txt", 15), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.ECowraiders2, "rockmi1", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/rockridge.txt", 16), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.ECowraiders3, "rockmi1", 30, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/rockridge.txt", 17), X: 0, Y: 0, Xs: 0, Ys: 0),
+        new(GeneratedMobs.ThiefBug, "rockmi1", 10, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/rockridge.txt", 13), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Thief Bug"),
+        new(GeneratedMobs.Gaster, "rockmi1", 40, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/rockridge.txt", 14), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Gaster"),
+        new(GeneratedMobs.ECowraiders1, "rockmi1", 10, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/rockridge.txt", 15), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Elite Buffalo Bandit"),
+        new(GeneratedMobs.ECowraiders2, "rockmi1", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/rockridge.txt", 16), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Elite Buffalo Bandit"),
+        new(GeneratedMobs.ECowraiders3, "rockmi1", 30, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/rockridge.txt", 17), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Elite Buffalo Bandit"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. Rockmi1];

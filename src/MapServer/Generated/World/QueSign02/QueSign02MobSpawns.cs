@@ -13,15 +13,15 @@ internal static class QueSign02MobSpawns
 {
     internal static readonly MobSpawnDefinition[] QueSign02 =
     [
-        new(GeneratedMobs.GAncientMummy, "que_sign02", 8, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/quests/the_sign_quest.txt", 12437), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.GEvilDruid, "que_sign02", 8, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/quests/the_sign_quest.txt", 12438), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.GGhoul, "que_sign02", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/quests/the_sign_quest.txt", 12439), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.GIncubus, "que_sign02", 8, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/quests/the_sign_quest.txt", 12440), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.GInjustice, "que_sign02", 8, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/quests/the_sign_quest.txt", 12441), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.GSkelPrisoner, "que_sign02", 15, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/quests/the_sign_quest.txt", 12442), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.GZombiePrisoner, "que_sign02", 15, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/quests/the_sign_quest.txt", 12443), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.GWraith, "que_sign02", 15, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/quests/the_sign_quest.txt", 12444), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.GWraithDead, "que_sign02", 8, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/quests/the_sign_quest.txt", 12445), X: 0, Y: 0, Xs: 0, Ys: 0),
+        new(GeneratedMobs.GAncientMummy, "que_sign02", 8, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/quests/the_sign_quest.txt", 12437), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Ancient Mummy"),
+        new(GeneratedMobs.GEvilDruid, "que_sign02", 8, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/quests/the_sign_quest.txt", 12438), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Evil Druid"),
+        new(GeneratedMobs.GGhoul, "que_sign02", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/quests/the_sign_quest.txt", 12439), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Ghoul"),
+        new(GeneratedMobs.GIncubus, "que_sign02", 8, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/quests/the_sign_quest.txt", 12440), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Incubus"),
+        new(GeneratedMobs.GInjustice, "que_sign02", 8, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/quests/the_sign_quest.txt", 12441), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Injustice"),
+        new(GeneratedMobs.GSkelPrisoner, "que_sign02", 15, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/quests/the_sign_quest.txt", 12442), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Skeleton Prisoner"),
+        new(GeneratedMobs.GZombiePrisoner, "que_sign02", 15, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/quests/the_sign_quest.txt", 12443), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Zombie Prisoner"),
+        new(GeneratedMobs.GWraith, "que_sign02", 15, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/quests/the_sign_quest.txt", 12444), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Wraith"),
+        new(GeneratedMobs.GWraithDead, "que_sign02", 8, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/quests/the_sign_quest.txt", 12445), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Wraith Dead"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. QueSign02];

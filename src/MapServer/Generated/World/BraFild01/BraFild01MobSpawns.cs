@@ -13,12 +13,26 @@ internal static class BraFild01MobSpawns
 {
     internal static readonly MobSpawnDefinition[] BraFild01 =
     [
-        new(GeneratedMobs.Goldporing, "bra_fild01", 3, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/RWC_2011.txt", 268), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.XmasSmokeyGift, "bra_fild01", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1128), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.XmasSmokeySock, "bra_fild01", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1419), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.OrganicJakk, "bra_fild01", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 555), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.InorganicJakk, "bra_fild01", 4, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 858), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.C4Toucan, "bra_fild01", 3, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 43), X: 0, Y: 0, Xs: 0, Ys: 0),
+        new(GeneratedMobs.Goldporing, "bra_fild01", 3, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/RWC_2011.txt", 268), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Golden Poring"),
+        new(GeneratedMobs.XmasSmokeyGift, "bra_fild01", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1128), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Gift Stealing Raccoon"),
+        new(GeneratedMobs.XmasSmokeySock, "bra_fild01", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1419), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Sock Stealing Raccoon"),
+        new(GeneratedMobs.OrganicJakk, "bra_fild01", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 555), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Organic Pumpkin"),
+        new(GeneratedMobs.InorganicJakk, "bra_fild01", 4, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 858), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Inorganic Pumpkin"),
+        new(GeneratedMobs.HeadlessMule, "bra_fild01", 40, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/brasilis.txt", 30), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Headless Mule"),
+        new(GeneratedMobs.Curupira, "bra_fild01", 80, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/brasilis.txt", 31), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Curupira"),
+        new(GeneratedMobs.Dokebi, "bra_fild01", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/brasilis.txt", 32), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Dokebi"),
+        new(GeneratedMobs.Jaguar, "bra_fild01", 10, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/brasilis.txt", 33), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Jaguar"),
+        new(GeneratedMobs.Savage, "bra_fild01", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/brasilis.txt", 34), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Savage"),
+        new(GeneratedMobs.Toucan, "bra_fild01", 10, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/brasilis.txt", 35), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Toucan"),
+        new(GeneratedMobs.RedMushroom, "bra_fild01", 3, 360000, 180000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/brasilis.txt", 36), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Red Mushroom"),
+        new(GeneratedMobs.C4Toucan, "bra_fild01", 3, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 43), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Furious Toucan"),
+        new(GeneratedMobs.Curupira, "bra_fild01", 50, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/brasilis.txt", 10), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Curupira"),
+        new(GeneratedMobs.Dokebi, "bra_fild01", 10, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/brasilis.txt", 11), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Dokebi"),
+        new(GeneratedMobs.Savage, "bra_fild01", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/brasilis.txt", 12), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Savage"),
+        new(GeneratedMobs.HeadlessMule, "bra_fild01", 40, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/brasilis.txt", 13), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Headless Mule"),
+        new(GeneratedMobs.RedMushroom, "bra_fild01", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/brasilis.txt", 14), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Red Mushroom"),
+        new(GeneratedMobs.Jaguar, "bra_fild01", 55, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/brasilis.txt", 15), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Jaguar"),
+        new(GeneratedMobs.Toucan, "bra_fild01", 60, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/brasilis.txt", 16), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Toucan"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. BraFild01];

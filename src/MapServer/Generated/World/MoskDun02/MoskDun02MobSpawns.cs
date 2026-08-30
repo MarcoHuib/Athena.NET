@@ -13,15 +13,15 @@ internal static class MoskDun02MobSpawns
 {
     internal static readonly MobSpawnDefinition[] MoskDun02 =
     [
-        new(GeneratedMobs.WoodGoblin, "mosk_dun02", 30, 10000, 10000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/mosk_dun.txt", 35), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Les, "mosk_dun02", 40, 10000, 10000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/mosk_dun.txt", 36), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Vavayaga, "mosk_dun02", 20, 20000, 10000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/mosk_dun.txt", 37), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Uzhas, "mosk_dun02", 5, 20000, 10000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/mosk_dun.txt", 38), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.C1Les, "mosk_dun02", 1, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 217), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Les, "mosk_dun02", 47, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/mosk_dun.txt", 28), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.WoodGoblin, "mosk_dun02", 35, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/mosk_dun.txt", 29), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Vavayaga, "mosk_dun02", 23, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/mosk_dun.txt", 30), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Uzhas, "mosk_dun02", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/mosk_dun.txt", 31), X: 0, Y: 0, Xs: 0, Ys: 0),
+        new(GeneratedMobs.WoodGoblin, "mosk_dun02", 30, 10000, 10000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/mosk_dun.txt", 35), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Wood Goblin"),
+        new(GeneratedMobs.Les, "mosk_dun02", 40, 10000, 10000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/mosk_dun.txt", 36), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Les"),
+        new(GeneratedMobs.Vavayaga, "mosk_dun02", 20, 20000, 10000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/mosk_dun.txt", 37), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Baba Yaga"),
+        new(GeneratedMobs.Uzhas, "mosk_dun02", 5, 20000, 10000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/mosk_dun.txt", 38), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Uzhas"),
+        new(GeneratedMobs.C1Les, "mosk_dun02", 1, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 217), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Swift Les"),
+        new(GeneratedMobs.Les, "mosk_dun02", 47, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/mosk_dun.txt", 28), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Les"),
+        new(GeneratedMobs.WoodGoblin, "mosk_dun02", 35, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/mosk_dun.txt", 29), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Wood Goblin"),
+        new(GeneratedMobs.Vavayaga, "mosk_dun02", 23, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/mosk_dun.txt", 30), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Baba Yaga"),
+        new(GeneratedMobs.Uzhas, "mosk_dun02", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/mosk_dun.txt", 31), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Uzhas"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. MoskDun02];

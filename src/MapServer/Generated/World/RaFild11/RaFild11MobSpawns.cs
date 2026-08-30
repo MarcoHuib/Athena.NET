@@ -13,12 +13,18 @@ internal static class RaFild11MobSpawns
 {
     internal static readonly MobSpawnDefinition[] RaFild11 =
     [
-        new(GeneratedMobs.EventLude, "ra_fild11", 3, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2006.txt", 1093), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Drops, "ra_fild11", 100, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/rachel.txt", 97), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Stapo, "ra_fild11", 40, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/rachel.txt", 98), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Roween, "ra_fild11", 2, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/rachel.txt", 99), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.YellowPlant, "ra_fild11", 15, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/rachel.txt", 100), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.RedPlant, "ra_fild11", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/rachel.txt", 101), X: 0, Y: 0, Xs: 0, Ys: 0),
+        new(GeneratedMobs.EventLude, "ra_fild11", 3, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2006.txt", 1093), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Lude"),
+        new(GeneratedMobs.Drops, "ra_fild11", 100, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/rachel.txt", 97), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Drops"),
+        new(GeneratedMobs.Stapo, "ra_fild11", 40, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/rachel.txt", 98), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Stapo"),
+        new(GeneratedMobs.Roween, "ra_fild11", 2, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/rachel.txt", 99), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Roween"),
+        new(GeneratedMobs.YellowPlant, "ra_fild11", 15, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/rachel.txt", 100), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Yellow Plant"),
+        new(GeneratedMobs.RedPlant, "ra_fild11", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/rachel.txt", 101), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Red Plant"),
+        new(GeneratedMobs.RedPlant, "ra_fild11", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/rachel.txt", 96), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Red Plant"),
+        new(GeneratedMobs.YellowPlant, "ra_fild11", 15, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/rachel.txt", 97), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Yellow Plant"),
+        new(GeneratedMobs.Drosera, "ra_fild11", 10, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/rachel.txt", 98), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Drosera"),
+        new(GeneratedMobs.Ep18GreyWolfBaby, "ra_fild11", 50, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/rachel.txt", 99), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Grey Baby Wolf"),
+        new(GeneratedMobs.Ep18GreyGoat, "ra_fild11", 70, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/rachel.txt", 100), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Grey Goat"),
+        new(GeneratedMobs.Ep18Rakehand, "ra_fild11", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/rachel.txt", 101), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Rake Hand"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. RaFild11];

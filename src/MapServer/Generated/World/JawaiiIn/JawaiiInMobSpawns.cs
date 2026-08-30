@@ -13,11 +13,11 @@ internal static class JawaiiInMobSpawns
 {
     internal static readonly MobSpawnDefinition[] JawaiiIn =
     [
-        new(GeneratedMobs.RedMushroom, "jawaii_in", 1, 3000000, 1200000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/mobs/towns.txt", 32), X: 128, Y: 121, Xs: 1, Ys: 4),
-        new(GeneratedMobs.BlackMushroom, "jawaii_in", 1, 3600000, 1200000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/mobs/towns.txt", 33), X: 124, Y: 76, Xs: 1, Ys: 1),
-        new(GeneratedMobs.BlackMushroom, "jawaii_in", 2, 3000000, 1200000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/mobs/towns.txt", 34), X: 72, Y: 74, Xs: 5, Ys: 1),
-        new(GeneratedMobs.ThiefBug, "jawaii_in", 1, 5400000, 3000000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/citycleaners.txt", 19), X: 73, Y: 117, Xs: 4, Ys: 4),
-        new(GeneratedMobs.ThiefBug, "jawaii_in", 1, 4800000, 2400000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/citycleaners.txt", 20), X: 83, Y: 117, Xs: 5, Ys: 5),
+        new(GeneratedMobs.RedMushroom, "jawaii_in", 1, 3000000, 1200000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/mobs/towns.txt", 32), X: 128, Y: 121, Xs: 1, Ys: 4, SpawnName: "Red Mushroom"),
+        new(GeneratedMobs.BlackMushroom, "jawaii_in", 1, 3600000, 1200000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/mobs/towns.txt", 33), X: 124, Y: 76, Xs: 1, Ys: 1, SpawnName: "Black Mushroom"),
+        new(GeneratedMobs.BlackMushroom, "jawaii_in", 2, 3000000, 1200000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/mobs/towns.txt", 34), X: 72, Y: 74, Xs: 5, Ys: 1, SpawnName: "Black Mushroom"),
+        new(GeneratedMobs.ThiefBug, "jawaii_in", 1, 5400000, 3000000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/citycleaners.txt", 19), X: 73, Y: 117, Xs: 4, Ys: 4, SpawnName: "Thief Bug"),
+        new(GeneratedMobs.ThiefBug, "jawaii_in", 1, 4800000, 2400000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/citycleaners.txt", 20), X: 83, Y: 117, Xs: 5, Ys: 5, SpawnName: "Thief Bug"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. JawaiiIn];

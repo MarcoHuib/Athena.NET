@@ -13,17 +13,17 @@ internal static class ArugDun01MobSpawns
 {
     internal static readonly MobSpawnDefinition[] ArugDun01 =
     [
-        new(GeneratedMobs.BansheeMaster, "arug_dun01", 22, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/gld_dunSE.txt", 17), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Necromancer, "arug_dun01", 18, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/gld_dunSE.txt", 18), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.BeholderMaster, "arug_dun01", 17, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/gld_dunSE.txt", 19), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Fanat, "arug_dun01", 17, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/gld_dunSE.txt", 20), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Aunoe, "arug_dun01", 17, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/gld_dunSE.txt", 21), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.C5BansheeMaster, "arug_dun01", 2, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 31), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.BansheeMaster, "arug_dun01", 22, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_dunSE.txt", 25), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.BeholderMaster, "arug_dun01", 22, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_dunSE.txt", 26), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Aunoe, "arug_dun01", 22, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_dunSE.txt", 27), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Necromancer, "arug_dun01", 18, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_dunSE.txt", 28), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Fanat, "arug_dun01", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_dunSE.txt", 29), X: 0, Y: 0, Xs: 0, Ys: 0),
+        new(GeneratedMobs.BansheeMaster, "arug_dun01", 22, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/gld_dunSE.txt", 17), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Banshee Master"),
+        new(GeneratedMobs.Necromancer, "arug_dun01", 18, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/gld_dunSE.txt", 18), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Necromancer"),
+        new(GeneratedMobs.BeholderMaster, "arug_dun01", 17, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/gld_dunSE.txt", 19), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Beholder Master"),
+        new(GeneratedMobs.Fanat, "arug_dun01", 17, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/gld_dunSE.txt", 20), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Fanat"),
+        new(GeneratedMobs.Aunoe, "arug_dun01", 17, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/gld_dunSE.txt", 21), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Aunoe"),
+        new(GeneratedMobs.C5BansheeMaster, "arug_dun01", 2, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 31), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Elusive Banshee Master"),
+        new(GeneratedMobs.BansheeMaster, "arug_dun01", 22, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_dunSE.txt", 25), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Banshee Master"),
+        new(GeneratedMobs.BeholderMaster, "arug_dun01", 22, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_dunSE.txt", 26), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Beholder master"),
+        new(GeneratedMobs.Aunoe, "arug_dun01", 22, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_dunSE.txt", 27), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Aunoe"),
+        new(GeneratedMobs.Necromancer, "arug_dun01", 18, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_dunSE.txt", 28), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Necromancer"),
+        new(GeneratedMobs.Fanat, "arug_dun01", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_dunSE.txt", 29), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Fanat"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. ArugDun01];

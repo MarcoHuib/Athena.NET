@@ -13,15 +13,15 @@ internal static class MocFild22MobSpawns
 {
     internal static readonly MobSpawnDefinition[] MocFild22 =
     [
-        new(GeneratedMobs.Morocc1, "moc_fild22", 60, 30000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/morocc.txt", 321), X: 0, Y: 0, Xs: 0, Ys: 0, DeathEvent: "0"),
-        new(GeneratedMobs.Morocc2, "moc_fild22", 60, 30000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/morocc.txt", 322), X: 0, Y: 0, Xs: 0, Ys: 0, DeathEvent: "0"),
-        new(GeneratedMobs.Morocc3, "moc_fild22", 60, 30000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/morocc.txt", 323), X: 0, Y: 0, Xs: 0, Ys: 0, DeathEvent: "0"),
-        new(GeneratedMobs.Morocc4, "moc_fild22", 25, 10000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/morocc.txt", 324), X: 0, Y: 0, Xs: 0, Ys: 0, DeathEvent: "0"),
-        new(GeneratedMobs.C4Morocc1, "moc_fild22", 3, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 208), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Morocc1, "moc_fild22", 73, 30000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/morocc.txt", 216), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Morocc2, "moc_fild22", 73, 30000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/morocc.txt", 217), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Morocc3, "moc_fild22", 73, 30000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/morocc.txt", 218), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Morocc4, "moc_fild22", 50, 10000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/morocc.txt", 219), X: 0, Y: 0, Xs: 0, Ys: 0),
+        new(GeneratedMobs.Morocc1, "moc_fild22", 60, 30000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/morocc.txt", 321), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Incarnation of Morocc", DeathEvent: "0"),
+        new(GeneratedMobs.Morocc2, "moc_fild22", 60, 30000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/morocc.txt", 322), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Incarnation of Morocc", DeathEvent: "0"),
+        new(GeneratedMobs.Morocc3, "moc_fild22", 60, 30000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/morocc.txt", 323), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Incarnation of Morocc", DeathEvent: "0"),
+        new(GeneratedMobs.Morocc4, "moc_fild22", 25, 10000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/morocc.txt", 324), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Incarnation of Morocc", DeathEvent: "0"),
+        new(GeneratedMobs.C4Morocc1, "moc_fild22", 3, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 208), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Furious Incarnation of Morocc"),
+        new(GeneratedMobs.Morocc1, "moc_fild22", 73, 30000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/morocc.txt", 216), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Incarnation of Morocc"),
+        new(GeneratedMobs.Morocc2, "moc_fild22", 73, 30000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/morocc.txt", 217), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Incarnation of Morocc"),
+        new(GeneratedMobs.Morocc3, "moc_fild22", 73, 30000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/morocc.txt", 218), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Incarnation of Morocc"),
+        new(GeneratedMobs.Morocc4, "moc_fild22", 50, 10000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/morocc.txt", 219), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Incarnation of Morocc"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. MocFild22];

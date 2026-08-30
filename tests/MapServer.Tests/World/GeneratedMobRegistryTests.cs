@@ -65,8 +65,15 @@ public sealed class GeneratedMobRegistryTests
     public void EveryPinnedMobSpawnReferenceResolvesToGeneratedDefinition()
     {
         var npcRoot = Path.Combine(RepositoryRoot(), "legacy/rathena/npc");
-        // Match the existing analyzed mob-spawn domain exactly. boss_monster is a separate MVP
-        // declaration/runtime concern and is intentionally outside this task's 9,844-row invariant.
+        // Deliberately a NARROWER proxy grammar than the canonical MobDataCompiler.SpawnLine parser
+        // (numeric MobId only, mandatory ",x,y") - this test is a standalone smoke check that every
+        // discovered numeric MobId resolves through GeneratedMobRegistry, not a second copy of the
+        // canonical spawn-line grammar; it intentionally excludes both boss_monster (a separate MVP
+        // concern) and the bare-map-name/AegisName-token forms the canonical parser DOES cover (see
+        // WorldDataImporter.Tests.MobSpawnGenerationTests for the authoritative 10,068-declaration
+        // coverage, including those forms) - this regex's own mandatory ",x,y" requirement means its
+        // count is UNCHANGED at 9,844 even after the canonical parser's bare-map-name fix, since none
+        // of the 224 newly-recovered declarations use the ",x,y" form this proxy regex requires.
         var pattern = new Regex(@"^(?<map>[A-Za-z0-9_]+),(?<x>-?\d+),(?<y>-?\d+)(?:,(?<xs>\d+),(?<ys>\d+))?\t+monster\t+[^\t]+\t+(?<id>\d+),(?<count>\d+)(?:,(?<delay1>\d+))?(?:,(?<delay2>\d+))?", RegexOptions.Compiled);
         var unresolved = new List<string>();
         var discovered = 0;

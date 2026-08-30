@@ -13,21 +13,21 @@ internal static class RaSan04MobSpawns
 {
     internal static readonly MobSpawnDefinition[] RaSan04 =
     [
-        new(GeneratedMobs.Goldporing, "ra_san04", 3, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/RWC_2011.txt", 489), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.XmasSmokeyGift, "ra_san04", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1348), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.XmasSmokeySock, "ra_san04", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1639), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.EventLude, "ra_san04", 3, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2006.txt", 1100), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.OrganicJakk, "ra_san04", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 775), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.InorganicJakk, "ra_san04", 4, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 1078), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Echio, "ra_san04", 60, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/ra_san.txt", 67), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Agav, "ra_san04", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/ra_san.txt", 68), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Seeker, "ra_san04", 10, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/ra_san.txt", 69), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Hodremlin, "ra_san04", 10, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/ra_san.txt", 70), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.C3Echio, "ra_san04", 1, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 278), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Echio, "ra_san04", 62, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/ra_san.txt", 46), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Agav, "ra_san04", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/ra_san.txt", 47), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Seeker, "ra_san04", 10, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/ra_san.txt", 48), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Hodremlin, "ra_san04", 10, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/ra_san.txt", 49), X: 0, Y: 0, Xs: 0, Ys: 0),
+        new(GeneratedMobs.Goldporing, "ra_san04", 3, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/RWC_2011.txt", 489), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Golden Poring"),
+        new(GeneratedMobs.XmasSmokeyGift, "ra_san04", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1348), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Gift Stealing Raccoon"),
+        new(GeneratedMobs.XmasSmokeySock, "ra_san04", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1639), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Sock Stealing Raccoon"),
+        new(GeneratedMobs.EventLude, "ra_san04", 3, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2006.txt", 1100), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Lude"),
+        new(GeneratedMobs.OrganicJakk, "ra_san04", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 775), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Organic Pumpkin"),
+        new(GeneratedMobs.InorganicJakk, "ra_san04", 4, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 1078), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Inorganic Pumpkin"),
+        new(GeneratedMobs.Echio, "ra_san04", 60, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/ra_san.txt", 67), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Echio"),
+        new(GeneratedMobs.Agav, "ra_san04", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/ra_san.txt", 68), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Agav"),
+        new(GeneratedMobs.Seeker, "ra_san04", 10, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/ra_san.txt", 69), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Seeker"),
+        new(GeneratedMobs.Hodremlin, "ra_san04", 10, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/ra_san.txt", 70), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Hodremlin"),
+        new(GeneratedMobs.C3Echio, "ra_san04", 1, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 278), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Echio Ringleader"),
+        new(GeneratedMobs.Echio, "ra_san04", 62, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/ra_san.txt", 46), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Echio"),
+        new(GeneratedMobs.Agav, "ra_san04", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/ra_san.txt", 47), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Agav"),
+        new(GeneratedMobs.Seeker, "ra_san04", 10, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/ra_san.txt", 48), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Seeker"),
+        new(GeneratedMobs.Hodremlin, "ra_san04", 10, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/ra_san.txt", 49), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Hodremlin"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. RaSan04];

@@ -13,9 +13,9 @@ internal static class VeFild06MobSpawns
 {
     internal static readonly MobSpawnDefinition[] VeFild06 =
     [
-        new(GeneratedMobs.Stapo, "ve_fild06", 2, 300000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/veins.txt", 76), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Stapo, "ve_fild06", 1, 1800000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/veins.txt", 77), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.ShiningPlant, "ve_fild06", 1, 1020000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/veins.txt", 78), X: 0, Y: 0, Xs: 0, Ys: 0),
+        new(GeneratedMobs.Stapo, "ve_fild06", 2, 300000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/veins.txt", 76), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Stapo"),
+        new(GeneratedMobs.Stapo, "ve_fild06", 1, 1800000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/veins.txt", 77), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Stapo"),
+        new(GeneratedMobs.ShiningPlant, "ve_fild06", 1, 1020000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/veins.txt", 78), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Shining Plant"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. VeFild06];

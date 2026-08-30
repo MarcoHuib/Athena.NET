@@ -13,9 +13,9 @@ internal static class SpRudusMobSpawns
 {
     internal static readonly MobSpawnDefinition[] SpRudus =
     [
-        new(GeneratedMobs.Ep171Venenum1, "sp_rudus", 30, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/sp_rudus.txt", 11), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Ep171Dolor1, "sp_rudus", 30, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/sp_rudus.txt", 12), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Ep171TwinCaput1, "sp_rudus", 30, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/sp_rudus.txt", 13), X: 0, Y: 0, Xs: 0, Ys: 0),
+        new(GeneratedMobs.Ep171Venenum1, "sp_rudus", 30, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/sp_rudus.txt", 11), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Venenum"),
+        new(GeneratedMobs.Ep171Dolor1, "sp_rudus", 30, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/sp_rudus.txt", 12), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Dolor"),
+        new(GeneratedMobs.Ep171TwinCaput1, "sp_rudus", 30, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/sp_rudus.txt", 13), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Twin Caput"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. SpRudus];

@@ -13,14 +13,14 @@ internal static class TegDun02MobSpawns
 {
     internal static readonly MobSpawnDefinition[] TegDun02 =
     [
-        new(GeneratedMobs.C4LWhikebain, "teg_dun02", 2, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 285), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.LYgnizem, "teg_dun02", 15, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/teg_dun.txt", 23), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.LWhikebain, "teg_dun02", 15, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/teg_dun.txt", 24), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.LArmaia, "teg_dun02", 15, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/teg_dun.txt", 25), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.LKavac, "teg_dun02", 15, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/teg_dun.txt", 26), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.LDancer, "teg_dun02", 15, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/teg_dun.txt", 27), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.LRawrel, "teg_dun02", 15, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/teg_dun.txt", 28), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.LErend, "teg_dun02", 15, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/teg_dun.txt", 29), X: 0, Y: 0, Xs: 0, Ys: 0),
+        new(GeneratedMobs.C4LWhikebain, "teg_dun02", 2, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 285), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Furious Wickebine Tres"),
+        new(GeneratedMobs.LYgnizem, "teg_dun02", 15, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/teg_dun.txt", 23), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Crusader Egnigem"),
+        new(GeneratedMobs.LWhikebain, "teg_dun02", 15, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/teg_dun.txt", 24), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Rogue Wickebine"),
+        new(GeneratedMobs.LArmaia, "teg_dun02", 15, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/teg_dun.txt", 25), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Alchemist Armeyer"),
+        new(GeneratedMobs.LKavac, "teg_dun02", 15, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/teg_dun.txt", 26), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Bard Kavach"),
+        new(GeneratedMobs.LDancer, "teg_dun02", 15, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/teg_dun.txt", 27), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Dancer Josephina"),
+        new(GeneratedMobs.LRawrel, "teg_dun02", 15, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/teg_dun.txt", 28), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Sage Laurell"),
+        new(GeneratedMobs.LErend, "teg_dun02", 15, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/teg_dun.txt", 29), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Monk Errende"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. TegDun02];

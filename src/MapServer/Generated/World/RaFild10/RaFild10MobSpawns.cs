@@ -13,10 +13,15 @@ internal static class RaFild10MobSpawns
 {
     internal static readonly MobSpawnDefinition[] RaFild10 =
     [
-        new(GeneratedMobs.EventLude, "ra_fild10", 3, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2006.txt", 1092), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Stapo, "ra_fild10", 30, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/rachel.txt", 90), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Galion, "ra_fild10", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/rachel.txt", 91), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Roween, "ra_fild10", 10, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/rachel.txt", 92), X: 0, Y: 0, Xs: 0, Ys: 0),
+        new(GeneratedMobs.EventLude, "ra_fild10", 3, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2006.txt", 1092), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Lude"),
+        new(GeneratedMobs.Stapo, "ra_fild10", 30, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/rachel.txt", 90), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Stapo"),
+        new(GeneratedMobs.Galion, "ra_fild10", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/rachel.txt", 91), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Galion"),
+        new(GeneratedMobs.Roween, "ra_fild10", 10, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/fields/rachel.txt", 92), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Roween"),
+        new(GeneratedMobs.Drosera, "ra_fild10", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/rachel.txt", 87), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Drosera"),
+        new(GeneratedMobs.Magmaring, "ra_fild10", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/rachel.txt", 88), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Magmaring"),
+        new(GeneratedMobs.Ep18GreyWolfBaby, "ra_fild10", 50, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/rachel.txt", 89), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Grey Baby Wolf"),
+        new(GeneratedMobs.Ep18GreyGoat, "ra_fild10", 60, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/rachel.txt", 90), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Grey Goat"),
+        new(GeneratedMobs.Ep18Rakehand, "ra_fild10", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/rachel.txt", 91), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Rake Hand"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. RaFild10];

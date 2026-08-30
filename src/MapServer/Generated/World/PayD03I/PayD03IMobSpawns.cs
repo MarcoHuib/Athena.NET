@@ -13,10 +13,21 @@ internal static class PayD03IMobSpawns
 {
     internal static readonly MobSpawnDefinition[] PayD03I =
     [
-        new(GeneratedMobs.Whisper_1185, "pay_d03_i", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/pay_dun.txt", 163), X: 154, Y: 112, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Whisper_1185, "pay_d03_i", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/pay_dun.txt", 164), X: 161, Y: 117, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Whisper_1185, "pay_d03_i", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/pay_dun.txt", 165), X: 84, Y: 63, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Whisper_1185, "pay_d03_i", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/pay_dun.txt", 166), X: 81, Y: 61, Xs: 0, Ys: 0),
+        new(GeneratedMobs.BluePlant, "pay_d03_i", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/pay_dun.txt", 158), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Blue Plant"),
+        new(GeneratedMobs.GreenPlant, "pay_d03_i", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/pay_dun.txt", 159), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Green Plant"),
+        new(GeneratedMobs.YellowPlant, "pay_d03_i", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/pay_dun.txt", 160), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Yellow Plant"),
+        new(GeneratedMobs.WhitePlant, "pay_d03_i", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/pay_dun.txt", 161), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "White Plant"),
+        new(GeneratedMobs.Whisper_1185, "pay_d03_i", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/pay_dun.txt", 162), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Whisper"),
+        new(GeneratedMobs.Whisper_1185, "pay_d03_i", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/pay_dun.txt", 163), X: 154, Y: 112, Xs: 0, Ys: 0, SpawnName: "Whisper"),
+        new(GeneratedMobs.Whisper_1185, "pay_d03_i", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/pay_dun.txt", 164), X: 161, Y: 117, Xs: 0, Ys: 0, SpawnName: "Whisper"),
+        new(GeneratedMobs.Whisper_1185, "pay_d03_i", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/pay_dun.txt", 165), X: 84, Y: 63, Xs: 0, Ys: 0, SpawnName: "Whisper"),
+        new(GeneratedMobs.Whisper_1185, "pay_d03_i", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/pay_dun.txt", 166), X: 81, Y: 61, Xs: 0, Ys: 0, SpawnName: "Whisper"),
+        new(GeneratedMobs.IllMunak, "pay_d03_i", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/pay_dun.txt", 168), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Resentful Munak"),
+        new(GeneratedMobs.IllBonGun, "pay_d03_i", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/pay_dun.txt", 169), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Resentful Bongun"),
+        new(GeneratedMobs.IllSohee, "pay_d03_i", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/pay_dun.txt", 170), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Resentful Sohee"),
+        new(GeneratedMobs.IllArcherSkeleton, "pay_d03_i", 15, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/pay_dun.txt", 171), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Resentful Soldier"),
+        new(GeneratedMobs.IllFuryHero, "pay_d03_i", 5, 15000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/pay_dun.txt", 172), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Deranged Adventurer", DeathEvent: "ill_moonlight_wizard::OnMobDead"),
+        new(GeneratedMobs.IllNineTail, "pay_d03_i", 10, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/pay_dun.txt", 173), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Angry Nine Tail", DeathEvent: "illusion_mob#moonlight::OnKill"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. PayD03I];

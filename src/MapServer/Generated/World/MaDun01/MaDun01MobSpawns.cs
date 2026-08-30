@@ -13,10 +13,10 @@ internal static class MaDun01MobSpawns
 {
     internal static readonly MobSpawnDefinition[] MaDun01 =
     [
-        new(GeneratedMobs.C3Manananggal, "ma_dun01", 2, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 172), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Manananggal, "ma_dun01", 40, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/ma_dun.txt", 19), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Wakwak, "ma_dun01", 30, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/ma_dun.txt", 20), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Tiyanak, "ma_dun01", 40, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/ma_dun.txt", 21), X: 0, Y: 0, Xs: 0, Ys: 0),
+        new(GeneratedMobs.C3Manananggal, "ma_dun01", 2, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 172), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Manananggal Ringleader"),
+        new(GeneratedMobs.Manananggal, "ma_dun01", 40, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/ma_dun.txt", 19), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Manananggal"),
+        new(GeneratedMobs.Wakwak, "ma_dun01", 30, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/ma_dun.txt", 20), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Wakwak"),
+        new(GeneratedMobs.Tiyanak, "ma_dun01", 40, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/ma_dun.txt", 21), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Tiyanak"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. MaDun01];

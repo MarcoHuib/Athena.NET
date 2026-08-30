@@ -13,9 +13,9 @@ internal static class Verus01MobSpawns
 {
     internal static readonly MobSpawnDefinition[] Verus01 =
     [
-        new(GeneratedMobs.CenereG, "verus01", 50, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/verus.txt", 18), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.ExplorationRoverT, "verus01", 25, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/verus.txt", 19), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.RepairRobotT, "verus01", 25, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/verus.txt", 20), X: 0, Y: 0, Xs: 0, Ys: 0),
+        new(GeneratedMobs.CenereG, "verus01", 50, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/verus.txt", 18), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Green Cenere"),
+        new(GeneratedMobs.ExplorationRoverT, "verus01", 25, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/verus.txt", 19), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Explorer Robot Turbo"),
+        new(GeneratedMobs.RepairRobotT, "verus01", 25, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/verus.txt", 20), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Repair Robot Turbo"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. Verus01];

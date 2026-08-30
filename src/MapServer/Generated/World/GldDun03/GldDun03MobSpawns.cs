@@ -13,14 +13,14 @@ internal static class GldDun03MobSpawns
 {
     internal static readonly MobSpawnDefinition[] GldDun03 =
     [
-        new(GeneratedMobs.MayaPuple, "gld_dun03", 3, 1200000, 600000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/gld_dun.txt", 37), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Caterpillar, "gld_dun03", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/gld_dun.txt", 38), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Gullinbursti, "gld_dun03", 10, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/gld_dun.txt", 39), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.CremyFear, "gld_dun03", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/gld_dun.txt", 40), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.LeibOlmai, "gld_dun03", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/gld_dun.txt", 41), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.C4Caterpillar, "gld_dun03", 2, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 122), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Caterpillar, "gld_dun03", 35, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_re.txt", 54), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.CremyFear, "gld_dun03", 35, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_re.txt", 55), X: 0, Y: 0, Xs: 0, Ys: 0),
+        new(GeneratedMobs.MayaPuple, "gld_dun03", 3, 1200000, 600000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/gld_dun.txt", 37), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Maya Purple"),
+        new(GeneratedMobs.Caterpillar, "gld_dun03", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/gld_dun.txt", 38), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Caterpillar"),
+        new(GeneratedMobs.Gullinbursti, "gld_dun03", 10, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/gld_dun.txt", 39), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Gullinbursti"),
+        new(GeneratedMobs.CremyFear, "gld_dun03", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/gld_dun.txt", 40), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Creamy Fear"),
+        new(GeneratedMobs.LeibOlmai, "gld_dun03", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/gld_dun.txt", 41), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Leib Olmai"),
+        new(GeneratedMobs.C4Caterpillar, "gld_dun03", 2, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 122), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Furious Caterpillar"),
+        new(GeneratedMobs.Caterpillar, "gld_dun03", 35, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_re.txt", 54), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Caterpillar"),
+        new(GeneratedMobs.CremyFear, "gld_dun03", 35, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/gld_re.txt", 55), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Creamy Fear"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. GldDun03];

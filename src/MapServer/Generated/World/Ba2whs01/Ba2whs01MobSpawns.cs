@@ -13,9 +13,9 @@ internal static class Ba2whs01MobSpawns
 {
     internal static readonly MobSpawnDefinition[] Ba2whs01 =
     [
-        new(GeneratedMobs.Ep172BetaGuardsNg, "ba_2whs01", 30, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/ba_2whs.txt", 9), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Ep172OmegaCleanerNg, "ba_2whs01", 90, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/ba_2whs.txt", 10), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Ep172HeartHunterH, "ba_2whs01", 70, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/ba_2whs.txt", 11), X: 0, Y: 0, Xs: 0, Ys: 0),
+        new(GeneratedMobs.Ep172BetaGuardsNg, "ba_2whs01", 30, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/ba_2whs.txt", 9), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Broken Beta Guards"),
+        new(GeneratedMobs.Ep172OmegaCleanerNg, "ba_2whs01", 90, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/ba_2whs.txt", 10), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Broken Omega Cleaner"),
+        new(GeneratedMobs.Ep172HeartHunterH, "ba_2whs01", 70, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/ba_2whs.txt", 11), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Heart Hunter Skirmisher"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. Ba2whs01];

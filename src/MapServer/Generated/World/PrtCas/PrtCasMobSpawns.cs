@@ -13,7 +13,7 @@ internal static class PrtCasMobSpawns
 {
     internal static readonly MobSpawnDefinition[] PrtCas =
     [
-        new(GeneratedMobs.GlassPlate, "prt_cas", 15, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/prt_cas.txt", 10), X: 367, Y: 138, Xs: 16, Ys: 22),
+        new(GeneratedMobs.GlassPlate, "prt_cas", 15, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/prt_cas.txt", 10), X: 367, Y: 138, Xs: 16, Ys: 22, SpawnName: "Plate"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. PrtCas];

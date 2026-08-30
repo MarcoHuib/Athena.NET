@@ -13,7 +13,7 @@ internal static class Rockmi2MobSpawns
 {
     internal static readonly MobSpawnDefinition[] Rockmi2 =
     [
-        new(GeneratedMobs.Purplestone, "rockmi2", 31, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/rockridge.txt", 21), X: 100, Y: 36, Xs: 20, Ys: 20),
+        new(GeneratedMobs.Purplestone, "rockmi2", 31, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/rockridge.txt", 21), X: 100, Y: 36, Xs: 20, Ys: 20, SpawnName: "Purple Ore"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. Rockmi2];

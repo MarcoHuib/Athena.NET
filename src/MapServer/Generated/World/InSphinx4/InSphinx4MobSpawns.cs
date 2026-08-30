@@ -13,21 +13,21 @@ internal static class InSphinx4MobSpawns
 {
     internal static readonly MobSpawnDefinition[] InSphinx4 =
     [
-        new(GeneratedMobs.Goldporing, "in_sphinx4", 3, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/RWC_2011.txt", 373), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.XmasSmokeyGift, "in_sphinx4", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1233), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.XmasSmokeySock, "in_sphinx4", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1524), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.EventLude, "in_sphinx4", 3, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2006.txt", 1351), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.OrganicJakk, "in_sphinx4", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 660), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.InorganicJakk, "in_sphinx4", 4, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 963), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Minorous, "in_sphinx4", 50, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/in_sphinx.txt", 43), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Anubis, "in_sphinx4", 15, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/in_sphinx.txt", 44), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Mimic, "in_sphinx4", 4, 600000, 300000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/in_sphinx.txt", 45), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Pasana, "in_sphinx4", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/in_sphinx.txt", 46), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.C1Minorous, "in_sphinx4", 1, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 144), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Minorous, "in_sphinx4", 77, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/in_sphinx.txt", 44), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Pasana, "in_sphinx4", 30, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/in_sphinx.txt", 45), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Anubis, "in_sphinx4", 23, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/in_sphinx.txt", 46), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Mimic, "in_sphinx4", 6, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/in_sphinx.txt", 47), X: 0, Y: 0, Xs: 0, Ys: 0),
+        new(GeneratedMobs.Goldporing, "in_sphinx4", 3, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/RWC_2011.txt", 373), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Golden Poring"),
+        new(GeneratedMobs.XmasSmokeyGift, "in_sphinx4", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1233), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Gift Stealing Raccoon"),
+        new(GeneratedMobs.XmasSmokeySock, "in_sphinx4", 5, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/christmas_2013.txt", 1524), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Sock Stealing Raccoon"),
+        new(GeneratedMobs.EventLude, "in_sphinx4", 3, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2006.txt", 1351), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Lude"),
+        new(GeneratedMobs.OrganicJakk, "in_sphinx4", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 660), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Organic Pumpkin"),
+        new(GeneratedMobs.InorganicJakk, "in_sphinx4", 4, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2013.txt", 963), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Inorganic Pumpkin"),
+        new(GeneratedMobs.Minorous, "in_sphinx4", 50, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/in_sphinx.txt", 43), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Minorous"),
+        new(GeneratedMobs.Anubis, "in_sphinx4", 15, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/in_sphinx.txt", 44), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Anubis"),
+        new(GeneratedMobs.Mimic, "in_sphinx4", 4, 600000, 300000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/in_sphinx.txt", 45), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Mimic"),
+        new(GeneratedMobs.Pasana, "in_sphinx4", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/in_sphinx.txt", 46), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Pasana"),
+        new(GeneratedMobs.C1Minorous, "in_sphinx4", 1, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 144), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Swift Minorous"),
+        new(GeneratedMobs.Minorous, "in_sphinx4", 77, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/in_sphinx.txt", 44), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Minorous"),
+        new(GeneratedMobs.Pasana, "in_sphinx4", 30, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/in_sphinx.txt", 45), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Pasana"),
+        new(GeneratedMobs.Anubis, "in_sphinx4", 23, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/in_sphinx.txt", 46), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Anubis"),
+        new(GeneratedMobs.Mimic, "in_sphinx4", 6, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/in_sphinx.txt", 47), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Mimic"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. InSphinx4];

@@ -13,9 +13,9 @@ internal static class EvtZombieMobSpawns
 {
     internal static readonly MobSpawnDefinition[] EvtZombie =
     [
-        new(GeneratedMobs.Ep14MorsBossb, "evt_zombie", 150, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2008.txt", 267), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Ep14MorsMob1, "evt_zombie", 80, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2008.txt", 268), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Ep14MorsMob2, "evt_zombie", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2008.txt", 269), X: 0, Y: 0, Xs: 0, Ys: 0),
+        new(GeneratedMobs.Ep14MorsBossb, "evt_zombie", 150, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2008.txt", 267), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Zombie"),
+        new(GeneratedMobs.Ep14MorsMob1, "evt_zombie", 80, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2008.txt", 268), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Ghoul"),
+        new(GeneratedMobs.Ep14MorsMob2, "evt_zombie", 20, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/events/halloween_2008.txt", 269), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Zombie Master"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. EvtZombie];

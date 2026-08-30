@@ -13,7 +13,7 @@ internal static class VerTunnMobSpawns
 {
     internal static readonly MobSpawnDefinition[] VerTunn =
     [
-        new(GeneratedMobs.ReconRobot, "ver_tunn", 5, 30000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/verus.txt", 16), X: 0, Y: 0, Xs: 0, Ys: 0),
+        new(GeneratedMobs.ReconRobot, "ver_tunn", 5, 30000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/verus.txt", 16), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Recon Robot"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. VerTunn];

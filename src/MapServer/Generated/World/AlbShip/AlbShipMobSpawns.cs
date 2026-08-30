@@ -13,7 +13,7 @@ internal static class AlbShipMobSpawns
 {
     internal static readonly MobSpawnDefinition[] AlbShip =
     [
-        new(GeneratedMobs.ECramp, "alb_ship", 25, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/towns.txt", 27), X: 0, Y: 0, Xs: 0, Ys: 0),
+        new(GeneratedMobs.ECramp, "alb_ship", 25, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/towns.txt", 27), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Strange Mouse"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. AlbShip];

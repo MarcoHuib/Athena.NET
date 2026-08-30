@@ -13,13 +13,13 @@ internal static class TurDun05MobSpawns
 {
     internal static readonly MobSpawnDefinition[] TurDun05 =
     [
-        new(GeneratedMobs.Permeter, "tur_dun05", 3, 20000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/tur_dun.txt", 70), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Freezer, "tur_dun05", 5, 30000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/tur_dun.txt", 71), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Assulter, "tur_dun05", 1, 20000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/tur_dun.txt", 72), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.C2Freezer, "tur_dun05", 1, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 314), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Freezer, "tur_dun05", 7, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/tur_dun.txt", 52), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Permeter, "tur_dun05", 4, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/tur_dun.txt", 53), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Assulter, "tur_dun05", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/tur_dun.txt", 54), X: 0, Y: 0, Xs: 0, Ys: 0),
+        new(GeneratedMobs.Permeter, "tur_dun05", 3, 20000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/tur_dun.txt", 70), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Permeter"),
+        new(GeneratedMobs.Freezer, "tur_dun05", 5, 30000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/tur_dun.txt", 71), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Freezer"),
+        new(GeneratedMobs.Assulter, "tur_dun05", 1, 20000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/dungeons/tur_dun.txt", 72), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Assaulter"),
+        new(GeneratedMobs.C2Freezer, "tur_dun05", 1, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 314), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Solid Freezer"),
+        new(GeneratedMobs.Freezer, "tur_dun05", 7, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/tur_dun.txt", 52), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Freezer"),
+        new(GeneratedMobs.Permeter, "tur_dun05", 4, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/tur_dun.txt", 53), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Permeter"),
+        new(GeneratedMobs.Assulter, "tur_dun05", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/dungeons/tur_dun.txt", 54), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Assaulter"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. TurDun05];

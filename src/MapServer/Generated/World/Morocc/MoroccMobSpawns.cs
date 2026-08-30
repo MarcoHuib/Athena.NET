@@ -13,7 +13,7 @@ internal static class MoroccMobSpawns
 {
     internal static readonly MobSpawnDefinition[] Morocc =
     [
-        new(GeneratedMobs.WildRose, "morocc", 1, 7200000, 3600000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/citycleaners.txt", 26), X: 0, Y: 0, Xs: 0, Ys: 0),
+        new(GeneratedMobs.WildRose, "morocc", 1, 7200000, 3600000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/pre-re/mobs/citycleaners.txt", 26), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Wild Rose"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. Morocc];

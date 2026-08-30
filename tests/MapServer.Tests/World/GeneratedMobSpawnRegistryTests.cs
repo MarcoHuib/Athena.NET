@@ -14,11 +14,18 @@ namespace Athena.Net.MapServer.Tests.World;
 // GeneratedMobSpawnRegistry's own map-lookup contract and end-to-end runtime activation.
 public sealed class GeneratedMobSpawnRegistryTests
 {
+    // Count corrected from 9,844 to 10,068 by a genuine parser bug fix (this branch): pinned
+    // npc_parse_mob's own w1 sscanf success condition is `w1count >= 1` (src/map/npc.cpp:5233) - a
+    // bare "<map>\tmonster\t..." declaration with no ",x,y" coordinates at all is valid pinned
+    // syntax, but the prior SpawnLine regex required ",x,y" unconditionally and silently dropped
+    // every such declaration - 224 real ordinary `monster` declarations use this bare form (see
+    // WorldDataImporter.Tests.MobSpawnGenerationTests.ReadAllMobSpawns_FindsExactly10068Declarations
+    // for the full accounting).
     [Fact]
-    public void All_ContainsExactly9844Declarations()
+    public void All_ContainsExactly10068Declarations()
     {
-        Assert.Equal(9844, GeneratedMobSpawnRegistry.All.Length);
-        Assert.Equal(9844, GeneratedMobSpawnRegistry.Count);
+        Assert.Equal(10068, GeneratedMobSpawnRegistry.All.Length);
+        Assert.Equal(10068, GeneratedMobSpawnRegistry.Count);
     }
 
     // Task section 32: unknown map returns an empty collection, never throws.
@@ -71,9 +78,16 @@ public sealed class GeneratedMobSpawnRegistryTests
     // AcademyMobSpawns/PrtFild08MobSpawns files this branch retired. Uses MapServerWorld.Build with
     // an EXPLICIT servedMaps set containing only this one map (never mutating the production
     // MapServerHostingScope.ServedMaps itself - task section 14: runtime activation must follow the
-    // map lifecycle, not blindly instantiate all 9,841 valid declarations across every map at once)
+    // map lifecycle, not blindly instantiate all 10,065 valid declarations across every map at once)
     // to prove: rAthena source -> generated spawn -> generated MobDefinition -> real MonsterRegistry
     // instance, through the exact same runtime MonsterRegistry/MonsterRuntime every other map uses.
+    // pay_fild01 is also a real Renewal-vs-pre-Renewal collision example (ai/world-data.md's
+    // "Generated mob spawns" section): GeneratedMobSpawnRegistry.GetForMap (all represented
+    // declarations) includes BOTH npc/pre-re/mobs/fields/payon.txt's WILOW/POPORING/PORING (10 each,
+    // PreRenewalSource - inactive) AND npc/re/mobs/fields/payon.txt's WILOW(181)/PORING(38)/FABRE(38)
+    // (RenewalDefault - active), plus several pinned-disabled event declarations (RWC_2011/
+    // christmas_2008/christmas_2013/dumplingfestival/halloween_2006/halloween_2013/xmas/
+    // StPatrick_2008, all Disabled). Runtime activation must include only the RenewalDefault subset.
     [Fact]
     public void RuntimeActivation_PreviouslyUnservedRealMap_InstantiatesThroughTheGenericPipeline()
     {
@@ -85,14 +99,22 @@ public sealed class GeneratedMobSpawnRegistryTests
         Assert.Contains(generatedSpawns, spawn => spawn.Mob.AegisName == "WILOW" && spawn.Count == 181);
         Assert.Contains(generatedSpawns, spawn => spawn.Mob.AegisName == "PORING" && spawn.Count == 38);
         Assert.Contains(generatedSpawns, spawn => spawn.Mob.AegisName == "FABRE" && spawn.Count == 38);
+        // The pre-Renewal collision: represented, but excluded from the effective runtime profile.
+        Assert.Contains(generatedSpawns, spawn => spawn.Mob.AegisName == "WILOW" && spawn.Count == 10 && spawn.Source.File.Contains("pre-re", StringComparison.Ordinal));
+
+        var effectiveSpawns = GeneratedMobSpawnLoadProfiles.GetForMap(Map, MobSpawnLoadProfile.AthenaIroEffective);
+        Assert.NotEmpty(effectiveSpawns);
+        Assert.DoesNotContain(effectiveSpawns, spawn => spawn.Source.File.Contains("pre-re", StringComparison.Ordinal));
+        Assert.DoesNotContain(effectiveSpawns, spawn => spawn.Source.File.Contains("/npc/events/", StringComparison.Ordinal));
+        Assert.True(effectiveSpawns.Count < generatedSpawns.Count);
 
         var servedMaps = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { Map };
         var world = MapServerWorld.Build(new GameplayRuleServices(new RenewalBasicAttackRules()), servedMaps: servedMaps);
 
         var instances = world.Monsters.AllInstances.Where(instance => instance.Map == Map).ToArray();
-        Assert.Equal(generatedSpawns.Sum(spawn => spawn.Count), instances.Length);
+        Assert.Equal(effectiveSpawns.Sum(spawn => spawn.Count), instances.Length);
         Assert.All(instances, instance => Assert.True(instance.IsAlive));
-        Assert.Contains(instances, instance => instance.Spawn.Mob.AegisName == "WILOW");
+        Assert.Contains(instances, instance => instance.Spawn.Mob.AegisName == "WILOW" && instance.Spawn.Count == 181);
 
         // Only the ONE served map's declarations were instantiated - definition availability stays
         // global (GeneratedMobSpawnRegistry.All has thousands more), but runtime instantiation
@@ -186,5 +208,110 @@ public sealed class GeneratedMobSpawnRegistryTests
         Assert.DoesNotContain("evt_zombie", MapServerHostingScope.ServedMaps);
         var world = MapServerWorld.Build(new GameplayRuleServices(new RenewalBasicAttackRules()), servedMaps: MapServerHostingScope.ServedMaps);
         Assert.DoesNotContain(world.Monsters.AllInstances, instance => instance.Map == "evt_zombie");
+    }
+}
+
+// GeneratedMobSpawnLoadProfiles regression coverage (ai/world-data.md's "Generated mob spawns" -
+// RathenaRenewalDefault/AthenaIroEffective). Profile membership is metadata ABOUT a
+// MobSpawnDefinition, never a field ON it - GeneratedMobSpawnRegistry.All (repository-wide source
+// coverage) is unaffected by any assertion here.
+public sealed class GeneratedMobSpawnLoadProfilesTests
+{
+    // Real declarations from a file referenced (active, uncommented) by pinned
+    // npc/re/scripts_monsters.conf - npc/re/mobs/towns.txt is unconditionally active in the real
+    // Renewal config graph (RathenaScriptConfigGraphRealDataTests locks this at the parser level;
+    // this proves the same fact end-to-end through the compiled generated registry/profile).
+    [Fact]
+    public void RenewalDefault_IncludesDeclarationsFromAnActiveScriptsMonstersConfFile()
+    {
+        var townsDeclarations = GeneratedMobSpawnRegistry.All.Where(spawn => spawn.Source.File == "legacy/rathena/npc/re/mobs/towns.txt").ToArray();
+        Assert.NotEmpty(townsDeclarations);
+        var renewalSet = GeneratedMobSpawnLoadProfiles.RathenaRenewalDefault.ToHashSet();
+        Assert.All(townsDeclarations, spawn => Assert.Contains(spawn, renewalSet));
+    }
+
+    // A real declaration from a pinned-disabled event file (commented `npc:` directive in
+    // npc/scripts_athena.conf) - represented in the repository-wide registry but absent from BOTH
+    // profiles.
+    [Fact]
+    public void DisabledEventFileDeclarations_AreRepresentedButAbsentFromBothProfiles()
+    {
+        var christmasDeclarations = GeneratedMobSpawnRegistry.All.Where(spawn => spawn.Source.File == "legacy/rathena/npc/events/christmas_2013.txt").ToArray();
+        Assert.NotEmpty(christmasDeclarations);
+        var renewalSet = GeneratedMobSpawnLoadProfiles.RathenaRenewalDefault.ToHashSet();
+        var effectiveSet = GeneratedMobSpawnLoadProfiles.AthenaIroEffective.ToHashSet();
+        Assert.All(christmasDeclarations, spawn => Assert.DoesNotContain(spawn, renewalSet));
+        Assert.All(christmasDeclarations, spawn => Assert.DoesNotContain(spawn, effectiveSet));
+    }
+
+    // A real npc/pre-re/... declaration - represented, but absent from both profiles (this project
+    // never resolves the actual pre-Renewal config graph, so "not Renewal-active" is as far as this
+    // classification goes - see MobSpawnLoadClass.PreRenewalSource's own doc comment).
+    [Fact]
+    public void PreRenewalDeclarations_AreRepresentedButAbsentFromBothProfiles()
+    {
+        var preReDeclarations = GeneratedMobSpawnRegistry.All.Where(spawn => spawn.Source.File.Contains("/npc/pre-re/", StringComparison.Ordinal)).ToArray();
+        Assert.NotEmpty(preReDeclarations);
+        var renewalSet = GeneratedMobSpawnLoadProfiles.RathenaRenewalDefault.ToHashSet();
+        var effectiveSet = GeneratedMobSpawnLoadProfiles.AthenaIroEffective.ToHashSet();
+        Assert.All(preReDeclarations, spawn => Assert.DoesNotContain(spawn, renewalSet));
+        Assert.All(preReDeclarations, spawn => Assert.DoesNotContain(spawn, effectiveSet));
+    }
+
+    // Academy overlay: pinned-disabled (npc/re/scripts_monsters.conf:5) yet ACTIVE in
+    // AthenaIroEffective purely through the explicit AthenaOverlaySourceFiles allow-list.
+    [Fact]
+    public void AcademyDeclarations_AreAbsentFromRenewalDefaultButActiveThroughTheAthenaOverlay()
+    {
+        var academyDeclarations = GeneratedMobSpawnRegistry.All.Where(spawn => spawn.Source.File == "legacy/rathena/npc/re/mobs/academy.txt").ToArray();
+        Assert.NotEmpty(academyDeclarations);
+        var renewalSet = GeneratedMobSpawnLoadProfiles.RathenaRenewalDefault.ToHashSet();
+        var effectiveSet = GeneratedMobSpawnLoadProfiles.AthenaIroEffective.ToHashSet();
+        Assert.All(academyDeclarations, spawn => Assert.DoesNotContain(spawn, renewalSet));
+        Assert.All(academyDeclarations, spawn => Assert.Contains(spawn, effectiveSet));
+
+        // Still reachable through a live built world exactly as today (unchanged behavior).
+        var world = MapServerWorld.Build(new GameplayRuleServices(new RenewalBasicAttackRules()), servedMaps: MapServerHostingScope.ServedMaps);
+        Assert.Contains(world.Monsters.AllInstances, instance => instance.Map == "prt_fild08d" && instance.Spawn.Mob.AegisName == "PORING");
+    }
+
+    // evt_zombie: still represented, still absent from both profiles (Disabled - halloween_2008.txt
+    // is commented out at npc/scripts_athena.conf).
+    [Fact]
+    public void EvtZombieDeclarations_AreAbsentFromBothProfiles()
+    {
+        var evtZombieSpawns = GeneratedMobSpawnRegistry.All.Where(spawn => spawn.Map == "evt_zombie").ToArray();
+        Assert.Equal(3, evtZombieSpawns.Length);
+        var renewalSet = GeneratedMobSpawnLoadProfiles.RathenaRenewalDefault.ToHashSet();
+        var effectiveSet = GeneratedMobSpawnLoadProfiles.AthenaIroEffective.ToHashSet();
+        Assert.All(evtZombieSpawns, spawn => Assert.DoesNotContain(spawn, renewalSet));
+        Assert.All(evtZombieSpawns, spawn => Assert.DoesNotContain(spawn, effectiveSet));
+    }
+
+    // Views, not copies (task section 22): every element AthenaIroEffective holds for a given map is
+    // the SAME CLR object reference GeneratedMobSpawnRegistry.GetForMap returns for that map.
+    [Fact]
+    public void AthenaIroEffective_ReferencesTheSameInstancesAsTheRegistry_NeverCopies()
+    {
+        var registryEntries = GeneratedMobSpawnRegistry.GetForMap("prt_fild08d");
+        var effectiveEntries = GeneratedMobSpawnLoadProfiles.GetForMap("prt_fild08d", MobSpawnLoadProfile.AthenaIroEffective);
+        Assert.NotEmpty(effectiveEntries);
+        Assert.All(effectiveEntries, effective => Assert.Contains(registryEntries, registryEntry => ReferenceEquals(registryEntry, effective)));
+    }
+
+    [Fact]
+    public void GetForMap_UnknownMap_ReturnsEmptyForEitherProfile()
+    {
+        Assert.Empty(GeneratedMobSpawnLoadProfiles.GetForMap("this_map_does_not_exist_anywhere", MobSpawnLoadProfile.RathenaRenewalDefault));
+        Assert.Empty(GeneratedMobSpawnLoadProfiles.GetForMap("this_map_does_not_exist_anywhere", MobSpawnLoadProfile.AthenaIroEffective));
+    }
+
+    // RathenaRenewalDefault is always a subset of AthenaIroEffective (AthenaIroEffective =
+    // RathenaRenewalDefault union the Athena overlay).
+    [Fact]
+    public void RathenaRenewalDefault_IsAlwaysASubsetOfAthenaIroEffective()
+    {
+        var effectiveSet = GeneratedMobSpawnLoadProfiles.AthenaIroEffective.ToHashSet();
+        Assert.All(GeneratedMobSpawnLoadProfiles.RathenaRenewalDefault, spawn => Assert.Contains(spawn, effectiveSet));
     }
 }

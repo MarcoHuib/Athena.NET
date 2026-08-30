@@ -13,7 +13,7 @@ internal static class LhzIn01MobSpawns
 {
     internal static readonly MobSpawnDefinition[] LhzIn01 =
     [
-        new(GeneratedMobs.RedMushroom, "lhz_in01", 1, 120000, 100000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/mobs/towns.txt", 39), X: 157, Y: 54, Xs: 0, Ys: 0),
+        new(GeneratedMobs.RedMushroom, "lhz_in01", 1, 120000, 100000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/mobs/towns.txt", 39), X: 157, Y: 54, Xs: 0, Ys: 0, SpawnName: "Red Mushroom"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. LhzIn01];

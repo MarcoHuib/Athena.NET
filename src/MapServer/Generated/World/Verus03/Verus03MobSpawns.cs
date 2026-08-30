@@ -13,10 +13,10 @@ internal static class Verus03MobSpawns
 {
     internal static readonly MobSpawnDefinition[] Verus03 =
     [
-        new(GeneratedMobs.IllegalPromotion, "verus03", 40, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/verus.txt", 25), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.ExplorationRover, "verus03", 50, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/verus.txt", 26), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.RepairRobot, "verus03", 50, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/verus.txt", 27), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.RuinBeliever2, "verus03", 10, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/verus.txt", 28), X: 0, Y: 0, Xs: 0, Ys: 0),
+        new(GeneratedMobs.IllegalPromotion, "verus03", 40, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/verus.txt", 25), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Illegal Promotion"),
+        new(GeneratedMobs.ExplorationRover, "verus03", 50, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/verus.txt", 26), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Explorer Robot"),
+        new(GeneratedMobs.RepairRobot, "verus03", 50, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/verus.txt", 27), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Repair Robot"),
+        new(GeneratedMobs.RuinBeliever2, "verus03", 10, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/verus.txt", 28), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Ruin Grace Believer"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. Verus03];

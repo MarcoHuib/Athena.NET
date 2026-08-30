@@ -13,10 +13,10 @@ internal static class MaFild01MobSpawns
 {
     internal static readonly MobSpawnDefinition[] MaFild01 =
     [
-        new(GeneratedMobs.C5Tiyanak, "ma_fild01", 2, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 173), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Tikbalang, "ma_fild01", 67, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/malaya.txt", 21), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Tiyanak, "ma_fild01", 67, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/malaya.txt", 22), X: 0, Y: 0, Xs: 0, Ys: 0),
-        new(GeneratedMobs.Jejeling, "ma_fild01", 40, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/malaya.txt", 23), X: 0, Y: 0, Xs: 0, Ys: 0),
+        new(GeneratedMobs.C5Tiyanak, "ma_fild01", 2, 180000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/championmobs.txt", 173), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Elusive Tiyanak"),
+        new(GeneratedMobs.Tikbalang, "ma_fild01", 67, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/malaya.txt", 21), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Tikbalang"),
+        new(GeneratedMobs.Tiyanak, "ma_fild01", 67, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/malaya.txt", 22), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Tiyanak"),
+        new(GeneratedMobs.Jejeling, "ma_fild01", 40, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/malaya.txt", 23), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Jejeling"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. MaFild01];

@@ -13,7 +13,7 @@ internal static class JupeCore2MobSpawns
 {
     internal static readonly MobSpawnDefinition[] JupeCore2 =
     [
-        new(GeneratedMobs.Dimik, "jupe_core2", 100, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/jobs/3-1/mechanic.txt", 740), X: 0, Y: 0, Xs: 0, Ys: 0),
+        new(GeneratedMobs.Dimik, "jupe_core2", 100, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/jobs/3-1/mechanic.txt", 740), X: 0, Y: 0, Xs: 0, Ys: 0, SpawnName: "Dimik"),
     ];
     internal static readonly MobSpawnDefinition[] All =
         [.. JupeCore2];
