@@ -793,36 +793,94 @@ to THIS SAME mob's own resolved `AttackMotion` (`mob.cpp:5391-5397`, the `else {
 }` branch for a mob_id seen for the first time), which `MobDataCompiler` computes explicitly rather
 than approximating with a constant.
 
-`Size`/`Race`/`Element`/`Class` are new strongly-typed generated enums (`MobSize`/`MobRace`/
-`MobElement`/`MobClass`, alongside the pre-existing `[Flags] MobMode`) mirroring the pinned
-`e_size`/`e_race`/`e_element`/`e_mob_class` numeric values exactly (including pinned's own gap —
-`MobClass.Battlefield = 4`, no member at 3). Only the members `MobDatabase::parseBodyNode` can
-actually resolve into a real per-mob value are modeled (e.g. `RC_ALL`/`ELE_WEAPON`/`SZ_MAX` are
-pinned wildcard/sentinel constants a real `Size:`/`Race:`/`Element:` field is never resolved to,
-per each parser's own bounds-check-then-clamp-to-default logic) — see each enum's own doc comment
-in `WorldEntityDefinition.cs` for the exact pinned trace. String values resolve case-insensitively
-against the fixed pinned name table (matching `script_get_constant`'s own `search_str`/`strcasecmp`
-lookup — real pinned data uses both `Size: Large`/`Race: Player_Doram` and `Race: Demihuman`
-spellings, not the enum member's own C# identifier casing), falling back to the documented default
-on an unrecognized value exactly like the pre-existing unrecognized-`Ai`-preset fallback — never a
-thrown error for one bad enum-shaped field. A `Title:`/`JapaneseName:` value that is YAML-quoted in
-the pinned source (e.g. `Title: "<Red Pepper>"`, required whenever the value contains a
-YAML-special character) is unwrapped before being re-emitted as a proper escaped C# string literal,
-not embedded with its original YAML quote characters.
+`Size`/`Race`/`Element`/`Class` are strongly-typed generated enums (`MobSize`/`MobRace`/
+`MobElement`/`MobClass`) mirroring the pinned `e_size`/`e_race`/`e_element`/`e_mob_class` numeric
+values exactly (including pinned's own gap — `MobClass.Battlefield = 4`, no member at 3). Only the
+members `MobDatabase::parseBodyNode` can actually resolve into a real per-mob value are modeled
+(e.g. `RC_ALL`/`ELE_WEAPON`/`SZ_MAX` are pinned wildcard/sentinel constants a real `Size:`/`Race:`/
+`Element:` field is never resolved to, per each parser's own bounds-check-then-clamp-to-default
+logic) — see each enum's own doc comment in `WorldEntityDefinition.cs` for the exact pinned trace.
+String values resolve case-insensitively against the fixed pinned name table (matching
+`script_get_constant`'s own `search_str`/`strcasecmp` lookup — real pinned data uses both
+`Size: Large`/`Race: Player_Doram` and `Race: Demihuman` spellings, not the enum member's own C#
+identifier casing), falling back to the documented default on an unrecognized value exactly like
+the pre-existing unrecognized-`Ai`-preset fallback — never a thrown error for one bad enum-shaped
+field. A `Title:`/`JapaneseName:` value that is YAML-quoted in the pinned source (e.g.
+`Title: "<Red Pepper>"`, required whenever the value contains a YAML-special character) is unwrapped
+before being re-emitted as a proper escaped C# string literal, not embedded with its original YAML
+quote characters.
 
-Deliberately still out of scope: `RaceGroups` (no `CHK_RACE`-style fixed bound, no runtime
-consumer) and `MvpDrops` (list-shaped, no drop-table runtime — same rationale as `Drops`, but
-without `Drops`' own dedicated analyzer component, since nothing yet consumes MVP-specific reward
-items). Both remain genuine, tracked `StaticData` gaps (`mob-field:race-groups`/
-`mob-field:mvp-drops`) in `analyze`'s domain report — `RepositoryDomainAnalyzers.MobSupportedKeys`
-is kept in sync with `MobDataCompiler`'s actual field coverage by
-`MobDataCompilerTests.PinnedMobDbSchema_EveryDocumentedTopLevelField_IsAccountedForByCompilerOrExplicitExclusion`,
+`RepositoryDomainAnalyzers.MobSupportedKeys` is kept in sync with `MobDataCompiler`'s actual scalar
+field coverage; a real, pinned-file-scanning schema-drift test
+(`MobDataCompilerTests.PinnedMobDbSchema_EveryTopLevelKeyActuallyPresentInRealData_IsExplicitlyClassified`
+and its `Modes:`-nested-key companion) discovers every top-level key that actually occurs anywhere
+in the real pinned `db/re/mob_db.yml` (not merely the file's own header comment) and asserts each
+is either `Modeled` (a scalar/enum `MobDefinitionData` field), a `DedicatedComponent` (`Modes`,
+`RaceGroups`, `Drops`, `MvpDrops` — see below), or `ExplicitlyIgnoredWithReason` (currently empty) —
 so a future pinned schema addition is caught as a test failure rather than silently widening the
 unmeasured gap. See `tests/WorldDataImporter.Tests/MobDataCompilerTests.cs` for the full
 enum-coverage and lossless-round-trip regression suite, including a real pinned fixture (Golden
 Thief Bug, Id 1086) that exercises `MvpExp`/`Size: Large`/`Race: Insect`/`Element: Fire`/
 `ElementLevel: 2`/`Class: Boss` together against real rAthena data rather than only synthetic
 fixtures.
+
+### Mob Modes: the complete pinned bitmask, representation vs runtime execution
+
+`MobMode`/`MobModeData` (`WorldEntityDefinition.cs`/`MobDataCompiler.cs`) model the COMPLETE pinned
+`e_mode` bitmask — all 22 named `MD_*` bits (`legacy/rathena/doc/mob_db_mode_list.txt`,
+cross-checked against `mmo.hpp:242-272`; the two remaining bit positions, `0x0000100`/`0x0800000`,
+are pinned "FREE"/unused slots with no `MD_*` constant and are correctly absent). Every valid
+`Modes:` entry name — `CanMove`/`Looter`/`Aggressive`/`Assist`/`CastSensorIdle`/`NoRandomWalk`/
+`NoCast`/`CanAttack`/`CastSensorChase`/`ChangeChase`/`Angry`/`ChangeTargetMelee`/
+`ChangeTargetChase`/`TargetWeak`/`RandomTarget`/`IgnoreMelee`/`IgnoreMagic`/`IgnoreRanged`/`Mvp`/
+`IgnoreMisc`/`KnockBackImmune`/`TeleportBlock`/`FixedItemDrop`/`Detector`/`StatusImmune`/
+`SkillImmune` — round-trips losslessly through `ReadMode`/`GenerateMobDefinition`, individually
+OR'd (`true`)/AND-NOT'd (`false`) onto the mob's `Ai:`-preset base mode exactly like pinned
+`MobDatabase::parseBodyNode` (`mob.cpp:5446-5519`). Only 5 of those 22 bits
+(`CanMove`/`NoRandomWalk`/`CanAttack`/`ChangeTargetMelee`/`ChangeTargetChase`) are consulted by any
+real MapServer runtime call site today (`MonsterRuntime`/`MobInstance`/`MonsterCombatCoordinator`,
+via `mode.HasFlag`) — every other bit is genuinely stored, real source data that is currently inert
+at runtime, never silently dropped.
+
+`RepositoryDomainAnalyzers.AnalyzeMobs` expresses this split as two independent components:
+`ModeData` (can every `Modes:` entry NAME in this block be represented at all — blocked only by a
+genuinely unrecognized/future `MD_*` name, reported as `mob-field:mode-<name>`, not by any of the 22
+modeled bits) and `ModeRuntime` (of the bits this mob's fully RESOLVED mode — `Ai` preset plus
+`Modes:` overrides — actually carries, how many does MapServer execute; blocked bits are reported as
+`mob-mode-runtime:<name>`). A mob can be `ModeData: FullyCompatible` (every source bit retained)
+while `ModeRuntime: PartiallyCompatible` or even `Unsupported` (few/none of ITS OWN resolved bits
+happen to be runtime-executed) — never inflating runtime compatibility merely because storage
+succeeded. `ModeRuntime` is `NotApplicable` for a mob whose resolved mode is `MobMode.None` (nothing
+to execute in the first place, e.g. an immobile plant with no `Ai:` match).
+
+### RaceGroups, Drops, MvpDrops: representation vs runtime
+
+`RaceGroups`/`Drops`/`MvpDrops` are all list-shaped pinned blocks, now retained on `MobDefinition`
+as typed lists (`IReadOnlyList<MobRaceGroupEntry>? RaceGroups`, `IReadOnlyList<MobDropEntry>? Drops`,
+`IReadOnlyList<MobDropEntry>? MvpDrops` — `null` when the pinned block is entirely absent, an empty
+list is never emitted for an absent block) rather than being excluded from the source-data model.
+`RaceGroups` is deliberately a pinned-NAME list (`MobRaceGroupEntry(string Name, bool Value)`), not
+a hand-maintained C# enum — the pinned `RC2_*` constant table (`map.hpp:343-382`) is open-ended and
+content-defined (`RC2_GOBLIN`, `RC2_BIOLAB`, `RC2_MALANGDO`, ...), so re-encoding it into a fixed
+enum would silently reject a future pinned addition rather than representing it. `Drops`/`MvpDrops`
+share one shape (`MobDropEntry(string Item, int Rate, bool StealProtected, string? RandomOptionGroup)`)
+because pinned `MobDatabase::parseDropNode` (`mob.cpp:4844-4923`) parses both blocks identically;
+`Item` is retained as the pinned AegisName string (no cross-domain item-Id resolution happens at
+this layer — see the item/mob domain-independence note above).
+
+Each of the three has its OWN dedicated analyzer component (`RaceGroups`/`Drops`/`MvpDrops`),
+exactly like the pre-existing `Drops`-vs-`StaticData` split: a non-empty block is unconditionally
+excluded from the generic unknown-top-level-field `StaticData` scan (so it never produces a
+`mob-field:race-groups`/`mob-field:mvp-drops`/`mob-field:drops` StaticData blocker for a construct
+that is, in fact, now fully represented) and instead reports its OWN dedicated `Unsupported` status
+with a distinct runtime-capability id (`mob-race-groups:runtime`/`mob-drops:runtime`/
+`mob-mvp-drops:runtime`) — there is no race-group/drop-table/MVP-reward runtime consumer anywhere in
+this project outside the unrelated single-quest `QuestDropDataCompiler` slice. An absent block is
+`NotApplicable` on its own component (no runtime gap to report for a mob that never declared the
+section). As of this hardening pass, `mob-field:*` StaticData blockers are **zero** across the
+complete pinned `db/re/mob_db.yml` — the only remaining `StaticData: Unsupported` mobs (48, matching
+the pre-existing `mob-definition:format` count) are genuinely unparseable source blocks, unrelated
+to field coverage.
 
 Mob definitions are generated once, stateless/deterministic, into the shared global
 `GeneratedMobs` (`internal static partial class`). Output is sharded by pinned-source-derived

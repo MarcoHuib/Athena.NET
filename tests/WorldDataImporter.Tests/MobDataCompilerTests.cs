@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using Athena.WorldCompiler.Generation;
 
 public sealed class MobDataCompilerTests
@@ -102,8 +103,13 @@ public sealed class MobDataCompilerTests
         var mob = MobDataCompiler.ReadMobDefinition(MobDbFixture, 2401);
 
         // Pinned Ai=02 resolves to MONSTER_TYPE_02=0x83=MD_CANMOVE|MD_LOOTER|MD_CANATTACK
-        // (mob.hpp:153) - MD_LOOTER is not modeled by MobModeData, so only CanMove|CanAttack survive.
-        Assert.Equal(MobDataCompiler.MobModeData.CanMove | MobDataCompiler.MobModeData.CanAttack, mob.Mode);
+        // (mob.hpp:153), and this fixture's own Modes: block additionally sets FixedItemDrop - all
+        // four bits are now retained (MobModeData models the complete pinned bitmask), not only the
+        // two bits MapServer's runtime currently executes (CanMove/CanAttack) - see MobMode's own
+        // doc comment for the representation-vs-runtime-execution distinction this asserts.
+        Assert.Equal(
+            MobDataCompiler.MobModeData.CanMove | MobDataCompiler.MobModeData.Looter | MobDataCompiler.MobModeData.CanAttack | MobDataCompiler.MobModeData.FixedItemDrop,
+            mob.Mode);
     }
 
     [Fact]
@@ -157,10 +163,12 @@ public sealed class MobDataCompilerTests
 
         var mob = MobDataCompiler.ReadMobDefinition(fixtureWithExplicitNoRandomWalk, 9997);
 
-        // Ai=02 also resolves MD_CANATTACK (0x83's own third bit) - this test's own point is that
-        // NoRandomWalk was correctly OR'd on top of the FULL Ai=02 preset, not that CanAttack was
-        // somehow suppressed.
-        Assert.Equal(MobDataCompiler.MobModeData.CanMove | MobDataCompiler.MobModeData.CanAttack | MobDataCompiler.MobModeData.NoRandomWalk, mob.Mode);
+        // Ai=02=0x83 resolves MD_CANMOVE|MD_LOOTER|MD_CANATTACK - this test's own point is that
+        // NoRandomWalk was correctly OR'd on top of the FULL Ai=02 preset (Looter included), not
+        // that any preset bit was somehow suppressed.
+        Assert.Equal(
+            MobDataCompiler.MobModeData.CanMove | MobDataCompiler.MobModeData.Looter | MobDataCompiler.MobModeData.CanAttack | MobDataCompiler.MobModeData.NoRandomWalk,
+            mob.Mode);
     }
 
     [Fact]
@@ -177,7 +185,9 @@ public sealed class MobDataCompilerTests
         var mob = MobDataCompiler.ReadMobDefinition(MobDbFixture, 2401);
         var generated = MobDataCompiler.GenerateMobDefinition(mob, "abc123", "AcademyMobs", "GPoring", "db/re/mob_db.yml", 42);
 
-        Assert.Contains("Mode: MobMode.CanMove | MobMode.CanAttack,", generated);
+        // Emission order follows ModeBitOrder (pinned bit-value ascending), not source/enum
+        // declaration order coincidence - FixedItemDrop (0x1000000) sorts after CanAttack (0x80).
+        Assert.Contains("Mode: MobMode.CanMove | MobMode.Looter | MobMode.CanAttack | MobMode.FixedItemDrop,", generated);
         // The generated source must never special-case this mob's numeric Id - the Mode value is
         // computed once from pinned Ai/Modes: data and emitted as a plain expression.
         Assert.DoesNotContain("2401 ==", generated);
@@ -449,6 +459,75 @@ public sealed class MobDataCompilerTests
               Mvp: true
         """;
 
+    // Same real pinned Golden Thief Bug record, this time INCLUDING the real pinned MvpDrops:/
+    // Drops: blocks (db/re/mob_db.yml:4222-4246) that GoldenThiefBugFixture above deliberately
+    // omits (that fixture predates this project's Drops/MvpDrops representation and several other
+    // tests already depend on its exact shape) - a separate constant rather than editing the
+    // shared one, to avoid changing what those other tests exercise.
+    private const string GoldenThiefBugWithDropsFixture = """
+        Body:
+          - Id: 1086
+            AegisName: GOLDEN_BUG
+            Name: Golden Thief Bug
+            Level: 65
+            Hp: 222750
+            BaseExp: 102060
+            JobExp: 77760
+            MvpExp: 51030
+            Attack: 952
+            Attack2: 843
+            Defense: 159
+            MagicDefense: 81
+            Str: 71
+            Agi: 77
+            Vit: 80
+            Int: 62
+            Dex: 140
+            Luk: 76
+            AttackRange: 1
+            SkillRange: 10
+            ChaseRange: 12
+            Size: Large
+            Race: Insect
+            Element: Fire
+            ElementLevel: 2
+            WalkSpeed: 100
+            AttackDelay: 768
+            AttackMotion: 768
+            ClientAttackMotion: 720
+            DamageMotion: 480
+            DamageTaken: 10
+            Ai: 07
+            Class: Boss
+            Modes:
+              Mvp: true
+            MvpDrops:
+              - Item: Gold_Ring
+                Rate: 2000
+              - Item: Ora_Ora
+                Rate: 1000
+              - Item: Bs_Making_S
+                Rate: 5000
+            Drops:
+              - Item: Gold
+                Rate: 500
+              - Item: Golden_Mace
+                Rate: 75
+              - Item: Golden_Gear
+                Rate: 125
+              - Item: Golden_Bell
+                Rate: 250
+              - Item: Emperium
+                Rate: 150
+              - Item: Elunium
+                Rate: 1000
+              - Item: Shadowdecon
+                Rate: 50
+              - Item: Golden_Bug_Card
+                Rate: 1
+                StealProtected: true
+        """;
+
     [Fact]
     public void ReadMobDefinition_RealPinnedGoldenThiefBug_ReadsEveryExpandedStaticField()
     {
@@ -689,50 +768,247 @@ public sealed class MobDataCompilerTests
         Assert.Contains("Title: \"Say \\\"Hi\\\"\"", generated);
     }
 
-    // ===== Schema-drift guard: the pinned mob_db.yml header comment (legacy/rathena/db/re/
-    // mob_db.yml, the file's own authoritative field list) is the ground truth this project's
-    // MobDataCompiler is measured against. This test enumerates every top-level scalar/nested-block
-    // field name documented there and asserts each is either read by MobDataCompiler.
-    // ReadMobDefinition (this project's static-data model) or is one of the explicitly-excluded
-    // list-shaped/unbounded blocks that RepositoryDomainAnalyzers.AnalyzeMobs already tracks through
-    // its own dedicated component instead (Drops, MvpDrops, RaceGroups) - so a future pinned
-    // mob_db.yml revision that adds a genuinely new top-level scalar field is caught here as a test
-    // failure instead of silently expanding the unmeasured gap.
-    [Fact]
-    public void PinnedMobDbSchema_EveryDocumentedTopLevelField_IsAccountedForByCompilerOrExplicitExclusion()
+    // ===== Real schema-drift guard: scans the ACTUAL pinned legacy/rathena/db/re/mob_db.yml for
+    // every top-level key that genuinely occurs in a real record (not merely the file's own header
+    // comment, which could itself drift from the real data, or a hand-copied C# list, which a
+    // future field addition could silently bypass by never being updated). Each discovered key must
+    // be explicitly classified as Modeled (MobDataCompiler.ReadMobDefinition parses it into a
+    // scalar/enum MobDefinitionData field), DedicatedComponent (RaceGroups/Drops/MvpDrops/Modes -
+    // list-shaped blocks with their own dedicated representation and analyzer component rather than
+    // a flat scalar), or ExplicitlyIgnoredWithReason (none exist today - kept as an empty set so a
+    // reviewer must add both the classification AND the reason if one is ever needed). A genuinely
+    // new pinned top-level key with none of these three classifications fails the test - this is
+    // the actual fail-closed guard the earlier hand-duplicated list could not provide. =====
+
+    private static string FindRepositoryRoot()
     {
-        var documentedFields = new[]
-        {
-            "Id", "AegisName", "Name", "JapaneseName", "Level", "Hp", "Sp", "BaseExp", "JobExp",
-            "MvpExp", "Attack", "Attack2", "Defense", "MagicDefense", "Resistance", "MagicResistance",
-            "Str", "Agi", "Vit", "Int", "Dex", "Luk", "AttackRange", "SkillRange", "ChaseRange",
-            "Size", "Race", "RaceGroups", "Element", "ElementLevel", "WalkSpeed", "AttackDelay",
-            "AttackMotion", "ClientAttackMotion", "DamageMotion", "DamageTaken", "GroupId", "Title",
-            "Ai", "Class", "Modes", "MvpDrops", "Drops",
-        };
-        // Fields MobDataCompiler.ReadMobDefinition genuinely parses into MobDefinitionData (via
-        // ScalarRegex/ReadMode/ReadSize/ReadRace/ReadElement/ReadClass).
-        var compilerReadFields = new[]
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "Athena.NET.sln"))) directory = directory.Parent;
+        return directory?.FullName ?? throw new DirectoryNotFoundException("Athena.NET repository root was not found.");
+    }
+
+    private static readonly Regex TopLevelKeyPattern = new(@"(?m)^    (?<key>[A-Za-z][A-Za-z0-9_]*):", RegexOptions.Compiled);
+
+    [Fact]
+    public void PinnedMobDbSchema_EveryTopLevelKeyActuallyPresentInRealData_IsExplicitlyClassified()
+    {
+        var path = Path.Combine(FindRepositoryRoot(), "legacy/rathena/db/re/mob_db.yml");
+        var yaml = File.ReadAllText(path);
+
+        // Every distinct 4-space-indented "Key:" that actually occurs anywhere in a real record
+        // (scans the whole file body, not just one mob - a field could in principle be used by only
+        // a handful of the 2000+ records).
+        var discoveredKeys = TopLevelKeyPattern.Matches(yaml).Select(match => match.Groups["key"].Value).Distinct(StringComparer.Ordinal).ToArray();
+        Assert.NotEmpty(discoveredKeys); // Guards against a silently-empty/mis-pathed scan passing vacuously.
+
+        var modeled = new HashSet<string>(StringComparer.Ordinal)
         {
             "Id", "AegisName", "Name", "JapaneseName", "Level", "Hp", "Sp", "BaseExp", "JobExp",
             "MvpExp", "Attack", "Attack2", "Defense", "MagicDefense", "Resistance", "MagicResistance",
             "Str", "Agi", "Vit", "Int", "Dex", "Luk", "AttackRange", "SkillRange", "ChaseRange",
             "Size", "Race", "Element", "ElementLevel", "WalkSpeed", "AttackDelay", "AttackMotion",
             "ClientAttackMotion", "DamageMotion", "DamageTaken", "GroupId", "Title", "Ai", "Class",
-            "Modes",
         };
-        // List-shaped/unbounded blocks with no fixed scalar shape and their own dedicated analyzer
-        // component (RepositoryDomainAnalyzers.AnalyzeMobs' Drops component; MvpDrops/RaceGroups
-        // remain genuine, tracked StaticData gaps) - deliberately excluded from
-        // MobDataCompiler.ReadMobDefinition, not silently forgotten.
-        var explicitlyExcluded = new[] { "RaceGroups", "MvpDrops", "Drops" };
+        // List-shaped blocks with their own dedicated representation (MobDefinitionData.RaceGroups/
+        // Drops/MvpDrops lists, MobDefinitionData.Mode via the Modes: block) and dedicated analyzer
+        // component (RepositoryDomainAnalyzers.AnalyzeMobs' RaceGroups/Drops/MvpDrops/ModeData/
+        // ModeRuntime components) - never a flat MobSupportedKeys scalar entry.
+        var dedicatedComponent = new HashSet<string>(StringComparer.Ordinal) { "Modes", "RaceGroups", "Drops", "MvpDrops" };
+        // No pinned top-level mob_db.yml key is currently excluded without representation - if one
+        // is ever added here, it must carry its own reason (see this test's own header comment).
+        var explicitlyIgnoredWithReason = new Dictionary<string, string>(StringComparer.Ordinal);
 
-        var unaccountedFor = documentedFields.Except(compilerReadFields).Except(explicitlyExcluded).ToArray();
+        var unclassified = discoveredKeys.Where(key => !modeled.Contains(key) && !dedicatedComponent.Contains(key) && !explicitlyIgnoredWithReason.ContainsKey(key)).ToArray();
+        Assert.Empty(unclassified);
+    }
 
-        Assert.Empty(unaccountedFor);
-        // Guards the guard itself: every compiler-read field must actually be one of the
-        // pinned-documented fields (catches a typo'd field name in either list above).
-        Assert.Empty(compilerReadFields.Except(documentedFields));
-        Assert.Empty(explicitlyExcluded.Except(documentedFields));
+    // Companion to the header-body scan: also fails closed on a genuinely new nested Modes: entry
+    // name (the complete pinned MD_* bitmask this project already models in full - see MobModeData's
+    // own doc comment - so this should only ever fail if a FUTURE rAthena revision adds a brand new
+    // MD_* bit beyond the 22 pinned ones this project currently knows about).
+    private static readonly Regex ModesEntryPattern = new(@"(?m)^      (?<key>[A-Za-z][A-Za-z0-9_]*):\s*(?:true|false)\s*$", RegexOptions.Compiled);
+
+    [Fact]
+    public void PinnedMobDbSchema_EveryModesEntryNameActuallyPresentInRealData_IsRecognizedByModeBitsByName()
+    {
+        var path = Path.Combine(FindRepositoryRoot(), "legacy/rathena/db/re/mob_db.yml");
+        var yaml = File.ReadAllText(path);
+
+        var recognizedModeNames = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "CanMove", "Looter", "Aggressive", "Assist", "CastSensorIdle", "NoRandomWalk", "NoCast", "CanAttack",
+            "CastSensorChase", "ChangeChase", "Angry", "ChangeTargetMelee", "ChangeTargetChase", "TargetWeak",
+            "RandomTarget", "IgnoreMelee", "IgnoreMagic", "IgnoreRanged", "Mvp", "IgnoreMisc", "KnockBackImmune",
+            "TeleportBlock", "FixedItemDrop", "Detector", "StatusImmune", "SkillImmune",
+        };
+
+        var discoveredModeNames = new List<string>();
+        foreach (Match modesBlock in Regex.Matches(yaml, @"(?m)^    Modes:\n((?:      .+\n?)*)"))
+        {
+            discoveredModeNames.AddRange(ModesEntryPattern.Matches(modesBlock.Groups[1].Value).Select(m => m.Groups["key"].Value));
+        }
+        var distinctDiscovered = discoveredModeNames.Distinct(StringComparer.Ordinal).ToArray();
+        Assert.NotEmpty(distinctDiscovered); // Guards against a silently-empty scan passing vacuously.
+
+        Assert.Empty(distinctDiscovered.Except(recognizedModeNames, StringComparer.Ordinal));
+    }
+
+    // ===== RaceGroups: real pinned round-trip (Id 1016, Archer Skeleton - db/re/mob_db.yml). =====
+
+    [Fact]
+    public void ReadMobDefinition_RealPinnedArcherSkeleton_PreservesRaceGroupsAndDropsWithStealProtected()
+    {
+        var yaml = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "legacy/rathena/db/re/mob_db.yml"));
+        var mob = MobDataCompiler.ReadMobDefinition(yaml, 1016);
+
+        Assert.Equal("ARCHER_SKELETON", mob.AegisName);
+        var raceGroup = Assert.Single(mob.RaceGroups);
+        Assert.Equal("Clocktower", raceGroup.Name);
+        Assert.True(raceGroup.Value);
+
+        Assert.NotEmpty(mob.Drops);
+        var cardDrop = mob.Drops.Single(drop => drop.Item == "Archer_Skeleton_Card");
+        Assert.Equal(1, cardDrop.Rate);
+        Assert.True(cardDrop.StealProtected);
+        // Every other entry in this real block omits StealProtected - must default to false, not
+        // silently inherit the previous entry's value.
+        var otherDrop = mob.Drops.First(drop => drop.Item != "Archer_Skeleton_Card");
+        Assert.False(otherDrop.StealProtected);
+    }
+
+    [Fact]
+    public void GenerateMobDefinition_RealPinnedArcherSkeleton_RoundTripsRaceGroupsAndDropsThroughGeneratedSource()
+    {
+        var yaml = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "legacy/rathena/db/re/mob_db.yml"));
+        var mob = MobDataCompiler.ReadMobDefinition(yaml, 1016);
+        var generated = MobDataCompiler.GenerateMobDefinition(mob, "e985006171d2eb320ee512a653f4c83aea3d81b6", "GeneratedMobs", "ArcherSkeleton", "db/re/mob_db.yml", 765);
+
+        Assert.Contains("RaceGroups: [new MobRaceGroupEntry(\"Clocktower\", true)]", generated);
+        Assert.Contains("new MobDropEntry(\"Archer_Skeleton_Card\", 1, true, null)", generated);
+        Assert.Contains("MvpDrops: null", generated);
+    }
+
+    // ===== MvpDrops: real pinned round-trip (Id 1086, Golden Thief Bug - already the fixture used
+    // by the Size/Race/Element/Class MVP round-trip tests above). =====
+
+    [Fact]
+    public void ReadMobDefinition_RealPinnedGoldenThiefBug_PreservesMvpDropsAndDrops()
+    {
+        var mob = MobDataCompiler.ReadMobDefinition(GoldenThiefBugWithDropsFixture, 1086);
+
+        Assert.Equal(3, mob.MvpDrops.Count);
+        Assert.Equal("Gold_Ring", mob.MvpDrops[0].Item);
+        Assert.Equal(2000, mob.MvpDrops[0].Rate);
+        Assert.Equal("Ora_Ora", mob.MvpDrops[1].Item);
+        Assert.Equal("Bs_Making_S", mob.MvpDrops[2].Item);
+
+        Assert.Equal(8, mob.Drops.Count);
+        var cardDrop = mob.Drops.Single(drop => drop.Item == "Golden_Bug_Card");
+        Assert.Equal(1, cardDrop.Rate);
+        Assert.True(cardDrop.StealProtected);
+    }
+
+    [Fact]
+    public void GenerateMobDefinition_RealPinnedGoldenThiefBug_RoundTripsMvpDropsAndDropsThroughGeneratedSource()
+    {
+        var mob = MobDataCompiler.ReadMobDefinition(GoldenThiefBugWithDropsFixture, 1086);
+        var generated = MobDataCompiler.GenerateMobDefinition(mob, "e985006171d2eb320ee512a653f4c83aea3d81b6", "GeneratedMobs", "GoldenThiefBug", "db/re/mob_db.yml", 4187);
+
+        Assert.Contains("MvpDrops: [new MobDropEntry(\"Gold_Ring\", 2000, false, null), new MobDropEntry(\"Ora_Ora\", 1000, false, null), new MobDropEntry(\"Bs_Making_S\", 5000, false, null)]", generated);
+        Assert.Contains("new MobDropEntry(\"Golden_Bug_Card\", 1, true, null)", generated);
+    }
+
+    // ===== RaceGroups/Drops/MvpDrops absent - must be null, never an empty (but present) list, on
+    // the generated record. =====
+
+    [Fact]
+    public void ReadMobDefinition_NoRaceGroupsDropsOrMvpDrops_AllThreeAreEmpty()
+    {
+        var mob = MobDataCompiler.ReadMobDefinition(MobDbFixture, 1002);
+
+        Assert.Empty(mob.RaceGroups);
+        Assert.Empty(mob.Drops);
+        Assert.Empty(mob.MvpDrops);
+    }
+
+    [Fact]
+    public void GenerateMobDefinition_NoRaceGroupsDropsOrMvpDrops_EmitsNullForAllThree()
+    {
+        var mob = MobDataCompiler.ReadMobDefinition(MobDbFixture, 1002);
+        var generated = MobDataCompiler.GenerateMobDefinition(mob, "abc123", "GeneratedMobs", "Poring", "db/re/mob_db.yml", 1);
+
+        Assert.Contains("RaceGroups: null", generated);
+        Assert.Contains("Drops: null", generated);
+        Assert.Contains("MvpDrops: null", generated);
+    }
+
+    // ===== Full pinned mode bitmask preservation (not merely the 5 runtime-executed bits). =====
+
+    [Fact]
+    public void ReadMobDefinition_ModesEntry_False_RemovesBitFromAiPreset()
+    {
+        // Ai=02=0x83=MD_CANMOVE|MD_LOOTER|MD_CANATTACK; an explicit Modes: Looter: false must
+        // AND-NOT that bit back off, proving the override direction (not merely that True adds
+        // bits already present).
+        const string fixture = "Body:\n  - Id: 1\n    AegisName: T\n    Name: T\n    Ai: 02\n    Modes:\n      Looter: false\n";
+        var mob = MobDataCompiler.ReadMobDefinition(fixture, 1);
+
+        Assert.Equal(MobDataCompiler.MobModeData.CanMove | MobDataCompiler.MobModeData.CanAttack, mob.Mode);
+    }
+
+    [Fact]
+    public void ReadMobDefinition_EveryPinnedModeBitName_SetsExactlyThatBit()
+    {
+        // Exercises every one of the 22 pinned MD_* names this project models (see MobModeData's
+        // own doc comment) individually via a fresh Ai-less block (Ai absent -> base mode None), so
+        // each assertion proves that name maps to exactly its own bit, not merely "some bit changed".
+        AssertBit("Looter", MobDataCompiler.MobModeData.Looter);
+        AssertBit("Aggressive", MobDataCompiler.MobModeData.Aggressive);
+        AssertBit("Assist", MobDataCompiler.MobModeData.Assist);
+        AssertBit("CastSensorIdle", MobDataCompiler.MobModeData.CastSensorIdle);
+        AssertBit("NoCast", MobDataCompiler.MobModeData.NoCast);
+        AssertBit("CastSensorChase", MobDataCompiler.MobModeData.CastSensorChase);
+        AssertBit("ChangeChase", MobDataCompiler.MobModeData.ChangeChase);
+        AssertBit("Angry", MobDataCompiler.MobModeData.Angry);
+        AssertBit("TargetWeak", MobDataCompiler.MobModeData.TargetWeak);
+        AssertBit("RandomTarget", MobDataCompiler.MobModeData.RandomTarget);
+        AssertBit("IgnoreMelee", MobDataCompiler.MobModeData.IgnoreMelee);
+        AssertBit("IgnoreMagic", MobDataCompiler.MobModeData.IgnoreMagic);
+        AssertBit("IgnoreRanged", MobDataCompiler.MobModeData.IgnoreRanged);
+        AssertBit("Mvp", MobDataCompiler.MobModeData.Mvp);
+        AssertBit("IgnoreMisc", MobDataCompiler.MobModeData.IgnoreMisc);
+        AssertBit("KnockBackImmune", MobDataCompiler.MobModeData.KnockBackImmune);
+        AssertBit("TeleportBlock", MobDataCompiler.MobModeData.TeleportBlock);
+        AssertBit("FixedItemDrop", MobDataCompiler.MobModeData.FixedItemDrop);
+        AssertBit("Detector", MobDataCompiler.MobModeData.Detector);
+        AssertBit("StatusImmune", MobDataCompiler.MobModeData.StatusImmune);
+        AssertBit("SkillImmune", MobDataCompiler.MobModeData.SkillImmune);
+
+        static void AssertBit(string modeName, MobDataCompiler.MobModeData expectedBit)
+        {
+            var fixture = $"Body:\n  - Id: 1\n    AegisName: T\n    Name: T\n    Modes:\n      {modeName}: true\n";
+            Assert.Equal(expectedBit, MobDataCompiler.ReadMobDefinition(fixture, 1).Mode);
+        }
+    }
+
+    [Fact]
+    public void GenerateMobDefinition_EveryPinnedModeBit_EmitsCorrespondingMobModeMember()
+    {
+        const string fixture = "Body:\n  - Id: 1\n    AegisName: T\n    Name: T\n    Modes:\n      Aggressive: true\n      Detector: true\n      SkillImmune: true\n";
+        var mob = MobDataCompiler.ReadMobDefinition(fixture, 1);
+        var generated = MobDataCompiler.GenerateMobDefinition(mob, "abc123", "GeneratedMobs", "Test", "db/re/mob_db.yml", 1);
+
+        Assert.Contains("Mode: MobMode.Aggressive | MobMode.Detector | MobMode.SkillImmune,", generated);
+    }
+
+    [Fact]
+    public void ReadMobDefinition_UnrecognizedModeName_IsSkippedNotThrown()
+    {
+        // Pinned source's own "Unknown monster mode %s, skipping" fallback (mob.cpp:5501-5504) -
+        // never a thrown error for one bad entry, and the recognized sibling entry still applies.
+        const string fixture = "Body:\n  - Id: 1\n    AegisName: T\n    Name: T\n    Modes:\n      SomeFutureMode: true\n      CanMove: true\n";
+        var mob = MobDataCompiler.ReadMobDefinition(fixture, 1);
+
+        Assert.Equal(MobDataCompiler.MobModeData.CanMove, mob.Mode);
     }
 }

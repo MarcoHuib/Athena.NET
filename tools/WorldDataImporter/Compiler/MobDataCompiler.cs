@@ -21,7 +21,16 @@ internal static class MobDataCompiler
         string? JapaneseName, uint Sp, long MvpExp, int Resistance, int MagicResistance,
         int SkillRange, int ChaseRange, MobSizeData Size, MobRaceData Race, MobElementData Element,
         int ElementLevel, int ClientAttackMotion, int DamageTaken, int GroupId, string? Title,
-        MobClassData Class);
+        MobClassData Class,
+        IReadOnlyList<MobRaceGroupEntryData> RaceGroups, IReadOnlyList<MobDropEntryData> Drops,
+        IReadOnlyList<MobDropEntryData> MvpDrops);
+
+    // Mirrors Athena.Net.MapServer.World.MobRaceGroupEntry exactly - see that record's own doc
+    // comment for why RaceGroups is a pinned-name list rather than a fixed C# enum.
+    internal sealed record MobRaceGroupEntryData(string Name, bool Value);
+
+    // Mirrors Athena.Net.MapServer.World.MobDropEntry exactly - see that record's own doc comment.
+    internal sealed record MobDropEntryData(string Item, int Rate, bool StealProtected, string? RandomOptionGroup);
 
     // Mirrors Athena.Net.MapServer.World.MobSize exactly (same numeric values/names) - see that
     // enum's own doc comment for the pinned e_size trace and why SZ_ALL/SZ_MAX are excluded.
@@ -48,19 +57,40 @@ internal static class MobDataCompiler
     // pinned enum's own gap at 3) - see that enum's own doc comment for the pinned e_mob_class trace.
     internal enum MobClassData { Normal = 0, Boss = 1, Guardian = 2, Battlefield = 4, Event = 5 }
 
-    // Mirrors Athena.Net.MapServer.World.MobMode exactly (same bit values/names) - kept as a
-    // separate type per this project's existing WorldDataImporter/MapServer decoupling rule (see
-    // e.g. CompiledMapCellFlags's own doc comment for the same pattern): WorldDataImporter has no
-    // project reference to MapServer.
+    // Mirrors Athena.Net.MapServer.World.MobMode exactly (same bit values/names, the complete
+    // pinned MD_* bitmask) - kept as a separate type per this project's existing
+    // WorldDataImporter/MapServer decoupling rule (see e.g. CompiledMapCellFlags's own doc comment
+    // for the same pattern): WorldDataImporter has no project reference to MapServer.
     [Flags]
-    internal enum MobModeData
+    internal enum MobModeData : uint
     {
         None = 0,
         CanMove = 0x0000001,
+        Looter = 0x0000002,
+        Aggressive = 0x0000004,
+        Assist = 0x0000008,
+        CastSensorIdle = 0x0000010,
         NoRandomWalk = 0x0000020,
+        NoCast = 0x0000040,
         CanAttack = 0x0000080,
+        CastSensorChase = 0x0000200,
+        ChangeChase = 0x0000400,
+        Angry = 0x0000800,
         ChangeTargetMelee = 0x0001000,
         ChangeTargetChase = 0x0002000,
+        TargetWeak = 0x0004000,
+        RandomTarget = 0x0008000,
+        IgnoreMelee = 0x0010000,
+        IgnoreMagic = 0x0020000,
+        IgnoreRanged = 0x0040000,
+        Mvp = 0x0080000,
+        IgnoreMisc = 0x0100000,
+        KnockBackImmune = 0x0200000,
+        TeleportBlock = 0x0400000,
+        FixedItemDrop = 0x1000000,
+        Detector = 0x2000000,
+        StatusImmune = 0x4000000,
+        SkillImmune = 0x8000000,
     }
 
     // Pinned e_aegis_monstertype (legacy/rathena/src/map/mob.hpp:151-182) - the COMPLETE pinned
@@ -75,17 +105,6 @@ internal static class MobDataCompiler
         ["20"] = 0x3295, ["21"] = 0x3695, ["24"] = 0xA1, ["25"] = 0x1, ["26"] = 0xB695,
         ["27"] = 0x8084, ["ABR_PASSIVE"] = 0x21, ["ABR_OFFENSIVE"] = 0xA5,
     };
-
-    // Pinned MD_* bit values this project's MobModeData currently models (mmo.hpp:242-272) - used
-    // only to mask the raw Ai-preset+Modes: bitmask down to the bits Athena's generated model
-    // actually exposes; the full pinned e_mode has many more bits (MD_AGGRESSIVE, MD_LOOTER,
-    // MD_ASSIST, MD_MVP, etc.) that are correctly computed as part of the raw mask below but
-    // deliberately not surfaced in MobModeData yet (see that enum's own doc comment).
-    private const int ModeBitCanMove = 0x0000001;
-    private const int ModeBitNoRandomWalk = 0x0000020;
-    private const int ModeBitCanAttack = 0x0000080;
-    private const int ModeBitChangeTargetMelee = 0x0001000;
-    private const int ModeBitChangeTargetChase = 0x0002000;
 
     internal sealed record MobSpawnData(string Map, int MobId, int Count, int RespawnDelayMs, string SourceFile, int SourceLine, short X, short Y, short Xs, short Ys);
 
@@ -156,7 +175,74 @@ internal static class MobDataCompiler
             (int)OptionalInt(block, "DamageTaken", 100),
             (int)OptionalInt(block, "GroupId", 0),
             OptionalScalar(block, "Title"),
-            ReadClass(block));
+            ReadClass(block),
+            ReadRaceGroups(block),
+            ReadDrops(block, "Drops"),
+            ReadDrops(block, "MvpDrops"));
+    }
+
+    // Reproduces pinned MobDatabase::parseBodyNode's RaceGroups: resolution (mob.cpp:5291-5317):
+    // each entry is a bare pinned key name (never re-prefixed/validated against a fixed bound here -
+    // see MobRaceGroupEntry's own doc comment for why this project does not hardcode the pinned
+    // RC2_* table) paired with its own explicit true/false toggle value, in pinned source order.
+    private static IReadOnlyList<MobRaceGroupEntryData> ReadRaceGroups(string block)
+    {
+        var match = RaceGroupsBlockRegex().Match(block);
+        if (!match.Success) return [];
+        var entries = new List<MobRaceGroupEntryData>();
+        foreach (Match entry in ModeEntryRegex().Matches(match.Groups[1].Value))
+        {
+            var active = string.Equals(entry.Groups["value"].Value, "true", StringComparison.OrdinalIgnoreCase);
+            entries.Add(new MobRaceGroupEntryData(entry.Groups["name"].Value, active));
+        }
+        return entries;
+    }
+
+    // Reproduces pinned MobDatabase::parseDropNode (mob.cpp:4844-4923), shared verbatim by both
+    // `Drops:` and `MvpDrops:` - each list entry is `- Item: <name>` followed by indented
+    // `Rate:`/`StealProtected:`/`RandomOptionGroup:` fields (Index is a pinned overwrite-by-index
+    // mechanism for db/import overlays; this project reads only the base db/re/mob_db.yml, which
+    // never uses Index, so entries are read in pinned declaration order without needing to honor it).
+    private static IReadOnlyList<MobDropEntryData> ReadDrops(string block, string sectionName)
+    {
+        var blockMatch = DropsBlockRegex(sectionName).Match(block);
+        if (!blockMatch.Success) return [];
+        var entries = new List<MobDropEntryData>();
+        foreach (Match entry in DropEntryRegex().Matches(blockMatch.Groups[1].Value))
+        {
+            var item = entry.Groups["item"].Value;
+            var rest = entry.Groups["rest"].Value;
+            var rate = int.Parse(RequiredScalarIn(rest, "Rate"), CultureInfo.InvariantCulture);
+            var stealValue = OptionalScalarIn(rest, "StealProtected");
+            var steal = stealValue is not null && string.Equals(stealValue, "true", StringComparison.OrdinalIgnoreCase);
+            var group = OptionalScalarIn(rest, "RandomOptionGroup");
+            entries.Add(new MobDropEntryData(item, rate, steal, group));
+        }
+        return entries;
+    }
+
+    // Field lookups scoped to one already-extracted drop-entry's own continuation text (`rest`
+    // above), distinct from block-scoped ScalarRegex (which anchors on 4-space top-level
+    // indentation) - a drop entry's own fields are indented deeper (8 spaces: 6 for the list item
+    // plus 2 more for its own sub-fields).
+    private static readonly Regex DropEntryField = new(@"^\s*(?<field>\w+):\s*(?<value>.+?)\s*$", RegexOptions.Multiline);
+
+    private static string RequiredScalarIn(string text, string field)
+    {
+        foreach (Match match in DropEntryField.Matches(text))
+        {
+            if (string.Equals(match.Groups["field"].Value, field, StringComparison.Ordinal)) return match.Groups["value"].Value;
+        }
+        throw new ArgumentException($"Pinned mob_db.yml drop entry has no '{field}' field.");
+    }
+
+    private static string? OptionalScalarIn(string text, string field)
+    {
+        foreach (Match match in DropEntryField.Matches(text))
+        {
+            if (string.Equals(match.Groups["field"].Value, field, StringComparison.Ordinal)) return match.Groups["value"].Value;
+        }
+        return null;
     }
 
     // Pinned MobDatabase::parseBodyNode's Size:/Race:/Element:/Class: resolution (mob.cpp:5244-5487):
@@ -228,16 +314,21 @@ internal static class MobDataCompiler
     // (false) its own bit on top of that preset - never treating the Modes: block as the complete
     // mode by itself. A block with no `Ai:` field defaults to the same MONSTER_TYPE_06=0 pinned
     // uses when the YAML field is entirely absent (mob.cpp default-constructs status.mode to 0
-    // before any conditional field ever runs).
+    // before any conditional field ever runs). Every named MD_* bit is preserved (ModeBitsByName
+    // below covers the complete pinned bitmask, matching MobModeData exactly) - an unrecognized
+    // mode NAME (never a valid pinned MD_* name, only a genuinely unknown/future one) is skipped
+    // exactly like pinned source's own "Unknown monster mode %s, skipping" invalidWarning path, not
+    // silently normalized into an unrelated bit.
     private static MobModeData ReadMode(string block)
     {
-        var raw = 0;
+        var mode = MobModeData.None;
 
         var aiMatch = ScalarRegex("Ai").Match(block);
         if (aiMatch.Success)
         {
             var ai = aiMatch.Groups[1].Value.Trim();
-            raw = AiPresets.TryGetValue(ai, out var preset) ? preset : 0; // Unknown Ai defaults to MONSTER_TYPE_06=0, matching pinned invalidWarning fallback.
+            // Unknown Ai defaults to MONSTER_TYPE_06=0, matching pinned invalidWarning fallback.
+            mode = AiPresets.TryGetValue(ai, out var preset) ? (MobModeData)preset : MobModeData.None;
         }
 
         var modesMatch = ModesBlockRegex().Match(block);
@@ -247,31 +338,46 @@ internal static class MobDataCompiler
             {
                 var name = entry.Groups["name"].Value;
                 var active = string.Equals(entry.Groups["value"].Value, "true", StringComparison.OrdinalIgnoreCase);
-                if (!ModeBitsByName.TryGetValue(name, out var bit)) continue; // Unmodeled bit (e.g. FixedItemDrop) - correctly ignored, not an error.
-                raw = active ? raw | bit : raw & ~bit;
+                if (!ModeBitsByName.TryGetValue(name, out var bit)) continue; // Genuinely unrecognized mode name - pinned source's own "skip" fallback.
+                mode = active ? mode | bit : mode & ~bit;
             }
         }
 
-        var mode = MobModeData.None;
-        if ((raw & ModeBitCanMove) != 0) mode |= MobModeData.CanMove;
-        if ((raw & ModeBitNoRandomWalk) != 0) mode |= MobModeData.NoRandomWalk;
-        if ((raw & ModeBitCanAttack) != 0) mode |= MobModeData.CanAttack;
-        if ((raw & ModeBitChangeTargetMelee) != 0) mode |= MobModeData.ChangeTargetMelee;
-        if ((raw & ModeBitChangeTargetChase) != 0) mode |= MobModeData.ChangeTargetChase;
         return mode;
     }
 
-    // Only the mode names this project's MobModeData models are recognized here - every other
-    // pinned MD_* name (Aggressive, Looter, Assist, FixedItemDrop, Detector, ...) is silently
-    // skipped by ReadMode above, matching how a real Modes: block legitimately sets many bits this
-    // project's generated model does not yet expose (e.g. G_PORING's own Modes: FixedItemDrop).
-    private static readonly Dictionary<string, int> ModeBitsByName = new(StringComparer.Ordinal)
+    // The complete pinned MD_* name -> bit table (doc/mob_db_mode_list.txt), matching MobModeData's
+    // full bitmask exactly - every valid pinned Modes: entry name is recognized and its bit
+    // retained, independent of whether MapServer's runtime executes that bit yet (see MobModeData's
+    // own doc comment and RepositoryDomainAnalyzers' ModeData/ModeRuntime split).
+    private static readonly Dictionary<string, MobModeData> ModeBitsByName = new(StringComparer.Ordinal)
     {
-        ["CanMove"] = ModeBitCanMove,
-        ["NoRandomWalk"] = ModeBitNoRandomWalk,
-        ["CanAttack"] = ModeBitCanAttack,
-        ["ChangeTargetMelee"] = ModeBitChangeTargetMelee,
-        ["ChangeTargetChase"] = ModeBitChangeTargetChase,
+        ["CanMove"] = MobModeData.CanMove,
+        ["Looter"] = MobModeData.Looter,
+        ["Aggressive"] = MobModeData.Aggressive,
+        ["Assist"] = MobModeData.Assist,
+        ["CastSensorIdle"] = MobModeData.CastSensorIdle,
+        ["NoRandomWalk"] = MobModeData.NoRandomWalk,
+        ["NoCast"] = MobModeData.NoCast,
+        ["CanAttack"] = MobModeData.CanAttack,
+        ["CastSensorChase"] = MobModeData.CastSensorChase,
+        ["ChangeChase"] = MobModeData.ChangeChase,
+        ["Angry"] = MobModeData.Angry,
+        ["ChangeTargetMelee"] = MobModeData.ChangeTargetMelee,
+        ["ChangeTargetChase"] = MobModeData.ChangeTargetChase,
+        ["TargetWeak"] = MobModeData.TargetWeak,
+        ["RandomTarget"] = MobModeData.RandomTarget,
+        ["IgnoreMelee"] = MobModeData.IgnoreMelee,
+        ["IgnoreMagic"] = MobModeData.IgnoreMagic,
+        ["IgnoreRanged"] = MobModeData.IgnoreRanged,
+        ["Mvp"] = MobModeData.Mvp,
+        ["IgnoreMisc"] = MobModeData.IgnoreMisc,
+        ["KnockBackImmune"] = MobModeData.KnockBackImmune,
+        ["TeleportBlock"] = MobModeData.TeleportBlock,
+        ["FixedItemDrop"] = MobModeData.FixedItemDrop,
+        ["Detector"] = MobModeData.Detector,
+        ["StatusImmune"] = MobModeData.StatusImmune,
+        ["SkillImmune"] = MobModeData.SkillImmune,
     };
 
     // Parses the fixed rAthena spawn-declaration format:
@@ -392,7 +498,10 @@ internal static class MobDataCompiler
                 .Append(", Element: MobElement.").Append(mob.Element).Append(", ElementLevel: ").Append(mob.ElementLevel)
                 .Append(", ClientAttackMotion: ").Append(mob.ClientAttackMotion).Append(", DamageTaken: ").Append(mob.DamageTaken)
                 .Append(", GroupId: ").Append(mob.GroupId).Append(", Title: ").Append(FormatNullableString(mob.Title))
-                .Append(", Class: MobClass.").Append(mob.Class).AppendLine(");");
+                .Append(", Class: MobClass.").Append(mob.Class)
+                .Append(", RaceGroups: ").Append(FormatRaceGroups(mob.RaceGroups))
+                .Append(", Drops: ").Append(FormatDrops(mob.Drops))
+                .Append(", MvpDrops: ").Append(FormatDrops(mob.MvpDrops)).AppendLine(");");
         }
         output.AppendLine("}");
         return output.ToString();
@@ -526,16 +635,26 @@ internal static class MobDataCompiler
     }
 
     // Emits a C# MobMode expression matching the generated definition's flags exactly - "None"
-    // when no modeled bit is set, otherwise a `|`-joined list of the modeled MobMode member names.
+    // when no bit is set, otherwise a `|`-joined list of every SET MobMode member name (the
+    // complete pinned bitmask, not only the runtime-executed subset - see MobModeData's own doc
+    // comment).
+    private static readonly (MobModeData Bit, string Name)[] ModeBitOrder =
+    [
+        (MobModeData.CanMove, "CanMove"), (MobModeData.Looter, "Looter"), (MobModeData.Aggressive, "Aggressive"),
+        (MobModeData.Assist, "Assist"), (MobModeData.CastSensorIdle, "CastSensorIdle"), (MobModeData.NoRandomWalk, "NoRandomWalk"),
+        (MobModeData.NoCast, "NoCast"), (MobModeData.CanAttack, "CanAttack"), (MobModeData.CastSensorChase, "CastSensorChase"),
+        (MobModeData.ChangeChase, "ChangeChase"), (MobModeData.Angry, "Angry"), (MobModeData.ChangeTargetMelee, "ChangeTargetMelee"),
+        (MobModeData.ChangeTargetChase, "ChangeTargetChase"), (MobModeData.TargetWeak, "TargetWeak"), (MobModeData.RandomTarget, "RandomTarget"),
+        (MobModeData.IgnoreMelee, "IgnoreMelee"), (MobModeData.IgnoreMagic, "IgnoreMagic"), (MobModeData.IgnoreRanged, "IgnoreRanged"),
+        (MobModeData.Mvp, "Mvp"), (MobModeData.IgnoreMisc, "IgnoreMisc"), (MobModeData.KnockBackImmune, "KnockBackImmune"),
+        (MobModeData.TeleportBlock, "TeleportBlock"), (MobModeData.FixedItemDrop, "FixedItemDrop"), (MobModeData.Detector, "Detector"),
+        (MobModeData.StatusImmune, "StatusImmune"), (MobModeData.SkillImmune, "SkillImmune"),
+    ];
+
     private static string FormatMode(MobModeData mode)
     {
         if (mode == MobModeData.None) return "MobMode.None";
-        var parts = new List<string>();
-        if (mode.HasFlag(MobModeData.CanMove)) parts.Add("MobMode.CanMove");
-        if (mode.HasFlag(MobModeData.NoRandomWalk)) parts.Add("MobMode.NoRandomWalk");
-        if (mode.HasFlag(MobModeData.CanAttack)) parts.Add("MobMode.CanAttack");
-        if (mode.HasFlag(MobModeData.ChangeTargetMelee)) parts.Add("MobMode.ChangeTargetMelee");
-        if (mode.HasFlag(MobModeData.ChangeTargetChase)) parts.Add("MobMode.ChangeTargetChase");
+        var parts = ModeBitOrder.Where(entry => mode.HasFlag(entry.Bit)).Select(entry => "MobMode." + entry.Name).ToArray();
         return string.Join(" | ", parts);
     }
 
@@ -544,6 +663,29 @@ internal static class MobDataCompiler
     // treats as always-present per-block identifiers.
     private static string FormatNullableString(string? value) =>
         value is null ? "null" : "\"" + EscapeForCSharpString(value) + "\"";
+
+    // Emits a C# collection-expression literal for RaceGroups - "null" when the pinned block has no
+    // RaceGroups: section at all (distinct from an explicit empty list, which pinned source cannot
+    // actually produce, since an empty `RaceGroups:` header with no entries never appears in real
+    // data - but the record's own nullable default matches "field absent" for every other optional
+    // block on this record, so this keeps that convention rather than inventing a special case).
+    private static string FormatRaceGroups(IReadOnlyList<MobRaceGroupEntryData> entries)
+    {
+        if (entries.Count == 0) return "null";
+        var parts = entries.Select(entry => $"new MobRaceGroupEntry(\"{EscapeForCSharpString(entry.Name)}\", {(entry.Value ? "true" : "false")})");
+        return "[" + string.Join(", ", parts) + "]";
+    }
+
+    // Emits a C# collection-expression literal for Drops/MvpDrops - "null" when the pinned block
+    // has no such section (see FormatRaceGroups' own doc comment for the same "absent vs empty"
+    // rationale).
+    private static string FormatDrops(IReadOnlyList<MobDropEntryData> entries)
+    {
+        if (entries.Count == 0) return "null";
+        var parts = entries.Select(entry =>
+            $"new MobDropEntry(\"{EscapeForCSharpString(entry.Item)}\", {entry.Rate.ToString(CultureInfo.InvariantCulture)}, {(entry.StealProtected ? "true" : "false")}, {FormatNullableString(entry.RandomOptionGroup)})");
+        return "[" + string.Join(", ", parts) + "]";
+    }
 
     private static string EscapeForCSharpString(string value) => value.Replace("\\", "\\\\").Replace("\"", "\\\"");
 
@@ -593,4 +735,24 @@ internal static class MobDataCompiler
 
     private static readonly Regex ModeEntry = new(@"^\s*(?<name>\w+):\s*(?<value>true|false)\s*$", RegexOptions.Multiline);
     private static Regex ModeEntryRegex() => ModeEntry;
+
+    // Same shape as ModesBlock (6-space-indented body under a `    RaceGroups:` header) - pinned
+    // RaceGroups: entries use the identical `<Name>: <bool>` shape as Modes: entries, so ModeEntryRegex
+    // is reused directly rather than duplicating an identical pattern.
+    private static readonly Regex RaceGroupsBlock = new(@"^    RaceGroups:\n((?:      .+\n?)*)", RegexOptions.Multiline);
+    private static Regex RaceGroupsBlockRegex() => RaceGroupsBlock;
+
+    // Captures the raw text of a `    <sectionName>:\n      - Item: ...\n        Rate: ...\n      - ...`
+    // list block: every subsequent 6-space-indented line (each entry's `- Item:` line and its own
+    // further-indented `Rate:`/`StealProtected:`/`RandomOptionGroup:` continuation lines all satisfy
+    // this depth), stopping at the first line indented less deeply - mirrors ModesBlock's own
+    // "capture by indentation depth, not by counting fields" approach.
+    private static Regex DropsBlockRegex(string sectionName) => new($@"^    {Regex.Escape(sectionName)}:\n((?:      .+\n?)*)", RegexOptions.Multiline);
+
+    // One `- Item: <name>` entry followed by its own optional indented Rate:/StealProtected:/
+    // RandomOptionGroup: fields, up to the next `- Item:` entry or the end of the captured block.
+    private static readonly Regex DropEntry = new(
+        @"^\s*-\s*Item:\s*(?<item>\S+)\s*\n(?<rest>(?:(?!\s*-\s*Item:).*\n?)*)",
+        RegexOptions.Multiline);
+    private static Regex DropEntryRegex() => DropEntry;
 }

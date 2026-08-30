@@ -408,13 +408,18 @@ public sealed class RepositoryDomainAnalyzersTests
     }
 
     // ---------------------------------------------------------------------
-    // Priority 5: mob StaticData/Modes/Drops component independence.
+    // Priority 5 (hardened): mob StaticData/ModeData/ModeRuntime/RaceGroups/Drops/MvpDrops
+    // component independence.
     // ---------------------------------------------------------------------
 
     [Fact]
     public void Mob_FullyRepresented_AllComponentsFullyCompatibleOrNotApplicable()
     {
         using var fixture = new DomainFixture();
+        // MobBlock's own Ai: value ("01_DE_TWFOLLOW") is not a recognized pinned preset, so this
+        // mob's resolved Mode is None - ModeRuntime is therefore NotApplicable (no resolved bit to
+        // execute), not FullyCompatible; ModeData is still FullyCompatible (no unrecognized Modes:
+        // entry NAME - there is no Modes: block at all here).
         fixture.Write("db/re/mob_db.yml", MobBlock(1002, "PORING", "Poring"));
 
         var entities = RepositoryDomainAnalyzers.Analyze(fixture.Root, new HashSet<string> { "mobs" });
@@ -422,8 +427,11 @@ public sealed class RepositoryDomainAnalyzersTests
         var mob = Assert.Single(entities);
         Assert.Equal(DomainCompatibilityStatus.FullyCompatible, mob.Status);
         Assert.Equal(DomainCompatibilityStatus.FullyCompatible, mob.Components.Single(c => c.Name == "StaticData").Status);
-        Assert.Equal(DomainCompatibilityStatus.FullyCompatible, mob.Components.Single(c => c.Name == "Modes").Status);
+        Assert.Equal(DomainCompatibilityStatus.FullyCompatible, mob.Components.Single(c => c.Name == "ModeData").Status);
+        Assert.Equal(DomainCompatibilityStatus.NotApplicable, mob.Components.Single(c => c.Name == "ModeRuntime").Status);
+        Assert.Equal(DomainCompatibilityStatus.NotApplicable, mob.Components.Single(c => c.Name == "RaceGroups").Status);
         Assert.Equal(DomainCompatibilityStatus.NotApplicable, mob.Components.Single(c => c.Name == "Drops").Status);
+        Assert.Equal(DomainCompatibilityStatus.NotApplicable, mob.Components.Single(c => c.Name == "MvpDrops").Status);
         Assert.Equal(DomainCompatibilityStatus.NotApplicable, mob.Components.Single(c => c.Name == "Skills").Status);
     }
 
@@ -431,10 +439,9 @@ public sealed class RepositoryDomainAnalyzersTests
     public void Mob_UnsupportedStaticField_DoesNotTaintModesOrDrops()
     {
         using var fixture = new DomainFixture();
-        // RaceGroups/MvpExp... RaceGroups is a real mob_db.yml field with zero representation in
-        // MobDefinitionData (no CHK_RACE-style fixed bound and no runtime consumer, unlike Size/Race/
-        // Element/Class, which MobDataCompiler now reads and MobSupportedKeys now lists).
-        fixture.Write("db/re/mob_db.yml", MobBlock(1002, "PORING", "Poring") + "    Size: Small\n    Race: Plant\n    RaceGroups:\n      Goblin: true\n");
+        // Size/Race are fully represented (MobDataCompiler reads them) - a genuinely unmodeled
+        // top-level scalar field is used instead to prove StaticData independence.
+        fixture.Write("db/re/mob_db.yml", MobBlock(1002, "PORING", "Poring") + "    Size: Small\n    Race: Plant\n    SomeFutureField: 1\n");
 
         var entities = RepositoryDomainAnalyzers.Analyze(fixture.Root, new HashSet<string> { "mobs" });
 
@@ -443,29 +450,74 @@ public sealed class RepositoryDomainAnalyzersTests
         Assert.Equal(DomainCompatibilityStatus.PartiallyCompatible, staticData.Status);
         Assert.DoesNotContain("mob-field:size", staticData.Blockers!);
         Assert.DoesNotContain("mob-field:race", staticData.Blockers!);
-        Assert.Contains("mob-field:race-groups", staticData.Blockers!);
-        Assert.Equal(DomainCompatibilityStatus.FullyCompatible, mob.Components.Single(c => c.Name == "Modes").Status);
+        Assert.Contains("mob-field:some-future-field", staticData.Blockers!);
+        Assert.Equal(DomainCompatibilityStatus.FullyCompatible, mob.Components.Single(c => c.Name == "ModeData").Status);
         Assert.Equal(DomainCompatibilityStatus.PartiallyCompatible, mob.Status);
     }
 
     [Fact]
-    public void Mob_UnsupportedMode_ReportsModeSpecificBlockerIndependentOfStaticData()
+    public void Mob_RaceGroupsBlock_IsRepresentedAsDataButRemainsARuntimeGap()
     {
         using var fixture = new DomainFixture();
-        // Aggressive is a real MD_* mode bit with zero representation in MobModeData.
+        // RaceGroups is now fully REPRESENTED (MobDataCompiler.ReadRaceGroups round-trips it
+        // losslessly) - it must never produce a "mob-field:race-groups" StaticData blocker, but it
+        // still has no gameplay runtime consumer, so its own dedicated component stays Unsupported
+        // with a distinct `mob-race-groups:runtime` capability id.
+        fixture.Write("db/re/mob_db.yml", MobBlock(1002, "PORING", "Poring") + "    RaceGroups:\n      Goblin: true\n");
+
+        var entities = RepositoryDomainAnalyzers.Analyze(fixture.Root, new HashSet<string> { "mobs" });
+
+        var mob = Assert.Single(entities);
+        var staticData = mob.Components.Single(c => c.Name == "StaticData");
+        Assert.DoesNotContain("mob-field:race-groups", staticData.Blockers!);
+        Assert.Equal(DomainCompatibilityStatus.FullyCompatible, staticData.Status);
+        var raceGroups = mob.Components.Single(c => c.Name == "RaceGroups");
+        Assert.Equal(DomainCompatibilityStatus.Unsupported, raceGroups.Status);
+        Assert.Contains("mob-race-groups:runtime", raceGroups.Blockers!);
+        Assert.Equal(DomainCompatibilityStatus.PartiallyCompatible, mob.Status);
+    }
+
+    [Fact]
+    public void Mob_UnrecognizedModeName_ReportsModeDataBlockerIndependentOfStaticData()
+    {
+        using var fixture = new DomainFixture();
+        // Aggressive/CanMove are both real, fully-representable MD_* mode bits (MobModeData models
+        // the complete pinned bitmask) - a genuinely unrecognized future mode name is used instead
+        // to prove ModeData actually detects a real representation gap.
+        fixture.Write("db/re/mob_db.yml", MobBlock(1002, "PORING", "Poring") + "    Modes:\n      SomeFutureMode: true\n      CanMove: true\n");
+
+        var entities = RepositoryDomainAnalyzers.Analyze(fixture.Root, new HashSet<string> { "mobs" });
+
+        var mob = Assert.Single(entities);
+        var modeData = mob.Components.Single(c => c.Name == "ModeData");
+        Assert.Equal(DomainCompatibilityStatus.PartiallyCompatible, modeData.Status);
+        Assert.Contains("mob-field:mode-some-future-mode", modeData.Blockers!);
+        Assert.Equal(DomainCompatibilityStatus.FullyCompatible, mob.Components.Single(c => c.Name == "StaticData").Status);
+    }
+
+    [Fact]
+    public void Mob_AggressiveMode_IsRepresentedButRuntimeUnsupported()
+    {
+        using var fixture = new DomainFixture();
+        // Aggressive is a real, fully-REPRESENTABLE MD_* bit (ModeData: FullyCompatible) that no
+        // MapServer runtime call site executes yet (ModeRuntime: PartiallyCompatible, since CanMove
+        // in the same block IS executed) - proving the representation-vs-execution split directly.
         fixture.Write("db/re/mob_db.yml", MobBlock(1002, "PORING", "Poring") + "    Modes:\n      Aggressive: true\n      CanMove: true\n");
 
         var entities = RepositoryDomainAnalyzers.Analyze(fixture.Root, new HashSet<string> { "mobs" });
 
         var mob = Assert.Single(entities);
-        var modes = mob.Components.Single(c => c.Name == "Modes");
-        Assert.Equal(DomainCompatibilityStatus.PartiallyCompatible, modes.Status);
-        Assert.Contains("mob-mode:aggressive", modes.Blockers!);
-        Assert.Equal(DomainCompatibilityStatus.FullyCompatible, mob.Components.Single(c => c.Name == "StaticData").Status);
+        var modeData = mob.Components.Single(c => c.Name == "ModeData");
+        Assert.Equal(DomainCompatibilityStatus.FullyCompatible, modeData.Status);
+        Assert.Empty(modeData.Blockers!);
+        var modeRuntime = mob.Components.Single(c => c.Name == "ModeRuntime");
+        Assert.Equal(DomainCompatibilityStatus.PartiallyCompatible, modeRuntime.Status);
+        Assert.Contains("mob-mode-runtime:aggressive", modeRuntime.Blockers!);
+        Assert.DoesNotContain("mob-mode-runtime:can-move", modeRuntime.Blockers!);
     }
 
     [Fact]
-    public void Mob_WithDropsBlock_DropsComponentUnsupported()
+    public void Mob_WithDropsBlock_DropsComponentUnsupportedButNotAStaticDataBlocker()
     {
         using var fixture = new DomainFixture();
         fixture.Write("db/re/mob_db.yml", MobBlock(1002, "PORING", "Poring") + "    Drops:\n      - Item: Jellopy\n        Rate: 5000\n");
@@ -473,9 +525,26 @@ public sealed class RepositoryDomainAnalyzersTests
         var entities = RepositoryDomainAnalyzers.Analyze(fixture.Root, new HashSet<string> { "mobs" });
 
         var mob = Assert.Single(entities);
+        Assert.DoesNotContain("mob-field:drops", mob.Components.Single(c => c.Name == "StaticData").Blockers!);
         var drops = mob.Components.Single(c => c.Name == "Drops");
         Assert.Equal(DomainCompatibilityStatus.Unsupported, drops.Status);
         Assert.Contains("mob-drops:runtime", drops.Blockers!);
+        Assert.Equal(DomainCompatibilityStatus.PartiallyCompatible, mob.Status);
+    }
+
+    [Fact]
+    public void Mob_WithMvpDropsBlock_MvpDropsComponentUnsupportedButNotAStaticDataBlocker()
+    {
+        using var fixture = new DomainFixture();
+        fixture.Write("db/re/mob_db.yml", MobBlock(1002, "PORING", "Poring") + "    MvpDrops:\n      - Item: Gold_Ring\n        Rate: 2000\n");
+
+        var entities = RepositoryDomainAnalyzers.Analyze(fixture.Root, new HashSet<string> { "mobs" });
+
+        var mob = Assert.Single(entities);
+        Assert.DoesNotContain("mob-field:mvp-drops", mob.Components.Single(c => c.Name == "StaticData").Blockers!);
+        var mvpDrops = mob.Components.Single(c => c.Name == "MvpDrops");
+        Assert.Equal(DomainCompatibilityStatus.Unsupported, mvpDrops.Status);
+        Assert.Contains("mob-mvp-drops:runtime", mvpDrops.Blockers!);
         Assert.Equal(DomainCompatibilityStatus.PartiallyCompatible, mob.Status);
     }
 

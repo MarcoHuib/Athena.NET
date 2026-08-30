@@ -74,22 +74,34 @@ internal static class RepositoryDomainAnalyzers
         }
     }
 
-    // Priority 5 (ai/world-data.md): StaticData and Modes are independent components, exactly like
-    // items' StaticData/RuntimeBehavior split - each derives its status ONLY from its own blockers.
+    // Priority 5 (ai/world-data.md), hardened further here: StaticData, ModeData, ModeRuntime,
+    // RaceGroups, Drops, MvpDrops, and Skills are all independent components - each derives its
+    // status ONLY from its own blockers, exactly like items' StaticData/RuntimeBehavior split.
     // Fields the generated MobDefinition actually carries (MobDataCompiler.MobDefinitionData) are
-    // MobSupportedKeys; anything else present in the pinned block (Size, Race, Element,
-    // ElementLevel, Class, SkillRange, ChaseRange, ClientAttackMotion, DamageTaken, MvpExp,
-    // MvpDrops, ...) is real source data this project silently drops today and can never be
-    // reported FullyCompatible merely because MobDataCompiler.ReadMobDefinition/GenerateMobDefinition
-    // didn't throw. Drops is its own DEDICATED component (Unsupported when the mob has a Drops:
-    // table at all - there is no drop-table compiler/runtime anywhere in this project outside the
-    // single-quest QuestDropDataCompiler slice, which is unrelated general monster drop data) and is
-    // therefore excluded from the generic unknown-top-level-field StaticData scan below (Priority 2,
-    // ai/world-data.md) - a source `Drops:` block must produce exactly one blocker
-    // (`mob-drops:runtime`, on the Drops component), never also a redundant `mob-field:drops`
-    // StaticData blocker for the identical construct. Skills starts as NotApplicable here and is
-    // populated by AnalyzeMobSkills afterward (a second pass over the differently-formatted
-    // mob_skill_db.txt, Priority 6).
+    // MobSupportedKeys; RaceGroups/Drops/MvpDrops are list-shaped pinned blocks that now ALSO round-
+    // trip losslessly (MobDataCompiler.ReadRaceGroups/ReadDrops), so they are excluded from the
+    // generic unknown-top-level-field StaticData scan the same way Drops always was - each gets its
+    // own dedicated component instead, so a source `RaceGroups:`/`Drops:`/`MvpDrops:` block never
+    // ALSO produces a redundant `mob-field:*` StaticData blocker for the identical construct.
+    //
+    // Modes is now TWO components, not one, per this task's "distinguish conversion from execution"
+    // rule: ModeData reports whether every Modes: entry NAME is representable at all (only a
+    // genuinely unrecognized/future MD_* name - never one of the 22 pinned bits MobModeData now
+    // models in full - would block this); ModeRuntime reports whether MapServer's runtime actually
+    // EXECUTES each bit the mob's resolved mode carries (only CanMove/NoRandomWalk/CanAttack/
+    // ChangeTargetMelee/ChangeTargetChase are runtime-executed today - see MobMode's own doc
+    // comment). A mob can therefore be ModeData: FullyCompatible (every source bit retained) while
+    // ModeRuntime: PartiallyCompatible (only some of those bits are behaviorally implemented) -
+    // never inflating runtime compatibility merely because storage/serialization succeeded.
+    //
+    // Similarly, Drops/MvpDrops/RaceGroups are FullyCompatible as DATA whenever the block round-
+    // trips (which it now unconditionally does - MobDataCompiler.ReadDrops/ReadRaceGroups never
+    // throws on a well-formed pinned entry), but each still carries its own `*:runtime` blocker
+    // whenever the source block is non-empty, since no drop-table/race-group runtime consumer
+    // exists anywhere in this project. Skills starts as NotApplicable here and is populated by
+    // AnalyzeMobSkills afterward (a second pass over the differently-formatted mob_skill_db.txt,
+    // Priority 6) - it has no data/runtime split because this project has no mob-skill
+    // representation model at all yet, only the raw pinned skill IDs as blockers.
     private static IReadOnlyList<DomainEntity> AnalyzeMobs(string root)
     {
         var path = Path.Combine(root, "db/re/mob_db.yml"); if (!File.Exists(path)) return [];
@@ -103,30 +115,54 @@ internal static class RepositoryDomainAnalyzers
                 var mob = MobDataCompiler.ReadMobDefinition(yaml, id.Value);
                 _ = MobDataCompiler.GenerateMobDefinition(mob, "analysis", "CompatibilityProbe", "Mob", Relative(root, path), block.Line);
 
-                // "Drops" is deliberately excluded here even though it is not in MobSupportedKeys:
-                // it has its own dedicated Drops component below (Priority 2, ai/world-data.md), so
-                // the generic unknown-top-level-field detector must not ALSO report it as a
-                // "mob-field:drops" StaticData blocker - that would double-count the exact same
-                // source construct under two unrelated components. Every other unmodeled top-level
-                // field still becomes a StaticData gap as before.
-                var staticBlockers = TopLevelKeys(block.Text).Except(MobSupportedKeys, StringComparer.Ordinal).Except(["Drops"], StringComparer.Ordinal).Select(key => "mob-field:" + Kebab(key)).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
+                // RaceGroups/Drops/MvpDrops are deliberately excluded here even though they are not
+                // in MobSupportedKeys: each has its own dedicated component below, so the generic
+                // unknown-top-level-field detector must not ALSO report them as StaticData blockers
+                // - that would double-count the exact same source construct under two unrelated
+                // components. Every other unmodeled top-level field still becomes a StaticData gap.
+                var staticBlockers = TopLevelKeys(block.Text).Except(MobSupportedKeys, StringComparer.Ordinal)
+                    .Except(["Drops", "MvpDrops", "RaceGroups"], StringComparer.Ordinal)
+                    .Select(key => "mob-field:" + Kebab(key)).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
                 var staticStatus = staticBlockers.Length == 0 ? DomainCompatibilityStatus.FullyCompatible : DomainCompatibilityStatus.PartiallyCompatible;
 
-                var modeBlockers = NestedBooleanKeys(block.Text, "Modes").Except(MobSupportedModes, StringComparer.Ordinal).Select(mode => "mob-mode:" + Kebab(mode)).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
-                var modeStatus = modeBlockers.Length == 0 ? DomainCompatibilityStatus.FullyCompatible : DomainCompatibilityStatus.PartiallyCompatible;
+                // ModeData: a Modes: entry name that ReadMode/ModeBitsByName does not recognize is a
+                // genuine future/unknown MD_* bit this project cannot yet represent at all - distinct
+                // from ModeRuntime below, which is about EXECUTING an already-representable bit.
+                var modeNames = NestedBooleanKeys(block.Text, "Modes").ToArray();
+                var modeDataBlockers = modeNames.Except(AllModeBitNames, StringComparer.Ordinal)
+                    .Select(mode => "mob-field:mode-" + Kebab(mode)).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
+                var modeDataStatus = modeDataBlockers.Length == 0 ? DomainCompatibilityStatus.FullyCompatible : DomainCompatibilityStatus.PartiallyCompatible;
 
-                var hasDrops = HasBlock(block.Text, "Drops");
-                var dropsStatus = hasDrops ? DomainCompatibilityStatus.Unsupported : DomainCompatibilityStatus.NotApplicable;
-                var dropsBlockers = hasDrops ? new[] { "mob-drops:runtime" } : [];
+                // ModeRuntime: of the bits this mob's FULLY RESOLVED mode actually carries (Ai preset
+                // + Modes: overrides, i.e. mob.Mode - not merely the literal Modes: entries in this
+                // block, since most of a real mob's mode comes from its Ai preset), how many are
+                // runtime-executed. A mob whose resolved mode has zero bits (mob.Mode == None, e.g. a
+                // stationary "can't attack" plant) is NotApplicable - there is no runtime gap to
+                // report when the mob has no mode behavior to execute in the first place.
+                var resolvedModeNames = AllModeBitNames.Where(bitName => mob.Mode.HasFlag((MobDataCompiler.MobModeData)ModeBitsByRathenaName[bitName])).ToArray();
+                var modeRuntimeBlockers = resolvedModeNames.Except(MobSupportedModes, StringComparer.Ordinal)
+                    .Select(mode => "mob-mode-runtime:" + Kebab(mode)).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
+                var modeRuntimeStatus = resolvedModeNames.Length == 0 ? DomainCompatibilityStatus.NotApplicable
+                    : modeRuntimeBlockers.Length == 0 ? DomainCompatibilityStatus.FullyCompatible
+                    : modeRuntimeBlockers.Length == resolvedModeNames.Length ? DomainCompatibilityStatus.Unsupported
+                    : DomainCompatibilityStatus.PartiallyCompatible;
+
+                var raceGroupsComponent = ListComponent(HasBlock(block.Text, "RaceGroups"), "mob-race-groups:runtime");
+                var dropsComponent = ListComponent(HasBlock(block.Text, "Drops"), "mob-drops:runtime");
+                var mvpDropsComponent = ListComponent(HasBlock(block.Text, "MvpDrops"), "mob-mvp-drops:runtime");
 
                 var components = new DomainComponent[]
                 {
                     new("StaticData", staticStatus, staticBlockers),
-                    new("Modes", modeStatus, modeBlockers),
-                    new("Drops", dropsStatus, dropsBlockers),
+                    new("ModeData", modeDataStatus, modeDataBlockers),
+                    new("ModeRuntime", modeRuntimeStatus, modeRuntimeBlockers),
+                    new("RaceGroups", raceGroupsComponent.Status, raceGroupsComponent.Blockers),
+                    new("Drops", dropsComponent.Status, dropsComponent.Blockers),
+                    new("MvpDrops", mvpDropsComponent.Status, mvpDropsComponent.Blockers),
                     new("Skills", DomainCompatibilityStatus.NotApplicable, []),
                 };
-                var allBlockers = staticBlockers.Concat(modeBlockers).Concat(dropsBlockers).ToArray();
+                var allBlockers = staticBlockers.Concat(modeDataBlockers).Concat(modeRuntimeBlockers)
+                    .Concat(raceGroupsComponent.Blockers ?? []).Concat(dropsComponent.Blockers ?? []).Concat(mvpDropsComponent.Blockers ?? []).ToArray();
                 var overall = RollupComponents(components);
                 result.Add(Entity("mobs", $"mob:{id}", name, root, path, block.Line, overall, components, [], allBlockers));
             }
@@ -136,8 +172,11 @@ internal static class RepositoryDomainAnalyzers
                 var components = new DomainComponent[]
                 {
                     new("StaticData", DomainCompatibilityStatus.Unsupported, blockers),
-                    new("Modes", DomainCompatibilityStatus.NotApplicable, []),
+                    new("ModeData", DomainCompatibilityStatus.NotApplicable, []),
+                    new("ModeRuntime", DomainCompatibilityStatus.NotApplicable, []),
+                    new("RaceGroups", DomainCompatibilityStatus.NotApplicable, []),
                     new("Drops", DomainCompatibilityStatus.NotApplicable, []),
+                    new("MvpDrops", DomainCompatibilityStatus.NotApplicable, []),
                     new("Skills", DomainCompatibilityStatus.NotApplicable, []),
                 };
                 result.Add(Entity("mobs", $"mob:{id}", name, root, path, block.Line, DomainCompatibilityStatus.Unsupported, components, [], blockers));
@@ -145,6 +184,16 @@ internal static class RepositoryDomainAnalyzers
         }
         return result;
     }
+
+    // Shared shape for the three list-backed components (RaceGroups/Drops/MvpDrops): DATA
+    // representation is unconditionally FullyCompatible whenever the block round-trips (which it
+    // now always does for a well-formed pinned entry - see MobDataCompiler.ReadRaceGroups/ReadDrops),
+    // but RUNTIME support does not exist for any of them, so a non-empty block still carries its own
+    // `*:runtime` blocker and an Unsupported status - the blocker name alone communicates "runtime
+    // gap, not a data gap" (mirrors mob-skill:runtime's existing naming convention). An absent block
+    // is NotApplicable: there is no runtime gap to report for a mob that never declared the section.
+    private static (DomainCompatibilityStatus Status, string[] Blockers) ListComponent(bool present, string runtimeBlockerId) =>
+        present ? (DomainCompatibilityStatus.Unsupported, [runtimeBlockerId]) : (DomainCompatibilityStatus.NotApplicable, []);
 
     // Priority 6 (ai/world-data.md): legacy/rathena/db/re/mob_skill_db.txt is a plain
     // tab/comma-delimited text file (NOT YAML - see the file's own header comment), format:
@@ -545,10 +594,31 @@ internal static class RepositoryDomainAnalyzers
     // Kept in sync with MobDataCompiler.ReadMobDefinition's actually-parsed field set - a field
     // added there without a matching addition here would silently under-report a real gap as fixed
     // (see MobDataCompilerSchemaDriftTests for the regression that keeps these two lists honest).
-    // RaceGroups/MvpDrops are deliberately NOT here even though MobDataCompiler doesn't read them:
-    // MvpDrops has no runtime concept and remains a genuine StaticData gap; RaceGroups likewise has
-    // no CHK_RACE-style fixed bound or runtime consumer.
+    // RaceGroups/Drops/MvpDrops are deliberately NOT here even though MobDataCompiler now reads all
+    // three: each has its own dedicated component in AnalyzeMobs (RaceGroups/Drops/MvpDrops) rather
+    // than being folded into the generic scalar-field StaticData scan - listing them here would be
+    // harmless (Except is idempotent) but misleading, since they are not scalar fields.
     private static readonly string[] MobSupportedKeys = ["Id", "AegisName", "Name", "Level", "Hp", "Attack", "Attack2", "Defense", "MagicDefense", "Str", "Agi", "Vit", "Int", "Dex", "Luk", "AttackRange", "WalkSpeed", "AttackDelay", "AttackMotion", "DamageMotion", "BaseExp", "JobExp", "Ai", "Modes", "JapaneseName", "Sp", "MvpExp", "Resistance", "MagicResistance", "SkillRange", "ChaseRange", "Size", "Race", "Element", "ElementLevel", "ClientAttackMotion", "DamageTaken", "GroupId", "Title", "Class"];
+
+    // The complete pinned MD_* name -> bit table (doc/mob_db_mode_list.txt), mirroring
+    // MobDataCompiler.ModeBitsByName exactly - every one of these 22 names is now REPRESENTABLE
+    // (ModeData never blocks on them), independent of whether MobSupportedModes below - the
+    // RUNTIME-EXECUTED subset - also includes it.
+    private static readonly Dictionary<string, int> ModeBitsByRathenaName = new(StringComparer.Ordinal)
+    {
+        ["CanMove"] = 0x0000001, ["Looter"] = 0x0000002, ["Aggressive"] = 0x0000004, ["Assist"] = 0x0000008,
+        ["CastSensorIdle"] = 0x0000010, ["NoRandomWalk"] = 0x0000020, ["NoCast"] = 0x0000040, ["CanAttack"] = 0x0000080,
+        ["CastSensorChase"] = 0x0000200, ["ChangeChase"] = 0x0000400, ["Angry"] = 0x0000800, ["ChangeTargetMelee"] = 0x0001000,
+        ["ChangeTargetChase"] = 0x0002000, ["TargetWeak"] = 0x0004000, ["RandomTarget"] = 0x0008000, ["IgnoreMelee"] = 0x0010000,
+        ["IgnoreMagic"] = 0x0020000, ["IgnoreRanged"] = 0x0040000, ["Mvp"] = 0x0080000, ["IgnoreMisc"] = 0x0100000,
+        ["KnockBackImmune"] = 0x0200000, ["TeleportBlock"] = 0x0400000, ["FixedItemDrop"] = 0x1000000, ["Detector"] = 0x2000000,
+        ["StatusImmune"] = 0x4000000, ["SkillImmune"] = 0x8000000,
+    };
+    private static readonly string[] AllModeBitNames = [.. ModeBitsByRathenaName.Keys];
+
+    // Runtime-executed subset of AllModeBitNames - the only bits any real MapServer call site
+    // consults via mode.HasFlag today (MonsterRuntime/MobInstance/MonsterCombatCoordinator). Every
+    // other pinned bit is genuinely stored but behaviorally inert - see MobMode's own doc comment.
     private static readonly string[] MobSupportedModes = ["CanMove", "NoRandomWalk", "CanAttack", "ChangeTargetMelee", "ChangeTargetChase"];
     private static readonly string[] ItemSupportedKeys = ["Id", "AegisName", "Name", "Type", "AliasName", "Attack", "WeaponLevel", "SubType", "Range", "Locations", "Script", "EquipScript", "UnEquipScript"];
 
