@@ -11,7 +11,7 @@ public sealed class MobInstanceTests
         Source: new("rAthena", "abc", "db/re/mob_db.yml", 1));
 
     private static MobSpawnDefinition MakeSpawn(uint maxHp = 55, int respawnMs = 5000) =>
-        new(MakeMob(maxHp), "int_land01", 40, respawnMs, new("rAthena", "abc", "npc/re/mobs/int_land.txt", 12));
+        new(MakeMob(maxHp), "int_land01", 40, respawnMs, 0, new("rAthena", "abc", "npc/re/mobs/int_land.txt", 12));
 
     private static (bool Success, MobPosition Position) Fixed(ushort x, ushort y) => (true, new MobPosition(x, y));
 

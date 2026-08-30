@@ -1,6 +1,6 @@
 using Athena.Net.MapServer.Gameplay.Rules;
 using Athena.Net.MapServer.Gameplay.Rules.Renewal;
-using Athena.Net.MapServer.Generated.World.Izlude.Academy;
+using Athena.Net.MapServer.Generated.GameData.MobSpawns;
 using Athena.Net.MapServer.World;
 
 namespace Athena.Net.MapServer.Tests.World;
@@ -50,7 +50,7 @@ public sealed class TutorialFamilyCompletenessTests
                 missing.Add($"Navigation(intro_start) missing for '{izInt}'");
             if (!registry.GetNavigationAt(izInt, 51, 30).Any())
                 missing.Add($"Navigation(intro_evt02) missing for '{izInt}'");
-            if (!AcademyMobSpawns.GPoringSpawns.Any(s => s.Map == intLand))
+            if (!GeneratedMobSpawnRegistry.GetForMap(intLand).Any(s => s.Mob.AegisName == "G_PORING"))
                 missing.Add($"MobSpawn(G_PORING) missing for '{intLand}'");
             if (!world.Monsters.AllInstances.Any(instance => instance.Map == intLand))
                 missing.Add($"Composed monster instances missing for '{intLand}'");
@@ -79,7 +79,7 @@ public sealed class TutorialFamilyCompletenessTests
             return registry.EntitiesById.ContainsKey($"warp:int_land{suffix}:intro_to_izlude{introToIzludeSuffix}");
         });
         var navigationCount = IzIntSuffixes.Count(suffix => registry.GetNavigationAt("iz_int" + suffix, 18, 26).Any() && registry.GetNavigationAt("iz_int" + suffix, 51, 30).Any());
-        var mobSpawnCount = IzIntSuffixes.Count(suffix => AcademyMobSpawns.GPoringSpawns.Any(s => s.Map == "int_land" + suffix));
+        var mobSpawnCount = IzIntSuffixes.Count(suffix => GeneratedMobSpawnRegistry.GetForMap("int_land" + suffix).Any(s => s.Mob.AegisName == "G_PORING"));
 
         Assert.Equal(5, woundedSwordsman687Count);
         Assert.Equal(5, woundedSwordsman688Count);

@@ -28,7 +28,7 @@ public sealed class MonsterCombatCoordinatorTests
 
     private static (MonsterCombatCoordinator Coordinator, MobInstance Instance) MakeScenario(uint maxHp = 55, TimeProvider? clock = null)
     {
-        var spawn = new MobSpawnDefinition(MakeGPoring(maxHp), "int_land01", 1, 5000, new("rAthena", "abc", "x.txt", 1));
+        var spawn = new MobSpawnDefinition(MakeGPoring(maxHp), "int_land01", 1, 5000, 0, new("rAthena", "abc", "x.txt", 1));
         var registry = new MonsterRegistry([spawn], new WorldActorIdAllocator(), new FixedCellSelector(50, 50), clock ?? new FakeTimeProvider());
         var questDrops = new QuestDropResolver([new(Quest21008, 2401, WoodId, 1, 10000, new("rAthena", "abc", "quest_db.yml", 1))]);
         return (new MonsterCombatCoordinator(registry, questDrops, new RenewalBasicAttackRules()), registry.AllInstances[0]);

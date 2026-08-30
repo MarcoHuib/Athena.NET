@@ -1,8 +1,8 @@
 using Athena.Net.MapServer.Gameplay.Rules.Renewal;
 using Athena.Net.MapServer.Generated.GameData.Items;
+using Athena.Net.MapServer.Generated.GameData.MobSpawns;
 using Athena.Net.MapServer.Generated.GameData.Mobs;
 using Athena.Net.MapServer.Generated.GameData.Quests;
-using Athena.Net.MapServer.Generated.World.Izlude.Academy;
 using Athena.Net.MapServer.Net;
 using Athena.Net.MapServer.World;
 
@@ -77,7 +77,7 @@ public sealed class PoringQuestDropIntegrationTests
     {
         var clock = new FakeTimeProvider();
         var registry = new MonsterRegistry(
-            [AcademyMobSpawns.GPoringSpawns.Single(s => s.Map == "int_land03")], // matching real generated data.
+            [GeneratedMobSpawnRegistry.GetForMap("int_land03").Single(s => s.Mob.Id == GeneratedMobs.GPoring.Id)], // matching real generated data.
             new WorldActorIdAllocator(),
             new FixedCellSelector(50, 50),
             clock);
@@ -109,7 +109,7 @@ public sealed class PoringQuestDropIntegrationTests
         Assert.False(target.IsAlive);
 
         // --- Respawn ---
-        clock.Advance(TimeSpan.FromMilliseconds(target.Spawn.RespawnDelayMs + 1));
+        clock.Advance(TimeSpan.FromMilliseconds(target.Spawn.RespawnDelay + 1));
         var respawnedCount = registry.ProcessDueRespawns().Count;
         Assert.Equal(1, respawnedCount);
         Assert.True(target.IsAlive);
@@ -133,7 +133,7 @@ public sealed class PoringQuestDropIntegrationTests
     {
         var clock = new FakeTimeProvider();
         var registry = new MonsterRegistry(
-            [AcademyMobSpawns.GPoringSpawns[0]],
+            [GeneratedMobSpawnRegistry.GetForMap("int_land").Single(s => s.Mob.Id == GeneratedMobs.GPoring.Id)],
             new WorldActorIdAllocator(),
             new FixedCellSelector(50, 50),
             clock);
@@ -161,7 +161,7 @@ public sealed class PoringQuestDropIntegrationTests
         // reasonable number of attacks, not merely that the surrounding plumbing works.
         var clock = new FakeTimeProvider();
         var registry = new MonsterRegistry(
-            [AcademyMobSpawns.GPoringSpawns[0]],
+            [GeneratedMobSpawnRegistry.GetForMap("int_land").Single(s => s.Mob.Id == GeneratedMobs.GPoring.Id)],
             new WorldActorIdAllocator(),
             new FixedCellSelector(50, 50),
             clock);

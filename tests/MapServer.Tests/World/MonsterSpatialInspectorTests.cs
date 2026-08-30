@@ -34,7 +34,7 @@ public sealed class MonsterSpatialInspectorTests
     {
         var map = MakeAllWalkableMap("int_land", 100);
         var provider = new MapCollisionProvider([map]);
-        var spawn = new MobSpawnDefinition(MakeMob(), "int_land", 1, 5000, new("rAthena", "abc", "x.txt", 1));
+        var spawn = new MobSpawnDefinition(MakeMob(), "int_land", 1, 5000, 0, new("rAthena", "abc", "x.txt", 1));
         var registry = new MonsterRegistry([spawn], new WorldActorIdAllocator(), new FixedCellSelector(63, 69), TimeProvider.System);
         var instance = registry.AllInstances.Single();
         var inspector = new MonsterSpatialInspector(registry, provider);
@@ -70,7 +70,7 @@ public sealed class MonsterSpatialInspectorTests
         // on one map must not resolve when queried against a different map name.
         var map = MakeAllWalkableMap("int_land", 100);
         var provider = new MapCollisionProvider([map]);
-        var spawn = new MobSpawnDefinition(MakeMob(), "int_land", 1, 5000, new("rAthena", "abc", "x.txt", 1));
+        var spawn = new MobSpawnDefinition(MakeMob(), "int_land", 1, 5000, 0, new("rAthena", "abc", "x.txt", 1));
         var registry = new MonsterRegistry([spawn], new WorldActorIdAllocator(), new FixedCellSelector(50, 50), TimeProvider.System);
         var instance = registry.AllInstances.Single();
         var inspector = new MonsterSpatialInspector(registry, provider);
@@ -82,7 +82,7 @@ public sealed class MonsterSpatialInspectorTests
     public void TryDescribe_NoCollisionDataForMap_ReturnsFalse()
     {
         var provider = new MapCollisionProvider([]); // int_land deliberately uncovered.
-        var spawn = new MobSpawnDefinition(MakeMob(), "int_land", 1, 5000, new("rAthena", "abc", "x.txt", 1));
+        var spawn = new MobSpawnDefinition(MakeMob(), "int_land", 1, 5000, 0, new("rAthena", "abc", "x.txt", 1));
         var registry = new MonsterRegistry([spawn], new WorldActorIdAllocator(), new FixedCellSelector(50, 50), TimeProvider.System);
         var instance = registry.AllInstances.Single();
         var inspector = new MonsterSpatialInspector(registry, provider);
@@ -99,7 +99,7 @@ public sealed class MonsterSpatialInspectorTests
         // a value captured at spawn time.
         var map = MakeAllWalkableMap("int_land", 100);
         var provider = new MapCollisionProvider([map]);
-        var spawn = new MobSpawnDefinition(MakeMob(), "int_land", 1, 5000, new("rAthena", "abc", "x.txt", 1));
+        var spawn = new MobSpawnDefinition(MakeMob(), "int_land", 1, 5000, 0, new("rAthena", "abc", "x.txt", 1));
         var clock = new FakeTimeProvider();
         var registry = new MonsterRegistry([spawn], new WorldActorIdAllocator(), new FixedCellSelector(10, 10), clock);
         var instance = registry.AllInstances.Single();

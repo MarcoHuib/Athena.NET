@@ -64,11 +64,15 @@ public sealed class MonsterRegistry
 
     // Schedules a respawn for an instance that JUST transitioned to Dead
     // (idempotent: MobInstance.TryScheduleRespawn only succeeds once per
-    // death). Respawn delay is the pinned spawn's RespawnDelayMs
-    // (mob.delay1, npc_parse_mob).
+    // death). Respawn delay is the pinned spawn's RespawnDelay (mob.delay1,
+    // npc_parse_mob). RespawnRandomDelay (mob.delay2) is preserved losslessly
+    // on MobSpawnDefinition but deliberately NOT consumed here yet - pinned
+    // mob_delay_amount (mob.cpp:1071-1073) adds `rnd()%delay2` on top of
+    // delay1, which remains an explicit, documented runtime gap (not a data
+    // gap) rather than new scheduler behavior introduced by this branch.
     public void ScheduleRespawnIfNeeded(MobInstance instance)
     {
-        var dueTicks = _timeProvider.GetUtcNow().AddMilliseconds(instance.Spawn.RespawnDelayMs).UtcTicks;
+        var dueTicks = _timeProvider.GetUtcNow().AddMilliseconds(instance.Spawn.RespawnDelay).UtcTicks;
         instance.TryScheduleRespawn(dueTicks);
     }
 

@@ -100,7 +100,7 @@ public sealed class MapTcpServerMonsterEngagementFanOutTests
     private static TestWorld MakeWorld(ushort monsterX, ushort monsterY, TimeProvider timeProvider)
     {
         var allocator = new WorldActorIdAllocator();
-        var spawnDefinition = new MobSpawnDefinition(GeneratedMobs.GPoring, Map, 1, 5000, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "test", 0));
+        var spawnDefinition = new MobSpawnDefinition(GeneratedMobs.GPoring, Map, 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "test", 0));
         var registry = new MonsterRegistry([spawnDefinition], allocator, new FixedCellSelector(monsterX, monsterY), timeProvider);
         var questDrops = new QuestDropResolver(GeneratedQuestDrops.All);
         var combat = new MonsterCombatCoordinator(registry, questDrops, new RenewalBasicAttackRules());

@@ -393,6 +393,46 @@ auto-generated header. MapServer compiles only the emitted C#; it never reads rA
 runtime. The command prints `Mob generated-production coverage: 2675 / 2675` as a distinct
 integrity metric, not as a runtime-compatibility claim.
 
+### Generate all production mob spawns
+
+Every pinned ordinary rAthena `monster` spawn declaration (`npc/**/*.txt`), scoped strictly to the
+existing `mob-spawns` analyzer domain (`boss_monster` remains a separate, unimplemented MVP
+concern - never silently absorbed here):
+
+```bash
+dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- generate-mob-spawns \
+  --rathena-root legacy/rathena \
+  --rathena-commit e985006171d2eb320ee512a653f4c83aea3d81b6 \
+  --output src/MapServer/Generated/GameData/MobSpawns
+```
+
+Prints:
+
+```text
+Pinned ordinary mob-spawn declarations: 9844
+Generated:                             9844
+Mob definitions resolved:              9844 / 9844
+Valid map dependencies:                9841
+Invalid map dependencies:              3
+Generated files:                       183
+```
+
+The three invalid map dependencies are the pinned `evt_zombie` declarations
+(`npc/events/halloween_2008.txt:267-269`) - a map that resolves through no pinned map-cache layer
+at all. They are still generated (source coverage is never dropped for a bad map dependency) but
+can never be runtime-activated; ANY other unresolvable map, or any spawn MobId that fails to
+resolve against the freshly-parsed `mob_db.yml` symbol table, fails generation closed. Partitioning
+is one file per pinned NPC source file (195 pinned files -> 183 non-empty generated files, ~2.8
+MiB total), each grouped internally by map, plus one `GeneratedMobSpawns.Registry.cs` exposing the
+map-keyed `GeneratedMobSpawnRegistry.GetForMap(string)`/`TryGetMap`/`All` API - chosen after
+inventorying the real distribution (195 source files vs. 820 distinct map tokens); see
+`ai/world-data.md`'s "Generated mob spawns" section for the full field-by-field trace (including
+the new losslessly-preserved `RespawnRandomDelay`/`DeathEvent`/`Size`/`Ai` fields) and the
+runtime-activation model (`MapServerHostingScope.ServedMaps` remains the only hosting-scope
+decision; registry completeness never implies a map is actually served). Cleanup removes only
+generator-owned files (auto-generated header plus the `GeneratedMobSpawns.` filename prefix);
+regenerating twice produces byte-identical output.
+
 `Compatible` means the complete event passes the current real compilation boundary;
 unsupported statements are never omitted. `soleBlockerFor` counts events whose
 distinct normalized capability set contains only that feature, rather than estimating
