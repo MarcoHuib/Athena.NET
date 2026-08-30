@@ -1,8 +1,6 @@
 using System.Text;
+using Athena.WorldCompiler;
 using Athena.WorldCompiler.Lowering;
-using Athena.WorldCompiler.Rathena;
-using Athena.WorldCompiler.Rathena.Syntax;
-using Athena.WorldCompiler.Semantics;
 
 namespace Athena.WorldCompiler.Generation;
 
@@ -157,22 +155,14 @@ internal static class NpcWorldEmitter
     private static bool TryLowerTrigger(string triggerName, string rawScriptBody, WorldSourceInfo source, out LoweredNpcScript script, out string failureReason)
     {
         script = null!; failureReason = "";
-        var trimmed = rawScriptBody.TrimEnd();
-        if (trimmed.EndsWith('}')) trimmed = trimmed[..^1];
-        var syntax = new RathenaParser(trimmed, source.File, source.Line + 1).ParseCompilationUnit();
-        var semantics = SemanticAnalyzer.Analyze(syntax);
-        if (semantics.Diagnostics.Any(diagnostic => diagnostic.Severity == "Error"))
+        var (syntax, semantics) = RathenaEventCompiler.Parse(rawScriptBody, source);
+        var compilation = RathenaEventCompiler.Compile(syntax, semantics, triggerName);
+        if (!compilation.Success)
         {
-            failureReason = string.Join(Environment.NewLine, semantics.Diagnostics.Where(d => d.Severity == "Error").Select(d => d.Message));
+            failureReason = string.Join(Environment.NewLine, compilation.Diagnostics.Where(d => d.Severity == "Error").Select(d => d.Message));
             return false;
         }
-        var lowered = RathenaScriptLowerer.LowerEvent(syntax, triggerName);
-        if (!lowered.Success)
-        {
-            failureReason = string.Join(Environment.NewLine, lowered.Diagnostics.Where(d => d.Severity == "Error").Select(d => d.Message));
-            return false;
-        }
-        script = lowered.Script!;
+        script = compilation.Script!;
         return true;
     }
 

@@ -228,6 +228,119 @@ The report is derived from syntax and semantic analysis. It distinguishes parsed
 constructs from fully runtime-supported commands, includes source locations and
 blocking reasons, and does not classify labels or language keywords as commands.
 
+## Repository-wide compatibility analysis
+
+The `analyze` command discovers pinned world declarations and evaluates each NPC
+event through the same lexer, parser, semantic analyzer, and lowerer used by C#
+generation. It is a read-only dry run: it does not emit runtime C#, modify the
+pinned source, update a database, or contact a server.
+
+The default `--scope runtime` analyzes the real runtime NPC tree (`npc/` when the
+supplied root contains it). Documentation and samples therefore do not distort the
+official compatibility baseline or roadmap. Use `--scope all` deliberately when
+including `doc/` and other text sources for parser stress analysis:
+
+```bash
+dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- analyze \
+  --rathena-root legacy/rathena \
+  --scope all \
+  --output artifacts/world-analysis-all
+```
+
+Run the complete analysis manually (it is intentionally not part of normal tests):
+
+```bash
+dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- analyze \
+  --rathena-root legacy/rathena \
+  --output artifacts/world-analysis
+```
+
+Narrow investigations can repeat `--type` and can use `--map`, `--source`, and
+`--source-context-lines`:
+
+```bash
+dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- analyze \
+  --rathena-root legacy/rathena \
+  --output artifacts/world-analysis-izlude \
+  --type npc --map izlude --source npc/re --source-context-lines 5
+```
+
+The output contains:
+
+- `summary.json`: NPC/warp-scan totals (`NpcSourceFilesAnalyzed`/`NpcEventsAnalyzed`/`NpcCompatible`/
+  `NpcUnsupported` - deliberately NPC-scope-prefixed, see "Multi-domain architecture" below) plus the
+  full `Domains` table (one row per domain, including every multi-domain entry described below);
+- `compatible.jsonl`: one fully compatible logical NPC/warp entity/event per line;
+- `unsupported.jsonl`: unsupported NPC/warp events, all known blockers, and bounded source context;
+- `blockers.json`: feature/stage aggregates and representative sources, across BOTH the NPC/warp
+  scan and every domain entity's own blockers;
+- `work-items.json`: roadmap ordered by the amount of content a capability alone unlocks - stable
+  semantic capability IDs only (see "Work-item meaning" below), never a raw exception type name;
+- `dependencies.json`: the cross-domain dependency graph - literal quest/item/map/mob references
+  proven by lowered NPC source AND every domain entity's own dependencies (mob-spawn -> map/mob,
+  shop -> item, quest -> mob/item, item -> item via `Grants`), deduplicated and deterministically
+  sorted by entity id;
+- `domains/<domain>.jsonl`: one file per domain (`maps`, `mobs`, `mvp`, `items`, `mob-spawns`,
+  `quests`, `shops`, `mapflags`, `functions`, `map-world`), each line one `DomainEntity`;
+- `report.md`: concise human-readable summary.
+
+`analyze` evaluates two independent layers that are composed into one report, never blended into
+one meaningless percentage: the NPC/warp event scan (`RepositoryCompatibilityAnalyzer`,
+`CompatibilityEntity`, the original trusted compiler boundary, unmodified by the work below) and
+domain analysis (`RepositoryDomainAnalyzers`, `DomainEntity` - `maps`, `mobs`, `mvp`, `items`,
+`mob-spawns`, `quests`, `shops`, `mapflags`, `functions`, `map-world`). See "Multi-domain analysis"
+below for the full domain-by-domain breakdown, including static-vs-runtime compatibility (items,
+mobs), map geometry vs map-world completeness, mob definition vs spawn vs skill, MVP
+classification, and quest drop-rule vs full quest definition. Every `DomainEntity` decomposes into
+named `Components`, each deriving its status ONLY from its own blockers - one component being
+unsupported never taints a sibling.
+
+Raw-line domain scanners (`AnalyzeMapFlags`, `AnalyzeFunctions` - the domains that read pinned
+`*.txt` content directly rather than through `RathenaSourceParser`/`RathenaEventCompiler`) exclude
+commented-out (`//`, after trimming leading whitespace) and blank lines via a shared
+`IsCommentedOrBlank` helper before treating a line as a declaration - a commented-out
+`//map	mapflag	flag` line is never discovered as an active mapflag, and never produces a false
+`dependency:map` blocker referencing the literal `//map` text as a map name.
+
+`functions` domain entity ids are source-qualified (`function:<relative-source>:<line>:<name>`),
+not the bare function name, so two distinct pinned `function script` bodies that happen to share a
+name (pinned rAthena has several, e.g. `Job_Change`, `Chk`, `Catwarp`) remain separate entities and
+separate `dependencies.json` graph nodes instead of silently collapsing.
+
+A mob's `Drops:` block is classified exclusively by the dedicated `Drops` component
+(`mob-drops:runtime`); it is excluded from the generic unknown-top-level-field `StaticData` scan so
+the same source construct is never double-counted as both a `mob-field:drops` StaticData blocker
+and a `Drops` component blocker.
+
+Structural completeness counts (`map-world`'s `MobSpawns`/`MapFlags` components) are carried on an
+optional `DomainComponent.Metric` (`{ "Compatible": N, "Total": M }`), never as a formatted
+`"N/M"` string inside `Blockers` - `Blockers` holds only genuine semantic blocker/capability ids.
+
+`Compatible` means the complete event passes the current real compilation boundary;
+unsupported statements are never omitted. `soleBlockerFor` counts events whose
+distinct normalized capability set contains only that feature, rather than estimating
+from command frequency. Parsing failures, semantic failures, lowering gaps,
+runtime capability gaps, dependencies, and generation failures are separate stages
+because they require different work. Reliably discoverable categories without an
+actual converter are reported as `NotYetAnalyzed`, never as compatible.
+
+Roadmap blockers use stable semantic capability IDs such as
+`control-flow:while`, `function:callfunc`, `variable:account`, and
+`operator:logical-and`. The unsupported JSONL retains `compilerConstruct`, the
+diagnostic code, message, and location separately so compiler implementation detail
+remains available without becoming the roadmap identity. Attribution is based on
+the syntax node owning the diagnostic span; a nearby supported command is never
+used as a guess.
+
+Event compatibility and NPC-definition compatibility are distinct. A definition is
+`FullyCompatible` only when every executable event is compatible,
+`PartiallyCompatible` when compatible and unsupported events coexist,
+`Unsupported` when no executable event is compatible, and `NotApplicable` only
+when it has no executable behavior. A future safe `--compatible-only` bulk mode
+must generate only fully compatible definitions by default. It must not silently
+drop an unsupported `OnTouch`, `OnInit`, or other event from a partially compatible
+NPC.
+
 ## Top-level content audit
 
 ```bash

@@ -1,6 +1,7 @@
 using System.Buffers.Binary;
 using System.IO.Compression;
 using System.Text;
+using Athena.Rathena.Data;
 
 namespace Athena.Net.MapServer.World;
 
@@ -81,48 +82,9 @@ public static class RathenaMapCacheReader
     // on-demand per lookup).
     public static IReadOnlyList<MapCollisionMap> ReadAll(ReadOnlySpan<byte> mapCacheBytes)
     {
-        if (mapCacheBytes.Length < MainHeaderLength)
-            throw new InvalidDataException("map_cache.dat is truncated: missing the main header.");
-
-        var declaredFileSize = BinaryPrimitives.ReadUInt32LittleEndian(mapCacheBytes);
-        var mapCount = BinaryPrimitives.ReadUInt16LittleEndian(mapCacheBytes[4..]);
-        if (declaredFileSize != (uint)mapCacheBytes.Length)
-            throw new InvalidDataException($"map_cache.dat declares file_size {declaredFileSize} but the actual input is {mapCacheBytes.Length} bytes.");
-
-        var results = new List<MapCollisionMap>(mapCount);
-        var offset = MainHeaderLength;
-
-        for (var i = 0; i < mapCount; i++)
-        {
-            if (mapCacheBytes.Length < offset + MapInfoHeaderLength)
-                throw new InvalidDataException($"map_cache.dat is truncated: missing map_cache_map_info record {i} of {mapCount}.");
-
-            var nameField = mapCacheBytes.Slice(offset, MapNameFieldLength);
-            var nameLength = nameField.IndexOf((byte)0);
-            var name = Encoding.ASCII.GetString(nameLength < 0 ? nameField : nameField[..nameLength]);
-
-            var width = BinaryPrimitives.ReadInt16LittleEndian(mapCacheBytes[(offset + 12)..]);
-            var height = BinaryPrimitives.ReadInt16LittleEndian(mapCacheBytes[(offset + 14)..]);
-            var compressedLength = BinaryPrimitives.ReadInt32LittleEndian(mapCacheBytes[(offset + 16)..]);
-            var payloadStart = offset + MapInfoHeaderLength;
-
-            if (width <= 0 || height <= 0)
-                throw new InvalidDataException($"map_cache.dat record {i} ('{name}') has invalid dimensions ({width}x{height}).");
-            if (compressedLength < 0 || mapCacheBytes.Length < payloadStart + compressedLength)
-                throw new InvalidDataException($"map_cache.dat record {i} ('{name}') is truncated: declared compressed length {compressedLength} exceeds the remaining input.");
-
-            var cellCount = checked(width * height);
-            var rawCells = DecompressCells(mapCacheBytes.Slice(payloadStart, compressedLength), cellCount, name);
-
-            var cells = new MapCellFlags[cellCount];
-            for (var cellIndex = 0; cellIndex < cellCount; cellIndex++)
-                cells[cellIndex] = GatTypeToFlags(rawCells[cellIndex], name, cellIndex);
-
-            results.Add(new MapCollisionMap(name, width, height, cells));
-            offset = payloadStart + compressedLength;
-        }
-
-        return results;
+        return RathenaMapCacheFormat.ReadAll(mapCacheBytes).Select(entry =>
+            new MapCollisionMap(entry.Name, entry.Width, entry.Height,
+                entry.RawCells.Select((cell, index) => GatTypeToFlags(cell, entry.Name, index)).ToArray())).ToArray();
     }
 
     public static IReadOnlyList<MapCollisionMap> ReadAllFromFile(string path) => ReadAll(File.ReadAllBytes(path));

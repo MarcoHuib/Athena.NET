@@ -17,6 +17,7 @@ internal static class WorldDataImporterCli
             return args[0] switch
             {
                 "audit" => await AuditAsync(args[1..]),
+                "analyze" => await AnalyzeAsync(args[1..]),
                 "convert" => await ConvertAsync(args[1..]),
                 "compile" => await CompileAsync(args[1..]),
                 "compile-script" => await CompileScriptAsync(args[1..]),
@@ -47,6 +48,27 @@ internal static class WorldDataImporterCli
         Console.WriteLine($"Audited {report.FilesAnalyzed} files and {report.TopLevel.Total} top-level declarations.");
         foreach (var item in report.TopLevel.Categories) Console.WriteLine($"  {item.Category,-24} {item.Count,8}");
         Console.WriteLine($"Embedded labels: OnTouch={report.EmbeddedBehavior.OnTouch}, OnTouch_={report.EmbeddedBehavior.OnTouchVariant}, OnInit={report.EmbeddedBehavior.OnInit}, timers/events={report.EmbeddedBehavior.TimerOrEvent}.");
+        return 0;
+    }
+
+    private static async Task<int> AnalyzeAsync(string[] args)
+    {
+        var options = CliOptions.Parse(args);
+        var context = options.Optional("source-context-lines") is { } raw
+            ? int.Parse(raw, CultureInfo.InvariantCulture) : 5;
+        var types = options.All("type").Select(item => item.ToLowerInvariant()).ToHashSet(StringComparer.Ordinal);
+        var domains = options.All("domain").Select(item => item.ToLowerInvariant()).ToHashSet(StringComparer.Ordinal);
+        var scope = (options.Optional("scope") ?? "runtime").ToLowerInvariant() switch
+        {
+            "runtime" => AnalysisScope.Runtime,
+            "all" => AnalysisScope.All,
+            var value => throw new ArgumentException($"Unknown analysis scope '{value}'; expected runtime or all.")
+        };
+        var analysisOptions = new AnalysisOptions(options.Required("rathena-root"), options.Required("output"), context,
+            types.Count == 0 ? null : types, options.Optional("map"), options.Optional("source"), scope, domains.Count == 0 ? null : domains);
+        var result = RepositoryCompatibilityAnalyzer.Analyze(analysisOptions);
+        await RepositoryCompatibilityAnalyzer.WriteAsync(analysisOptions, result);
+        Console.WriteLine($"NPC scan: analyzed {result.Summary.NpcSourceFilesAnalyzed} files and {result.Summary.NpcEventsAnalyzed} entities/events: {result.Summary.NpcCompatible} compatible, {result.Summary.NpcUnsupported} unsupported. See the domain table in report.md for the multi-domain (items/mobs/quests/maps/...) picture.");
         return 0;
     }
 
@@ -604,6 +626,7 @@ internal static class WorldDataImporterCli
     private static void PrintUsage()
     {
         Console.Error.WriteLine("WorldDataImporter audit --source-root <folder> [--source-root <folder>] --output <report.json>");
+        Console.Error.WriteLine("WorldDataImporter analyze --rathena-root <folder> --output <folder> [--scope runtime|all] [--domain <maps|mobs|mob-spawns|mvp|items|quests|shops|mapflags|functions|map-world>] [--type <npc|warp|mob|boss|shop|function|mapflag>] [--map <map>] [--source <path-filter>] [--source-context-lines 5]");
         Console.Error.WriteLine("WorldDataImporter convert --source-root <folder> --output <entities-folder> [--source-file <path>] [--map <map>] [--name <name>] [--kind warp]");
         Console.Error.WriteLine("WorldDataImporter convert --source-root <folder> --all-compatible true --output <entities-folder> --report <report.json>");
         Console.Error.WriteLine("WorldDataImporter capabilities --source-root <folder> [--source-root <folder>] --output <report.json>");

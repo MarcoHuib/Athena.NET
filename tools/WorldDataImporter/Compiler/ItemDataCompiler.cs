@@ -43,6 +43,17 @@ internal enum WeaponType : byte
     TwoHandStaff = 23,
 }
 
+// Thrown for a genuinely unmodeled/unsupported pinned item_db construct this compiler cannot
+// represent - carries a stable, ALREADY-CLASSIFIED semantic capability id (e.g.
+// "item-type:card", "item-subtype:whatever", "item-location:whatever", "item-script:unsupported-shape")
+// so callers (RepositoryDomainAnalyzers.AnalyzeItems) never need to regex-parse this exception's
+// human-readable Message to recover a roadmap identity - the classification happens exactly once,
+// here, at the point the real failure reason is known, not reconstructed later from prose.
+internal sealed class ItemDefinitionUnsupportedException(string capabilityId, string message) : NotSupportedException(message)
+{
+    internal string CapabilityId { get; } = capabilityId;
+}
+
 internal static class ItemDataCompiler
 {
     private static readonly HashSet<string> NonStackableTypes = new(StringComparer.Ordinal) { "Weapon", "Armor", "PetEgg", "PetArmor", "ShadowGear" };
@@ -138,7 +149,7 @@ internal static class ItemDataCompiler
         {
             var subType = RequiredScalar(block, "SubType");
             if (!WeaponSubTypes.TryGetValue(subType, out var resolved))
-                throw new NotSupportedException($"Item SubType '{subType}' has no modeled WeaponType entry yet.");
+                throw new ItemDefinitionUnsupportedException("item-subtype:" + Kebab(subType), $"Item SubType '{subType}' has no modeled WeaponType entry yet.");
             weaponType = resolved;
         }
 
@@ -186,7 +197,7 @@ internal static class ItemDataCompiler
             var getItemMatch = Regex.Match(line, @"^getitem\s+(\d+)\s*,\s*(\d+)\s*;$");
             if (!getItemMatch.Success)
             {
-                throw new NotSupportedException(
+                throw new ItemDefinitionUnsupportedException("item-script:unsupported-shape",
                     $"Item Script line '{line}' is not a recognized constant getitem statement; this compiler does not implement a general script interpreter.");
             }
 
@@ -211,7 +222,7 @@ internal static class ItemDataCompiler
         {
             var key = entry.Groups[1].Value;
             if (!EquipLocations.TryGetValue(key, out var value))
-                throw new NotSupportedException($"Item Locations key '{key}' has no modeled equip_pos entry yet.");
+                throw new ItemDefinitionUnsupportedException("item-location:" + Kebab(key), $"Item Locations key '{key}' has no modeled equip_pos entry yet.");
             equip |= value;
         }
         return equip;
@@ -258,8 +269,13 @@ internal static class ItemDataCompiler
         "Usable" => "UsableItemDefinition",
         "Healing" => "HealingItemDefinition",
         "DelayConsume" => "DelayConsumeItemDefinition",
-        _ => throw new NotSupportedException($"Item Type '{type}' has no modeled ItemDefinition subtype yet."),
+        _ => throw new ItemDefinitionUnsupportedException("item-type:" + Kebab(type), $"Item Type '{type}' has no modeled ItemDefinition subtype yet."),
     };
+
+    // Same kebab-case convention RepositoryDomainAnalyzers.Kebab uses for every other capability id
+    // in this project's analysis output - duplicated here (rather than shared) because WorldDataImporter's
+    // Compiler/ types are deliberately free of the CLI-analysis-only RepositoryDomainAnalyzers dependency.
+    private static string Kebab(string value) => Regex.Replace(value, "([a-z0-9])([A-Z])", "$1-$2").Replace('_', '-').ToLowerInvariant();
 
     internal static string Generate(ItemDefinitionData item, string commit, string className, string constantName, string sourceFile, int sourceLine)
     {
