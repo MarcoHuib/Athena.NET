@@ -12,7 +12,7 @@ internal enum DefinitionCompatibilityStatus { FullyCompatible, PartiallyCompatib
 internal sealed record AnalysisOptions(
     string RathenaRoot, string OutputDirectory, int SourceContextLines = 5,
     IReadOnlySet<string>? Types = null, string? Map = null, string? Source = null,
-    AnalysisScope Scope = AnalysisScope.Runtime);
+    AnalysisScope Scope = AnalysisScope.Runtime, IReadOnlySet<string>? Domains = null);
 internal sealed record SourceContext(int StartLine, int EndLine, IReadOnlyList<string> Text);
 internal sealed record CompatibilityBlocker(string DiagnosticCode, string Feature, string Category, FailureStage Stage, string CompilerConstruct, int Line, int Column, string Message);
 internal sealed record CompatibilityEntity(
@@ -25,13 +25,15 @@ internal sealed record EventSummary(string Event, int Compatible, int Unsupporte
 internal sealed record DefinitionCompatibilitySummary(int Total, int FullyCompatible, int PartiallyCompatible, int Unsupported, int NotApplicable);
 internal sealed record AnalysisSummary(int FilesAnalyzed, int EntitiesAnalyzed, int Compatible, int Unsupported,
     IReadOnlyList<CategorySummary> Categories, IReadOnlyList<EventSummary> Events,
-    DefinitionCompatibilitySummary NpcDefinitions, DefinitionCompatibilitySummary WarpNpcDefinitions);
-internal sealed record BlockerSummary(string Feature, string Category, FailureStage Stage, int Occurrences, int AffectedEntities, int SoleBlockerFor, IReadOnlyList<string> RepresentativeSources);
-internal sealed record WorkItem(int Priority, string Feature, string Category, FailureStage Stage, int AffectedEntities, int EntitiesUnlocked, int Occurrences, IReadOnlyList<string> RepresentativeSources);
+    DefinitionCompatibilitySummary NpcDefinitions, DefinitionCompatibilitySummary WarpNpcDefinitions,
+    IReadOnlyList<DomainSummary> Domains);
+internal sealed record BlockerSummary(string Domain, string Feature, string Category, FailureStage Stage, int Occurrences, int AffectedEntities, int SoleBlockerFor, IReadOnlyList<string> RepresentativeSources);
+internal sealed record WorkItem(int Priority, string Domain, string Feature, string Category, FailureStage Stage, int AffectedEntities, int EntitiesUnlocked, int Occurrences, IReadOnlyList<string> RepresentativeSources);
 internal sealed record EntityDependencies(string Entity, IReadOnlyList<string> Dependencies);
 internal sealed record RepositoryAnalysisResult(AnalysisSummary Summary, IReadOnlyList<CompatibilityEntity> Compatible,
     IReadOnlyList<CompatibilityEntity> Unsupported, IReadOnlyList<BlockerSummary> Blockers,
-    IReadOnlyList<WorkItem> WorkItems, IReadOnlyList<EntityDependencies> Dependencies);
+    IReadOnlyList<WorkItem> WorkItems, IReadOnlyList<EntityDependencies> Dependencies,
+    IReadOnlyList<DomainEntity> DomainEntities);
 
 internal static class RepositoryCompatibilityAnalyzer
 {
@@ -96,18 +98,33 @@ internal static class RepositoryCompatibilityAnalyzer
             .ThenBy(item => item.EntityName, StringComparer.Ordinal).ThenBy(item => item.Event, StringComparer.Ordinal).ToArray();
         var compatible = ordered.Where(item => item.Status == CompatibilityStatus.Compatible).ToArray();
         var unsupported = ordered.Where(item => item.Status == CompatibilityStatus.Unsupported).ToArray();
-        var blockers = AggregateBlockers(unsupported);
-        var work = blockers.OrderByDescending(item => item.SoleBlockerFor).ThenByDescending(item => item.AffectedEntities)
-            .ThenByDescending(item => item.Occurrences).ThenBy(item => item.Feature, StringComparer.Ordinal)
-            .Select((item, index) => new WorkItem(index + 1, item.Feature, item.Category, item.Stage, item.AffectedEntities, item.SoleBlockerFor, item.Occurrences, item.RepresentativeSources)).ToArray();
+        var npcBlockers = AggregateBlockers(unsupported);
         var categories = ordered.GroupBy(item => item.EntityType, StringComparer.Ordinal).OrderBy(item => item.Key, StringComparer.Ordinal)
             .Select(group => new CategorySummary(group.Key, group.Count(), group.Count(x => x.Status == CompatibilityStatus.Compatible), group.Count(x => x.Status == CompatibilityStatus.Unsupported), group.Count(x => x.Status == CompatibilityStatus.NotYetAnalyzed), group.Count(x => x.Status == CompatibilityStatus.NotApplicable))).ToArray();
         var eventSummary = ordered.Where(item => item.Event is not null).GroupBy(item => item.Event!, StringComparer.Ordinal).OrderBy(item => item.Key, StringComparer.Ordinal)
             .Select(group => new EventSummary(group.Key, group.Count(x => x.Status == CompatibilityStatus.Compatible), group.Count(x => x.Status == CompatibilityStatus.Unsupported))).ToArray();
         var npcDefinitions = DefinitionSummary(ordered, "npc");
         var warpNpcDefinitions = DefinitionSummary(ordered, "warpnpc");
+        var domainEntities = RepositoryDomainAnalyzers.Analyze(root, options.Domains);
+        var blockers = npcBlockers.Concat(AggregateDomainBlockers(domainEntities)).OrderByDescending(item => item.SoleBlockerFor)
+            .ThenByDescending(item => item.AffectedEntities).ThenBy(item => item.Domain, StringComparer.Ordinal).ThenBy(item => item.Feature, StringComparer.Ordinal).ToArray();
+        var work = blockers.OrderByDescending(item => item.SoleBlockerFor).ThenByDescending(item => item.AffectedEntities)
+            .ThenByDescending(item => item.Occurrences).ThenBy(item => item.Domain, StringComparer.Ordinal).ThenBy(item => item.Feature, StringComparer.Ordinal)
+            .Select((item, index) => new WorkItem(index + 1, item.Domain, item.Feature, item.Category, item.Stage, item.AffectedEntities, item.SoleBlockerFor, item.Occurrences, item.RepresentativeSources)).ToArray();
+        var domainSummaries = RepositoryDomainAnalyzers.Summaries(domainEntities).ToList();
+        AddDefinitionDomain("npc-definitions", npcDefinitions);
+        AddDefinitionDomain("warpnpc-definitions", warpNpcDefinitions);
+        AddEventDomain("warps", ordered.Where(item => item.EntityType == "warp"));
+        domainSummaries = domainSummaries.OrderBy(item => item.Domain, StringComparer.Ordinal).ToList();
         var dependencies = ordered.Where(item => item.Dependencies is { Count: > 0 }).Select(item => new EntityDependencies(item.Id, item.Dependencies!)).ToArray();
-        return new(new(files.Length, ordered.Length, compatible.Length, unsupported.Length, categories, eventSummary, npcDefinitions, warpNpcDefinitions), compatible, unsupported, blockers, work, dependencies);
+        return new(new(files.Length, ordered.Length, compatible.Length, unsupported.Length, categories, eventSummary, npcDefinitions, warpNpcDefinitions, domainSummaries), compatible, unsupported, blockers, work, dependencies, domainEntities);
+
+        void AddDefinitionDomain(string name, DefinitionCompatibilitySummary summary) => domainSummaries.Add(new(name, summary.Total, summary.FullyCompatible, summary.PartiallyCompatible, summary.Unsupported, 0, summary.NotApplicable));
+        void AddEventDomain(string name, IEnumerable<CompatibilityEntity> values)
+        {
+            var array = values.ToArray(); domainSummaries.Add(new(name, array.Length, array.Count(x => x.Status == CompatibilityStatus.Compatible), 0,
+                array.Count(x => x.Status == CompatibilityStatus.Unsupported), array.Count(x => x.Status == CompatibilityStatus.NotYetAnalyzed), array.Count(x => x.Status == CompatibilityStatus.NotApplicable)));
+        }
     }
 
     public static async Task WriteAsync(AnalysisOptions options, RepositoryAnalysisResult result)
@@ -119,6 +136,9 @@ internal static class RepositoryCompatibilityAnalyzer
         await DeterministicJson.WriteFileAsync(Path.Combine(output, "blockers.json"), result.Blockers);
         await DeterministicJson.WriteFileAsync(Path.Combine(output, "work-items.json"), result.WorkItems);
         await DeterministicJson.WriteFileAsync(Path.Combine(output, "dependencies.json"), result.Dependencies);
+        var domainsDirectory = Path.Combine(output, "domains"); Directory.CreateDirectory(domainsDirectory);
+        foreach (var domain in result.DomainEntities.GroupBy(item => item.Domain, StringComparer.Ordinal).OrderBy(item => item.Key, StringComparer.Ordinal))
+            await WriteJsonLines(Path.Combine(domainsDirectory, domain.Key + ".jsonl"), domain);
         await File.WriteAllTextAsync(Path.Combine(output, "report.md"), Markdown(result), new UTF8Encoding(false));
     }
 
@@ -141,11 +161,31 @@ internal static class RepositoryCompatibilityAnalyzer
     {
         var occurrences = unsupported.SelectMany(entity => entity.Blockers!.Select(blocker => (entity, blocker)));
         return occurrences.GroupBy(item => (item.blocker.Feature, item.blocker.Category, item.blocker.Stage))
-            .Select(group => new BlockerSummary(group.Key.Feature, group.Key.Category, group.Key.Stage, group.Count(),
+            .Select(group => new BlockerSummary("npc", group.Key.Feature, group.Key.Category, group.Key.Stage, group.Count(),
                 group.Select(item => item.entity.Id).Distinct(StringComparer.Ordinal).Count(),
                 group.Select(item => item.entity).DistinctBy(item => item.Id).Count(entity => entity.Blockers!.Select(b => b.Feature).Distinct(StringComparer.Ordinal).Count() == 1),
                 group.Select(item => $"{item.entity.SourceFile}:{item.blocker.Line}").Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).Take(5).ToArray()))
             .OrderByDescending(item => item.SoleBlockerFor).ThenByDescending(item => item.AffectedEntities).ThenBy(item => item.Feature, StringComparer.Ordinal).ToArray();
+    }
+
+    private static IReadOnlyList<BlockerSummary> AggregateDomainBlockers(IReadOnlyList<DomainEntity> entities)
+    {
+        return entities.SelectMany(entity => entity.Blockers.Select(blocker => (entity, blocker)))
+            .GroupBy(item => (item.entity.Domain, item.blocker), StringTupleComparer.Ordinal)
+            .Select(group => new BlockerSummary(group.Key.Domain, group.Key.blocker, DomainCategory(group.Key.blocker), FailureStage.RuntimeCapability,
+                group.Count(), group.Select(item => item.entity.Id).Distinct(StringComparer.Ordinal).Count(),
+                group.Select(item => item.entity).DistinctBy(item => item.Id).Count(entity => entity.Blockers.Distinct(StringComparer.Ordinal).Count() == 1),
+                group.Select(item => $"{item.entity.SourceFile}:{item.entity.SourceLine}").Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).Take(5).ToArray()))
+            .ToArray();
+    }
+
+    private static string DomainCategory(string capability) => capability.Split(':', 2)[0];
+
+    private sealed class StringTupleComparer : IEqualityComparer<(string Domain, string blocker)>
+    {
+        public static readonly StringTupleComparer Ordinal = new();
+        public bool Equals((string Domain, string blocker) x, (string Domain, string blocker) y) => StringComparer.Ordinal.Equals(x.Domain, y.Domain) && StringComparer.Ordinal.Equals(x.blocker, y.blocker);
+        public int GetHashCode((string Domain, string blocker) value) => HashCode.Combine(StringComparer.Ordinal.GetHashCode(value.Domain), StringComparer.Ordinal.GetHashCode(value.blocker));
     }
 
     private static DefinitionCompatibilitySummary DefinitionSummary(IReadOnlyList<CompatibilityEntity> records, string entityType)
@@ -276,6 +316,8 @@ internal static class RepositoryCompatibilityAnalyzer
         text.AppendLine($"Files analyzed: {result.Summary.FilesAnalyzed}");
         text.AppendLine($"Entities/events analyzed: {result.Summary.EntitiesAnalyzed}");
         text.AppendLine($"Compatible: {result.Summary.Compatible}"); text.AppendLine($"Unsupported: {result.Summary.Unsupported}");
+        text.AppendLine("\n## Conversion overview\n\n| Domain | Total | Full | Partial | Unsupported | Not analyzed | N/A |\n|---|---:|---:|---:|---:|---:|---:|");
+        foreach (var domain in result.Summary.Domains) text.AppendLine($"| {domain.Domain} | {domain.Total} | {domain.FullyCompatible} | {domain.PartiallyCompatible} | {domain.Unsupported} | {domain.NotYetAnalyzed} | {domain.NotApplicable} |");
         AppendDefinitionSummary(text, "NPC definitions", result.Summary.NpcDefinitions);
         AppendDefinitionSummary(text, "WARPNPC definitions", result.Summary.WarpNpcDefinitions);
         text.AppendLine("\n## Content categories\n\n| Category | Discovered | Compatible | Unsupported | Not yet analyzed | Not applicable |\n|---|---:|---:|---:|---:|---:|");

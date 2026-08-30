@@ -5,4 +5,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
   </PropertyGroup>
+  <ItemGroup>
+    <!-- One authoritative map-cache parser is compiled into both the runtime and offline analyzer. -->
+    <Compile Include="../../src/MapServer/World/RathenaMapCacheFormat.cs" Link="Compiler/RathenaMapCacheFormat.cs" />
+  </ItemGroup>
 </Project>
