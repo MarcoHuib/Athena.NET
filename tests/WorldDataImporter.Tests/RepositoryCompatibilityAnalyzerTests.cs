@@ -223,6 +223,27 @@ public sealed class RepositoryCompatibilityAnalyzerTests
         Assert.Contains(all.Unsupported, item => item.EntityName == "Sample");
     }
 
+    [Fact]
+    public void ParserRecoveryPlaceholdersBecomeStableSyntaxCapabilitiesWithoutAbortingAnalysis()
+    {
+        using var fixture = new AnalysisFixture("""
+            prontera,1,1,4	script	Malformed	100,{
+            rand(,);
+            }
+            prontera,2,1,4	script	Still analyzed	100,{
+            mes "ok"; close;
+            }
+            """);
+
+        var result = RepositoryCompatibilityAnalyzer.Analyze(new(fixture.Directory, fixture.Output));
+
+        var malformed = Assert.Single(result.Unsupported, item => item.EntityName == "Malformed");
+        Assert.Contains(malformed.Blockers!, item => item.Feature == "syntax:expected-expression" && item.Stage == FailureStage.Parsing);
+        Assert.DoesNotContain(malformed.Blockers!, item => item.Feature.Contains("missing", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(result.Compatible, item => item.EntityName == "Still analyzed");
+        Assert.All(result.WorkItems, item => CompatibilityDiagnosticNormalizer.Validate(item.Feature));
+    }
+
     private sealed class AnalysisFixture : IDisposable
     {
         public string Directory { get; } = Path.Combine(Path.GetTempPath(), "athena-analysis-" + Guid.NewGuid().ToString("N"));

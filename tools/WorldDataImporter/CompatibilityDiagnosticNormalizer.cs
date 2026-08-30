@@ -14,10 +14,24 @@ internal static class CompatibilityDiagnosticNormalizer
         var stage = Stage(diagnostic.Code);
         var node = FindGenerationNode(syntax, diagnostic) ?? AttributionNode(FindMostSpecificNode(syntax, diagnostic.Span));
         var compilerConstruct = node?.GetType().Name ?? diagnostic.Construct ?? diagnostic.Code;
-        var capability = FromNode(node) ?? FromGenerationDiagnostic(diagnostic) ?? FromConstruct(diagnostic.Construct) ?? ($"syntax:{diagnostic.Code.ToLowerInvariant()}", "syntax");
+        var capability = FromDiagnosticCode(diagnostic.Code) ?? FromNode(node) ?? FromGenerationDiagnostic(diagnostic) ?? FromConstruct(diagnostic.Construct) ?? SyntaxFallback(diagnostic.Code);
+        if (!IsValid(capability.Id)) capability = SyntaxFallback(diagnostic.Code);
         Validate(capability.Id);
         return new(capability.Id, capability.Category, stage, compilerConstruct);
     }
+
+    private static (string Id, string Category)? FromDiagnosticCode(string code) => code switch
+    {
+        "RAT1001" => ("syntax:unrecognized-character", "syntax"),
+        "RAT1002" => ("syntax:unterminated-string", "syntax"),
+        "RAT2001" => ("syntax:expected-expression", "syntax"),
+        "RAT2002" => ("syntax:expected-token", "syntax"),
+        "RAT2004" => ("syntax:expected-switch-clause", "syntax"),
+        _ => null
+    };
+
+    private static (string Id, string Category) SyntaxFallback(string diagnosticCode) =>
+        ($"syntax:{diagnosticCode.ToLowerInvariant()}", "syntax");
 
     private static (string Id, string Category)? FromNode(SyntaxNode? node) => node switch
     {
@@ -198,8 +212,11 @@ internal static class CompatibilityDiagnosticNormalizer
 
     internal static void Validate(string capabilityId)
     {
-        if (string.IsNullOrWhiteSpace(capabilityId) || !char.IsAsciiLetterOrDigit(capabilityId[0]) ||
-            capabilityId.Any(character => !(char.IsAsciiLetterOrDigit(character) || character is '.' or '_' or ':' or '-')))
+        if (!IsValid(capabilityId))
             throw new InvalidOperationException($"Suspicious compatibility capability ID '{capabilityId}'.");
     }
+
+    private static bool IsValid(string capabilityId) =>
+        !string.IsNullOrWhiteSpace(capabilityId) && char.IsAsciiLetterOrDigit(capabilityId[0]) &&
+        capabilityId.All(character => char.IsAsciiLetterOrDigit(character) || character is '.' or '_' or ':' or '-');
 }
