@@ -29,7 +29,12 @@ internal static class MobDataCompiler
         int ElementLevel, int ClientAttackMotion, int DamageTaken, int GroupId, string? Title,
         MobClassData Class,
         IReadOnlyList<MobRaceGroupEntryData> RaceGroups, IReadOnlyList<MobDropEntryData> Drops,
-        IReadOnlyList<MobDropEntryData> MvpDrops);
+        IReadOnlyList<MobDropEntryData> MvpDrops,
+        // The pinned mob_db.yml 1-based line number of this mob's OWN "  - Id: <n>" declaration
+        // line, computed from the block's string offset - real provenance rather than a shared/
+        // caller-supplied placeholder. 0 only for synthetic in-memory fixtures that never came from
+        // a real file offset (e.g. unit-test YAML snippets built directly as MobDefinitionData).
+        int SourceLine = 0);
 
     // Mirrors Athena.Net.MapServer.World.MobRaceGroupEntry exactly - see that record's own doc
     // comment for why RaceGroups is a pinned-name list rather than a fixed C# enum.
@@ -144,6 +149,41 @@ internal static class MobDataCompiler
         if (start < 0) throw new ArgumentException($"Mob Id {mobId} was not found in the pinned mob_db.yml.");
         var next = mobDbYaml.IndexOf("\n  - Id: ", start + marker.Length, StringComparison.Ordinal);
         var block = next >= 0 ? mobDbYaml[start..(next + 1)] : mobDbYaml[start..];
+        return ParseMobBlock(block, mobId, CountLines(mobDbYaml, start));
+    }
+
+    // Enumerates EVERY "  - Id: <n>" block in the pinned mob_db.yml, in source (file) order - the
+    // source of truth for "generate all pinned mobs" (this task's primary objective), as opposed to
+    // ReadMobDefinition's single-mob lookup used by the pre-existing manually-curated
+    // compile-mob-definitions command. A single forward scan (no repeated IndexOf-from-start per
+    // mob) so this stays linear in file size for 2,675+ real entries.
+    internal static IReadOnlyList<MobDefinitionData> ReadAllMobDefinitions(string mobDbYaml)
+    {
+        var results = new List<MobDefinitionData>();
+        const string marker = "\n  - Id: ";
+        var searchFrom = 0;
+        var line = 1; // 1-based line number at `searchFrom`.
+        while (true)
+        {
+            var start = mobDbYaml.IndexOf(marker, searchFrom, StringComparison.Ordinal);
+            if (start < 0) break;
+            for (var i = searchFrom; i < start; i++) if (mobDbYaml[i] == '\n') line++;
+            start += 1; // Skip the leading '\n' shared with the previous block's terminator.
+            line++; // The line the '- Id:' declaration itself starts on.
+            var idStart = start + "  - Id: ".Length;
+            var idEnd = mobDbYaml.IndexOf('\n', idStart);
+            if (idEnd < 0) throw new ArgumentException("Pinned mob_db.yml has a truncated '- Id:' block at the end of the file.");
+            var id = int.Parse(mobDbYaml[idStart..idEnd].Trim(), CultureInfo.InvariantCulture);
+            var next = mobDbYaml.IndexOf(marker, idEnd, StringComparison.Ordinal);
+            var block = next >= 0 ? mobDbYaml[start..(next + 1)] : mobDbYaml[start..];
+            results.Add(ParseMobBlock(block, id, line));
+            searchFrom = idEnd;
+        }
+        return results;
+    }
+
+    private static MobDefinitionData ParseMobBlock(string block, int mobId, int sourceLine)
+    {
         var name = RequiredScalar(block, "Name");
 
         return new MobDefinitionData(
@@ -206,8 +246,60 @@ internal static class MobDataCompiler
             ReadClass(block),
             ReadRaceGroups(block),
             ReadDrops(block, "Drops"),
-            ReadDrops(block, "MvpDrops"));
+            ReadDrops(block, "MvpDrops"),
+            sourceLine);
     }
+
+    internal sealed record GeneratedMobSymbol(MobDefinitionData Mob, string Symbol);
+
+    internal static IReadOnlyList<GeneratedMobSymbol> CreateGeneratedSymbols(IReadOnlyList<MobDefinitionData> mobs)
+    {
+        var duplicateIds = mobs.GroupBy(mob => mob.Id).Where(group => group.Count() > 1).OrderBy(group => group.Key).ToArray();
+        if (duplicateIds.Length > 0)
+            throw new ArgumentException($"Pinned mob_db.yml contains duplicate effective mob Id(s): {string.Join(", ", duplicateIds.Select(group => group.Key))}.");
+
+        var used = new HashSet<string>(StringComparer.Ordinal);
+        var results = new List<GeneratedMobSymbol>(mobs.Count);
+        foreach (var mob in mobs.OrderBy(mob => mob.Id))
+        {
+            var baseSymbol = SanitizeMobSymbol(mob.AegisName);
+            var symbol = baseSymbol;
+            if (!used.Add(symbol))
+            {
+                symbol = $"{baseSymbol}_{mob.Id.ToString(CultureInfo.InvariantCulture)}";
+                if (!used.Add(symbol))
+                    throw new ArgumentException($"Mob symbol collision could not be disambiguated for Id {mob.Id} ('{mob.AegisName}').");
+            }
+            results.Add(new GeneratedMobSymbol(mob, symbol));
+        }
+        return results;
+    }
+
+    internal static string SanitizeMobSymbol(string aegisName)
+    {
+        var parts = Regex.Matches(aegisName, @"[A-Za-z0-9]+")
+            .Select(match => match.Value)
+            .Where(part => part.Length > 0)
+            .ToArray();
+        var symbol = string.Concat(parts.Select(part => char.ToUpperInvariant(part[0]) + part[1..].ToLowerInvariant()));
+        if (symbol.Length == 0) symbol = "Mob";
+        if (!SyntaxFactsLikeIdentifierStart(symbol[0])) symbol = "Mob" + symbol;
+        return CSharpKeywords.Contains(symbol) ? symbol + "Mob" : symbol;
+    }
+
+    private static bool SyntaxFactsLikeIdentifierStart(char value) => value == '_' || char.IsLetter(value);
+
+    private static readonly HashSet<string> CSharpKeywords = new(StringComparer.Ordinal)
+    {
+        "Abstract", "As", "Base", "Bool", "Break", "Byte", "Case", "Catch", "Char", "Checked",
+        "Class", "Const", "Continue", "Decimal", "Default", "Delegate", "Do", "Double", "Else",
+        "Enum", "Event", "Explicit", "Extern", "False", "Finally", "Fixed", "Float", "For", "Foreach",
+        "Goto", "If", "Implicit", "In", "Int", "Interface", "Internal", "Is", "Lock", "Long", "Namespace",
+        "New", "Null", "Object", "Operator", "Out", "Override", "Params", "Private", "Protected", "Public",
+        "Readonly", "Ref", "Return", "Sbyte", "Sealed", "Short", "Sizeof", "Stackalloc", "Static", "String",
+        "Struct", "Switch", "This", "Throw", "True", "Try", "Typeof", "Uint", "Ulong", "Unchecked", "Unsafe",
+        "Ushort", "Using", "Virtual", "Void", "Volatile", "While", "Record", "Required", "File"
+    };
 
     // Reproduces pinned MobDatabase::parseBodyNode's RaceGroups: resolution (mob.cpp:5291-5317):
     // each entry is a bare pinned key name (never re-prefixed/validated against a fixed bound here -
@@ -547,7 +639,7 @@ internal static class MobDataCompiler
                 .Append(", AttackDelay: ").Append(mob.AttackDelay).Append(", AttackMotion: ").Append(mob.AttackMotion)
                 .Append(", DamageMotion: ").Append(mob.DamageMotion).Append(", BaseExp: ").Append(mob.BaseExp)
                 .Append(", JobExp: ").Append(mob.JobExp).Append(", Mode: ").Append(FormatMode(mob.Mode))
-                .Append(", Source: new WorldSourceInfo(\"rAthena\", \"").Append(commit).Append("\", \"").Append(sourceFile).Append("\", ").Append(sourceLine).Append(')')
+                .Append(", Source: new WorldSourceInfo(\"rAthena\", \"").Append(commit).Append("\", \"").Append(sourceFile).Append("\", ").Append(mob.SourceLine == 0 ? sourceLine : mob.SourceLine).Append(')')
                 .Append(", JapaneseName: ").Append(FormatNullableString(mob.JapaneseName))
                 .Append(", MaxSp: ").Append(mob.Sp).Append(", MvpExp: ").Append(mob.MvpExp)
                 .Append(", Resistance: ").Append(mob.Resistance).Append(", MagicResistance: ").Append(mob.MagicResistance)
@@ -563,6 +655,51 @@ internal static class MobDataCompiler
         }
         output.AppendLine("}");
         return output.ToString();
+    }
+
+    internal static string GenerateMobRegistry(IReadOnlyList<GeneratedMobSymbol> mobs, string commit, string sourceFile)
+    {
+        var ordered = mobs.OrderBy(item => item.Mob.Id).ToArray();
+        var output = new StringBuilder()
+            .AppendLine("// <auto-generated>")
+            .AppendLine("// Generated by Athena.WorldCompiler.")
+            .Append("// Source: ").Append(sourceFile).AppendLine()
+            .Append("// rAthena commit: ").AppendLine(commit)
+            .AppendLine("// Do not edit this file directly.")
+            .AppendLine("// </auto-generated>")
+            .AppendLine("using Athena.Net.MapServer.World;")
+            .AppendLine()
+            .AppendLine("namespace Athena.Net.MapServer.Generated.GameData.Mobs;")
+            .AppendLine()
+            .AppendLine("internal static class GeneratedMobRegistry")
+            .AppendLine("{")
+            .AppendLine("    private static readonly IReadOnlyDictionary<int, MobDefinition> ById = new Dictionary<int, MobDefinition>")
+            .AppendLine("    {");
+        foreach (var item in ordered)
+            output.Append("        [").Append(item.Mob.Id).Append("] = GeneratedMobs.").Append(item.Symbol).AppendLine(",");
+        output
+            .AppendLine("    };")
+            .AppendLine()
+            .AppendLine("    internal static int Count => ById.Count;")
+            .AppendLine("    internal static IEnumerable<int> Ids => ById.Keys;")
+            .AppendLine("    internal static IEnumerable<MobDefinition> All => ById.Values;")
+            .AppendLine("    internal static bool TryGet(int mobId, out MobDefinition mob) => ById.TryGetValue(mobId, out mob!);")
+            .AppendLine("    internal static MobDefinition Get(int mobId) => ById.TryGetValue(mobId, out var mob)")
+            .AppendLine("        ? mob")
+            .AppendLine("        : throw new KeyNotFoundException($\"Unknown generated mob Id {mobId}.\");")
+            .AppendLine("}");
+        return output.ToString();
+    }
+
+    internal static bool IsOwnedGeneratedMobFile(string path, string className, string category)
+    {
+        var name = Path.GetFileName(path);
+        if (!(name == $"{className}.Registry.cs" ||
+              (name.StartsWith($"{className}.{category}.", StringComparison.Ordinal) && name.EndsWith(".cs", StringComparison.Ordinal))))
+            return false;
+        using var reader = new StreamReader(path);
+        return string.Equals(reader.ReadLine(), "// <auto-generated>", StringComparison.Ordinal) &&
+               string.Equals(reader.ReadLine(), "// Generated by Athena.WorldCompiler.", StringComparison.Ordinal);
     }
 
     internal static string GenerateMobSpawns(IReadOnlyList<MobSpawnData> spawns, string mobDefinitionExpression, string commit, string className, string arrayName, string worldNamespace = "Athena.Net.MapServer.Generated.World.Izlude.Academy") =>
@@ -746,6 +883,13 @@ internal static class MobDataCompiler
     }
 
     private static string EscapeForCSharpString(string value) => value.Replace("\\", "\\\\").Replace("\"", "\\\"");
+
+    private static int CountLines(string text, int exclusiveEnd)
+    {
+        var line = 1;
+        for (var i = 0; i < exclusiveEnd; i++) if (text[i] == '\n') line++;
+        return line;
+    }
 
     private static string RequiredScalar(string block, string field)
     {
