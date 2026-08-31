@@ -49,16 +49,16 @@ public sealed class MapTcpServer
 
     private sealed class InMemoryTestWorldRuntime : IWorldRuntime
     {
-        private readonly Dictionary<(string MapId, uint CharacterId), MapPlayerPresence> _presences = [];
+        private readonly Dictionary<(string MapId, uint CharacterId), WorldPlayerPresence> _presences = [];
         private readonly Lock _gate = new();
 
-        public Task<MapPresenceRegistration> RegisterPresenceAsync(string mapId, MapPlayerPresence presence, CancellationToken cancellationToken) =>
+        public Task<WorldPresenceRegistration> RegisterPresenceAsync(string mapId, WorldPlayerPresence presence, CancellationToken cancellationToken) =>
             Task.FromResult(Register(mapId, presence));
 
-        public Task<MapPresenceUnregistration> UnregisterPresenceAsync(string mapId, uint characterId, Guid presenceId, CancellationToken cancellationToken) =>
+        public Task<WorldPresenceUnregistration> UnregisterPresenceAsync(string mapId, uint characterId, Guid presenceId, CancellationToken cancellationToken) =>
             Task.FromResult(Unregister(mapId, characterId, presenceId));
 
-        private MapPresenceRegistration Register(string mapId, MapPlayerPresence presence)
+        private WorldPresenceRegistration Register(string mapId, WorldPlayerPresence presence)
         {
             var normalized = MapName.NormalizeWorld(mapId).ToLowerInvariant();
             var key = (normalized, presence.CharacterId);
@@ -67,31 +67,37 @@ public sealed class MapTcpServer
                 if (!_presences.TryGetValue(key, out var existing))
                 {
                     _presences.Add(key, presence);
-                    return new(normalized, MapPresenceRegistrationStatus.Registered, Count(normalized));
+                    return new("test-partition", normalized, WorldPresenceRegistrationStatus.Registered, Count(normalized));
                 }
                 if (existing.PresenceId != presence.PresenceId)
-                    return new(normalized, MapPresenceRegistrationStatus.Conflict, Count(normalized));
+                    return new("test-partition", normalized, WorldPresenceRegistrationStatus.Conflict, Count(normalized));
                 _presences[key] = presence;
-                return new(normalized, MapPresenceRegistrationStatus.AlreadyRegistered, Count(normalized));
+                return new("test-partition", normalized, WorldPresenceRegistrationStatus.AlreadyRegistered, Count(normalized));
             }
         }
 
-        private MapPresenceUnregistration Unregister(string mapId, uint characterId, Guid presenceId)
+        private WorldPresenceUnregistration Unregister(string mapId, uint characterId, Guid presenceId)
         {
             var normalized = MapName.NormalizeWorld(mapId).ToLowerInvariant();
             var key = (normalized, characterId);
             lock (_gate)
             {
                 if (!_presences.TryGetValue(key, out var existing))
-                    return new(normalized, MapPresenceUnregistrationStatus.AlreadyAbsent, Count(normalized));
+                    return new("test-partition", normalized, WorldPresenceUnregistrationStatus.AlreadyAbsent, Count(normalized));
                 if (existing.PresenceId != presenceId)
-                    return new(normalized, MapPresenceUnregistrationStatus.PresenceMismatch, Count(normalized));
+                    return new("test-partition", normalized, WorldPresenceUnregistrationStatus.PresenceMismatch, Count(normalized));
                 _presences.Remove(key);
-                return new(normalized, MapPresenceUnregistrationStatus.Removed, Count(normalized));
+                return new("test-partition", normalized, WorldPresenceUnregistrationStatus.Removed, Count(normalized));
             }
         }
 
         private int Count(string mapId) => _presences.Keys.Count(key => key.MapId == mapId);
+
+        public Task<WorldMovementResult> MovePlayerAsync(WorldMovementCommand command, CancellationToken cancellationToken) =>
+            Task.FromResult(new WorldMovementResult(WorldMovementStatus.Moved, null));
+
+        public Task<WorldTransferResult> TransferPlayerAsync(WorldTransferCommand command, CancellationToken cancellationToken) =>
+            Task.FromResult(new WorldTransferResult(WorldTransferStatus.Completed, WorldTransferType.SamePartition, null));
     }
 
     public int BoundPort { get; private set; }

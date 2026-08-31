@@ -8,6 +8,7 @@ using Athena.Net.MapServer.World.GeneratedScripts;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Orleans;
+using Athena.Net.World.Contracts;
 
 namespace Athena.Net.MapServer.Startup;
 
@@ -77,11 +78,15 @@ public static class MapServerApp
         // - see MapServerHostingScope's own doc comment for why this is a hand-declared set, never
         // derived from the warp graph or collision-data availability.
         var world = MapServerWorld.Build(gameplayRules, collisionProvider: collisionProvider, rates: mergedConfig.GameplayRates, customsEnabled: mergedConfig.CustomsEnabled, servedMaps: MapServerHostingScope.ServedMaps);
+        var partitionTopologyPath = Environment.GetEnvironmentVariable("ATHENA_WORLD_PARTITIONS_PATH")
+            ?? Path.Combine("conf", "world_partitions.json");
+        var partitionResolver = WorldPartitionTopologyLoader.Load(partitionTopologyPath, MapServerHostingScope.ServedMaps);
+        WorldPartitionActorRanges.Validate(WorldPartitionActorRanges.Development);
         var hostBuilder = Host.CreateApplicationBuilder(args);
         hostBuilder.UseOrleansClient();
         using var orleansHost = hostBuilder.Build();
         await orleansHost.StartAsync(cts.Token);
-        var worldRuntime = new OrleansWorldRuntime(orleansHost.Services.GetRequiredService<IClusterClient>());
+        var worldRuntime = new OrleansWorldRuntime(orleansHost.Services.GetRequiredService<IClusterClient>(), partitionResolver);
         var connector = new CharServerConnector(configStore);
         var mapServer = new MapTcpServer(configStore, connector, world, worldRuntime);
 

@@ -40,6 +40,7 @@ var secretsPath = Path.Combine(repoRoot, "solutionfiles", "secrets", "secret.jso
 // CWD is the repo root, so it must supply the absolute path it already discovered instead of
 // relying on that coincidence (see MapServerApp.RunAsync's own doc comment on this precedence).
 var mapCachePath = Path.Combine(repoRoot, "legacy", "rathena", "db", "map_cache.dat");
+var worldPartitionsPath = Path.Combine(repoRoot, "conf", "world_partitions.json");
 
 var sqlPassword = builder.AddParameter("sql-edge-password", secret: true);
 var sql = builder.AddSqlServer("sql", sqlPassword)
@@ -126,6 +127,7 @@ builder.AddProject("map-server", "../MapServer/MapServer.csproj")
     .WithEnvironment("OTEL_LOGS_EXPORTER", "otlp")
     .WithEnvironment("OTEL_METRICS_EXPORTER", "otlp")
     .WithEnvironment("OTEL_TRACES_EXPORTER", "otlp")
+    .WithEnvironment("ATHENA_WORLD_PARTITIONS_PATH", worldPartitionsPath)
     .WithReference(worldCluster.AsClient())
     .WaitFor(world)
     .WithArgs(

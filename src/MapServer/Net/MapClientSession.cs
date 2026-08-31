@@ -167,6 +167,8 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     // It is independent of Ragnarok packets, transport endpoints, and Orleans activation identity.
     private Guid? _presenceId;
     private string? _presenceMapId;
+    private Guid? _pendingTransferId;
+    private (string SourceMap, string DestinationMap, ushort X, ushort Y)? _pendingTransfer;
     private PlayerSessionLifecycle _playerLifecycle = PlayerSessionLifecycle.Unauthenticated;
     private readonly object _playerPresenceGate = new();
     private PlayerAuthAppearance _authAppearance = new();
@@ -1204,6 +1206,26 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
             $"[iRO MAP DEBUG] Movement request from=({fromX},{fromY}) target=({request.TargetX},{request.TargetY})");
 
         var resolved = ResolveMovementTarget(fromX, fromY, request.TargetX, request.TargetY);
+        if (_distributedWorld is not null)
+        {
+            var presenceId = _presenceId ?? throw new InvalidOperationException("Authenticated movement has no world presence identity.");
+            var worldMove = await _distributedWorld.MovePlayerAsync(
+                new WorldMovementCommand(
+                    presenceId,
+                    _charId,
+                    _mapName,
+                    fromX,
+                    fromY,
+                    resolved.TargetX,
+                    resolved.TargetY,
+                    resolved.Path.Select(cell => new WorldPosition(cell.X, cell.Y)).ToArray()),
+                cancellationToken);
+            if (worldMove.Status != WorldMovementStatus.Moved)
+            {
+                MapLogger.Warning($"World authority rejected movement status={worldMove.Status} map='{_mapName}' from=({fromX},{fromY}) target=({resolved.TargetX},{resolved.TargetY}).");
+                return;
+            }
+        }
         var now = _timeProvider.GetUtcNow();
 
         // Warp/OnTouch must fire only when the destination cell is actually reached over real
@@ -1280,6 +1302,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     private async Task SendSameServerWarpAsync(WarpDefinition warp, CancellationToken cancellationToken)
     {
         _scriptExecutionSession = null;
+        var authoritativeSourceMap = _presenceMapId ?? _mapName;
         await LeavePlayerWorldAsync(PlayerSessionLifecycle.AuthenticatedButNotWorldVisible, cancellationToken);
         _visibleActorIds.Clear();
         foreach (var action in warp.OrderedActions)
@@ -1314,6 +1337,8 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
                 TeleportTo(warpAction.Map, resolvedX, resolvedY);
             }
         }
+
+        await TransferDistributedPresenceAsync(authoritativeSourceMap, _mapName, _x, _y, cancellationToken);
 
         var response = IroMapTransitionPackets.BuildSameServerMapChange(_mapName, _x, _y);
         MapLogger.Info(
@@ -2382,8 +2407,10 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         var map = execution.Evaluate(warp.Map);
         if (string.IsNullOrWhiteSpace(map)) throw new InvalidOperationException("Warp map expression evaluated to an empty value.");
         MapLogger.Info($"[iRO MAP DEBUG] Script warp entity='{execution.EntityId}' map='{_mapName}' -> map='{map}' x={warp.X} y={warp.Y}");
+        var sourceMap = _presenceMapId ?? _mapName;
         await LeavePlayerWorldAsync(PlayerSessionLifecycle.AuthenticatedButNotWorldVisible, cancellationToken);
         TeleportTo(map, warp.X, warp.Y); _positionDirty = true; _visibleActorIds.Clear();
+        await TransferDistributedPresenceAsync(sourceMap, _mapName, _x, _y, cancellationToken);
         await WriteAsync(IroMapTransitionPackets.BuildSameServerMapChange(_mapName, _x, _y), cancellationToken);
         await PersistPositionIfDirtyAsync(cancellationToken);
     }
@@ -2527,8 +2554,10 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     async Task INpcScriptHost.WarpAsync(string map, ushort x, ushort y, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(map)) throw new InvalidOperationException("Generated script warp map is empty.");
+        var sourceMap = _presenceMapId ?? _mapName;
         await LeavePlayerWorldAsync(PlayerSessionLifecycle.AuthenticatedButNotWorldVisible, cancellationToken);
         TeleportTo(map, x, y); _positionDirty = true; _visibleActorIds.Clear();
+        await TransferDistributedPresenceAsync(sourceMap, _mapName, _x, _y, cancellationToken);
         await WriteAsync(IroMapTransitionPackets.BuildSameServerMapChange(map, x, y), cancellationToken);
         await PersistPositionIfDirtyAsync(cancellationToken);
     }
@@ -2889,9 +2918,9 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
             {
                 var registration = await _distributedWorld.RegisterPresenceAsync(
                     presence.MapName,
-                    new MapPlayerPresence(presenceId, presence.ActorId, presence.CharacterId, presence.X, presence.Y),
+                    new WorldPlayerPresence(presenceId, presence.ActorId, presence.CharacterId, presence.MapName, presence.X, presence.Y),
                     cancellationToken);
-                if (registration.Status == MapPresenceRegistrationStatus.Conflict)
+                if (registration.Status == WorldPresenceRegistrationStatus.Conflict)
                     throw new InvalidOperationException($"Character {presence.CharacterId} is already present in map authority '{registration.MapId}'.");
             }
             catch
@@ -2953,45 +2982,79 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     // presence in the registry/old map's spatial index forever with no lifecycle path back out.
     private async Task LeavePlayerWorldAsync(PlayerSessionLifecycle after, CancellationToken cancellationToken)
     {
-        uint actorId;
-        uint characterId;
-        Guid presenceId;
-        string presenceMapId;
+        uint actorId = 0;
+        Guid? presenceId;
+        string? presenceMapId;
+        bool wasWorldVisible;
         lock (_playerPresenceGate)
         {
-            if (_playerLifecycle != PlayerSessionLifecycle.WorldVisible)
+            wasWorldVisible = _playerLifecycle == PlayerSessionLifecycle.WorldVisible;
+            if (!wasWorldVisible && after != PlayerSessionLifecycle.Closed)
             {
-                if (after == PlayerSessionLifecycle.Closed) _playerLifecycle = after;
                 return;
             }
             _playerLifecycle = PlayerSessionLifecycle.ChangingMapOrUnregistering;
             actorId = _accountId;
-            characterId = _charId;
-            presenceId = _presenceId ?? throw new InvalidOperationException("World-visible player has no logical presence identity.");
-            presenceMapId = _presenceMapId ?? throw new InvalidOperationException("World-visible player has no registered map identity.");
+            presenceId = _presenceId;
+            presenceMapId = _presenceMapId;
         }
 
         try
         {
-            try
-            {
+            if (wasWorldVisible)
                 await _playerVisibility.UnregisterAsync(actorId, CancellationToken.None);
-            }
-            finally
-            {
-                if (_distributedWorld is not null)
-                    await _distributedWorld.UnregisterPresenceAsync(presenceMapId, characterId, presenceId, CancellationToken.None);
-            }
+            // Map changes preserve the logical presence and transfer it separately. Only the end
+            // of the connected world session unregisters distributed ownership.
+            if (after == PlayerSessionLifecycle.Closed && _distributedWorld is not null && presenceId is { } id && presenceMapId is not null)
+                await _distributedWorld.UnregisterPresenceAsync(presenceMapId, _charId, id, CancellationToken.None);
         }
         finally
         {
             lock (_playerPresenceGate)
             {
                 _presence = null;
-                _presenceId = null;
-                _presenceMapId = null;
+                if (after == PlayerSessionLifecycle.Closed)
+                {
+                    _presenceId = null;
+                    _presenceMapId = null;
+                    _pendingTransferId = null;
+                    _pendingTransfer = null;
+                }
                 _playerLifecycle = after;
             }
+        }
+    }
+
+    private async Task TransferDistributedPresenceAsync(string sourceMap, string destinationMap, ushort x, ushort y, CancellationToken cancellationToken)
+    {
+        if (_distributedWorld is null) { _presenceMapId = destinationMap; return; }
+        var presenceId = _presenceId ?? throw new InvalidOperationException("Map transfer has no logical presence identity.");
+        var operation = (WorldMapId.Normalize(sourceMap), WorldMapId.Normalize(destinationMap), x, y);
+        if (_pendingTransfer != operation)
+        {
+            _pendingTransfer = operation;
+            _pendingTransferId = Guid.NewGuid();
+        }
+
+        var result = await _distributedWorld.TransferPlayerAsync(
+            new WorldTransferCommand(
+                _pendingTransferId!.Value,
+                presenceId,
+                _charId,
+                operation.Item1,
+                operation.Item2,
+                x,
+                y,
+                string.Empty),
+            cancellationToken);
+        if (result.Status is not (WorldTransferStatus.Completed or WorldTransferStatus.AlreadyCompleted))
+            throw new InvalidOperationException($"World transfer failed status={result.Status} source='{sourceMap}' destination='{destinationMap}'.");
+
+        lock (_playerPresenceGate)
+        {
+            _presenceMapId = destinationMap;
+            _pendingTransferId = null;
+            _pendingTransfer = null;
         }
     }
 
