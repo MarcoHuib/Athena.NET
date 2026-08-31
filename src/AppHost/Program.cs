@@ -96,6 +96,7 @@ var charDb = sql.AddDatabase("CharDb");
 //
 const int worldSiloPort = 11111;
 const int worldGatewayPort = 30000;
+var worldGatewayAddress = $"127.0.0.1:{worldGatewayPort}";
 
 var worldCluster = builder
     .AddOrleans("athena-world-cluster")
@@ -292,7 +293,7 @@ builder
     // cross-resource TargetPort substitution.
     .WithEnvironment(
         "Orleans__Clustering__Gateways__0",
-        $"127.0.0.1:{worldGatewayPort}")
+        worldGatewayAddress)
 
     .WaitFor(world)
 
