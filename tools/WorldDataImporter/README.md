@@ -1,5 +1,23 @@
 # WorldDataImporter
 
+## Generate complete maps and ordinary warps
+
+```sh
+dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- generate-maps --rathena-root legacy/rathena --rathena-commit e985006171d2eb320ee512a653f4c83aea3d81b6 --output src/MapServer/Generated/World
+dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- generate-warps --rathena-root legacy/rathena --rathena-commit e985006171d2eb320ee512a653f4c83aea3d81b6 --output src/MapServer/Generated/World
+```
+
+`generate-maps` uses the shared `RathenaMapCacheLayers.Merge` authority (import → Renewal → base,
+first match wins), emits 1,296 effective maps with exact dimensions/cells and layer provenance,
+and builds `GeneratedMapRegistry`. Cells are deterministic zlib/base64 C# payloads, so normal
+production startup needs no rAthena cache file.
+
+`generate-warps` uses the same parser/converter as analysis, fails on any unparsed declaration or
+unresolved source/destination map, emits all 4,468 ordinary warps under source-map modules with
+exact file/line provenance, and builds `GeneratedWarpRegistry` as an index. Cleanup requires both
+the exact generated filename family and the standard auto-generated header; `*World.cs`, NPC,
+MobSpawns, and Scripts content is never owned by these commands.
+
 `WorldDataImporter` is the compatibility CLI for the emerging Athena world
 compiler. Its pipeline is source loading -> hand-written lexer -> recursive-
 descent syntax tree -> semantic analysis -> lowering -> deterministic C#. The

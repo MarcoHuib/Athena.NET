@@ -20,7 +20,6 @@ COPY --from=build /app/out/ ./
 # individual map cells into generated code. Only the one committed data file is copied - never the
 # full submodule checkout (scripts/tools/source), keeping the image small and avoiding any
 # temptation to run rAthena code inside this container.
-COPY legacy/rathena/db/map_cache.dat ./legacy/rathena/db/map_cache.dat
 RUN mkdir -p /app/conf
 RUN chown -R 1000:1000 /app
 USER 1000

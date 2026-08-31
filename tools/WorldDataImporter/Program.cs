@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.IO.Compression;
 using System.Text.Json;
 using Athena.WorldCompiler.Generation;
 using Athena.WorldCompiler.Lowering;
@@ -7,7 +8,7 @@ using Athena.WorldCompiler.Semantics;
 
 return await WorldDataImporterCli.RunAsync(args);
 
-internal static class WorldDataImporterCli
+internal static partial class WorldDataImporterCli
 {
     public static async Task<int> RunAsync(string[] args)
     {
@@ -30,6 +31,8 @@ internal static class WorldDataImporterCli
                 "generate-mobs" => await GenerateMobsAsync(args[1..]),
                 "compile-mob-spawn" => await CompileMobSpawnAsync(args[1..]),
                 "generate-mob-spawns" => await GenerateMobSpawnsAsync(args[1..]),
+                "generate-maps" => await GenerateMapsAsync(args[1..]),
+                "generate-warps" => await GenerateWarpsAsync(args[1..]),
                 "compile-quest-drop" => await CompileQuestDropAsync(args[1..]),
                 "compile-item" => await CompileItemAsync(args[1..]),
                 "compile-map-collision" => await CompileMapCollisionAsync(args[1..]),
@@ -566,7 +569,7 @@ internal static class WorldDataImporterCli
         var fileCount = 0;
         foreach (var mapGroup in byMap)
         {
-            var pascalMap = PascalCaseMapName(mapGroup.Key);
+            var pascalMap = MapModuleNaming.PascalCase(mapGroup.Key);
             var mapNamespace = $"{namespaceRoot}.{pascalMap}";
             var className = $"{pascalMap}MobSpawns";
             var source = MobDataCompiler.GenerateMobSpawnsForMap(mapGroup.Select(item => (item.Spawn, item.MobDefinitionExpression)).ToArray(), commit, className, mapNamespace);
@@ -584,10 +587,6 @@ internal static class WorldDataImporterCli
     // "int_land03" -> "IntLand03") - splits on '_' only, since rAthena map names never contain
     // other separators; a numeric suffix glued to the preceding word (e.g. "fild08") is NOT
     // further split, matching how "prt_fild08d" is one logical instanced-duplicate token.
-    private static string PascalCaseMapName(string mapName) =>
-        string.Concat(mapName.Split('_', StringSplitOptions.RemoveEmptyEntries).Select(part => char.ToUpperInvariant(part[0]) + part[1..]));
-
-
     // Task's own generation summary shape (task section 38): "Pinned ordinary mob-spawn
     // declarations discovered" / "Generated" / "Mob definitions resolved" / "Valid map
     // dependencies" / "Invalid map dependencies" / "Generated files". The three known evt_zombie
@@ -614,21 +613,6 @@ internal static class WorldDataImporterCli
     // matches the pinned "prt_fild08{,a,b,c,d}" family's established capitalization convention,
     // the SAME one the retired hand-authored PrtFild08MobSpawns.cs used
     // ("PrtFild08"/"PrtFild08A"/"PrtFild08B"/"PrtFild08C"/"PrtFild08D").
-    private static readonly IReadOnlyDictionary<string, (string FolderPath, string ClassPrefix, string NamespaceSuffix, string ArrayName)> MapFamilies =
-        new Dictionary<string, (string, string, string, string)>(StringComparer.Ordinal)
-        {
-            ["prt_fild08"] = ("PrtFild08", "PrtFild08", "PrtFild08", "PrtFild08"),
-            ["prt_fild08a"] = ("PrtFild08", "PrtFild08", "PrtFild08", "PrtFild08A"),
-            ["prt_fild08b"] = ("PrtFild08", "PrtFild08", "PrtFild08", "PrtFild08B"),
-            ["prt_fild08c"] = ("PrtFild08", "PrtFild08", "PrtFild08", "PrtFild08C"),
-            ["prt_fild08d"] = ("PrtFild08", "PrtFild08", "PrtFild08", "PrtFild08D"),
-            ["int_land"] = ("Izlude/Academy", "Academy", "Izlude.Academy", "IntLand"),
-            ["int_land01"] = ("Izlude/Academy", "Academy", "Izlude.Academy", "IntLand01"),
-            ["int_land02"] = ("Izlude/Academy", "Academy", "Izlude.Academy", "IntLand02"),
-            ["int_land03"] = ("Izlude/Academy", "Academy", "Izlude.Academy", "IntLand03"),
-            ["int_land04"] = ("Izlude/Academy", "Academy", "Izlude.Academy", "IntLand04"),
-        };
-
     // Map-oriented placement (ai/world-data.md's "Generated mob spawns" section): one canonical
     // spawn file per map/world-family module, never per pinned source file - if several source
     // files target the same map, their declarations are merged into that one map's file
@@ -650,14 +634,14 @@ internal static class WorldDataImporterCli
     {
         if (mapResolves)
         {
-            if (MapFamilies.TryGetValue(map, out var family))
-                return new MapPlacement(family.FolderPath, family.ClassPrefix, $"Athena.Net.MapServer.Generated.World.{family.NamespaceSuffix}", family.ArrayName, true);
-            var pascal = PascalCaseMapName(map);
+            if (MapModuleNaming.TryGetFamily(map, out var family))
+                return new MapPlacement(family.FolderPath, family.ClassName, family.Namespace, family.ArrayName, true);
+            var pascal = MapModuleNaming.PascalCase(map);
             return new MapPlacement(pascal, pascal, $"Athena.Net.MapServer.Generated.World.{pascal}", pascal, true);
         }
         if (map.StartsWith("evt_", StringComparison.Ordinal) && everyDeclarationIsFromEventsDirectory)
         {
-            var pascal = PascalCaseMapName(map);
+            var pascal = MapModuleNaming.PascalCase(map);
             return new MapPlacement($"Events/{pascal}", pascal, $"Athena.Net.MapServer.Generated.World.Events.{pascal}", pascal, false);
         }
         throw new ArgumentException($"generate-mob-spawns found spawn declaration(s) targeting unresolved map '{map}' that do not qualify for the known event-map placement (source file under npc/events/ AND a map token starting with \"evt_\") - this is a genuinely new unresolved map dependency and must be investigated, not silently classified.");
@@ -750,7 +734,7 @@ internal static class WorldDataImporterCli
             if (!resolves) invalidMapDeclarationCount += spawns.Count;
             var everyDeclarationFromEvents = spawns.All(spawn => spawn.SourceFile.Contains("/npc/events/", StringComparison.Ordinal));
             var placement = ClassifyMap(map, resolves, everyDeclarationFromEvents);
-            if (!MapFamilies.ContainsKey(map))
+            if (!MapModuleNaming.TryGetFamily(map, out _))
             {
                 var folder = placement.FolderPath;
                 var suffix = 2;
@@ -1063,6 +1047,8 @@ internal static class WorldDataImporterCli
         Console.Error.WriteLine("WorldDataImporter compile-progression --rathena-root <folder> --rathena-commit <sha> --output <MapServer/Generated/Progression directory> (compatibility alias)");
         Console.Error.WriteLine("WorldDataImporter compile-mob-spawn --rathena-root <folder> --rathena-commit <sha> --mob-id <id> --name <spawn-name> --spawn-file <path> [--exclude-map <map>] --class-name <n> --constant-name <n> --spawn-class-name <n> --spawn-array-name <n> --output-definition <Mob.cs> --output-spawns <MobSpawns.cs>");
         Console.Error.WriteLine("WorldDataImporter generate-mob-spawns --rathena-root <folder> [--rathena-commit <sha>] --output <MapServer/Generated/World directory>");
+        Console.Error.WriteLine("WorldDataImporter generate-maps --rathena-root <folder> [--rathena-commit <sha>] --output <MapServer/Generated/World directory>");
+        Console.Error.WriteLine("WorldDataImporter generate-warps --rathena-root <folder> [--rathena-commit <sha>] --output <MapServer/Generated/World directory>");
         Console.Error.WriteLine("WorldDataImporter compile-quest-drop --rathena-root <folder> --rathena-commit <sha> --quest-id <id> --output <QuestDrops.cs>");
         Console.Error.WriteLine("WorldDataImporter compile-item --rathena-root <folder> --rathena-commit <sha> --item-id <id> [--item-db-file <path>] --class-name <n> --constant-name <n> --output <Item.cs>");
         Console.Error.WriteLine("WorldDataImporter compile-map-collision --input <local.gat> --map <name> --output <local.athmap>");

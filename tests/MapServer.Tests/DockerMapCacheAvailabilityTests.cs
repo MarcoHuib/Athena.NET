@@ -36,12 +36,12 @@ public sealed class DockerMapCacheAvailabilityTests
     }
 
     [Fact]
-    public void MapServerDockerfile_CopiesTheRealMapCacheFile_AtTheRepositoryRelativePath()
+    public void MapServerDockerfile_DoesNotCopyRuntimeMapCache()
     {
         var repository = FindRepositoryRoot();
         var dockerfile = File.ReadAllText(Path.Combine(repository, "src/MapServer/Dockerfile"));
 
-        Assert.Contains("COPY legacy/rathena/db/map_cache.dat ./legacy/rathena/db/map_cache.dat", dockerfile);
+        Assert.DoesNotContain("COPY legacy/rathena/db/map_cache.dat", dockerfile);
     }
 
     [Fact]
@@ -50,7 +50,7 @@ public sealed class DockerMapCacheAvailabilityTests
         var repository = FindRepositoryRoot();
         var config = File.ReadAllText(Path.Combine(repository, "conf/docker/map_athena.conf"));
 
-        Assert.Contains("map_cache_path: legacy/rathena/db/map_cache.dat", config);
+        Assert.DoesNotContain("\nmap_cache_path:", config);
     }
 
     [Fact]
@@ -64,6 +64,6 @@ public sealed class DockerMapCacheAvailabilityTests
         var repository = FindRepositoryRoot();
         var config = File.ReadAllText(Path.Combine(repository, "conf/templates/map_athena.conf"));
 
-        Assert.Contains("map_cache_path: legacy/rathena/db/map_cache.dat", config);
+        Assert.DoesNotContain("\nmap_cache_path:", config);
     }
 }

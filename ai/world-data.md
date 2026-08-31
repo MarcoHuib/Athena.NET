@@ -1,5 +1,35 @@
 # Athena.NET world data
 
+## Complete generated maps and ordinary warps
+
+Production world geometry and ordinary declarative warps are generated C# under
+`src/MapServer/Generated/World`. The pinned import inputs are rAthena commit
+`e985006171d2eb320ee512a653f4c83aea3d81b6`, its layered map caches, and
+`npc/**/*.txt`.
+
+`RathenaMapCacheLayers.Merge` remains the single effective-map authority. Its
+first-match-wins precedence is import, then Renewal, then base. The pinned tree has no import
+cache, 8 Renewal entries, and 1,288 base entries, producing 1,296 effective maps. Each map module
+stores exact dimensions and raw GAT cell ordering as a deterministic zlib/base64 C# payload plus
+repository/commit/layer/file provenance. `GeneratedMapRegistry` is the global case-insensitive
+index. Normal MapServer startup constructs collision maps from it without reading rAthena files.
+
+The shared `RathenaSourceParser` and `WorldEntityConverter.ConvertDeclarativeWarps` pipeline models
+the pinned ordinary syntax as source map/X/Y/direction, identifier, radius X/Y, and destination
+map/X/Y. No optional fields occur in the 4,468 pinned declarations. Each has one source-map-owned
+`WarpDefinition` with exact file/line provenance. `GeneratedWarpRegistry` indexes those canonical
+arrays. Runtime filters it through `MapServerHostingScope.ServedMaps`, so unserved maps stay inert.
+
+```sh
+dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- generate-maps --rathena-root legacy/rathena --rathena-commit e985006171d2eb320ee512a653f4c83aea3d81b6 --output src/MapServer/Generated/World
+dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- generate-warps --rathena-root legacy/rathena --rathena-commit e985006171d2eb320ee512a653f4c83aea3d81b6 --output src/MapServer/Generated/World
+```
+
+This completes map production coverage (1,296/1,296) and ordinary-warp production coverage
+(4,468/4,468), independently of incomplete NPC, shop, mapflag, quest, instance, and other domains.
+Older direct-runtime-map-cache discussion below is implementation history superseded for normal
+production startup by this generated path.
+
 ## Runtime architecture
 
 MapServer's default world is compiled C#. It does not scan `data/world`, load

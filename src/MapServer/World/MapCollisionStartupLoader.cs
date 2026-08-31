@@ -1,6 +1,7 @@
 using Athena.Net.MapServer.Config;
 using Athena.Net.MapServer.Gameplay.Rules;
 using Athena.Net.MapServer.Logging;
+using Athena.Net.MapServer.Generated.World;
 using Athena.Rathena.Data;
 
 namespace Athena.Net.MapServer.World;
@@ -26,13 +27,11 @@ public static class MapCollisionStartupLoader
     public static IMapCollisionProvider Load(IReadOnlyList<MapCollisionArtifactConfig> artifacts, string? mapCachePath = null, RagnarokRuleSet ruleSet = RagnarokRuleSet.Renewal)
     {
         if (mapCachePath is { Length: > 0 })
-        {
             return LoadFromMapCache(mapCachePath, ruleSet);
-        }
 
         if (artifacts.Count == 0)
         {
-            return EmptyMapCollisionProvider.Instance;
+            return GeneratedMapCollisionProvider.Instance;
         }
 
         return LoadFromArtifacts(artifacts);

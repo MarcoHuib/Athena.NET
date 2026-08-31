@@ -13,7 +13,7 @@ public sealed class WorldMapRegistryTests
         // 3 travel-corridor doors (izlude-prontera-travel-trace.txt): izlude_d<->prt_fild08d (2,
         // one per direction) and prt_fild08d->prontera (1, one-way in pinned source - see
         // ai/world-data.md).
-        Assert.Equal(13, registry.StaticWarpCount);
+        Assert.Equal(4468, registry.StaticWarpCount);
         // 35 = the full 5-map tutorial family (base iz_int/int_land + 01..04), not just the 01..04
         // instanced variants: 2 Wounded Swordsman states x 5 maps (iz_int/01/02/03/04) + Captain
         // Carocc x 5 (int_land/01/02/03/04) + Lumin x 5 + Sailor x 5 (int_land/01/02/03/04) +

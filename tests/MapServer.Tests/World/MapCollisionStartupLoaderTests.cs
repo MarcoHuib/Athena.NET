@@ -112,11 +112,11 @@ public sealed class MapCollisionStartupLoaderTests
     }
 
     [Fact]
-    public void Load_NoArtifacts_ReturnsEmptyProvider()
+    public void Load_NoArtifacts_ReturnsCompleteGeneratedProvider()
     {
         var provider = MapCollisionStartupLoader.Load([]);
 
-        Assert.Same(EmptyMapCollisionProvider.Instance, provider);
+        Assert.True(provider.TryGetMap("prontera", out _));
     }
 
     [Fact]
