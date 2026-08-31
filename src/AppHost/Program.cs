@@ -1,4 +1,3 @@
-using Aspire.Hosting.ApplicationModel;
 using System.Text.Json;
 
 if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("ASPNETCORE_URLS")))
@@ -40,50 +39,18 @@ var builder = DistributedApplication.CreateBuilder(args);
 
 var repoRoot = FindRepoRoot() ?? Directory.GetCurrentDirectory();
 
-var loginConfigPath = Path.Combine(
-    repoRoot,
-    "conf",
-    "login_athena.conf");
+var loginConfigPath = Path.Combine(repoRoot, "conf", "login_athena.conf");
+var charConfigPath = Path.Combine(repoRoot, "conf", "char_athena.conf");
+var mapConfigPath = Path.Combine(repoRoot, "conf", "map_athena.conf");
+var interConfigPath = Path.Combine(repoRoot, "conf", "inter_athena.conf");
+var subnetConfigPath = Path.Combine(repoRoot, "conf", "subnet_athena.conf");
+var loginMsgPath = Path.Combine(repoRoot, "conf", "msg_conf", "login_msg.conf");
+var secretsPath = Path.Combine(repoRoot, "solutionfiles", "secrets", "secret.json");
 
-var charConfigPath = Path.Combine(
-    repoRoot,
-    "conf",
-    "char_athena.conf");
-
-var mapConfigPath = Path.Combine(
-    repoRoot,
-    "conf",
-    "map_athena.conf");
-
-var interConfigPath = Path.Combine(
-    repoRoot,
-    "conf",
-    "inter_athena.conf");
-
-var subnetConfigPath = Path.Combine(
-    repoRoot,
-    "conf",
-    "subnet_athena.conf");
-
-var loginMsgPath = Path.Combine(
-    repoRoot,
-    "conf",
-    "msg_conf",
-    "login_msg.conf");
-
-var secretsPath = Path.Combine(
-    repoRoot,
-    "solutionfiles",
-    "secrets",
-    "secret.json");
-
-// MapServer's configured map_cache_path
-// (legacy/rathena/db/map_cache.dat) is CWD-relative and only
-// resolves correctly when the process's working directory happens
-// to be the repository root.
-//
-// Aspire's AppHost does not guarantee that MapServer's child-process
-// CWD is the repository root, so pass the absolute path explicitly.
+// MapServer's configured map_cache_path is CWD-relative.
+// Aspire does not guarantee that the MapServer child process starts
+// with the repository root as its working directory, so pass the
+// already discovered absolute path explicitly.
 var mapCachePath = Path.Combine(
     repoRoot,
     "legacy",
@@ -112,69 +79,79 @@ var sql = builder
 var loginDb = sql.AddDatabase("LoginDb");
 var charDb = sql.AddDatabase("CharDb");
 
-// Logical Orleans cluster.
 //
-// This is deliberately named differently from the actual
-// Athena.World process:
+// Orleans development cluster
 //
-// athena-world-cluster
-// ├── silo   -> athena-world
-// └── client -> map-server
+// For the current single-silo development setup we deliberately
+// use predictable direct Orleans ports.
+//
+// Aspire.Hosting.Orleans models its Orleans endpoints as proxied
+// endpoints internally as a DCP workaround, but Orleans traffic
+// itself must not use that proxy.
+//
+// Therefore:
+// - the Aspire proxy may still get its own dynamic Port;
+// - Athena.World listens directly on TargetPort 11111/30000;
+// - MapServer connects directly to 127.0.0.1:30000.
+//
+const int worldSiloPort = 11111;
+const int worldGatewayPort = 30000;
+
 var worldCluster = builder
     .AddOrleans("athena-world-cluster")
     .WithDevelopmentClustering();
 
-// Athena.World is the Orleans silo.
-//
-// Development clustering currently runs World and MapServer
-// on the same development machine. Advertise loopback so that
-// MapServer can connect directly to the Orleans gateway listener.
-//
-// This is important because Aspire models the Orleans endpoints
-// as proxied endpoints internally, but Orleans traffic must NOT
-// go through that DCP proxy.
 var world = builder
     .AddProject(
         "athena-world",
         "../WorldServer/Athena.World/Athena.World.csproj")
+
+    // Adds the Orleans silo configuration and creates the
+    // "orleans-silo" and "orleans-gateway" endpoints.
     .WithReference(worldCluster)
-    .WithEnvironment(
-        "DOTNET_ENVIRONMENT",
-        "Development")
+
+    // Update the already-created Orleans silo endpoint.
+    // Keep Aspire's proxy model intact, but make the actual
+    // Orleans listener port deterministic.
+    .WithEndpoint(
+        "orleans-silo",
+        endpoint =>
+        {
+            endpoint.TargetPort = worldSiloPort;
+        })
+
+    // Same for the client-facing Orleans gateway.
+    //
+    // IMPORTANT:
+    // TargetPort = actual Athena.World Orleans listener.
+    // Port       = Aspire/DCP proxy port, which we intentionally ignore.
+    .WithEndpoint(
+        "orleans-gateway",
+        endpoint =>
+        {
+            endpoint.TargetPort = worldGatewayPort;
+        })
+
+    // Development cluster runs on this host, so advertise loopback.
     .WithEnvironment(
         "Orleans__Endpoints__AdvertisedIPAddress",
         "127.0.0.1")
+
+    .WithEnvironment(
+        "DOTNET_ENVIRONMENT",
+        "Development")
+
     .WithEnvironment(
         "OTEL_EXPORTER_OTLP_ENDPOINT",
         "http://localhost:4317")
+
     .WithEnvironment(
         "OTEL_EXPORTER_OTLP_PROTOCOL",
         "grpc")
+
     .WithEnvironment(
         "OTEL_SERVICE_NAME",
         "athena-world");
-
-// Aspire.Hosting.Orleans creates the "orleans-gateway"
-// endpoint automatically for the silo.
-//
-// IMPORTANT:
-// EndpointProperty.Port is the Aspire/DCP proxy port.
-// EndpointProperty.TargetPort is the actual port on which
-// the Orleans silo gateway listens.
-//
-// Orleans must connect directly to TargetPort.
-//
-// Example:
-//
-// Aspire proxy port : 54078   <- DO NOT USE
-// Orleans Gateway  : 54081   <- USE THIS
-var worldGatewayEndpoint =
-    world.GetEndpoint("orleans-gateway");
-
-var worldGateway =
-    ReferenceExpression.Create(
-        $"127.0.0.1:" +
-        $"{worldGatewayEndpoint.Property(EndpointProperty.TargetPort)}");
 
 builder
     .AddProject(
@@ -304,23 +281,19 @@ builder
         "OTEL_TRACES_EXPORTER",
         "otlp")
 
-    // Configure MapServer as a client of the same logical
-    // Orleans cluster as Athena.World.
+    // Gives MapServer the same ClusterId, ServiceId and
+    // development clustering configuration as Athena.World.
     .WithReference(worldCluster.AsClient())
 
     // Development clustering uses StaticGatewayListProvider.
     //
-    // Feed it the actual Orleans listener port, NOT the
-    // Aspire/DCP proxy port.
-    //
-    // Runtime result should look like:
-    //
-    // Orleans__Clustering__Gateways__0=127.0.0.1:<target-port>
+    // Use a plain value here rather than a ReferenceExpression.
+    // This deliberately bypasses Aspire's DCP proxy and avoids
+    // cross-resource TargetPort substitution.
     .WithEnvironment(
         "Orleans__Clustering__Gateways__0",
-        worldGateway)
+        $"127.0.0.1:{worldGatewayPort}")
 
-    // Preserve startup ordering as well.
     .WaitFor(world)
 
     .WithArgs(
@@ -357,8 +330,7 @@ static void EnsureSqlEdgePassword()
     throw new InvalidOperationException(
         "Missing SQL Edge SA password. " +
         "Set Parameters__sql-edge-password or " +
-        "SqlServer.SaPassword in " +
-        "solutionfiles/secrets/secret.json.");
+        "SqlServer.SaPassword in solutionfiles/secrets/secret.json.");
 }
 
 static bool TryReadSqlPasswordFromSecrets(
@@ -378,11 +350,8 @@ static bool TryReadSqlPasswordFromSecrets(
         return false;
     }
 
-    using var stream =
-        File.OpenRead(secretsPath);
-
-    using var document =
-        JsonDocument.Parse(stream);
+    using var stream = File.OpenRead(secretsPath);
+    using var document = JsonDocument.Parse(stream);
 
     if (!document.RootElement.TryGetProperty(
             "SqlServer",
