@@ -69,6 +69,21 @@ internal static partial class WorldEntityConverter
         return new(entities.OrderBy(item => item.Id, StringComparer.Ordinal).ToArray(), unsupported);
     }
 
+    // Canonical ordinary `warp` conversion used by both repository analysis and complete
+    // production generation. WARPNPC script actors are a separate domain and are intentionally
+    // excluded here.
+    public static ConversionResult ConvertDeclarativeWarps(IEnumerable<string> roots)
+    {
+        var entities = new List<WorldEntityDefinition>();
+        var unsupported = new List<UnsupportedConversion>();
+        foreach (var declaration in RathenaSourceParser.Parse(roots).Where(item => item.Directive == "warp"))
+        {
+            if (TryDeclarative(declaration, out var entity)) entities.Add(entity);
+            else unsupported.Add(Unsupported(declaration, "Malformed declarative warp"));
+        }
+        return new(entities.OrderBy(item => item.Source.File, StringComparer.Ordinal).ThenBy(item => item.Source.Line).ToArray(), unsupported);
+    }
+
     // Lossless semantic conversion: resolution always scans the FULL declaration index parsed from
     // roots, independent of filter. Only which template GROUPS get converted/emitted is scoped by
     // filter (matched against the template's own declaration). This keeps duplicate resolution correct

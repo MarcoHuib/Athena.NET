@@ -18,7 +18,7 @@ public sealed class MapServerWorldGameplayRulesTests
     [Fact]
     public void Build_WithRenewalRuleServices_ComposesSuccessfully()
     {
-        var world = MapServerWorld.Build(new GameplayRuleServices(new RenewalBasicAttackRules()));
+        var world = MapServerWorld.Build(new GameplayRuleServices(new RenewalBasicAttackRules()), warpDefinitions: []);
 
         Assert.NotNull(world.Combat);
     }
@@ -27,7 +27,7 @@ public sealed class MapServerWorldGameplayRulesTests
     public void Build_ProvidesTheSameImmutableRatePolicyToWorldConsumers()
     {
         var rates = new GameplayRateOptions { BaseExpRate = 500, QuestBaseExpRate = 200 };
-        var world = MapServerWorld.Build(new GameplayRuleServices(new RenewalBasicAttackRules()), rates: rates);
+        var world = MapServerWorld.Build(new GameplayRuleServices(new RenewalBasicAttackRules()), rates: rates, warpDefinitions: []);
         Assert.Same(rates, world.Rates);
     }
 
@@ -37,7 +37,7 @@ public sealed class MapServerWorldGameplayRulesTests
     [Fact]
     public void Build_WithNoCollisionProviderSupplied_DefaultsToEmptyProvider()
     {
-        var world = MapServerWorld.Build(new GameplayRuleServices(new RenewalBasicAttackRules()));
+        var world = MapServerWorld.Build(new GameplayRuleServices(new RenewalBasicAttackRules()), warpDefinitions: []);
 
         Assert.False(world.Collision.TryGetMap("int_land03", out _));
     }
@@ -74,7 +74,7 @@ public sealed class MapServerWorldGameplayRulesTests
     [Fact]
     public void Build_WithNoCollisionProviderSupplied_UsesUnverifiedFallbackSelector_DoesNotThrow()
     {
-        var world = MapServerWorld.Build(new GameplayRuleServices(new RenewalBasicAttackRules()));
+        var world = MapServerWorld.Build(new GameplayRuleServices(new RenewalBasicAttackRules()), warpDefinitions: []);
 
         Assert.NotEmpty(world.Monsters.AllInstances);
         Assert.All(world.Monsters.AllInstances, instance => Assert.True(instance.IsAlive));
@@ -120,7 +120,7 @@ public sealed class MapServerWorldGameplayRulesTests
     [Fact]
     public void Build_DefaultComposition_ProducesTwoHundredGPoringInstances_AcrossTheFullIntLandFamily()
     {
-        var world = MapServerWorld.Build(new GameplayRuleServices(new RenewalBasicAttackRules()));
+        var world = MapServerWorld.Build(new GameplayRuleServices(new RenewalBasicAttackRules()), warpDefinitions: []);
 
         var intLandFamily = new[] { "int_land", "int_land01", "int_land02", "int_land03", "int_land04" };
         var gPoringOnFamily = world.Monsters.AllInstances.Where(instance => intLandFamily.Contains(instance.Map)).ToArray();
@@ -135,7 +135,7 @@ public sealed class MapServerWorldGameplayRulesTests
     {
         var probe = new ProbeBasicAttackRules();
 
-        var world = MapServerWorld.Build(new GameplayRuleServices(probe));
+        var world = MapServerWorld.Build(new GameplayRuleServices(probe), warpDefinitions: []);
 
         Assert.NotNull(world.Combat);
     }

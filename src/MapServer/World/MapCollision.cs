@@ -104,18 +104,15 @@ public sealed class MapCollisionMap
 // Immutable lookup over every map this MapServer process has imported collision data for.
 // Deliberately keyed by the same internal extensionless map name every other MapServer/World type
 // uses (WorldMapRegistry, MobSpawnDefinition.Map, etc.) - never the client-facing ".gat" form.
-// A map with no imported data is NOT the same as a map whose (x,y) cell is blocked: TryGetMap
-// returns false so callers can distinguish "no collision data available for this map at all" (the
-// current state for every map in this repository - see MobSpawnCellSelector.cs/
-// MovementPathProvider.cs's own documented gap) from "this specific cell is non-walkable".
+// A map with no loaded data is NOT the same as a map whose (x,y) cell is blocked: TryGetMap
+// returns false so callers can distinguish "unknown map" from "this cell is non-walkable".
 public interface IMapCollisionProvider
 {
     bool TryGetMap(string mapName, out MapCollisionMap map);
 }
 
-// Production default while no map has imported collision data (the current state of every map in
-// this repository - see MapCollisionMap's own doc comment). TryGetMap always returns false; this
-// is the explicit "known-empty" case, kept distinct from a caller accidentally passing null.
+// Explicit known-empty provider for focused tests and compositions that intentionally omit map
+// geometry. Production startup uses GeneratedMapCollisionProvider instead.
 public sealed class EmptyMapCollisionProvider : IMapCollisionProvider
 {
     public static readonly EmptyMapCollisionProvider Instance = new();

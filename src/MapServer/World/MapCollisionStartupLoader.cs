@@ -1,6 +1,7 @@
 using Athena.Net.MapServer.Config;
 using Athena.Net.MapServer.Gameplay.Rules;
 using Athena.Net.MapServer.Logging;
+using Athena.Net.MapServer.Generated.World;
 using Athena.Rathena.Data;
 
 namespace Athena.Net.MapServer.World;
@@ -10,29 +11,25 @@ namespace Athena.Net.MapServer.World;
 // opens files, matching this project's existing "MapServerApp/MapServerWorld composition owns
 // loading, MapClientSession only consumes already-composed state" convention (see
 // MapServerWorld.Build's own doc comment for the analogous GameplayRuleServices composition
-// boundary). Reading/decompression happens exactly once here, at startup; the resulting
-// MapCollisionMap instances are immutable and shared for the server's lifetime - nothing re-reads
-// or re-decompresses per session or per lookup.
+// boundary). The production pack reader opens the generated pack once, reads its small index at
+// startup, and loads each immutable map block lazily on first use. Nothing reads per session.
 //
-// Two mutually exclusive sources (MapConfigLoader already rejects configuring both):
-//   - map_cache_path: the NORMAL source (ai/world-data.md) - pinned rAthena's own db/map_cache.dat,
-//     read whole via RathenaMapCacheReader, one MapCollisionMap per map the file declares.
-//   - map_collision_artifact (one or more): SECONDARY/debug tooling - locally supplied .gat-derived
+// With neither override configured, production uses Generated/Assets/Maps/AthenaMaps.bin.
+// Two mutually exclusive explicit/debug overrides remain (MapConfigLoader rejects both together):
+//   - map_cache_path: pinned rAthena map-cache layers, useful for import/debug comparison.
+//   - map_collision_artifact (one or more): locally supplied .gat-derived
 //     Athena artifacts (MapCollisionArtifact/MapCollisionCompiler), registered under explicit
 //     logical map name aliases.
-// Configuring neither preserves the original default: EmptyMapCollisionProvider.Instance.
 public static class MapCollisionStartupLoader
 {
     public static IMapCollisionProvider Load(IReadOnlyList<MapCollisionArtifactConfig> artifacts, string? mapCachePath = null, RagnarokRuleSet ruleSet = RagnarokRuleSet.Renewal)
     {
         if (mapCachePath is { Length: > 0 })
-        {
             return LoadFromMapCache(mapCachePath, ruleSet);
-        }
 
         if (artifacts.Count == 0)
         {
-            return EmptyMapCollisionProvider.Instance;
+            return GeneratedMapCollisionProvider.OpenProduction();
         }
 
         return LoadFromArtifacts(artifacts);

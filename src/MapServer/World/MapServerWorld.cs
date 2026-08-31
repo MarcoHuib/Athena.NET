@@ -3,9 +3,8 @@ using Athena.Net.MapServer.Gameplay.Rules;
 using Athena.Net.MapServer.Gameplay.Rates;
 using Athena.Net.MapServer.Generated.GameData.Quests;
 using Athena.Net.MapServer.Generated.World.Izlude.Academy;
+using Athena.Net.MapServer.Generated.World;
 using Athena.Net.MapServer.World.GeneratedScripts;
-using IzludeCityWarps = Athena.Net.MapServer.Generated.World.Izlude.IzludeCity.GeneratedWarps;
-using PrtFild08Warps = Athena.Net.MapServer.Generated.World.PrtFild08.GeneratedWarps;
 
 namespace Athena.Net.MapServer.World;
 
@@ -102,7 +101,7 @@ public sealed record MapServerWorld(WorldMapRegistry Maps, MonsterRegistry Monst
     // relies on this default and never derives it from WorldMapRegistry.ReachableMaps (that
     // property remains a purely diagnostic/navigation view of the warp graph - see its own doc
     // comment - not a hosting-scope source).
-    public static MapServerWorld Build(GameplayRuleServices gameplayRules, IMobSpawnCellSelector? cellSelector = null, TimeProvider? timeProvider = null, IMapCollisionProvider? collisionProvider = null, GameplayRateOptions? rates = null, bool customsEnabled = false, IReadOnlySet<string>? servedMaps = null)
+    public static MapServerWorld Build(GameplayRuleServices gameplayRules, IMobSpawnCellSelector? cellSelector = null, TimeProvider? timeProvider = null, IMapCollisionProvider? collisionProvider = null, GameplayRateOptions? rates = null, bool customsEnabled = false, IReadOnlySet<string>? servedMaps = null, IEnumerable<WarpDefinition>? warpDefinitions = null)
     {
         var resolvedCollisionProvider = collisionProvider ?? EmptyMapCollisionProvider.Instance;
         var allocator = new WorldActorIdAllocator();
@@ -110,7 +109,10 @@ public sealed record MapServerWorld(WorldMapRegistry Maps, MonsterRegistry Monst
         GeneratedScriptRegistry.Register(builder);
         if (customsEnabled) CustomWorldRegistry.Register(builder);
         var world = builder.Build();
-        var maps = new WorldMapRegistry(GeneratedWarps.All.Concat(IzludeCityWarps.All).Concat(PrtFild08Warps.All), world.Entities, scripts: world.Scripts, allocator: allocator);
+        var servedWarps = warpDefinitions ?? (servedMaps is null
+            ? GeneratedWarpRegistry.All
+            : servedMaps.Order(StringComparer.Ordinal).SelectMany(GeneratedWarpRegistry.GetForMap));
+        var maps = new WorldMapRegistry(servedWarps, world.Entities, scripts: world.Scripts, allocator: allocator);
         // Explicit either/or choice, not a fallback: EmptyMapCollisionProvider.Instance IS the
         // collision-less/dev case; anything else is a real collision-backed world.
         IMobSpawnCellSelector defaultCellSelector = ReferenceEquals(resolvedCollisionProvider, EmptyMapCollisionProvider.Instance)

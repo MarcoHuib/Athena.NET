@@ -1,5 +1,6 @@
 using System.Buffers.Binary;
 using System.Text;
+using Athena.Net.MapServer.World;
 
 namespace Athena.Net.MapServer.Net;
 
@@ -34,8 +35,6 @@ public static class IroMapTransitionPackets
             throw new ArgumentException("A map name is required.", nameof(mapName));
         }
 
-        return mapName.EndsWith(".gat", StringComparison.OrdinalIgnoreCase)
-            ? mapName
-            : $"{mapName}.gat";
+        return MapName.ToClient(mapName);
     }
 }

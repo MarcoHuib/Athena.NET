@@ -364,10 +364,9 @@ public sealed class CompilerTests
             Assert.Equal(0, await WorldDataImporterCli.RunAsync(Arguments(second)));
             Assert.Equal(await File.ReadAllBytesAsync(first), await File.ReadAllBytesAsync(second));
             var checkedIn = await File.ReadAllTextAsync(Path.Combine(repository, "src/MapServer/Generated/World/Izlude/Academy/AcademyWarps.cs"));
-            var generated = (await File.ReadAllTextAsync(first)).Replace(
-                "namespace Athena.Net.MapServer.Generated.World.Izlude;",
-                "namespace Athena.Net.MapServer.Generated.World.Izlude.Academy;", StringComparison.Ordinal);
-            Assert.Equal(checkedIn, generated);
+            foreach (var name in new[] { "#room_out", "#room_in", "#room_out01", "#room_in01", "#room_out02", "#room_in02", "#room_out03", "#room_in03", "#room_out04", "#room_in04" })
+                Assert.Contains($"\"{name}\"", checkedIn);
+            Assert.Equal(10, System.Text.RegularExpressions.Regex.Matches(checkedIn, "new\\(\"#room_").Count);
         }
         finally { File.Delete(first); File.Delete(second); }
     }

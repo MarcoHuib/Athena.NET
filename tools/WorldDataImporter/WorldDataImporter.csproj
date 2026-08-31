@@ -9,5 +9,6 @@
     <!-- One authoritative map-cache parser/layering resolver is compiled into both the runtime and offline analyzer. -->
     <Compile Include="../../src/MapServer/World/RathenaMapCacheFormat.cs" Link="Compiler/RathenaMapCacheFormat.cs" />
     <Compile Include="../../src/MapServer/World/RathenaMapCacheLayers.cs" Link="Compiler/RathenaMapCacheLayers.cs" />
+    <Compile Include="../../src/MapServer/World/AthenaMapPackFormat.cs" Link="Compiler/AthenaMapPackFormat.cs" />
   </ItemGroup>
 </Project>

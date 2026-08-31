@@ -9,11 +9,9 @@ public sealed class WorldMapRegistryTests
     public void DefaultWorld_IsTheIntentionalGeneratedVerticalSlice()
     {
         var registry = WorldMapRegistry.Tutorial;
-        // 13 = the original 10 Academy same-map doors (#room_in/#room_out x 5 iz_int variants) plus
-        // 3 travel-corridor doors (izlude-prontera-travel-trace.txt): izlude_d<->prt_fild08d (2,
-        // one per direction) and prt_fild08d->prontera (1, one-way in pinned source - see
-        // ai/world-data.md).
-        Assert.Equal(13, registry.StaticWarpCount);
+        // Every canonical ordinary warp whose trigger is on one of the 13 explicitly served maps
+        // is live. Destination maps do not determine ownership or activation.
+        Assert.Equal(46, registry.StaticWarpCount);
         // 35 = the full 5-map tutorial family (base iz_int/int_land + 01..04), not just the 01..04
         // instanced variants: 2 Wounded Swordsman states x 5 maps (iz_int/01/02/03/04) + Captain
         // Carocc x 5 (int_land/01/02/03/04) + Lumin x 5 + Sailor x 5 (int_land/01/02/03/04) +

@@ -36,34 +36,29 @@ public sealed class DockerMapCacheAvailabilityTests
     }
 
     [Fact]
-    public void MapServerDockerfile_CopiesTheRealMapCacheFile_AtTheRepositoryRelativePath()
+    public void MapServerDockerfile_DoesNotCopyRuntimeMapCache()
     {
         var repository = FindRepositoryRoot();
         var dockerfile = File.ReadAllText(Path.Combine(repository, "src/MapServer/Dockerfile"));
 
-        Assert.Contains("COPY legacy/rathena/db/map_cache.dat ./legacy/rathena/db/map_cache.dat", dockerfile);
+        Assert.DoesNotContain("COPY legacy/rathena/db/map_cache.dat", dockerfile);
     }
 
     [Fact]
-    public void DockerMapServerConfig_ConfiguresMapCachePath_AtTheSameRelativePathTheDockerfileBakesIn()
+    public void DockerMapServerConfig_DoesNotConfigureLegacyMapCacheOverride()
     {
         var repository = FindRepositoryRoot();
         var config = File.ReadAllText(Path.Combine(repository, "conf/docker/map_athena.conf"));
 
-        Assert.Contains("map_cache_path: legacy/rathena/db/map_cache.dat", config);
+        Assert.DoesNotContain("\nmap_cache_path:", config);
     }
 
     [Fact]
-    public void LocalDevTemplateConfig_AlsoConfiguresMapCachePath_AtTheSameRepositoryRelativePath()
+    public void LocalDevTemplateConfig_DoesNotConfigureLegacyMapCacheOverride()
     {
-        // Local `dotnet run` from the repo root and the Docker image both resolve
-        // "legacy/rathena/db/map_cache.dat" the same way (relative to their respective CWD, which
-        // is the repository root locally and /app in the image - matching layouts one level down)
-        // - a single repository-relative config value is correct for both, so both templates use
-        // the identical string rather than diverging environment-specific paths.
         var repository = FindRepositoryRoot();
         var config = File.ReadAllText(Path.Combine(repository, "conf/templates/map_athena.conf"));
 
-        Assert.Contains("map_cache_path: legacy/rathena/db/map_cache.dat", config);
+        Assert.DoesNotContain("\nmap_cache_path:", config);
     }
 }

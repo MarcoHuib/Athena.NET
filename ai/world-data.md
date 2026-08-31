@@ -1,5 +1,55 @@
 # Athena.NET world data
 
+## Complete generated maps and ordinary warps
+
+Production world geometry and ordinary declarative warps are generated C# under
+`src/MapServer/Generated/World`. The pinned import inputs are rAthena commit
+`e985006171d2eb320ee512a653f4c83aea3d81b6`, its layered map caches, and
+`npc/**/*.txt`.
+
+`RathenaMapCacheLayers.Merge` remains the single effective-map authority. Its
+first-match-wins precedence is import, then Renewal, then base. The pinned tree has no import
+cache, 8 Renewal entries, and 1,288 base entries, producing 1,296 effective maps. Each map module
+stores small readable metadata plus its deterministic zero-based `AssetId` and
+repository/commit/layer/file provenance. Exact GAT cells live in the separate generated source
+asset `src/MapServer/Generated/Assets/Maps/AthenaMaps.bin`, published as
+`MapData/AthenaMaps.bin`; generated map C# contains no collision payload.
+
+Athena Map Pack v1 uses 8-byte magic `ATHMAP\0\0`, a 32-byte little-endian header, and a 24-byte
+fixed index entry per AssetId. The header fields are magic, UInt16 version/header-size, UInt32 map
+count, UInt64 index offset, and UInt64 payload offset. Each index entry stores UInt64 absolute
+payload offset, UInt32 payload length/cell count, UInt16 width/height, byte encoding, and three
+zero reserved bytes. Encoding 1 is `Packed4`: even cells occupy the low nibble and odd cells the
+high nibble, with a zero unused high nibble for odd cell counts. Values 0..6 round-trip exactly;
+there is no general-purpose compression in v1.
+
+`GeneratedMapRegistry` is the global case-insensitive metadata index. Normal MapServer startup
+opens `Path.Combine(AppContext.BaseDirectory, "MapData", "AthenaMaps.bin")` once, validates and
+loads only its small index, then uses `RandomAccess.Read` to materialize requested maps. Decoding
+writes directly into the final immutable `MapCellFlags[]`; each result is cached by AssetId.
+Served-map startup validation materializes only the explicit hosted set, not all 1,296 maps.
+
+The shared `RathenaSourceParser` and `WorldEntityConverter.ConvertDeclarativeWarps` pipeline models
+the pinned ordinary syntax as source map/X/Y/direction, identifier, radius X/Y, and destination
+map/X/Y. No optional fields occur in the 4,468 pinned declarations. Each has one source-map-owned
+`WarpDefinition` with exact file/line provenance. `GeneratedWarpRegistry` indexes those canonical
+arrays. Runtime filters it through `MapServerHostingScope.ServedMaps`, so unserved maps stay inert.
+
+```sh
+dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- generate-maps --rathena-root legacy/rathena --rathena-commit e985006171d2eb320ee512a653f4c83aea3d81b6 --output src/MapServer/Generated/World
+dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- generate-warps --rathena-root legacy/rathena --rathena-commit e985006171d2eb320ee512a653f4c83aea3d81b6 --output src/MapServer/Generated/World
+```
+
+This completes map production coverage (1,296/1,296) and ordinary-warp production coverage
+(4,468/4,468), independently of incomplete NPC, shop, mapflag, quest, instance, and other domains.
+Focused tests inject empty/minimal warp sets into `MapServerWorld.Build`; production supplies
+explicit `ServedMaps` and composes per-map generated warp arrays. `WorldMapRegistry.Tutorial`
+remains the small tutorial/travel-corridor fixture rather than becoming the full 4,468-warp world.
+Older direct-runtime-map-cache discussion below is implementation history superseded for normal
+production startup by this generated pack path. Explicit configured map-cache/artifact overrides
+remain diagnostic/backward-compatible sources and never act as an implicit fallback for a broken
+production pack.
+
 ## Runtime architecture
 
 MapServer's default world is compiled C#. It does not scan `data/world`, load
@@ -1832,10 +1882,14 @@ NOT claimed, and explicitly out of scope for this branch:
 Expand the runtime only through tested vertical slices; do not restore bulk JSON
 runtime data as a shortcut.
 
-## Map geometry: direct pinned rAthena map_cache.dat import (normal path)
+## Historical map geometry path: direct pinned rAthena map_cache.dat import
 
-Athena's NORMAL source of map geometry/collision data is pinned rAthena's own
-`legacy/rathena/db/map_cache.dat`, read directly at MapServer startup —
+This section documents the still-supported explicit `map_cache_path` debugging/import override.
+It was the production path before complete map generation. The normal production source is now
+`Generated/Assets/Maps/AthenaMaps.bin`, described in the generated-world section above; normal
+startup performs no rAthena map-cache I/O.
+
+The override source is pinned rAthena's own `legacy/rathena/db/map_cache.dat`, read at MapServer startup —
 **not** a manually extracted client `.gat` file, and **not** an offline
 per-map conversion step. rAthena already ships this server-side dataset
 (map dimensions + per-cell static terrain, itself built from client
@@ -1849,7 +1903,7 @@ Athena's stock-iRO wire-authority rules (`ai/iro-2026-wire.md`) are
 unchanged by this section; nothing here asserts a captured/verified iRO
 fact.
 
-### Runtime architecture
+### Legacy override architecture
 
 ```
 legacy/rathena/db/map_cache.dat  (pinned reference data, read as-is)
@@ -1865,7 +1919,7 @@ MapCollisionStartupLoader.Load(artifacts, mapCachePath)
 IMapCollisionProvider  (MapCollisionProvider, keyed by each map's own real name)
 ```
 
-`RathenaMapCacheReader` reads and decompresses the whole file exactly once,
+When the override is explicitly selected, `RathenaMapCacheReader` reads and decompresses the whole file exactly once,
 at MapServer startup — never per session, never per lookup. The resulting
 `MapCollisionMap` instances are immutable and shared for the server's
 lifetime, exactly like every other startup-composed dependency
@@ -1941,26 +1995,21 @@ maps) byte-for-byte:
   definitionally a corrupt input file, never "some other map I don't care
   about."
 
-### Configuration
+### Explicit override configuration
 
-`map_cache_path: <path>` (`MapConfig.MapCachePath`/`MapConfigLoader`) is the
-normal key — e.g. `map_cache_path: legacy/rathena/db/map_cache.dat` for
-local development. A missing or malformed configured file fails MapServer
+`map_cache_path: <path>` (`MapConfig.MapCachePath`/`MapConfigLoader`) selects
+the legacy override — e.g. `map_cache_path: legacy/rathena/db/map_cache.dat` for
+import debugging. A missing or malformed configured file fails MapServer
 startup loudly (`MapCollisionStartupLoader` throws `InvalidOperationException`),
 never silently falling back to `EmptyMapCollisionProvider`. Configuring both
 `map_cache_path` and one or more `map_collision_artifact` lines is itself a
 startup configuration error — `MapConfigLoader.Load` throws rather than
 picking an implicit precedence, since silently choosing one source over the
-other could hide a real operator mistake. Configuring neither key preserves
-the original default: `EmptyMapCollisionProvider.Instance`, exactly as
-before this section's runtime existed.
+other could hide a real operator mistake. Configuring neither key selects the generated Athena
+Map Pack and is the normal production configuration.
 
-No production packaging/copy step (e.g. bundling `map_cache.dat` into a
-published MapServer output directory) exists yet — `map_cache_path` today
-points at a local filesystem path (typically directly at the pinned
-submodule checkout for development). Revisit packaging when a real
-production deployment target requires MapServer to run without the
-`legacy/rathena` submodule present.
+The generated `AthenaMaps.bin` is copied to build and publish output under `MapData/`; production
+deployments therefore require neither this override nor the `legacy/rathena` checkout.
 
 ### Still missing
 
@@ -2136,7 +2185,7 @@ dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- compile
 - `IMapCollisionProvider { bool TryGetMap(string mapName, out MapCollisionMap map) }` —
   `TryGetMap` returning `false` for an unknown map is a distinct outcome from a known map's blocked
   cell; callers must not conflate "no data for this map" with "this cell is blocked".
-- `EmptyMapCollisionProvider.Instance` — the current production default; resolves no map at all.
+- `EmptyMapCollisionProvider.Instance` — an explicit test/composition seam; resolves no map at all.
 - `MapCollisionProvider` — simple immutable in-memory provider, case-insensitive-ordinal map-name
   lookup (matching every other map-name comparison in this codebase). Two constructors: one keyed
   directly by each map's own `MapName` (the common "each map is its own resource" case), and one
@@ -2177,11 +2226,10 @@ alongside `Maps`/`Monsters`/`Combat`. `MapClientSession` does not open files and
 mergedConfig.MapCachePath)` once, at the same composition point every other startup dependency
 (gameplay rules, the monster registry, etc.) is built, and passes the result into
 `MapServerWorld.Build`. `MapCollisionStartupLoader.Load` now branches on which of the two mutually
-exclusive sources is configured (see the `map_cache.dat` section above for the normal
-`map_cache_path` branch); this artifact-based branch is what runs when one or more
+exclusive override sources is configured (see the historical `map_cache.dat` section above);
+the generated pack is selected when neither is configured, while this artifact-based branch runs when one or more
 `map_collision_artifact: <path>|<map1>,<map2>,...` lines are configured instead. Zero configured
-lines/path is still the default and still resolves to `EmptyMapCollisionProvider.Instance` -
-unconfigured startup behavior is unchanged. This branch reads each configured artifact file exactly
+lines/path resolves to the generated production pack. This branch reads each configured artifact file exactly
 once via `MapCollisionArtifact.ReadFile` and registers the SAME loaded `MapCollisionMap` instance
 under every logical map name listed for that artifact (never re-parsing the file per alias, never
 duplicating the cell array) - this is how the `int_land`/`int_land01..04` aliasing above is served
@@ -2237,5 +2285,6 @@ imported terrain data from every caller, not just gameplay-traversal ones (see
   not yet been exercised against a real client resource in this environment (none is available -
   see "Local/gitignored data strategy" above). This is no longer the blocking gap for real map
   geometry in general: the `map_cache.dat` section above proves real geometry (including
-  `int_land`/`int_land01..04`) via the normal `map_cache_path` source, tested against the actual
-  pinned `legacy/rathena/db/map_cache.dat`.
+  `int_land`/`int_land01..04`) via the explicit `map_cache_path` override, tested against the actual
+  pinned `legacy/rathena/db/map_cache.dat` through the explicit legacy override; production uses
+  the generated pack containing the same canonical effective cells.
