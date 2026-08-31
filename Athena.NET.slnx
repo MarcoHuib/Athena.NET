@@ -4,11 +4,14 @@
     <Project Path="src/LoginServer/LoginServer.csproj" />
     <Project Path="src/CharServer/CharServer.csproj" />
     <Project Path="src/MapServer/MapServer.csproj" />
+    <Project Path="src/WorldServer/Athena.World.Contracts/Athena.World.Contracts.csproj" />
+    <Project Path="src/WorldServer/Athena.World/Athena.World.csproj" />
   </Folder>
 
   <Folder Name="/tests/">
     <Project Path="tests/LoginServer.Tests/LoginServer.Tests.csproj" />
     <Project Path="tests/MapServer.Tests/MapServer.Tests.csproj" />
+    <Project Path="tests/World.Tests/World.Tests.csproj" />
     <Project Path="tests/CharServer.Tests/CharServer.Tests.csproj" />
     <Project Path="tests/WorldDataImporter.Tests/WorldDataImporter.Tests.csproj" />
   </Folder>

@@ -17,6 +17,8 @@ public sealed class MapTelemetry : IDisposable
     public static readonly ActivitySource ActivitySource = new(ServiceName);
     public static readonly Meter Meter = new(ServiceName);
     public static readonly Counter<long> ConnectionsAccepted = Meter.CreateCounter<long>("map.connections.accepted");
+    public static readonly Histogram<double> WorldCommandDuration = Meter.CreateHistogram<double>("world.command.duration", "ms");
+    public static readonly Counter<long> WorldCommandFailures = Meter.CreateCounter<long>("world.command.failures");
 
     private readonly TracerProvider _tracerProvider;
     private readonly MeterProvider _meterProvider;

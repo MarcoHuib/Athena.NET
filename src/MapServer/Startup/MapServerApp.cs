@@ -5,6 +5,9 @@ using Athena.Net.MapServer.Net;
 using Athena.Net.MapServer.Telemetry;
 using Athena.Net.MapServer.World;
 using Athena.Net.MapServer.World.GeneratedScripts;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Orleans;
 
 namespace Athena.Net.MapServer.Startup;
 
@@ -74,12 +77,18 @@ public static class MapServerApp
         // - see MapServerHostingScope's own doc comment for why this is a hand-declared set, never
         // derived from the warp graph or collision-data availability.
         var world = MapServerWorld.Build(gameplayRules, collisionProvider: collisionProvider, rates: mergedConfig.GameplayRates, customsEnabled: mergedConfig.CustomsEnabled, servedMaps: MapServerHostingScope.ServedMaps);
+        var hostBuilder = Host.CreateApplicationBuilder(args);
+        hostBuilder.UseOrleansClient();
+        using var orleansHost = hostBuilder.Build();
+        await orleansHost.StartAsync(cts.Token);
+        var worldRuntime = new OrleansWorldRuntime(orleansHost.Services.GetRequiredService<IClusterClient>());
         var connector = new CharServerConnector(configStore);
-        var mapServer = new MapTcpServer(configStore, connector, world);
+        var mapServer = new MapTcpServer(configStore, connector, world, worldRuntime);
 
         var connectTask = connector.RunAsync(cts.Token);
         await mapServer.RunAsync(cts.Token);
         await connectTask;
+        await orleansHost.StopAsync();
 
         return 0;
     }

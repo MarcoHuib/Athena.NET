@@ -8,6 +8,7 @@ using Athena.Net.MapServer.Gameplay.Rates;
 using Athena.Net.MapServer.Logging;
 using Athena.Net.MapServer.World;
 using Athena.Net.MapServer.World.GeneratedScripts;
+using Athena.Net.World.Contracts;
 
 namespace Athena.Net.MapServer.Net;
 
@@ -81,6 +82,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     private readonly GameplayRateOptions _rates;
     private readonly PlayerPresenceRegistry _players;
     private readonly PlayerVisibilityCoordinator _playerVisibility;
+    private readonly IWorldRuntime? _distributedWorld;
     private readonly WorldVisibilityOptions _visibilityOptions;
     // Owns authoritative per-cell walk timing (see CharacterMovementState's own doc comment for the
     // rAthena unit_walktoxy_timer trace this replaces). _x/_y/_mapName remain the fields every other
@@ -206,10 +208,10 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     // WorldMapRegistry.Tutorial: that static singleton builds its OWN private WorldActorIdAllocator,
     // so silently falling back to it here would reintroduce a second, independent actor-ID
     // namespace alongside the composed MonsterRegistry's shared one.
-    public MapClientSession(int sessionId, TcpClient client, CharServerConnector charConnector, MapServerWorld world)
+    public MapClientSession(int sessionId, TcpClient client, CharServerConnector charConnector, MapServerWorld world, IWorldRuntime worldRuntime)
         : this(sessionId, client, charConnector, world.Maps, monsters: world.Monsters, combat: world.Combat, spatialInspector: world.SpatialInspector,
                movementPathProvider: world.MovementPathProvider, monsterRuntime: world.MonsterRuntime, collisionProvider: world.Collision, rates: world.Rates,
-               players: world.Players, playerVisibility: world.PlayerVisibility, visibilityOptions: world.Visibility)
+               players: world.Players, playerVisibility: world.PlayerVisibility, visibilityOptions: world.Visibility, distributedWorld: worldRuntime)
     {
     }
 
@@ -234,7 +236,8 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         GameplayRateOptions? rates = null,
         PlayerPresenceRegistry? players = null,
         PlayerVisibilityCoordinator? playerVisibility = null,
-        WorldVisibilityOptions? visibilityOptions = null)
+        WorldVisibilityOptions? visibilityOptions = null,
+        IWorldRuntime? distributedWorld = null)
     {
         SessionId = sessionId;
         _client = client;
@@ -258,6 +261,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         _visibilityOptions = visibilityOptions ?? WorldVisibilityOptions.Default;
         _players = players ?? new PlayerPresenceRegistry(_visibilityOptions);
         _playerVisibility = playerVisibility ?? new PlayerVisibilityCoordinator(_players, _visibilityOptions);
+        _distributedWorld = distributedWorld;
         _statusEffects = new CharacterStatusEffectState(_timeProvider);
     }
 
@@ -2857,6 +2861,23 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         if (presence is null) return;
 
         await _playerVisibility.RegisterAsync(presence, this, cancellationToken);
+        if (_distributedWorld is not null)
+        {
+            try
+            {
+                var registration = await _distributedWorld.RegisterPresenceAsync(
+                    presence.MapName,
+                    new MapPlayerPresence(presence.ActorId, presence.CharacterId, presence.X, presence.Y),
+                    cancellationToken);
+                if (!registration.Registered)
+                    throw new InvalidOperationException($"Character {presence.CharacterId} is already present in map authority '{registration.MapId}'.");
+            }
+            catch
+            {
+                await _playerVisibility.UnregisterAsync(presence.ActorId, CancellationToken.None);
+                throw;
+            }
+        }
         lock (_playerPresenceGate)
         {
             _presence = presence;
@@ -2921,7 +2942,15 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
 
         try
         {
-            await _playerVisibility.UnregisterAsync(actorId, CancellationToken.None);
+            try
+            {
+                await _playerVisibility.UnregisterAsync(actorId, CancellationToken.None);
+            }
+            finally
+            {
+                if (_distributedWorld is not null)
+                    await _distributedWorld.UnregisterPresenceAsync(_mapName, _charId, CancellationToken.None);
+            }
         }
         finally
         {

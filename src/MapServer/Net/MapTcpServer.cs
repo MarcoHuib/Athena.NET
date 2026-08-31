@@ -7,6 +7,7 @@ using Athena.Net.MapServer.Config;
 using Athena.Net.MapServer.Logging;
 using Athena.Net.MapServer.Telemetry;
 using Athena.Net.MapServer.World;
+using Athena.Net.World.Contracts;
 
 namespace Athena.Net.MapServer.Net;
 
@@ -22,19 +23,36 @@ public sealed class MapTcpServer
     private readonly MapConfigStore _configStore;
     private readonly CharServerConnector _charConnector;
     private readonly MapServerWorld _world;
+    private readonly IWorldRuntime _worldRuntime;
     private readonly TcpListener _listener;
     private readonly ConcurrentDictionary<int, MapClientSession> _sessions = new();
     private readonly MonsterEngagementTickProcessor _engagementProcessor;
     private int _nextSessionId;
 
-    public MapTcpServer(MapConfigStore configStore, CharServerConnector charConnector, MapServerWorld world, TimeProvider? timeProvider = null)
+    public MapTcpServer(MapConfigStore configStore, CharServerConnector charConnector, MapServerWorld world, IWorldRuntime worldRuntime, TimeProvider? timeProvider = null)
     {
         _configStore = configStore;
         _charConnector = charConnector;
         _world = world;
+        _worldRuntime = worldRuntime;
         var config = _configStore.Current;
         _listener = new TcpListener(config.BindIp, config.MapPort);
         _engagementProcessor = new MonsterEngagementTickProcessor(_world.Monsters, _world.Collision, _world.MovementPathProvider, timeProvider ?? TimeProvider.System);
+    }
+
+    // Focused tests which exercise the existing process-local simulation do not start an Orleans
+    // cluster. Production startup always uses the overload above and requires IWorldRuntime.
+    internal MapTcpServer(MapConfigStore configStore, CharServerConnector charConnector, MapServerWorld world, TimeProvider? timeProvider = null)
+        : this(configStore, charConnector, world, NullWorldRuntime.Instance, timeProvider)
+    {
+    }
+
+    private sealed class NullWorldRuntime : IWorldRuntime
+    {
+        public static readonly NullWorldRuntime Instance = new();
+        public Task<MapPresenceRegistration> RegisterPresenceAsync(string mapId, MapPlayerPresence presence, CancellationToken cancellationToken) =>
+            Task.FromResult(new MapPresenceRegistration(MapName.NormalizeWorld(mapId), true, 1));
+        public Task<bool> UnregisterPresenceAsync(string mapId, uint characterId, CancellationToken cancellationToken) => Task.FromResult(true);
     }
 
     public int BoundPort { get; private set; }
@@ -207,7 +225,7 @@ public sealed class MapTcpServer
         MapLogger.Info($"[iRO MAP DEBUG] Client connected: {endpoint}");
 
         using (client)
-        await using (var session = new MapClientSession(sessionId, client, _charConnector, _world))
+        await using (var session = new MapClientSession(sessionId, client, _charConnector, _world, _worldRuntime))
         {
             _sessions[sessionId] = session;
             try
