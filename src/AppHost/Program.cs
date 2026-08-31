@@ -1,3 +1,4 @@
+using Aspire.Hosting.ApplicationModel;
 using System.Text.Json;
 
 if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("ASPNETCORE_URLS")))
@@ -25,7 +26,9 @@ if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("DOTNET_DASHBOA
 }
 
 var builder = DistributedApplication.CreateBuilder(args);
+
 var repoRoot = FindRepoRoot() ?? Directory.GetCurrentDirectory();
+
 var loginConfigPath = Path.Combine(repoRoot, "conf", "login_athena.conf");
 var charConfigPath = Path.Combine(repoRoot, "conf", "char_athena.conf");
 var mapConfigPath = Path.Combine(repoRoot, "conf", "map_athena.conf");
@@ -33,6 +36,7 @@ var interConfigPath = Path.Combine(repoRoot, "conf", "inter_athena.conf");
 var subnetConfigPath = Path.Combine(repoRoot, "conf", "subnet_athena.conf");
 var loginMsgPath = Path.Combine(repoRoot, "conf", "msg_conf", "login_msg.conf");
 var secretsPath = Path.Combine(repoRoot, "solutionfiles", "secrets", "secret.json");
+
 // MapServer's configured map_cache_path (legacy/rathena/db/map_cache.dat) is CWD-relative and only
 // resolves correctly when the process's working directory happens to be the repository root
 // (direct local `dotnet run`) or the Docker image's own WORKDIR /app (which mirrors the same
@@ -42,6 +46,7 @@ var secretsPath = Path.Combine(repoRoot, "solutionfiles", "secrets", "secret.jso
 var mapCachePath = Path.Combine(repoRoot, "legacy", "rathena", "db", "map_cache.dat");
 
 var sqlPassword = builder.AddParameter("sql-edge-password", secret: true);
+
 var sql = builder.AddSqlServer("sql", sqlPassword)
     .WithImage("azure-sql-edge")
     .WithImageTag("latest")
@@ -55,16 +60,45 @@ var sql = builder.AddSqlServer("sql", sqlPassword)
 
 var loginDb = sql.AddDatabase("LoginDb");
 var charDb = sql.AddDatabase("CharDb");
-var worldCluster = builder.AddOrleans("athena-world")
+
+// Logical Orleans cluster definition.
+//
+// Keep the cluster resource name distinct from the actual Athena.World silo process.
+// This makes the Aspire model easier to understand:
+//
+// athena-world-cluster
+// ├── silo   -> athena-world
+// └── client -> map-server
+var worldCluster = builder
+    .AddOrleans("athena-world-cluster")
     .WithDevelopmentClustering();
 
-var world = builder.AddProject("athena-world", "../WorldServer/Athena.World/Athena.World.csproj")
+// Athena.World is the Orleans silo process.
+var world = builder
+    .AddProject(
+        "athena-world",
+        "../WorldServer/Athena.World/Athena.World.csproj")
     .WithReference(worldCluster)
+    .WithEnvironment("DOTNET_ENVIRONMENT", "Development")
     .WithEnvironment("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317")
     .WithEnvironment("OTEL_EXPORTER_OTLP_PROTOCOL", "grpc")
     .WithEnvironment("OTEL_SERVICE_NAME", "athena-world");
 
-builder.AddProject("login-server", "../LoginServer/LoginServer.csproj")
+// Aspire.Hosting.Orleans adds this endpoint to every silo resource.
+//
+// Development clustering on the Orleans client side uses a StaticGatewayListProvider.
+// Explicitly pass the dynamically allocated Athena.World gateway to MapServer so the
+// client does not start with an empty gateway list.
+var worldGatewayEndpoint = world.GetEndpoint("orleans-gateway");
+
+var worldGateway = ReferenceExpression.Create(
+    $"{worldGatewayEndpoint.Property(EndpointProperty.IPV4Host)}:" +
+    $"{worldGatewayEndpoint.Property(EndpointProperty.Port)}");
+
+builder
+    .AddProject(
+        "login-server",
+        "../LoginServer/LoginServer.csproj")
     .WithEndpoint("tcp", endpoint =>
     {
         endpoint.Port = 6900;
@@ -89,7 +123,10 @@ builder.AddProject("login-server", "../LoginServer/LoginServer.csproj")
         "--secrets", secretsPath,
         "--auto-migrate");
 
-builder.AddProject("char-server", "../CharServer/CharServer.csproj")
+builder
+    .AddProject(
+        "char-server",
+        "../CharServer/CharServer.csproj")
     .WithEndpoint("tcp", endpoint =>
     {
         endpoint.Port = 6121;
@@ -112,7 +149,10 @@ builder.AddProject("char-server", "../CharServer/CharServer.csproj")
         "--secrets", secretsPath,
         "--auto-migrate");
 
-builder.AddProject("map-server", "../MapServer/MapServer.csproj")
+builder
+    .AddProject(
+        "map-server",
+        "../MapServer/MapServer.csproj")
     .WithEndpoint("tcp", endpoint =>
     {
         endpoint.Port = 5121;
@@ -126,8 +166,25 @@ builder.AddProject("map-server", "../MapServer/MapServer.csproj")
     .WithEnvironment("OTEL_LOGS_EXPORTER", "otlp")
     .WithEnvironment("OTEL_METRICS_EXPORTER", "otlp")
     .WithEnvironment("OTEL_TRACES_EXPORTER", "otlp")
+
+    // Configures the MapServer process as an Orleans client and gives it the
+    // same ClusterId, ServiceId and clustering provider as Athena.World.
     .WithReference(worldCluster.AsClient())
+
+    // Development clustering uses Orleans' StaticGatewayListProvider for clients.
+    // Aspire allocates the actual gateway port dynamically, so reference the
+    // Athena.World silo endpoint instead of hardcoding an IP address or port.
+    //
+    // Result at runtime is conceptually:
+    //
+    // Orleans__Clustering__Gateways__0=192.168.x.x:<dynamic-gateway-port>
+    .WithEnvironment(
+        "Orleans__Clustering__Gateways__0",
+        worldGateway)
+
+    // Do not start MapServer until the Athena.World resource has started.
     .WaitFor(world)
+
     .WithArgs(
         "--map-config", mapConfigPath,
         "--map-cache-path", mapCachePath,
@@ -137,25 +194,41 @@ builder.Build().Run();
 
 static void EnsureSqlEdgePassword()
 {
-    if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("Parameters__sql-edge-password")))
+    if (!string.IsNullOrWhiteSpace(
+            Environment.GetEnvironmentVariable("Parameters__sql-edge-password")))
     {
         return;
     }
 
     var repoRoot = FindRepoRoot() ?? Directory.GetCurrentDirectory();
+
     if (TryReadSqlPasswordFromSecrets(repoRoot, out var secretsPassword))
     {
-        Environment.SetEnvironmentVariable("Parameters__sql-edge-password", secretsPassword);
+        Environment.SetEnvironmentVariable(
+            "Parameters__sql-edge-password",
+            secretsPassword);
+
         return;
     }
+
     throw new InvalidOperationException(
-        "Missing SQL Edge SA password. Set Parameters__sql-edge-password or SqlServer.SaPassword in solutionfiles/secrets/secret.json.");
+        "Missing SQL Edge SA password. " +
+        "Set Parameters__sql-edge-password or " +
+        "SqlServer.SaPassword in solutionfiles/secrets/secret.json.");
 }
 
-static bool TryReadSqlPasswordFromSecrets(string repoRoot, out string password)
+static bool TryReadSqlPasswordFromSecrets(
+    string repoRoot,
+    out string password)
 {
     password = string.Empty;
-    var secretsPath = Path.Combine(repoRoot, "solutionfiles", "secrets", "secret.json");
+
+    var secretsPath = Path.Combine(
+        repoRoot,
+        "solutionfiles",
+        "secrets",
+        "secret.json");
+
     if (!File.Exists(secretsPath))
     {
         return false;
@@ -163,17 +236,23 @@ static bool TryReadSqlPasswordFromSecrets(string repoRoot, out string password)
 
     using var stream = File.OpenRead(secretsPath);
     using var document = JsonDocument.Parse(stream);
-    if (!document.RootElement.TryGetProperty("SqlServer", out var sqlServer))
+
+    if (!document.RootElement.TryGetProperty(
+            "SqlServer",
+            out var sqlServer))
     {
         return false;
     }
 
-    if (!sqlServer.TryGetProperty("SaPassword", out var passwordElement))
+    if (!sqlServer.TryGetProperty(
+            "SaPassword",
+            out var passwordElement))
     {
         return false;
     }
 
     password = passwordElement.GetString() ?? string.Empty;
+
     return !string.IsNullOrWhiteSpace(password);
 }
 
@@ -188,9 +267,15 @@ static string? FindRepoRoot()
     foreach (var root in roots)
     {
         var dir = new DirectoryInfo(root);
+
         while (dir != null)
         {
-            var secretsPath = Path.Combine(dir.FullName, "solutionfiles", "secrets", "secret.json");
+            var secretsPath = Path.Combine(
+                dir.FullName,
+                "solutionfiles",
+                "secrets",
+                "secret.json");
+
             if (File.Exists(secretsPath))
             {
                 return dir.FullName;
