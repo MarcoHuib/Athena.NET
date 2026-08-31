@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.PoringW02;
 
 internal static class PoringW02Map
 {
-    internal static readonly GeneratedMapDefinition PoringW02 = new("poring_w02", 200, 240, "eNrt3NuOgyAQAFB88P9/ebPJbrYUEep6GfTw0qY16ZxUYLg5TbcoaeLg4ODg4ODg4ODg4ODg4ODg4ODg4OD4LnNHGcKRmoWD49mOlR/k4NjUZ3Q49u9L0r51O3fktTt37FznOTgGcJQxr3/Gca7jtTXmUM85OGLkiX/5Xx5zPU/8ecdxmiOPnuM6R2OegYPjsY7ewsHBMYSjjOpzxz7ziunoNYL3lvagtQQOjqCOebW2L2QixXUcHBy/3+Z1P6SjDHGut1dRHctBrrW7ARxL99GnjqW78QRHNsM5F31cFmfnfVV8Pr//zvmOlDvy2Jf/jhTPUU1G+q8ZxZGCO9aTw4ZjIVvkOMixoXDsU8//EXmo9uoujs39R9IPHpMn5nnJe05Vy13SBXlie/zRcszvuWQKOY5KHY563h5zHFVxhBtHbXTUxygRHeVqYTn1UMxOhHLM89IMz9IcCgfHMxzb1wrGWP/g4Hj4uvPKCsKQ+xk4ODg6HQPv6+PgOMUx6D79mzucN3CuiIPDuVQO589HdGivODhu+1ycDNTnmEI/b4kjpqM9z8DB8UxHX/GcVA4ODg4ODg4ODg4ODg4ODg4ODg4OjhXHxweOj46zEU9aP6Mdi7ESDwcHR3pee/VzfXp9vRzQjidVH4pRbtW58oZqxcPBwfE8x13aXXm7/IqDQ95+SXtl/oqDg4NjTMdpgxiODYM5Dg6OKmTiCNHunjF7lI4f/7y8yEs4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4OCJsxBy+fAHVl8yB", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition PoringW02 = new(912, "poring_w02", 200, 240, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [PoringW02];

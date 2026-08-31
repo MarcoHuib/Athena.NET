@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.VrPop3;
 
 internal static class VrPop3Map
 {
-    internal static readonly GeneratedMapDefinition VrPop3 = new("vr_pop3", 252, 246, "eNrt3d1qwkAUhdE5DPP+r1wa0VhjQSpIc/b6roRercbMTGJ+qiSdq3GInZ2dnZ2dnZ29B549E8/Ozm6OY2c3u7P3oFfu9IYe0Vrs1rJmN3QrWZObQc6e3m9PZ2+neqlg+gimj1T1qe3jnYxv3Was7dPjAXr/sb1uO/Lv9upqt0ZzVOJgNMBe7OxOu4XY0c3sZnYjvBGe3VfeSMfObqSzmGVnt79b2pjjfOsNd/8CXzY8fJy+bHnjna+9LW9919k+L0WevZqR+Pph34q0f3/Yd/6ZYz/8Kp1iHzPyMsPe10q/oJ/BF9Ym22vAs18nuWD8zL2PYFvuhOIvS71I/HWZm7jP35b4gedx9qObtfLOZuz2MPzc8Wul6O9OYsXZ65GeNOLdnbWNs8/5zD6iDuanozr4+Gf4JN8bz+6pCOyezEgfgM85mD/i2TP17OxpevZMfLLdXVXs7K6yZ2d3Xw07Ozu7tY05jp2d3VBnhvOEAJud3UhnhqtPv/yX3YPqXWbm0kr25q+OZM9zd7anvCnyr6/MZGcPo7Oz299teBu+u96CPs2+/dWtcex+lfBzVOf/QEmSJEmSJEmSJEmSJEmSJEmSJEmSJEmSJEk6aV9RJ+Y1", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition VrPop3 = new(1258, "vr_pop3", 252, 246, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [VrPop3];

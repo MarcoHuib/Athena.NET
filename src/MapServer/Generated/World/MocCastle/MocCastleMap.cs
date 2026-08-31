@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.MocCastle;
 
 internal static class MocCastleMap
 {
-    internal static readonly GeneratedMapDefinition MocCastle = new("moc_castle", 200, 200, "eNrt3WFzgyAMgOHk///pfdhq0aokI0igb++29W5UeSYgBHCqS7xEceDAgQMHDhw4cODAgQMHDhw4HnXI7oUjlyOh5Msc6SVf50he13HgSOVIZsGBI5NDaa9w4FjdMXecAUe2uM8K9QMHDhw4ht4z+zkOb5I66qk+3uIYVa6Wcjxb03Gs4bAmzX4fXMVR5+DA4Ui+U0zrODS91dZXp3DIzA5zDnHkcuRff7WKI+zkcf1IHJEOWcMhEzuCR1o4cCzlCI4C017FSlpzksUheR2e8FBz2fpSh6W1FHGtOBvusK+bM0eDH1+XEeiQIQ5DSfA5RtSPo+Ps7O+QkBTJcSRxFJ6ezRWO+3qe3mG8H/zD0Ubp5Th6cHTtl8TtCRvoqH7K66hftfz7hAuHzu3QP4fO7lBtDzTgUOZxcODAgQMHDhw4Yhwr7LvL77CNRZ2RZ5GAuKcpZ9M4KjEO8cX6fbMfe4dIw9WoRWv6OfRv3N0Y+nQ6PiebcFy++tfzUMfZ0S534Pnnf7M6Pt/947EpHRxXf+fL6/H7K8P1MrdXun1raK+u8tfkqOVsfz22I8Zcj338eTbHlqmi3b3ulVkdWtzSZ3Top0Nzlqvy1Hoz5yJ3u1x7Oqz13HL/sDpspbBPu2vp0Vnrx/6GZXBcpdlqhhx2hEmTQ3z93bqjtmCqcJRl4SGHfRxlcLjGH6b6sRtMhYwHVV/tac1h7LfX52t9Dsdw/mFHn/lzs8NRrgY7QuIM73nO59dl3M93lyWrPqod40gbscOBg3kDHDhw4MCBAweOL3ek7ycas2d2PLp+1z5etc1Z+Ma/gY7X+Q5fejkXsD2U6dxhPp7dcRbhyOE4yZkhnnjr8JWD0tFQTtsd+4/sw2uHZHKev2M6Ve/xTmNhUY7KTHBrqqpDfPUjrcO5bimXw7UOwLDj1Lsn2/N/au7qeaBjaLtrW19iWY6yjMNcrpz9Em+5anS4d0tq8SNstai/vWpyHJ7fiSO+vfKvjayt5op3vIYy7xn3gKcPhTiMOTuuDtz/aCtXlXbXOfi8z5l0GpcHOsbFGWLLFQ4czNfiwEG8HQcOHDhw4MCBAweOgY+1n/j1AxHriSg=", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition MocCastle = new(766, "moc_castle", 200, 200, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [MocCastle];

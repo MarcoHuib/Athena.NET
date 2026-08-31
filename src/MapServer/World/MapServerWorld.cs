@@ -101,7 +101,7 @@ public sealed record MapServerWorld(WorldMapRegistry Maps, MonsterRegistry Monst
     // relies on this default and never derives it from WorldMapRegistry.ReachableMaps (that
     // property remains a purely diagnostic/navigation view of the warp graph - see its own doc
     // comment - not a hosting-scope source).
-    public static MapServerWorld Build(GameplayRuleServices gameplayRules, IMobSpawnCellSelector? cellSelector = null, TimeProvider? timeProvider = null, IMapCollisionProvider? collisionProvider = null, GameplayRateOptions? rates = null, bool customsEnabled = false, IReadOnlySet<string>? servedMaps = null)
+    public static MapServerWorld Build(GameplayRuleServices gameplayRules, IMobSpawnCellSelector? cellSelector = null, TimeProvider? timeProvider = null, IMapCollisionProvider? collisionProvider = null, GameplayRateOptions? rates = null, bool customsEnabled = false, IReadOnlySet<string>? servedMaps = null, IEnumerable<WarpDefinition>? warpDefinitions = null)
     {
         var resolvedCollisionProvider = collisionProvider ?? EmptyMapCollisionProvider.Instance;
         var allocator = new WorldActorIdAllocator();
@@ -109,7 +109,9 @@ public sealed record MapServerWorld(WorldMapRegistry Maps, MonsterRegistry Monst
         GeneratedScriptRegistry.Register(builder);
         if (customsEnabled) CustomWorldRegistry.Register(builder);
         var world = builder.Build();
-        var servedWarps = servedMaps is null ? GeneratedWarpRegistry.All : GeneratedWarpRegistry.All.Where(warp => servedMaps.Contains(warp.SourceMap));
+        var servedWarps = warpDefinitions ?? (servedMaps is null
+            ? GeneratedWarpRegistry.All
+            : servedMaps.Order(StringComparer.Ordinal).SelectMany(GeneratedWarpRegistry.GetForMap));
         var maps = new WorldMapRegistry(servedWarps, world.Entities, scripts: world.Scripts, allocator: allocator);
         // Explicit either/or choice, not a fallback: EmptyMapCollisionProvider.Instance IS the
         // collision-less/dev case; anything else is a real collision-backed world.

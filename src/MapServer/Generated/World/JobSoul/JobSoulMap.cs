@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.JobSoul;
 
 internal static class JobSoulMap
 {
-    internal static readonly GeneratedMapDefinition JobSoul = new("job_soul", 60, 60, "eNrt0LENAAAIwzD6/9P8AAtCzu4lybgKy7Isy7625RXLsix73m5qTiQNmQ==", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition JobSoul = new(623, "job_soul", 60, 60, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [JobSoul];

@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.EclTdun04;
 
 internal static class EclTdun04Map
 {
-    internal static readonly GeneratedMapDefinition EclTdun04 = new("ecl_tdun04", 60, 60, "eNrt1UsOgCAMBNDO/S9tjIqyUMrwsSTTBYHFCy0kLUCHQVZWNpy1PFay18Zts/t4W0o8tMUq9nGqsAeZb++c/31ncPYsnbf7guE5o1e9yfp7bPoZq+/PxTb33evwVqXbGj1Tmqzmr6xsaNsSG7InC8M=", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition EclTdun04 = new(365, "ecl_tdun04", 60, 60, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [EclTdun04];

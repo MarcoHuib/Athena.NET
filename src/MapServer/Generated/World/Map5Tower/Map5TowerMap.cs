@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.Map5Tower;
 
 internal static class Map5TowerMap
 {
-    internal static readonly GeneratedMapDefinition Map5Tower = new("5@tower", 160, 160, "eNrt2QEKgCAQBMC7/386ekFUSqvNPkAHDkXZ7uhU8/Hx8fHx8fHx8fHx8fHx8fHx8fHx8fHx8fHx8fHx8fHx8fHx8fHx8fFt5qvL8O3tq3Rf8e08X+eXj4+Pj4+Pb7n383MsHx9fkK/5nvvi7+dwX/OtN98b6Obj+8yX1H/wDfd1tC+sfxv1xZzsO9d/tcVcX26/uoJPP83Hx8fHx8fHx8fHx8fHx8fHx8fHx8fHx8f3O196DiUaXMI=", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition Map5Tower = new(190, "5@tower", 160, 160, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [Map5Tower];

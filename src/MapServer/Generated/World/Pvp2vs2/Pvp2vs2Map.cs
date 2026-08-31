@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.Pvp2vs2;
 
 internal static class Pvp2vs2Map
 {
-    internal static readonly GeneratedMapDefinition Pvp2vs2 = new("pvp_2vs2", 80, 80, "eNrt2IsOgyAMBVAac///lzcflVYEaW2cWSAxmYhHJo+CRKEp0fu9FJaGN7x/9pxjrO6pS61qpNpNT3mGl/awB51oySmy12Ty9rzVy8V+7H2z2t7a7bo9roX0+N5cHN3tceaJmnk8VDzRl/ciAR4sHt9Aez2g/+kLPGoPPuTHXs9X0R76PeptX0pqQNz2+KjMqpBNFuCRxUuFN22p8GDxUpAn5qrFmyYOjPMv9VzTfCW87cTpQY5/7XG5Oa7wCLS8v4pnmv+iPQ4OdOFZ48f26kl7qod7vb2/yPneUj+ocrI/++NRw4OpPQqvWKu54gcCvc75NMqjXm8+Qb9HT3sn640cyyHXIL74Ee3Ji/PoIsd6A0X8uOfpeJQvH7x0x+MVr8cDBwdSA0J5WxnbfgFtz7z/CPfUxmr1HPutt+8vrTvqJ73g7xHj+9Dwhnf0Xv39Pjp9AE7nDKU=", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition Pvp2vs2 = new(965, "pvp_2vs2", 80, 80, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [Pvp2vs2];

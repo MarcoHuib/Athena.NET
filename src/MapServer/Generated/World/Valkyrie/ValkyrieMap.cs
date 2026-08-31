@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.Valkyrie;
 
 internal static class ValkyrieMap
 {
-    internal static readonly GeneratedMapDefinition Valkyrie = new("valkyrie", 100, 100, "eNrt2dEKgDAIheHj+7900EVQQaQ42+w/14MPmpvYzIZHhoHxvHwPBgYGBgYGBgZGjqEjKxs6BeNrg7rCwGh/PnRNvqHxhhRHZjIqvtUd4XxwJ2LQP35u9Jk5LUD43w38BG8sqxsFe15Qu/xbwqAPdjZUNteGqkvxkfO1Mt08SK/FwMBwXXbJ2QD/uyNN", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition Valkyrie = new(1227, "valkyrie", 100, 100, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [Valkyrie];

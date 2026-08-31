@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.PvpRoom;
 
 internal static class PvpRoomMap
 {
-    internal static readonly GeneratedMapDefinition PvpRoom = new("pvp_room", 100, 100, "eNrt2esKgCAMQOHt/V86CA20iJjTJjv74RDFDzIvoOr0EMXAwMDASG9ICQwMDAyM0yjFqCFOEcEorfJG9n0e6im+1XxDLQN29SxG0Pm4AUkMjympo/9pLNt3ay9bxtjLaE5cc/5y98GIZLjsIxhbGXqdmLaMgYHhYgwv80QG/xUGBsaYwdsdBgYGxqbGijgA5lIZ4w==", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition PvpRoom = new(1008, "pvp_room", 100, 100, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [PvpRoom];

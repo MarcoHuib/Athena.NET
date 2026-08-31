@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.EclHub01;
 
 internal static class EclHub01Map
 {
-    internal static readonly GeneratedMapDefinition EclHub01 = new("ecl_hub01", 200, 180, "eNrt3QtqAyEUBdDn/jddKBRCkzZ06n1Rc84ClOv4HeJkDGBhVXIsFOKTHGvlEOQv9RzQserGxkEqnaP6Y9R2jXTfWoF66rstB2E9EI4xvcybFD1jPVD2T+3/zxz1rMpYjLm1VWuK+w4VX3ArWOzjkqdXWMHtyG8Dem6N9TWhtM+Ac5sumuNZjIkrSXwz1bQjrfQafmkyW2iqChbce3JqjRHuVb3H5S0PyPEd7lk5+sf4AaNjJFfyMTZ/bRw64A/vcJebBOVYfsqVY8VZV453yAEAAAAAAAAAAACMhe8K9H8no0K3t6v/vlSm0O3vriW66Qt+dxtpmjNivORpDDHEMDbOjWFwvHmvGof0qnHI4/C5x+tbUgAAAAAAAAAAAAAAAIBx/f/hd/YB3TeJdQ==", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition EclHub01 = new(357, "ecl_hub01", 200, 180, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [EclHub01];

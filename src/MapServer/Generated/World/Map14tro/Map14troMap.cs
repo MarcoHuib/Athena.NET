@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.Map14tro;
 
 internal static class Map14troMap
 {
-    internal static readonly GeneratedMapDefinition Map14tro = new("1@4tro", 100, 100, "eNrtmctyRCEIRJv//+msUomA2CCmKgku79R45vJQukfk+YIMYxjDGMYwhjGMf8XA5/qtDKyMF7GCz2Bp4CK0Y1AUcDlwGHzgQKbZ5hx0BYArpPVF1o+OEJDVumysEH0MLMlJIHKMAIGGnCuGDWKJAZt25z10C6UYQTGph3JKC86tpxnSy4A+NGyBER0Ppvn8ejJPrhhq6+1HKYbea8vwqBwD1fU3GIU+v9qXPq96EOxdyzLAMvSXKUbwYjjd4brNfEYYPBzvPntaZM8TZDIQ3Y7dDMkV2jAeMbAZH/O1G/SDOzw6wzfBWMf+oBvsgXChP8LwoUfjXB3AaCEU58TSbfjmHmQguMvBBQPUgBUXch+DGUaZWO1jJ5TABaUDw6m6Ore7gvabOnAhVYYrRuy+JY0jvvL/2s7Gq0EPak3Fi2fQhpJSa9LiM2BvmbQxfD8h03xJ32epsKeMndpsipWdPrp8n/Wn++dkl2eJ0Mzq8V69DKDRe/V8JmQ87poXnrOqc772D3j68x/LMIYxjGEM49aSzqwPLsUd6w==", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition Map14tro = new(18, "1@4tro", 100, 100, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [Map14tro];

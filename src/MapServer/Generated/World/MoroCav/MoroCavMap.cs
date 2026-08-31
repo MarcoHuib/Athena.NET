@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.MoroCav;
 
 internal static class MoroCavMap
 {
-    internal static readonly GeneratedMapDefinition MoroCav = new("moro_cav", 100, 100, "eNrt2sEOwzAIA1D7/396p0lT10XDYJpWcOyhTwkJI+lIe4BjjDHGGFcaeMeNDXyEYa5wCNoNT86bDdvajRNhQyCiBjoNXy2RiIgBaaJkg3bDVtshE4Jh/Y1SiYCBZxgYYyujcV2xYa44Od9kXdGfjx6DXQbub+AZxuzznQx0Gr4+UT4X/G3g6+Qf4hC/WTAYQBZJGkV3Mg0GrjCOzwyGsFvC+RBO0elxVNwnLlJdZSxXk9tAncGGcawMe85te/CM7DBq50q9DUe0WTCPA7/qcGlNlD4bROuuycg3DaC/+QETSGmfKL8+0O92GOwweNwf8712jDHGGIPpfz/Y4gWLqyGU", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition MoroCav = new(804, "moro_cav", 100, 100, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [MoroCav];

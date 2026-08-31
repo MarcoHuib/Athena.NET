@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.Force41;
 
 internal static class Force41Map
 {
-    internal static readonly GeneratedMapDefinition Force41 = new("force_4-1", 200, 200, "eNrt3cGSwiAMAFB62f//5L3tqqtLa0MT8HHRgzK8mSKhoWbblmht4+Dg4JjP0f5tSePbOab1HK3bqiluxzTaEfXtvY62q50bR7zit1eO8dfVCcfXi5bp2DWmsY6Q64pjDcfjRKrg6I7pmeN+dvYdP598+novefXac/TGtLLj2HW1O5I7vDKdva4+0bE/AjgeK3BwcHD43Z3LIb6aOb4qG7fbD3IUd6Td91nlPpz7okUcY/IGsd/Py39kOEbk1aJ7yMoP5jjGZvjmzp+v4bgu38vBwcERZZn//NUqjs15OA4ODg4OjhRH9unj42Na2VHhPPjRMXFwcHBw5Dus59Zz84PjIx3B3XBwZDtC18Hwji5dzwc8bpyynoc7kuYHBwcHB8e163mJdfBdRzvcKq7n7a1Wb35wcHDM5Fjld9d+UHzFwcHBYT/4ufvBavep5T84ODg4OORro06XxPaTd/4qshfnfTg4ODicp3ae2vODHBwcHBwcHBwcHBwcHBzqc6rPqT7nrI5R/0M/VnHd/+lz1KrPGeAoUW+CgyO+zk+Y48L6UbeVlv6+632qTv2oeo7IumRnnsypVF+Ng4ODg4NjNof4aub4qmzcbj/IweF+Ise09TnlP2rV55QfrFafU/6cg4Pj2rV/gvYNhZWPPA==", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition Force41 = new(401, "force_4-1", 200, 200, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [Force41];

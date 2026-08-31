@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.GuildVs14;
 
 internal static class GuildVs14Map
 {
-    internal static readonly GeneratedMapDefinition GuildVs14 = new("guild_vs1-4", 100, 100, "eNrt2ssOhSAMRdF20P//5WuiA4JFvUjra59hMayBvIKqhkcUI8iQJRgYGC0lep5jYGBgfNeQg3mOsQLr1tsa8mcwMDBsSpwxd760OFKfUTulUfc/zCgSYLjvwAYYbnfN4nlj/Y7r0oBxZbJT2Db8p84Z5VaWbbRjqnak5s5+jE7j6eMqYw7eZC0JWxMz1vbkPSpsr804M+SffTiLYmC8757hTfc+3PVhYGBgXGvwbRsDQ/k3asThvCs/3D0d2g==", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition GuildVs14 = new(487, "guild_vs1-4", 100, 100, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [GuildVs14];

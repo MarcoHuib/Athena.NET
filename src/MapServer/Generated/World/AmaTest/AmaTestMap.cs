@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.AmaTest;
 
 internal static class AmaTestMap
 {
-    internal static readonly GeneratedMapDefinition AmaTest = new("ama_test", 100, 132, "eNrt2TESgCAMRNHs/S9taeGIoNko8qmsfEMIDAmSfYQwMDAwMD5mRHsYDSUbTSZ5HjLHSt71aKy6rGvuyisV526hIfP+mDJW+sk84rV9TqwWNJSYVyJWa+WV7LG6ONwzjTMn6d6+/+74FdQfGBgYGBgYGBgYGBgYXRUVRneJW2HE1MZg8X/DGO8wDBr3WiXLGU+bZHP0+gIDA8NriFhxJs5qiFh9aZ+XGM37VXBP7HqI9NXO/Y+o9BkwMDAw3jEqxgZoTStm", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition AmaTest = new(232, "ama_test", 100, 132, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [AmaTest];

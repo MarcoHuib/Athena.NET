@@ -45,7 +45,7 @@ public sealed class DockerMapCacheAvailabilityTests
     }
 
     [Fact]
-    public void DockerMapServerConfig_ConfiguresMapCachePath_AtTheSameRelativePathTheDockerfileBakesIn()
+    public void DockerMapServerConfig_DoesNotConfigureLegacyMapCacheOverride()
     {
         var repository = FindRepositoryRoot();
         var config = File.ReadAllText(Path.Combine(repository, "conf/docker/map_athena.conf"));
@@ -54,13 +54,8 @@ public sealed class DockerMapCacheAvailabilityTests
     }
 
     [Fact]
-    public void LocalDevTemplateConfig_AlsoConfiguresMapCachePath_AtTheSameRepositoryRelativePath()
+    public void LocalDevTemplateConfig_DoesNotConfigureLegacyMapCacheOverride()
     {
-        // Local `dotnet run` from the repo root and the Docker image both resolve
-        // "legacy/rathena/db/map_cache.dat" the same way (relative to their respective CWD, which
-        // is the repository root locally and /app in the image - matching layouts one level down)
-        // - a single repository-relative config value is correct for both, so both templates use
-        // the identical string rather than diverging environment-specific paths.
         var repository = FindRepositoryRoot();
         var config = File.ReadAllText(Path.Combine(repository, "conf/templates/map_athena.conf"));
 

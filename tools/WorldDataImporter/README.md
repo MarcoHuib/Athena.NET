@@ -8,9 +8,11 @@ dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- generat
 ```
 
 `generate-maps` uses the shared `RathenaMapCacheLayers.Merge` authority (import → Renewal → base,
-first match wins), emits 1,296 effective maps with exact dimensions/cells and layer provenance,
-and builds `GeneratedMapRegistry`. Cells are deterministic zlib/base64 C# payloads, so normal
-production startup needs no rAthena cache file.
+first match wins), assigns AssetIds from the ordinally sorted 1,296-map collection, and emits both
+small map metadata C# plus `Generated/World/MapData/AthenaMaps.bin` from that same in-memory list.
+Athena Map Pack v1 has a 32-byte header, 24-byte fixed index entries, and exact Packed4 GAT values
+(two cells per byte, no zlib/Base64/general compression). The pack is atomically replaced and is a
+separate published `MapData/AthenaMaps.bin` runtime asset; normal startup needs no rAthena cache.
 
 `generate-warps` uses the same parser/converter as analysis, fails on any unparsed declaration or
 unresolved source/destination map, emits all 4,468 ordinary warps under source-map modules with

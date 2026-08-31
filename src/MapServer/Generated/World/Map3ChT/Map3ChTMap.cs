@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.Map3ChT;
 
 internal static class Map3ChTMap
 {
-    internal static readonly GeneratedMapDefinition Map3ChT = new("3@ch_t", 200, 200, "eNrt3e1ugyAUAFDM0vd/5SVbs0wFxQ8sVw+/bEKLpwJeudYOwy1KGjg4ODg4unF8vQsHBwcHBwcHBwcHBwcHBwcHBwcHBwcHB8ddHOldODg4ODg4ODg4ODg4ODg4ODg4nulIBwoHBwfHtJ2m0yUHBwcHx6WOfZrtv7u7ylEjmtfm4Khro86R2ad0ZNbg4DjBMWsqpmPeVkhH5vTLwfFYx3hAc/TUr36qBJ13p8ej2XnwvHi39LbMZoO4hIMjYLwb0pH5kCVH+fjuX/WpCSv+VV64Pl/6stsMjDaODxUODg6OYI5jK2ccl69Tp9W4pCNHHjMKg3p1VHS0mM+zjOqY96CQDvMuBwcHx6cdr1f5FYd+9TjHFswop8RxhWNxnHfrGGYRe8ExrtvzddT+24s4OHafSaI5SvNVHMcvJuNYy+N16ShlXUM5MpRhPa/a3fgoZVWjjfM7OP52aXuWu0vHjvsmUoRl6goJB8djHNOUCId+deLaw2iDY/A/ihwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHG0ezN9V+QbiyYsC", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition Map3ChT = new(183, "3@ch_t", 200, 200, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [Map3ChT];

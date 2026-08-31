@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.VeFild06;
 
 internal static class VeFild06Map
 {
-    internal static readonly GeneratedMapDefinition VeFild06 = new("ve_fild06", 400, 400, "eNrt3ctugzAURVFb+f9/7jBSiqzGrrnHYu1RR610V8GQ8OhdQTUjiOplBDzEg4d48BAPHuLBQzzEg4d48BAPHuLBQzzEg4d48BAPHuLBQzx4iId48BAPHuLBQzx4iId48BAPHuLBQzx4iAcP8RAPHuLBQzx4iAcP8RAPHuLBQzx4iAcP8eAhHuLBQzx4iAcP8eAhHuLBQzx4iAcP8eAhHjzEQzx4iAcP8eAhHjzEQzx4iAcP8eAhHjzEg4d4iAcP8eAhHjzEg4d4iAcP8eAhHjzEg4d48DACHuLBQzx4iAcP8eAhHuLBQzx4iAcP8eAhHuLBQzx4iAcP8eAhHjzEQzx4iAcP8eAhHjzEQzx4iAcP8eDxWfuVAfPgcW3Bo9Cj8TjAw3yLPHCkexhtlIfJVnrgiPKwt4rxsJBHeTjt4MGDBw8ePHiIBw/VehgrDx484jxwJHk0q3mSB44oj8YjyKM1Hjx4THgAyfHoQAI9gETtr3jw4LEZ5KGqkR4P3sr2HO8uzPLhe71N28f8MHnsWM9nxumoYK/Hl5N1lLbs0fvFyjG5D3PUfL/HaMQ8Fj1Gs+88zvZwlr/6/WCby3URRecfPI718Klkncf6tsRjcMDLI/96Hx5h14sODn/HP/HYdP8Hj6znAfDgwWP3qs6DBw8eWzw20PDg8YjzDx7OB3nwcD7IYwaEx43PF/3bwmw9v+15rzxOeX77IgqPuzxcT130/o/L03fXt5/h8flreNzzwUlXjMfSvWw86u9f48HjEeu5gjwMOsrDnHl4XyqPqPcJ8wh7v/PgayjVvI+eR7CH/VW5hztlefDgwYPH/4EYc52H78HTPDqNLI/348rEg4d48BAPHuIhHjzEg4d48BAPHuLBQzzEg4d48BAPHuLBQzzEg4d48BAPHuLBQzzEg4d48BAPHuLBQzx4iId48BAPHuLBQzx4iId48BAPHuLBQzx4iAcP8RAPHuLBQzx4iAcP8RAPHuLBQzx4iAcP8eAhHuLBQzx4iAcP8eAhHuLBQzx4iAcP8eAhHjzEQzx4iAcP8eAhHjzEQzx4iAcP8eAhHjzEg4d4iAcP8eAhHjzm/8QB5Xi0l5L+M34AnKZorA==", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition VeFild06 = new(1233, "ve_fild06", 400, 400, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [VeFild06];

@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.TurDun05;
 
 internal static class TurDun05Map
 {
-    internal static readonly GeneratedMapDefinition TurDun05 = new("tur_dun05", 100, 100, "eNrtmYtuwzAIRa/F///zuiW2AQOGdKm0KZaqVZ2TY8zjEqe12wfaw3gYD+NhPIyH8fcYdIy7GMRH8lbuxAwjSXLnhAy8Rhriz0FkBQQkw6AkY64cr/9mLQlmJRgpY+gdxkHZ2QK2s+8zLBbzHqoM6giD0e8l4qPEOK9FA1wGiQVhrCbFmOtDhCBuR9/VpD/AGc0lCEO656jEaHMHQkbjUZ6OXVUcljuzZDk/Y1PLDLNIkOke7rSLGqUZMAiOL/YatZbtmFHWQX7Nj1+ApRYPyAz6CuM0HWMGoNPlnAUAJa0FRGqp1HUZoBSjr5IXoZ5YfJbIj6gWrgzwwbL38IIv9rjKgMregHHZjgMyv6IXpF9nEKcdMzwGZRiwGDSDqP8sBYZm7F5gYKmAa4jOKpnrReFBgvVS1FUl/GEVjJE/a3MYNi0tZwhchNy1HIN99Rji1rsu0WBwi0wGE4q1O0nWq2Zt1/LbYIj6Rtm6KyhMr0U710TNjVtVWL+A7/4pT4OtzVDBkWWc5vDwGYbYdb3IsPuSNCPZ+5ilHOOBh4cwL59FhoCoEg6PgcpeiT5g0Tue7Kz4B/UkYkBqxdQrlVND+YsMmlLBGXqpnOF2igieH1fFW9w6xWwyqMKYzXnwpAbjuEAV6B2jhc8eQnC165IM9/BE9InGyDO41pm2eQwUGet9xQwylB/VvRp/vwsvrS7zHkdQOAOwY97ImkXNfIYK3Ebmc49nBzIML0qPq0wHM/ejwJDp3mao7OLYQCwMVSzYCuOTgFZgNOfIhfYIdcYSxVUmjT1h7QkTMna33Gk3TeXyGHsELhwuo4DQTci1s/AE4rOMy2f6vjrg1xhOruvjnfcZtl2bU6p33uNoxi3vilTncyuDPsa47b3aP2I87zkfxsP4u4xPjC9qwjPa", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition TurDun05 = new(1204, "tur_dun05", 100, 100, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [TurDun05];

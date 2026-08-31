@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.KhKiehl02;
 
 internal static class KhKiehl02Map
 {
-    internal static readonly GeneratedMapDefinition KhKiehl02 = new("kh_kiehl02", 100, 100, "eNrt2TEOhDAMRNFJwf2vvA3FakHBwsnIXn1XdE8KjGWHMbaXBsYmQ2dhYGBg1Db0VX0N/VQ/Q5PqYShY1Y2Iw1lhvO4lrwMYNxIpjxqpVlKmJyZjXqGXhD7ftJFOx7OxIIIFci6tQLSGmCIYjY3juD51NHjnGBjkHGOv4ZhLTHuUYU60zLuWud2yf1j2KM8dmWOvteznlnuGe4T/gxgYGBgYGBgY/2s46gMVXR4i", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition KhKiehl02 = new(676, "kh_kiehl02", 100, 100, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [KhKiehl02];

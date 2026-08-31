@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.DewIn01;
 
 internal static class DewIn01Map
 {
-    internal static readonly GeneratedMapDefinition DewIn01 = new("dew_in01", 60, 60, "eNrtle0KABAMRe/e/6WRz/hjo5B7fijlTMZGhBBCCCEBJH5xxaBi4EV3PsAOt5uvuDjkPnFev1p9Sfvehq4UkQOEUZmrsrtEWV/9bZ6tHcfSdVB7Dvjf3PT3OU/TDLk=", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition DewIn01 = new(344, "dew_in01", 60, 60, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [DewIn01];

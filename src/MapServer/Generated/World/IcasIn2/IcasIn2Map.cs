@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.IcasIn2;
 
 internal static class IcasIn2Map
 {
-    internal static readonly GeneratedMapDefinition IcasIn2 = new("icas_in2", 280, 160, "eNrtnOtugzAMRu33f+lpmtaGEBD+nCbedM4vVimtc8jFMIw7AAAAAAAAAAAAAAAAAADA/8Fe4AIveEmLwURBL+VGrVmJkIp5sQ68/EbTzqONYZXyYnh5NIvwcqllV1x4uY/GHS9jL/vdFPJSJV0o5sXwchNIc4CXkZcKA6ZAXlcnu6zkxayalxrzyLxQslDdi+EFL7deCt08LOLF8PLYC+vueB7V8+K71t1jSNu97M/rpu1HZlcz4Gnnukany5Nn3/D+vUzPpnrpw3l9GPYi9urg5SKaxKi1WWMl3qtPf8PTzs328j5r8fs6870Mown3SJ9Gx5bndXyTl3E0u7z0R0qvEuvuYLgco1n4X6zBFjT4YN1+dBuNumbOuHEue+nOa3O82sus2953+7QJid3Fn88DSe3Try86Hc7M64LhfKdVTYblmpf8BcUULzNz8N5LgWs19yIPeoz/2iXG3Xleyv/AY6pYAQAAAAAAAAAAAAAAAAAAAAAAAAAA8Kkv75LaCZUHiddnzSkoUeuC47+2oHNNnZB6zoVwjzVCgcoKZZApj5DnHsk/FUzHZoNcYxcsU9npJdQ868U+3r+UF7msXa5tTnqJnwJp2bZcDWGsXu9Q+uifLePsa46TNXzKW1YCsYovH2mLSLXhkljnhdMYTC6kH+pa2LJi4fa8S1600uZ1eWeisZA8KV5cL3BN1ocvfOd/4yXYStw2l18I/MxaYW2SvEjbZk7Mhhd0CsNFDFU2Y///qh8vAAAAAAAAAAAAAAAAAAAAAAAAACv4AsnEpQU=", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition IcasIn2 = new(533, "icas_in2", 280, 160, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [IcasIn2];

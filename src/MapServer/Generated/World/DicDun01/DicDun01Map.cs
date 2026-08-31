@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.DicDun01;
 
 internal static class DicDun01Map
 {
-    internal static readonly GeneratedMapDefinition DicDun01 = new("dic_dun01", 400, 256, "eNrt3dtuozAUQFGsyv//y72pUkMLMTHGPmbth1GnyqThrARyYdyUJEmSJEmSJJ3ZspPp8ODBg4eOeJgKD/HgoSPHbx5johiQxwcPHjzEg4d4RJ736539U3jw4MGDxz08Wvny4MGDB49JBjW/qNHxKNwgHoN5BDaZy+PozRtvY4J7rG4LjzEfHz9f8xhnb8VjnE158Aj1MuwGjw8ePHjsHM953OcdPR48ePDgEf2zKeeq8eDBg4ecO81DPHhIkiRJkiRJkiRJkiRJkqR06Lw9k+AhHjycs231UR5q5ZEzj5t5LNqefMF3/78gjoIhNfGwHPIlHpXXy2M1tzYiPNZT/o5HLI/dyZUvEjG8R/k8Xrv8/r27v8doy1/F8bjH8rt9PRbL6fOwXF9Hj8ojE4/6+/HDX3g099i5qpwfJ8AjpkfBpbxfsuOxtZVfHqv91fNpt/VIXd+v29y050MpuvjH9/c8/gyx6NlgyWV8ALXV907p8e73yr3VJNt9/HZ8/2FwPHjYX3U8u+H1pzjmWe2R1s9sl8RjGI+61wHGefZeq9F+TpIkSZIkSZIkSZIkSZIkSZIkScnCwVbanpeDBw8ePEIt327mPGbzWK9LWbPuqpnz4DGqx3oRs88/3p6Mhcc1Hj9fxPOY53jOY1iPhUd/Fx7DefzZ8KE9Llurm0chiP1VSm/zvmL6vVXLXeIBhAcPHn5JLg8ePP6ZJw8eY7v0+/2PPHjwuPtZGzwc43nw4MGjqUf0X/CcVH+vKL23mBoPHjx4iAcP8eAhSZIkSZIkSZKkVHmaoOENdtam8fHgwYMHDx48xIPHpbeXBw8ePHjw4BHg+dXkz/g8PrzfzqNq46Mu15DPvNjBBQrCe1gvo3xCPHhcvZo8Dx7n/M9THn0P6H2fXkVdsW/Wl0E8ePDY8siZx1AeXn9Y3ZIHDx48AnjkU94x9sHYSUv4fvyTfM41puR8sfaDyEk+H4wMYj4eHzx48BAPHpIkSZIkSdLtewduWzt7", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition DicDun01 = new(346, "dic_dun01", 400, 256, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [DicDun01];

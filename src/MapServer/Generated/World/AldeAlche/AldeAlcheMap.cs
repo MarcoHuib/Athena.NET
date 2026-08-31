@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.AldeAlche;
 
 internal static class AldeAlcheMap
 {
-    internal static readonly GeneratedMapDefinition AldeAlche = new("alde_alche", 200, 200, "eNrtnY1ugzAMBpP3f+mp2ygNCtJqu3H87U4T6qYBPSCJQ/56BwCoRZtQ1eOqU9RjuDGPD2vvZswDce719Og5HsPFtD5XxzHSUleAR5fyaE4P6yFiPYwXdNzHnT7c6fyQ6e9lVxePnp1fPTbfPy3B4z7FJni0mZYvwkh5rnbwCCmL7d+h3eBMZY58V8qjJ6XziYvRIyhYjvLIrr1keLgfzPkxnB7H7+Ysyx5chXi8lsR2D9PeEw/75RjrIdZA1ZUkouvpEu9N8AAAAAAAAAAAAAAAAIBOexAebzYg47FbX3k8dhu5gMdu40jw2GtUT0UTDY/WYvqu4uH/pj7wwEPBI95FJa1r5Foqua9GOaJSHmqU7CoRikaspRIzakS/KlG8Tl0ED/JdXQ/iK71o968mn7sCGh6r67V47PXeR8zDMYcGHrt7rG43iJhP5P96xLer4RHUQ+a5Cctb8PD0IDs3ZWfa/LjHwvrJ4fGRvEPCo243y/RGRAUPAAAAAAAAAAAAAAAAAIDO/BvVJ0TR82DOIzzwUEwfk7Kj+Mwu45/wwCOy32vl3Etphfn/6zH/T/O6tucmYg1TJQ/XasTvHeSyviUepvhq+hiazh7rETPzod0ja6zz/FQCHir34zkyKM7j6MC/2KNV9DjPcXdnIsZDVvO4iycqedzfnQSPyyLaeMzyiTUeP6f5deqv17GGx1iRH9JKkMfKGt20BKztEfKiJdej139hBAAAAMX4AidGiOE=", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition AldeAlche = new(211, "alde_alche", 200, 200, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [AldeAlche];

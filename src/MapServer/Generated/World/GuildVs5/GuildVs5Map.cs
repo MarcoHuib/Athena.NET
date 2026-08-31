@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.GuildVs5;
 
 internal static class GuildVs5Map
 {
-    internal static readonly GeneratedMapDefinition GuildVs5 = new("guild_vs5", 100, 100, "eNrt2OsOwiAMBeDDj77/Kxt1i7tQdtq1RGOJiTEGvkFhFFpLL2hllFFGGWWUUUYZgQZe5f2da2ClEgygY7DY1xiAZlCKz7CFBreEsJjnG5tlkW0o/Ykwdm15BwxsLIYI/Mbxcbc/RYTtjdOQI+E0zsMOuFYjuFgM4+E2erWPrQqngBupjnAOidHAdTkTmuI3MMOg4z4wPJTN8HUnxLhwDYY+VJ6FCDXe42zEwmC0Z/QrRxpaZVgzFRgznecn2WDe8hFGCzCYjeLu3J35vtL3ogRDphiSbcgEg27daFwqbL4QatzN4Tpp1WLIZkbEGrL7e0UCcuoD0YD4vH1nIMzg53DMOSrP4JSQc22ywe2Lv2AsL7vUOxn1NPjJi8PuLB2t++5FkXlnOdFoM4y6Cy+jjDLKKKOM/zRmlAfs9h6d", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition GuildVs5 = new(493, "guild_vs5", 100, 100, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [GuildVs5];

@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.Map14inq;
 
 internal static class Map14inqMap
 {
-    internal static readonly GeneratedMapDefinition Map14inq = new("1@4inq", 160, 160, "eNrt3NFWwyAMgOFwwfu/sheeiYyNESAQxs/NtCr9joUAbWgIrosEfPjw4cN3lE/elOETquoVfPjwdftSfenIDF9rvaf7aH8X+GK08TXU2+az+v9F2h8+xo/l48f/z0cN+U9fH13W/vp8S/rH89XRfFmv8x6fRfk2n6VZc0Z8+NKtmkk6MfGlCNYDzf7Yxjc4yeqooNMnozM/6/4x5rPvvyf4tBHldt/782l9a/qvP1827QxtgbpcedjF5/N8Pdd3wfjmsv0R/+b7evoHvvL6ZrdqXxzBd+b45is+f/TF4na/J1/8bXOxbIw+xreH64Nv1/wvsUog4y++69dvm/uH//jiPT4fPr6xfmP+zProyPUb4+8l67fga/1W5EX8feSZJG58Iht99fak/f42H/GP55c7fd6fT/t/vu88P8J5fgn5Q/jW+cifJH/Xo6+en/18vvX52aGa3171GeS36/YHtMQP2bh/Yb1PF1s1vyMb9s/gG9tfpvXFxfvzlL4YaX/4GD8YP/Dhwxdm7T2eWSM+fPjw4ft238y3YNznm/0ekbt8Fm9iucdn9S4bfPjov8TnE3zMXzwWfPjw4cPn2SeU7vIDDvxGyQ==", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition Map14inq = new(14, "1@4inq", 160, 160, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [Map14inq];

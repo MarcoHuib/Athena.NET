@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.RaTemsky;
 
 internal static class RaTemskyMap
 {
-    internal static readonly GeneratedMapDefinition RaTemsky = new("ra_temsky", 200, 200, "eNrt3AmOwiAUAFB6/0tPZnHsalgKBfKIiRpN4bVs/f64LFOUsHBwcHCUVvBXODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4OFIF68LxlCNclHEdx3fjOPZXoPoVCW171UiOEFE4nnGs18GxHb/vq4/1BnnhDXYlHBz27Rwc0znMV/oVB4dxzmF8cHCI787n+BS/4mjtaB4V5Thpb06c+jZfKDwJJ41IirdvQtqdOEKs4j9y3YvjrG0pjtBJv7q5cHCsHKWg1YH6dbzuawdwRJzs6r/ihpb7D45n18GUrJOO9lfpjn72V5dX6fv5+Mn705vbUtivPjnO44nXjuf6VVysZ/tqxPvBsR2z5MnM6JAPJw+Zw+8fHBwcc+QzLP6fmoODo7GjyX5vKkdGBRx9JdCFHu+JMo7fm2NXQXQ1HPUzU252lMVv0tTZp6sjR1GsK5TG1e6aq3dH/XlUdBxYYzpSc6ayv/ka5XUc55NKheuRPCdWcqTnWTZ1RPerMse7X9VyxI7z9BnuYpzXcmS1qsDx8DqYueKE3tbz3JWzpiPnRGXvAOZypN9MVd+3p+/yN9P7FI4J4iWptYjDcYhTc3BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcPTx14GPlS+jYo1D", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition RaTemsky = new(1110, "ra_temsky", 200, 200, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [RaTemsky];

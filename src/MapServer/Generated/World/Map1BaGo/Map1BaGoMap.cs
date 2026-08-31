@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.Map1BaGo;
 
 internal static class Map1BaGoMap
 {
-    internal static readonly GeneratedMapDefinition Map1BaGo = new("1@ba_go", 400, 100, "eNrt20ENAAAIAzHm3zQWeJFAWgm79xIAAAAAAAAAAAAAADihZgy1tJQeeuihhx566KGHHnrooYceeuihhx566KGHHnrooYceeuihhx566KGHHnrooYceeuihhx566KGHHnrooYceeuihhx566KGHHnp4IgMAAAAAAAAAAAAAAG81Cb2QXw==", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition Map1BaGo = new(24, "1@ba_go", 400, 100, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [Map1BaGo];

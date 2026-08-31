@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.JupeCave;
 
 internal static class JupeCaveMap
 {
-    internal static readonly GeneratedMapDefinition JupeCave = new("jupe_cave", 232, 100, "eNrt17kNADAIADHYf+l0kTJAPvAtAO4gs0WRnJycnJycnJycnJycnJycnJycnJycnJycnJycnJycnJycnJycnJycnM85Y3Zwndg0lXOZeSNOTk5OTs6/ne6hCk7/CicnJycnJycnJycnJycnJycnJycnJycnJycnJycnJycnJydnDWeXBokZVP4=", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition JupeCave = new(665, "jupe_cave", 232, 100, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [JupeCave];

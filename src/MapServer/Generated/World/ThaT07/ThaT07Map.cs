@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.ThaT07;
 
 internal static class ThaT07Map
 {
-    internal static readonly GeneratedMapDefinition ThaT07 = new("tha_t07", 140, 200, "eNrt3NuWgyAMQNHw/z89b9MbapAEk3B4alnU7tUqhoC0FqZIw4IFCxYsWLBgwYIFC5Z+s7fy/a7f6rNYWX6P2/8euSi1LKIoI+1qWEQsLReaNBZxKFUts8L8lqNjuf1LMnq6TFuapWXyPC9rmenrsOxmmbs3ulsaFiwZLJ3qo8bvla/XvjHDmEX8Le+fsR9P57Xoo67sFrVxM8v0NS0PWAQLFjeLYb+rj3cHB3s2lobl5Oi96pKWFt5yGEthwWJuOb9w97XI3bkJLAb5OixTsZT3eDqs5fVhb8v12FYz3vWw9Obt61taGsvZdXS6LqO05ap/Uf/NpSyafnc/y1wtlp0s4edhE+Tr/POYz1jGkkFR1pGtsIz09mNts1um5zNHjoAlvYXriH6X+7THmlniOsYBWMgz7JILimW5mzusYHHJexvep2tZAs1NGMd12r5uQSzVJi0NCxYsWAYtX09JYOF8yWv5r/s42jMxQyyL9zM/OS0r8nVYqljW5HexxLHoZnPuZeydLQdPv/7+kAvmJiJZMs6TlJqzud4FzNNy1qdMWY45YrFvURhLC/S7YHnMMrrFWIg54cwWz3sjljwW11hKqRm01FqjZBczVLCwPyb7qc7veatdbyEL9t990qLf/VhUOymzjzUWLFiwYMGixfwB/YU+lQ==", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition ThaT07 = new(1176, "tha_t07", 140, 200, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [ThaT07];

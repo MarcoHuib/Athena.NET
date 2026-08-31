@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.JorCrkP;
 
 internal static class JorCrkPMap
 {
-    internal static readonly GeneratedMapDefinition JorCrkP = new("jor_crk_p", 200, 200, "eNrt20FqQzEQRMHu+186iywCWcQKJPDVrjqBHkY2lkYtAAAAAAAAAAAAAAAA7yPfjWRcmJIfbFTc05ITIxnPL0kmQpKJkGQiJJkISTZCMhKSjZBkIyQjIRkJyUhIRkIyEpKRkIyEZCQkIyEZCclISEZCMhKSkZCMhOh4VkhGQnQ8K0THs0Jer2+io7nkbuT14iY6PkM68YH0io4erW1hqx+X9PFb5I4b9rO1Xf+jPhOSe0Y3/iikd4QM/MG9Y38cff2+0VGWM1KH1su3ITPXUzP3hTMXuDOTATOjGjOzMzNDWV3pWJn22xkj7UpHRzJ+GdJOhLQTIe1ESFvvjbz/+pfT38tL2oVHku3Am9UCAAAAAAAAAAAAAMCXD1Hsi6M=", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition JorCrkP = new(640, "jor_crk_p", 200, 200, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [JorCrkP];

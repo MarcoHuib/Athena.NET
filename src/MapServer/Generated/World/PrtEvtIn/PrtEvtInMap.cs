@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.PrtEvtIn;
 
 internal static class PrtEvtInMap
 {
-    internal static readonly GeneratedMapDefinition PrtEvtIn = new("prt_evt_in", 60, 60, "eNrtlEEKwCAMBHf//+kWbIuih1gMucxczCEDQbKxAQAAAArRzVc8ZbKrBVVuVE9wlem2pr77rYJus4654Zl/uuf+2eOTvRzWGCPvxXB29+KrfnyuYckJvgBHuQy4", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition PrtEvtIn = new(925, "prt_evt_in", 60, 60, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [PrtEvtIn];

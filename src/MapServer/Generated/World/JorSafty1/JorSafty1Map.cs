@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.JorSafty1;
 
 internal static class JorSafty1Map
 {
-    internal static readonly GeneratedMapDefinition JorSafty1 = new("jor_safty1", 400, 400, "eNrt3e1u4jAQhlGPfP/3vIJ2u8F8tNWqmbfyOVLVnwx+AgkByVUAAAAAAAAAAAAAAAAAAAAAAECScefcx59zPKaHHnpcH39e9I+RcFjMiB7vf3pk9Bh6xPUwxnI2jTqHbd7j8k+P/jE+3rxn6+Xl5eTh/HEYorHH5Rl7fSwzzBn2GajjfNbdY8T0eLgcIceFHnqMgByVcf9KDz30iBwj7+a2Hnp8FmTnHiEjNfRYvwCqvCC1jzn1yOvxXqRCv0Heq8fQI6lG8vvCnj0q/RcvG/WIfrpDj8ifg+3VI/+3eVv1KD2izue/4JereqAHAAAAAAAAAAAAAAAAAAAAAAAAAAAAALC9iA3Y0UOPdG9b7x0F9DhzjPGJ03uM2w34RkOR2xLnHhZxPZYcHduxj9m3h2xej6GHHnrk9xhhPZr2mk7skXA+b9v7u32QtUfG9VXfXuzdc4wlSEKPtt332t65o3t07oe4FOnrMWN6dN47WoK0Hhbz40P67j1m8yRdt9HCchzWoXeSMfRYe1TzPfeMHr3fOnTeZ7+bRo8RkuPfwmzeY3SfOO5X5uyj4+/Tb7+yCvt29Gack5Mcu7D0uF5m6JHS5O2qz1oENdEDAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOpnN2IfNrbSI3Rd9NCjt0faEaGHHvE9Yk6reuihhx4v5wj6GKBH0qtj188fIT0CDg090l6qEVf/gZ88tu5xO8bWPer6oHo8LhIzih7dl97Ng+jxcqAte6S8Th+Ms9WxkLEAL+fRIyvIriuhx/rQCc+/qvQov2wBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAqJ/aVtn2MHqErshePXIOCj300EMPPfTQQ4//f/SXq6FHx4W/Hlk9ns+hR+cHYz300OM70+ixZY+ASwo9vrAOu93fDe9R1X/jvaqCbv939qgK+C6kNu1xfOziWRALogfPg1iPrCCWIyJI6ZH5KrEQegCEvjFaAj3QQw/00AM99EAPAAAAAAAAAAAAAAAAAAAAAAAA+G3+AH4xYkI=", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition JorSafty1 = new(653, "jor_safty1", 400, 400, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [JorSafty1];

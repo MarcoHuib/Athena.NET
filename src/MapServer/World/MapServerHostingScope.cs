@@ -74,8 +74,9 @@ public static class MapServerHostingScope
             throw new InvalidOperationException(
                 $"MapServerHostingScope.ServedMaps declares {missing.Length} map(s) with no collision data loaded: " +
                 $"{string.Join(", ", missing)}. Every declared-served map must have real collision data before " +
-                "MapServer starts listening for clients - configure map_cache_path/map_collision_artifact so these " +
-                "maps resolve, or remove them from ServedMaps if this build genuinely does not serve them yet.");
+                "MapServer starts listening for clients - regenerate/repair the Athena Map Pack (or configure an " +
+                "explicit map_cache_path/map_collision_artifact override) so these maps resolve, or remove them " +
+                "from ServedMaps if this build genuinely does not serve them yet.");
         }
     }
 }

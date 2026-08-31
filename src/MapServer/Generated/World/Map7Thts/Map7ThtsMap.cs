@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.Map7Thts;
 
 internal static class Map7ThtsMap
 {
-    internal static readonly GeneratedMapDefinition Map7Thts = new("7@thts", 180, 180, "eNrt20sSgyAMAFC5/6W77E8xAWzBeWybOq8jMRBsKcuNrTAzMzMzMzMzPy8fHPVvMPeLY/HMMXHkrn9/chDJnDTXZhJzbwbux57lLHP+SddXdZjz5m1jvrJy57zMI9ahzKPNPb+DOWNuVzNncjBSa5j7zNGavp+rzLkcDNz7wtxujudmfWYxx8xHM+Psich8Re2uzS3mSE1h/oU5vvKcZ72xljm3s51jbqxqXq1XsKJZH+lKc7/99UrMzP81j+t/MWd7Befq2fZWq5mjKyXmkWf0udNO5pFnmqH31ZiT5s++4pznKaub3/u3sfMh5uzeKrtWYrbvZmZmZr6buS2WOatuiWRuWyfl4piL/w8yMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzPfzrzieAAm4miO", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition Map7Thts = new(193, "7@thts", 180, 180, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [Map7Thts];

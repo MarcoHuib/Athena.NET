@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.PrtChurch;
 
 internal static class PrtChurchMap
 {
-    internal static readonly GeneratedMapDefinition PrtChurch = new("prt_church", 200, 200, "eNrt3d1ygyAQQGHs+z90O1On+bMRDMRl850Lb4y4J7ACE4LLAgAAgFGUO2aN7/ZMRI+6+PJ4ZGlX2fIjskdLfsSrk8eI6ttVTI/2/JjX4/GKmB41+RH0YXWj05AfMfvBD+s/eJzhc/Q8Dx48ePDgwYMHj2aP9RDe42mcaTx+J4vxPXbiTOORJM8BAACwTLBm5euH+cd0PMwVePDgwYMHDx48ePDgwYMHDx7ZPCKvlufBQ57z4DHq3jx48BjtcW4fmMGj7515xNmh4cxxYlaPEsZjvbqysLj1seFR9j59fezn8JrLun661O1V0M/jv/78uMdaH5Ue1/1grPrI4nHdrpaK/3eMyvFXyt0o41lJ3R4wvfPjMazdNO/kMbo+SpPIpO0qrMfGvh9v8ujefzR9I7d3jFsfOyWVe4/CI4nHiPHVZZzxrnF7//o4Zz54tsfI33Dm9OidH+rj0z3KLjzO3JHucuQRaffJuZ9XPHgAAAAAAAAAAAAAWLzHdtJ4or3/9Wg8eTyytCsekT3OdTkeCw8ewzyWlxfr9zU5EE8yj7/lkUE8muNJ5aE/Tz+PAAAAAAAA23P4b+iPkUQ=", "RenewalOverlay", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/re/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition PrtChurch = new(923, "prt_church", 200, 200, MapSourceLayer.Renewal, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/re/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [PrtChurch];

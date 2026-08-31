@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.Map1Tnm1;
 
 internal static class Map1Tnm1Map
 {
-    internal static readonly GeneratedMapDefinition Map1Tnm1 = new("1@tnm1", 180, 140, "eNrt3O1uwzAIQFH8/i89aVrVLPEHGNzg9Obfuig7sjDF2Esp211SMGPGjBkzZsyYMWPGjBlzYrOEXJgxY8aMme8UzJgxY8aMGTNmzJgxY8aMGTNmzJgxY8aMGTNmzPnMv9tcrf2uxiYYZot5vLM43HVMb5YMsXEC7WguJ5ZyV/qT5grnv+tussIsCvPN46w5lXAzOsr8SbZYTorsbL45ph9h1kV07a6cZumncecZq9pv/LERay5jc0A8d3OHE60e5ZvNZWaUrfHczdH2aTR6aqu6sJ8/jBjnQ+nVG4nXnavMYgyKUq/ETp9KKrNozDJlbma1YLPhlKuMM5B2FmY216PDl5mDzbKDWZejfV8p7We9slvnwfnNYusxWtRzZk3d8QXmXqIPyM+Xmqg6y59vtmV/t7kRfd9h1rqn5uDW5mOWmDJf+orx0XEV9j7Jae4lppk17Ap1bC36DLPzP+cUtWg/ULw9xpzmYnZ65mB7JfR0syYeomv+ersxdg7uZD5uz4f1ZJo1fqy5HTGeLm68+d3ti6tFezWccQ37GHPs/qCle+kxR+7DXnu5jVX4WrOrZ97+k06zBJr1ne7Znrn59E9ISTp9TmZk/vuprHhzhOWsWjeaDqvO981lzcsuTOfrbOZ17+fgvChmzJgxY8aMGTPmXOYdrx8PXk83", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition Map1Tnm1 = new(119, "1@tnm1", 180, 140, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [Map1Tnm1];

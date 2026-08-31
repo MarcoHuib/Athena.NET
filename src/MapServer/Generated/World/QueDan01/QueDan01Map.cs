@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.QueDan01;
 
 internal static class QueDan01Map
 {
-    internal static readonly GeneratedMapDefinition QueDan01 = new("que_dan01", 80, 80, "eNrt2MEOhCAMBNCZA///y5t42sWWYqcmZKE3TX1pERElT5z4m8Dx9vPQhegBeTD0rsOFPb1fQADhcEyCcDgmQTidTnVtnO8882Z4IHIeBC+I1T0nO+/Bngx5D1au4gWjMOmx1guKL/Aoe02rr7X2c0XT+h0XNLmWdRmidpvyY+OZN1y5mrOYzryJrOkse0a/mPWYf3iD+hiN45XysF9nv5Gpb3SJ4rHW45oeh/n5+mTvtkG191Eznr3h1T8ivkeRteCSHqs97ukVfsfWcizmWMy94HEr78SJEy/8MP4AVSUS5w==", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition QueDan01 = new(1053, "que_dan01", 80, 80, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [QueDan01];

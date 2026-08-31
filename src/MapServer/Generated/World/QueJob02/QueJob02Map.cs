@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.QueJob02;
 
 internal static class QueJob02Map
 {
-    internal static readonly GeneratedMapDefinition QueJob02 = new("que_job02", 200, 200, "eNrt3dtyhCAMgGF4/5fuzXZmDygBkhDDz123XeXrRASBWGuKUioOHDhw4MCBAwcOHDhw4MCB4/OgHwXHXkf5KTj2OT7r7mbB8VPn9if/n+GwdZSb0v5bHHaO9xr3W1mZY6lNOMghj5/5nsrynfMYx8j1PNtXef8Uh+zsOv2MlqT9Mw7JObX7ku3j4/BU9NthHKp9hEFJ+3c4PBV9I4770am3Y/DsiR27FTiiOSau9LSOCIqJyMLhIhHXI7mjBijfffvbmuHYYLmJNRxbPWc5aujSlOCI1YvEgcPBEbPVxYEjgiPKGAoHjniOpyjOctT6DMdXTXGMPwuwjCwzh61H31GExTiycAgdVqMzL4f1KFPXIf+OtgTH6lyLpkT3Os/hmFv9ajTnts+xQJI45IefbRe0HFrjj6iOMclKr1LDoTU+j+wYva/NVeX1vWmHZB7Hz7G6Rl7iKMX2XrDikM1z4ljdPYHjuY7+uowsjrE9izu22QdwqDxQ0XfseWAXwBE0rnRWIdm0uzi8HBfnxrH45MO2347jVIftuPYJjv5zHxw4bB29k+x13M8bODvM5j9GIivcTjAcsSSHO2KsH8cRL7LOcFjO45hc6ckdZSDfWojIwhEmIwWOKBKd6zyTY69E434e3TFTL5/17Lf5CZM7qnVeIYWpOBx7IquV/eMn+nE4RdZ1XlXJ88QcDvOsQvpHTupY3+vll70Txz7HaB6vHA7tDNqOGe9wOEXXzHWew7Feh2KyExXHrhViOCzyTFhd6zh2rHbDQVxldmRpd7PdB6viOzRw+PVK+vlCcHjF1P02qaH/Co7l+9/VW8+mRmQ4lOarryJp/r0AOObXc1y3s/PvMcEhzdsnfWPv2nstcfRzrJlnv8OhkpMQh3fe2qtsispnSuh4dMGBAwcOHDhsukAPKX9S5YlO", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition QueJob02 = new(1060, "que_job02", 200, 200, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [QueJob02];

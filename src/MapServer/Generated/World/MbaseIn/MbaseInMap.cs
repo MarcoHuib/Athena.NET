@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.MbaseIn;
 
 internal static class MbaseInMap
 {
-    internal static readonly GeneratedMapDefinition MbaseIn = new("mbase_in", 400, 200, "eNrt3etSqzAUBtDw/i99ZvRYwEILuezEZn0/tDrqQFaTwAbisshASZqAh/DgITx4CA8ewoOH8BAePIQHD+HBQ3jwEB7Cg4fw4CE8eAgPHsKDh/AQHjyEBw/hwUN48BAewoOH8OAhPHgIDx7Cg4fwEB48hAcP4cFDePAQHsKDh/DgITx4CA8ewoOH8BAePIQHD2nlkf5H0/CQc4+RRCZ6j6Tz3eehf7zS4DGUh/lc/xhk/hhsE2f3GG8jedhQuyk8eAgPHsKDh/DgITx4CA8J8Uhpqho5Dx4ZElR48LiiQYQHj/QmGpvHvB7pQjQ3Dx7jePzB9wCPD/T42u0rHMHtw4NHf4+1ra94RLYQDx48ziW2H4vG4t0LHl09Yq+lNprPD4+Cw+bzLf/6VVHvqNhDXp4BNPFY/2pa+nmkGh5tWqupx/N49cojQqTWueiP6bpfqfq2xcwf5+PV9B775+9S/edrR/OoV62pX/J5jKLr5xTh0fP4amiPn2O/x+zWYj2AQ4+T77R/vraWx/NvlYPc98hZEKF1/aqnR/0adUj/SFc8SkeNPL1JPc7nkUfXL/LI7k0jjVf5HiXViXT8Mrx/pMLVHdpcUrs/f2RXi7aH7NtesZlieNz2yDwj3DX70yxeUtm72xhHHqOcD8Z5vDzw3f1Y68Ln/t08kkcK8Vi+3/6/RqZfo1hUMbGiR/16YpjHYY27Ts27hkfx1ailTr39fr2kwiWgsyPeZemzjlmtC0R1xvab9cQ2d5ks8RyjejSvt78FecwvEnN98O0Am3BcPH5PS8wDORCu3Ynk+cGP9jhA0fieP+dx2Bt58OAhPHgIDx7CQ3jwEB48hAcP4cFDePDQBDyEBw/hwUN4zOThPjYeUnc9gI73588wf/DQPyquB8AjZjVE87n+Mcb8Merzj84Hzec8pi4kOO/jITx4SBeP3JUiNT2Pz/fIXY2UCA8ePDocX+V5aHn9gwcPHtPPH8oC6iU8hAcP4SE8eAgPHsKDh4T/M2TplH9YAyvZ", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition MbaseIn = new(745, "mbase_in", 400, 200, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [MbaseIn];

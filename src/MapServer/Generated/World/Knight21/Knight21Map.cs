@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.Knight21;
 
 internal static class Knight21Map
 {
-    internal static readonly GeneratedMapDefinition Knight21 = new("knight_2-1", 200, 200, "eNrt3MEKgCAMANDt/3+6S3QKTdDA+XaO6GGOMVeZJSKSg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODo3H/J7Z2RPwE4eDg4ODg4FCXfKRUqHc5ODg4OFY64mNwcAw6epj7og0c2VmJTd6rJmRNBluzP9oO+5yDg4PjdMfLYw075tBidpdt1DFpjTiKOmYEB0dVh3zFoS5R73JwcHDoi+pTH3JuUOUcR77iMAfAwcHBwWEO2Vw4BwcHBwcHxxHfR6X/AXBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBw/DNIv3VcenqR6g==", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition Knight21 = new(682, "knight_2-1", 200, 200, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [Knight21];

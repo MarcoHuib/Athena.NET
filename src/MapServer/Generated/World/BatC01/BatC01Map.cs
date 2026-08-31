@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.BatC01;
 
 internal static class BatC01Map
 {
-    internal static readonly GeneratedMapDefinition BatC01 = new("bat_c01", 200, 180, "eNrt2zsKgEAQRMGe+1/aUExVsB2qcsEHq+h+ZgAAAAAAAAAAAADa5bbzWh3fV+joqrgW6eip0GFMeTY6W3Z0JDp6OhIdPR2Jjp6OREdPx5M71NEwpnR0PeE6ut63OtrmPnX841tER2uFDh06dOjQoUOHDh06dPgb/FvHuzMROr7v6JhJ1NE1z66jaxVKR9ca7ZYOOxjGvhgddr8t7pjRYcfxng5nC3ae83Dqxpja3PH0zKOOno4ZHQAAAAAAAAAAALzpAGBEcok=", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition BatC01 = new(273, "bat_c01", 200, 180, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [BatC01];

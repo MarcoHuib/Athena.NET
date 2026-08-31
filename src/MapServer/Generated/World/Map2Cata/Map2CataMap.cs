@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.Map2Cata;
 
 internal static class Map2CataMap
 {
-    internal static readonly GeneratedMapDefinition Map2Cata = new("2@cata", 160, 160, "eNrt3NFygyAQQFH2gf//5cy0kxCVIIvsCnJ5SasRzlRYkIIiQ6cg+PDhw4dvKl/4kS4XqMo34MOHr9mX8ktHevhq853dR/1bwBejja8i3zqf1d8vUv/w0X+49x/fn+8ctmfzR93qX5vPpX3s747mx3Ke6/gs0tN8lmZNifjwpamaTrpg4ksRLAf9PlY8rylV5zsNBrXnrX3B4nzP9lE+33b1aj5tRFnd97s8rc+n/Y7n27aA8zFn+obsxqn42u+vQ/82ZP0j/vX3tbQPfMf7u5mqzRzBN1X/Ji0+8es//p7AMox4mO7PXODRv2Vbbvyvc/FYGQ9XWte/bHq7Yuz2hN7Tl1jnQOZf8D1u/uq0gdzbPsaPL6PH52n6t0HHB/M+vzF+5vmN53PmT83n1+TO+bXf85Of8j8f25Ukw/hCuNFXrk/a31fzEf+s/z/Y/+on+a6uUnRsvyIXgeK/PqJuoGUZnwdfX8L8Cz4/H+snWb87ok+K67P35fmvz5bi+vaiz2B9u25/QE38CDfuX/D36WKr5jvhhv0z+K7tL9P6ovP+PKUvRuofPvoP+g98+PBJr73HPXPEhw8fPnxP9/V8C8Z6vt7vEVnLZ/EmlnV8Vu+ywYeP9kt8nsHH+GXEhA8fPnz4RvYFUnN6AanjRmM=", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition Map2Cata = new(167, "2@cata", 160, 160, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [Map2Cata];

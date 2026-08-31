@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.MaZif09;
 
 internal static class MaZif09Map
 {
-    internal static readonly GeneratedMapDefinition MaZif09 = new("ma_zif09", 60, 60, "eNrt0MEJACAQA8Gk/6YFS/CjhzP/JZAWgGPJjTbbrN3fWj+//zMAbRftmg3F", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition MaZif09 = new(731, "ma_zif09", 60, 60, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [MaZif09];

@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.KhMansion;
 
 internal static class KhMansionMap
 {
-    internal static readonly GeneratedMapDefinition KhMansion = new("kh_mansion", 100, 100, "eNrt2cEOgCAMA9D2/3/ag5qQKHhZp5vdDS8v4GATSXmANmzY+JiBI6oamEQ1416Jfh+ZxshJjP0ZTkZjHPMobySsVVZegfVzt9E+xzAQGTeDkgYgzKtxrwdWW8yqudL4ew+3WOGSRsZayYx1vtcwnquBjVeNi1TaGBQbNmy02+c+2181uvQlnfrERn27v9Vs8Ff/P3R3MlkGxXdLPO+Q425+1vPwP69ng5HEfB5sYaSeJTZco2zYsBFsZMQGVBUiQw==", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition KhMansion = new(677, "kh_mansion", 100, 100, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [KhMansion];

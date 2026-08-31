@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.GonIn;
 
 internal static class GonInMap
 {
-    internal static readonly GeneratedMapDefinition GonIn = new("gon_in", 200, 120, "eNrt3NtuwyAMBmD7/V96k7ZOTYfBBw6O8+dma6VG+YYx4MKYS1zEcMABBxxwwAHHz4vLJb83vCl5PtW7g3A9zNH7oOEpOOiQXV3H93upHOx0TGqP35/Obht2vP8WcfAaR+thGw6mfj/b55DyxcefWtEeMQetc7wFi8fxursna/riqp33dY5esr6X45V3/ZEVdciZakZ75HP05onynMTviM9K2oPbLR2sd4zHc72jOXbd0sG3d7Ri1OdozFGqOCaMgxuXqfUdqvnV35B+WHIVfM6ho+N5Bodu/XE6nuSKh20dlac9VCtbhYNpRv0mVFZbVvfZ6SCa4ZBX/PsckTrc/yE4Q/+wOlBvhwMOOOCAAw444IADDjjggAMOOOCAAw444Hia49T3VnCMviWGI0FcHWfMcFAVB9WIKziQr+B4QlwxHEvPq5n3Y5yPrAmOBL1jsI+MP3cBHmuM3kZ3lUO7sljcHHDo42rvfiyLI1H/recQTjX2zrGkqR4MzuFVd0hRuDb/RByDcXD5LNbuGGwYPeIgp8N83qCQ45rx1u0v9tdgre2xwhE7PdXIpuK+8BWO1kkI7zkKVXvQNgf7/wOH2UH5HKO8y5scjnxlGAcPnIao4qA7OhpPEqhY9ue7u1vkuQ7d+gMO69zI5mBDvSSzw1JnyHvVcXAJB/b7wAEHHHDAcfLgff7rC3A7T50=", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition GonIn = new(478, "gon_in", 200, 120, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [GonIn];

@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.HarIn01;
 
 internal static class HarIn01Map
 {
-    internal static readonly GeneratedMapDefinition HarIn01 = new("har_in01", 120, 120, "eNrt2eEOgyAMRtH2/V96CYnOkDlBaL/JLv4wxuihWEHQXVLMcXFxcWWufSl/5JYTIrfh+R4qed5KAfGGuIp4G/Nqttv2/ja306n7+TbruuWSIfd95Aq3t53Llu/mx3uZbe3uhO77Zrzek1kDbl2DxV2XuV29e0heZbq+JXHdE6S4pnCZL+Di4uLi4uLi4uLi4uLiLunOWVG56e67LHf/5TO+GPsA16x2Q2RcketTV0Vxe9afcXHnjPty14NGpIt2zvzOMde4x7hxcVdwmZfh4uLi4uLi4uLi/pKrKi+BDzLU", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition HarIn01 = new(496, "har_in01", 120, 120, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [HarIn01];

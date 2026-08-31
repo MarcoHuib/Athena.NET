@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.AmaIn01;
 
 internal static class AmaIn01Map
 {
-    internal static readonly GeneratedMapDefinition AmaIn01 = new("ama_in01", 200, 200, "eNrt3NuygyAMQNHk/3/6zJk6Koq3GC7B7VPbqZRVBKISVYfYRHHgwIEDBw4cOHDgwBHRIcv2svC5DGtJUwlLfY5qVswh6WYuRc0Oj993dPzX0eAQnwq4OX61/4mSV1UcIp7ldOCYX9bu5z7/pI9j3rO9w6GUVY/XwzE8gCO/XTuS3XUEh76aP5Z6qDZxLAemn0PrO5YvdTMPWvp5uksn87kxTuwmrn/jeB2uF3BMtXoQl3R2ejTF7aM4TP0DBw6ul+DAgQMHDhw4cODAgQMHDhw4cODAgQMHDhw4cOBoeu85XYcV8b6a6LLQIrYjvcOJAweOnCP4eJVZzRDcMcQ8yHHVm0NwcFz5r7ZUHJxH4cDRqu/iwPE9x730FRwWx9O0oMPIdA4rLKX24tiq6jseZ8euA2zdR9s+OeE3HNtfcmgPGdbh3stvOnwyMEdzbDOycZRzrAa47Kiby4vHUdKxT2zNj7Xh+nkXDnFyVD+vzV0qiusYpT3c+0eb6yX7ENvF4R8dfsTheq9CrbFzrw6J5tDzgD1oe4zooH80vC7q7zjZv/hMO4qj1DGLAweOo2eT4cCB4wvj1UaCAwfrfXDgwIEDBw4cOHDgwIEDBw4cOHDgwIEDBw4cOHDgwPGRdWTxHTfWnQ7qqLTa1pBwlebralRH1fYo9Se0dri3x+7NucOaOVrqkMRhzeRd76448uPuJonhST/vrD3M41VUx8WqTKdnsOi7BOrcytcYjusPpcUzcXDUcnBeiwMHDhw4cOAomvgeYvsD7QOOjQ==", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition AmaIn01 = new(230, "ama_in01", 200, 200, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [AmaIn01];

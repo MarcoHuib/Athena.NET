@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.YunoIn01;
 
 internal static class YunoIn01Map
 {
-    internal static readonly GeneratedMapDefinition YunoIn01 = new("yuno_in01", 200, 200, "eNrt3Q1vhCAMgOH2///pJcvlTlDuoC1f+pIly5YoPkIBFVT1FkkUBw4cOHDgwIEDBw4c2zokS44sBIfHISeC3SEXyb+nJzmuM7blLoVkqTM/tt3FITZH8pfLkdcIi0NUAhw61VFZlHK9VVoe1uhMj3y2Q2/iiIiPvJY9z5FL2hxx7e5VnLdZqlpt+dLE3c5hi3P5lqy1qrpeXWy9kqMtzjXheNvKiLHJr2MoOU6/PI58jGR11MfHa4skRNuj/Nhuf2JOkzgf4jj15/aBXX4I4xzHQbI1wsvjbPdlspodhnNXvjaf47DdG/oWz1Mc7ros0tyCbnMfDgf3d3HgwIEDBw4cOHDgwIEDBw4cOHDgwIEDBw4cOHDgwIEDBw4cOMoz/3HMc0StKXqu42oGd5xkXL1KZ7u6c8+mt490/P8vLO8IR9X2xfKIYESvHLTER0x0vH40aAVkU3mEOpIgGeqQ1ykM7b88e7I43kWyv0PzNV47xnnsuGil9srdE8Y5dKZDb+KI2M9aDvdOWseJn67Y+Z6IT28UcjosjpD3XXxOY4Rj5nVU6BXZXRzCfR8cOHDgwIEDBw4cOHDgwIEDBw4cOHDgwIEDBw4cOHDgwIEDx/aOARO5uzoKs682AHV1ZJPIehbyjR3p90tw6HFatnRuPCoc9qzT6eXHcxK+SqfG4ZsPd3RcfEFhYHlozKTXxBFdyaQ8vzPUkcfHBIf2cEyoVxpXr86MLRzpHpJ9vYtoc4ceQn9Nh9SmuzgWjw8cy/bn5Tif4nD3IaMd0WVf7s93duTlvZnjGGSDHNrBoZeO/teDkatTRYLfkzDTMen63LRK9ykO7fehopY4N5/HcfdTq+4nqv17cQs5PF/iXcshuzm2ffxR8z36bZ9H4eA5Jw4cOHDgwIEDBw4cOMKeHq2b/gDxlo7/", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition YunoIn01 = new(1289, "yuno_in01", 200, 200, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [YunoIn01];

@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.LhzQue01;
 
 internal static class LhzQue01Map
 {
-    internal static readonly GeneratedMapDefinition LhzQue01 = new("lhz_que01", 120, 180, "eNrt3NsOwiAMgOHy/i/thSYbJ2WGtqT9udJE9y0lhULGSnFpUnBxcXEPcaVtXq7MXVlo/9MJ3JIvztdHG7f+vbl7+5rCTdS/zQWLnbuWvyIaccYN6nYXtXHbNLZ1p/86wN0+/yZ01+p23FNcnXUZ7hmu1rrby2V/AxcXFzeLu1bHRnFX9wlxcXFxcXFxqa9wcXFxcXFxcXFxcXFxcXFxcXFxcU92Hz71mcL1ivN+V8Qnzri45C/j8857sZ9/vdxsdU62/o3sUk+auuODdHFdhzh/t5uzuDrulbrG7lu4H+CP59ad+bm4bf7Wrl3+1nEePX6tFOe+f21c8/51H6/6t28Yud1rA0KOz9N5UHm8qos5+/n318t79NxhzAPXk8NbibTef3SqVcO9T7yjHGK9j4uLq7lRvr29AIB3RsE=", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition LhzQue01 = new(707, "lhz_que01", 120, 180, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [LhzQue01];

@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.New32;
 
 internal static class New32Map
 {
-    internal static readonly GeneratedMapDefinition New32 = new("new_3-2", 200, 200, "eNrt3ItugyAUAFD4/5/elmxWAWutVbnskGxZw5pyAl4eXpvzECVlDg4OjuMf8V04OnGkqXBwnADJHBwcHBwcHBwcHBwcHP/JYX/OkZ2LcnBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwuM/JwcHBwXGuIy1L6Sgqgzjq/uC4z/HzYulYvu7cMWmeOB7/GcBRX+fFEOPg+Mj8UVVycPy3+WM4R/BxZf7g4DB/cFzoSHtKv440iGOfpPO4+yKC41zHX7tuGVUcB2PVxz0cHJ07xKsQ65KNCo6T17tlu/P0q3J165hfJtPPtJxKZX3fjqLd5X5wVt/3uJqNo9Y5w6zeeQnHW1H3qSOlEI7l4eIjhnFcG3dTMzOjHnbdzx+51frlX7n/+aNaoxSOk761Wh4yBwcHBwcHBwcHBwcHBwcHBwcHBwcHB8fYjsZd+8uehN+fnLbquDhn6nCOHQfHkXyutTSJWP2xnrUS3hGuPxo5Er+QHMyxmqIZa1ytNKrKhxgy7ua+GJuQtx2XYtpPG35iHry2U9qfOw+9AzgC9Ufm4OjqOh8l7o4yD9oPnv+lhXsda++4y9Fu1eZ6t90t9Xr/unX7a+1pOXKz/+5zvNKe1NoP5+398KX78/zW/nwcRxkj7nYcO79aGZfh5o/1NU6Q/Xn18Ea0+watB2Vz4PtRaShHKMnQjux+LQcHB8ddS7Ew5QvqU4r/", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition New32 = new(832, "new_3-2", 200, 200, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [New32];

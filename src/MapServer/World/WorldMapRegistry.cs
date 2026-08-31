@@ -7,6 +7,7 @@ namespace Athena.Net.MapServer.World;
 public sealed class WorldMapRegistry
 {
     private readonly IReadOnlyList<WarpDefinition> _warps;
+    private readonly IReadOnlyDictionary<string, WarpDefinition[]> _warpsByMap;
     private readonly IReadOnlyList<WorldActor> _worldActors;
     private readonly IReadOnlyDictionary<string, WorldEntityDefinition> _entitiesById;
     private readonly IReadOnlyDictionary<uint, (WorldEntityDefinition Entity, ScriptBehaviorDefinition Script)> _interactionsByActorId;
@@ -28,6 +29,7 @@ public sealed class WorldMapRegistry
         Scripts = scripts ?? GeneratedScriptRegistry.Registry;
         _navigation = GeneratedTutorialNavigation.All;
         _warps = warps.ToArray();
+        _warpsByMap = _warps.GroupBy(warp => warp.SourceMap, StringComparer.OrdinalIgnoreCase).ToDictionary(group => group.Key, group => group.ToArray(), StringComparer.OrdinalIgnoreCase);
         _entitiesById = entities.ToDictionary(entity => entity.Id, StringComparer.OrdinalIgnoreCase);
         allocator ??= new WorldActorIdAllocator();
         var dynamicActors = (dynamicWarpActors ?? []).ToArray();
@@ -95,7 +97,11 @@ public sealed class WorldMapRegistry
         entity = null!; script = null!; return false;
     }
     public IEnumerable<NavigationDefinition> GetNavigationAt(string mapName, ushort x, ushort y) => _navigation.Where(item => item.Contains(mapName, x, y));
-    public bool TryFindWarp(string mapName, ushort x, ushort y, out WarpDefinition warp) { warp = _warps.FirstOrDefault(candidate => candidate.Matches(mapName, x, y))!; return warp is not null; }
+    public bool TryFindWarp(string mapName, ushort x, ushort y, out WarpDefinition warp)
+    {
+        warp = _warpsByMap.TryGetValue(MapName.NormalizeWorld(mapName), out var candidates) ? candidates.FirstOrDefault(candidate => candidate.Matches(mapName, x, y))! : null!;
+        return warp is not null;
+    }
     public bool TryFindFirstWarpAlongRoute(string mapName, ushort fromX, ushort fromY, ushort toX, ushort toY, out WarpIntersection intersection)
     {
         foreach (var (x, y) in GridLineTraversal.Enumerate(fromX, fromY, toX, toY)) if (TryFindWarp(mapName, x, y, out var warp)) { intersection = new(warp, x, y); return true; }
@@ -135,14 +141,14 @@ public sealed class WorldMapRegistry
     // prt_fild08d->prontera doors (ai/world-data.md's travel-corridor content); each area's
     // GeneratedWarps class is compiled independently (see tools/WorldDataImporter), so the
     // composed set is a plain concatenation rather than one area owning every WarpDefinition.
-    private static IEnumerable<WarpDefinition> AllGeneratedWarps => GeneratedWarpRegistry.All;
-    private static WorldMapRegistry LoadGenerated() => new(AllGeneratedWarps, GeneratedScriptRegistry.Entities, scripts: GeneratedScriptRegistry.Registry);
+    private static IEnumerable<WarpDefinition> TutorialWarps => MapServerHostingScope.ServedMaps.Order(StringComparer.Ordinal).SelectMany(GeneratedWarpRegistry.GetForMap);
+    private static WorldMapRegistry LoadGenerated() => new(TutorialWarps, GeneratedScriptRegistry.Entities, scripts: GeneratedScriptRegistry.Registry);
 
     // Same generated data as Tutorial/LoadGenerated(), but taking an externally supplied allocator
     // so MapServerWorld.Build() can hand WorldMapRegistry and MonsterRegistry the SAME
     // WorldActorIdAllocator instance instead of Tutorial's own private one.
     internal static WorldMapRegistry LoadGenerated(WorldActorIdAllocator allocator) =>
-        new(AllGeneratedWarps, GeneratedScriptRegistry.Entities, scripts: GeneratedScriptRegistry.Registry, allocator: allocator);
+        new(TutorialWarps, GeneratedScriptRegistry.Entities, scripts: GeneratedScriptRegistry.Registry, allocator: allocator);
 }
 
 public readonly record struct WarpIntersection(WarpDefinition Warp, ushort X, ushort Y);

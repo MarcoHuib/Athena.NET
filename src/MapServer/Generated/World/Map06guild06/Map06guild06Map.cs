@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.Map06guild06;
 
 internal static class Map06guild06Map
 {
-    internal static readonly GeneratedMapDefinition Map06guild06 = new("06guild_06", 100, 100, "eNrt2rEOgCAMRdHX//9pFwfDgC2GWpr7ZvGEDloazLZHhoExf/wOBgYGBgYGxpmGhmwxnkxkpQJ7GAz3XrRWp1C99EVwKkUMveQMQ47UN+RMbUOB1DUUzJIRYWZv+tvIqNWBhjYFA6ODwbeE/0dWrbr0JX36xD59e59zVJ9zbc4MIGeWkTGTyZotMevDwMDAwMDoYRh3cRoYGbkA4WMcug==", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition Map06guild06 = new(5, "06guild_06", 100, 100, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [Map06guild06];

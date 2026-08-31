@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.HeroEnt3;
 
 internal static class HeroEnt3Map
 {
-    internal static readonly GeneratedMapDefinition HeroEnt3 = new("hero_ent3", 140, 180, "eNrt3EFuwjAQBVBv/v2vXHVRUWgBmzr2lLy/ySJo9JREYsYxJCIiIvXTHub6/PNPv4ulTQ4LCwsLCwvLOstYz3Aei+eFhYWFhYVF/6J/YWFhYWFhOcbyVeXz+DfL90p7LZdr87ulp2e4VJj1NquW5fkT9VoFFhYWFpa6lselOiyN5ehb9LPYWDfZylky1dIGe+BDLstNvTFLO8jShi1tOuWm5l5Kds5okzFJqmiSKphk/R7ElZJRULJ9i2ZByhoMC8urX9v314aS81nu36+kzs50FhYWFhaWM1kqzWr/f4ItNtqzsLCwsLCwsLCwsLCwsLCwsLyFpe+3c6ss128Yd67Y9VhWrWPusnRtMkuNfwljEREREREREdkxDX8ATCdTfw==", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition HeroEnt3 = new(505, "hero_ent3", 140, 180, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [HeroEnt3];

@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.Memohall;
 
 internal static class MemohallMap
 {
-    internal static readonly GeneratedMapDefinition Memohall = new("memohall", 280, 200, "eNrt3dly4jAQBVD5/386lYVQCdoAa/XppwnTU9w6WMZuxOQ4lFJKqR0q/JQcXLhw4cJFHi5cuHDhwoULFy5c2mUZnWmWHFy4cOHChQsXLly4cOHCJRtIDi7WERcuXLhw4cKFCxcuXLhw4cKFi7mUeZ15nfMLl/45BkWa32VAiniejkL3ZxqbI/XqxOpKObhw4cKFCxcus+YIL9auObhw4cKls0sqYKRxzxxcrKPWGc7ONksOLly4cOHChQsXLly4XNfl3EQ75ODCZfzKXj+H825lnp8ffh8tzA/jfafk+LtVKp0j08elucsLR6rrOte7XLhUfx3hfgbLJk33nedSixXv29Tlcx/397OUUBJ9p6+j2sM6+8/fd3n4Q/IFivdt7PL1YIVLtG/XdcRlBRfraHaXI2Tv0Yp9G1+/hMrrl3A0n++Oc8l98+r567qjxa6tN9aROab57jVd3E8vNMccmIOLdcSFS3eXN2Oa77a+P+KSvp8uenW6n55uvlt0ueh8t8blinNMLlO7WEdrzHdneT8y3/W5faPrzLbraJH7xuc6V87BhUub+eFDd/s5ZnT/aSTH0P27l3epOCJHrqM+Oeqf49XeVXNw4dJin0est8c+j7Eu5fuePi7l++Ro98D5bsW7aZf9u3GXcfPdYS7/5k1Jl0FzzDHriMsKLvbv2r+77OfTlQPeq813awe8k8137QviwoWLfapcrKPFzi97JPF9Ei5cfP/IdR0XLly4cOHChQsXLo33h87hcgz5nUzZJ+n5W81myVERp/S3/YJM49If5hWXMNnxEnq/PtO4BC7pjyJ6rqN8jtSHJ52Pl6camuYovFv3dXm2o+Xrk7+a6uBy++Hzv7f923F7PLGxtkGO457j4TTTOEfGJd40wCUMyKGUUkoppZRSSimllOpUH8FplUs=", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition Memohall = new(746, "memohall", 280, 200, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [Memohall];

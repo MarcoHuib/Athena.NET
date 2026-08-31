@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.MoskFild01;
 
 internal static class MoskFild01Map
 {
-    internal static readonly GeneratedMapDefinition MoskFild01 = new("mosk_fild01", 200, 200, "eNrt2DESwiAQBdBlcv87q4WFMWFSCPrx/TJV3rALC60tka1xcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcEQ56p4FHFXzIBwXGYs48vt86nKMr6tV1mOSZBvOyHbUW/IcdZooR/WT4qgL+X1H1T85KqquzlSP70GO3gb8ccg2fD48rqkQR6dlIvbdw1+dcRRubSakxTgObk/VMs/zfYOEziX7Rq9Yx6tkzqA47v7RG1QC30Wf/x1ZV/Mvt96pOTg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODi+5lglN0pHnVs=", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition MoskFild01 = new(812, "mosk_fild01", 200, 200, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [MoskFild01];

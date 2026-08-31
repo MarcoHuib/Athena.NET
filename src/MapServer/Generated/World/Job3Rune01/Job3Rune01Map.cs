@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.Job3Rune01;
 
 internal static class Job3Rune01Map
 {
-    internal static readonly GeneratedMapDefinition Job3Rune01 = new("job3_rune01", 160, 100, "eNrt2dsOgyAMgOH2/V96yXajpJxGW5v4c2dx+AkToaqWLqL48OHDhw8fPnz48OHDhw8fPnz48OEL90lTRnXWOW/2Ta4tEgd08IkEAmVV10ZWdFY/P+RroZeK+11E+abd1DvuNJHs26BX8x09O/jOhN4+fcZnW9fs90fZatXZdw02ffcLadtJ4b52DNWYeZdDKf8/q7ofSvR9f2P6tB/L9MmCT+v5tEr/FR/f6s9HyfnFnJ8t90Pz88laIeP9FrNAYH2F78S3u/5L9t3ebrv7S2/f2f787xk6Lb8R51vID5nnWI1H7M8X8mvmzmnckm9+cjwylm/Sjmb5xPbJ+HLevr27KJu/d+d5f1/w5r3MV358+b6FDx8+fPjw4cOHDx8+fPjw4fPPxc3KBx74NJw=", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition Job3Rune01 = new(602, "job3_rune01", 160, 100, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [Job3Rune01];

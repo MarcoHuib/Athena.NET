@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.JupeArea2;
 
 internal static class JupeArea2Map
 {
-    internal static readonly GeneratedMapDefinition JupeArea2 = new("jupe_area2", 164, 300, "eNrt3VEOgCAIANC8/6W7QDQ110Qe3368tkYKuFrbJq4oGiMjIyMjYw1j6GZkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZNzLON11YWRkZDzc+ORlZGRkZGRk3N/Ytb9gZGRkLGQcyueMjIyMjIyMjIyMjIyMjIyMjIyMwSLGNQ/CyMjIyMjIyMjIyMjIyMjIqJbCyMjIyJi9Hs7ofWRkzG+8uoORkZGxltF3hpGRkZGRkZGRkfEs4+tJg5GRkbGgsSufMzIyMhY3mttjZGRkZGRkZGRkZGTMZvw+g8TIyLi3cfAvGT/VpDIY1R/1kBgZGRlzGDPk8CzG8F4po7k9RkZGxgV7CkZGRsbaxomqKiMjI2MJo/41IyMjIyMjIyMjIyMjIyMjIyMjI+N5xgxxA8sPsqI=", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition JupeArea2 = new(664, "jupe_area2", 164, 300, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [JupeArea2];

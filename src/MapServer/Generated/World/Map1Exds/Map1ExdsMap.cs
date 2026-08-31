@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.Map1Exds;
 
 internal static class Map1ExdsMap
 {
-    internal static readonly GeneratedMapDefinition Map1Exds = new("1@exds", 200, 240, "eNrt3M1OAkEQhVEqlXr/V1aRKPIzroze8hw3RDZ86elmgJ6pAgAAAAAAAAAAAAAAAAAgRHf4y7+SnDHnv8SWfuzyTHrHx1PhIYEd9awjbbJPH6j4mb6rI6ik++ZN49OMjr92YAWfWenQ8fNzZEPHRJU8i5isEekdHf1dR9hwzN3b+qw4rNLWq6OGpBOs8+s9nc39WGR1nC7SOy4P93b0jo7O7KgtHVclkWdXN/97W4DDzkoed5ziDqv+Jx2l4zeXq9uOqE/mtaHjkdd1d2YWhFTiDzkAAAAAlEsUjr9d7RVXWsRecrFkE937VoiZFbvonnTkXXPxtKOD58cs6Ugcj96xA63734QYEB0/0tFbOhJKuneUrO6YvANryfQ47gjan/JNx4az3QnKOArR8deW3yUdkTvQvtxiI71jvnZUhX49et1RteGWOlUL7g1UZZesDgAAAAAAAAAAAAAAAAC48wIsycoA", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition Map1Exds = new(49, "1@exds", 200, 240, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [Map1Exds];

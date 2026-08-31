@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.IzInC;
 
 internal static class IzInCMap
 {
-    internal static readonly GeneratedMapDefinition IzInC = new("iz_in_c", 200, 200, "eNrt3duSwiAQRVH6/396LEcrJmACyAGabJ6seXCyijvdQbMlSjAcOHDgwIEDBw4cOHDgwIEDBw4cOHDgwIEDBw4cOHDgwIEDBw4cOHAo/uWj4MCBI37+fcEx0BFSZY368OcIX+qjmSQMbFTuHOG0+HMI+0hPRzQPOnbsqsFru3o8c+IjjqHjVfQXHDhaOPzPg0+ELTJe2XFudz3umnNHctXFehdHW4m7/fnh2f2eM6Tmc4/nPiGxKXR6Lvo/fbwc1pTR+3z3w0EcBwcOHDimCZJdna7iGO+4WMs4c5jC8d5vd8HguIfj4xynp8M0DklMf2mHSRzSHIuaIf7mjhESiUN6qLa2Q7Nun4txe8cq7Yr+MZUjnWTh1DFTjdzdkUqu8Oo4xpOdtqu9w2//WMSRSDb06ZhoFry9I55DcEzmcLo/X9cROuQJCfZRSziC3FGYdzbruj30cdgYx/fVT5iTkUjScuhIfuvLYa0d28B1+CB1NB+vzj4pHKpx16KEdW19CB3PxvpKOpQ7NO3KhvVzUX5Jp3xf1Xg17DVvv/WhXZfgqMu6unqfanrHtng4HRMd5Vlq8gBw4FjDQT41Dhw4cODAgQMHDhw4cMzo0Odm9NnX4pjivdR+jsrz3dwQzeftSZZ1h8R2ytmO0chRFJjaTp1LQqN1jpJnKwyvVYbj6uIGBY7C6ggdHUVtpbfDRA4r7R11Ud5WjvRXlEW/fsx2atKuzh15rfjHy7z0jszq732vWoUj626r6D2kAY6cu6BO4vTq98PajLtm70yZrHG3fnVSut6Nr2ZtOX8IVpfd1yXxpX3a/eD+PtCWNxxs14Vbn3vo8zpuBClwmLffBeC8BAcOHDhw4MCBAwcOHDhw4LiDY5XyB+rcj/Q=", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition IzInC = new(575, "iz_in_c", 200, 200, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [IzInC];

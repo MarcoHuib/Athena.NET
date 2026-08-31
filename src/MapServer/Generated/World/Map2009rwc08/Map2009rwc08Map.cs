@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.Map2009rwc08;
 
 internal static class Map2009rwc08Map
 {
-    internal static readonly GeneratedMapDefinition Map2009rwc08 = new("2009rwc_08", 100, 100, "eNrt2dkOhCAMBVB46P//8kQzhKUV2wIGzeVlookcdigT4/IUIgwYMGDAgAFjGyMU6a1GENLbjDpfs7OFwdvH3GYbGCkXIp4zUX67t3GVm3EcGww60/G+NMcMTW+rFBgTjPxVbaR+N8xFu8Hejxr1nEtG/qlH936G1KfUZKrud6/BHkeN45kVnPIIo1mGVDO1wevatsi5CnZmH/VyCFqjP8NdBnkNUhvF/mAy5HUm3nyf1w8x739ZbvIYMnT13Mi4HroOQ+5zbT11fS6PXX1bknsOWvprsnG2jM7orolp1SO5v1WRgtqQ1vZJxmN7lLi9Dhv/nU8uOvFooTwr7WbI7cDXj/bMN27w9dxv3J+gV5zbYVji/zLmTFHorLi2La0xQlffAci3AHPvGdYZ8lxcfe+zwpAjhbX3cKuMr9yLfumeGv9NwIABAwYMGD7jifQDJUge/g==", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition Map2009rwc08 = new(151, "2009rwc_08", 100, 100, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [Map2009rwc08];

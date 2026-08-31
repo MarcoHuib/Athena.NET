@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.Force32;
 
 internal static class Force32Map
 {
-    internal static readonly GeneratedMapDefinition Force32 = new("force_3-2", 200, 200, "eNrt3dtuwyAMgGGiSn3/R17XtV3OAdtgcH8upmjrEr6Eo0PSaQqR0oQDBw4cOHDg+N28SC7Zy81TWpH+/jj/4Pvjye005+QppuPsAiZF4dA48vK0ctwfaf3x5++KHTa1LDtPq3p++D+SHCw5ovYxO084JCW7mcOu/7BzCPqPw3ZB4LA7Gyf5Cu2wLVdV93JaruwcjXaEAwcOHDiCOXz7wbNxieM8ynR8NZIjyrg90DzKeF67PXk48h1R4j5V4nC66LAwDlchLqp2dBLfdXAEuW/A/SgcOHDgwIEDBw4cOHDgwIEj0vpEhz1t4z778eWiK5eOs2Czp/cau+gOo7iow54O49SrLUdHVp4O7xtstwS1cxvNFNTzrDw1cNweqanj7BoqWsuXQ9zuFperi+ZaEmOfOySx94sMpQb94OfEzBzFKwR91zMs68Y7SVY6Gjuef5QcfeWQnJGLjH2lQ1waDBzK9Qzbu72lR7/tJJ1D1w/iwKF1RKnn9B+D9B9lsx+7cUnu2LWqw2CcaO3ocdxeuB5Oe3TtPGovSdb1KY5uMq/txaGNMxQ7/ufn7x0sirpz/GqRp8z5efeOrPWJ22fu/OOiezmL7ghy34D7UThw4MCBAwcOHDhw4MCBAwfrE83fn7iNeWniPtvHU2tEkGI6elyf2Jnj/koNHFVr58cx2vqrCA67coWDctWLo067+9oWOoTr2+s57Gpaw/W76/fV6lZ49NFetXfYlauDN6324TC7Ps7lajGu14zjcXiXq9bz2hiOwtTEUaEfxEG5whHAUXNcIu1Bv9sxj4fOn+GeP9H9+dntODGKI0g/2OntGRw4eL9odAf1g3KFg/qBAwftFQ4cOHBkxRmGc5h8E4x/PxjIYfu9zn7lKoYjSj3HMbYj2SYXR7JPOAZ3TBMOylWfjijtboPvusMRxGE/blcP0MyejxrTYT2vjeKwedw02TyvRhyO551x4MCBA8c09g2fYdIPq3N8ng==", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition Force32 = new(399, "force_3-2", 200, 200, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [Force32];

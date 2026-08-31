@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.JobKnt;
 
 internal static class JobKntMap
 {
-    internal static readonly GeneratedMapDefinition JobKnt = new("job_knt", 200, 200, "eNrt3AsKACEIBUC9/6U7whb0WXTeBWKCikDNLJFIDg4ODg4ODg4ODg4ODg4ODg4ODg4ODg6OD0dMhoOD44xj4xocHBwcHBwcHBwcC45YCAdHN8eNc751rzg4ijm85xwcHBwcHBwcHO8cN8LBwaHeh4ODg4ODg4ODg4ODg4ODo7vjSWcFBwcHBwcHBwcHB0dLh/8gBwcHBwcHB4e5OBwcHBz6DTg4ODg4ODg4zPfh4HBfcZi3xMHhvuLg4ODg4ODgMBeHg4ODQ/0VBwcHBwcHBwcHBwcHBwcHBwcHxx8dVTIACkGAcg==", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition JobKnt = new(617, "job_knt", 200, 200, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [JobKnt];

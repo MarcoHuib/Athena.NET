@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.Map2Nyr;
 
 internal static class Map2NyrMap
 {
-    internal static readonly GeneratedMapDefinition Map2Nyr = new("2@nyr", 240, 240, "eNrt3e2OoyAUAFBJ3/+dN9nsTttp5RsVPPdP0ykqRwleQZ0QhBBCCDF7PDoHLy/vdbzvJXLK82rPvLy8vLy8vP/ruVf/0jK8vLzneWNlSpfl5eXl5eXl5eXlXdEbu2ZP/X328Q1e3pW8z1p/u97PW5J3lvnQ9HgOLy/v+fnk6DK8ebEVxZW8dfXmjS8X2wO92mHOerat7kjxTuYt+MLLu6q39nydm0/u7cHafLK1v7qft+68zcvLy1t+vc97tLfkfNbvyj38ql9uvsE7wtt/ZIa3zJvXCq/Znmv6K942b/s4YG9vuLW3d3/F29mbVXAdb3LdvLzLe2vnnUr7ldi32v4qnlOs542XSXnffumYb4zybuHzzqd/3zfeY72P57dHf+/HeBDvkP5qf9k9b83ZibfE2zPfiHl/6sK7ovfXaHq797E73B/PN6b1Rmcn7uXdtvW9z63kHt/28br93+KzYbxR798Farwb7xTtOVT2V9ug/ioUvEOo1/E925ue+W9sz7F8o9lbVjLnnoXYvQ6ZNSjOJ3l5eXl5j/Xmjsfe09sym5FaS81dg6kt1M+njPTWv2sy31s6X9b+HMCZ3vL5UN4W776k7Je8PXqV41vrLe0hjvbGz0Cfbfu1xPeW3/3OhyW82yHPhzZ7w2uSwDveO+a5//He2ufZeWfxhlOeHribt3AENqQu0muvwM7zxtPk5KBEYT55leM7wxZ4+9emz32IvGe9Sak802tZCy8vLy8v712866yF9+ht8M7iTVzwh7Z35PKOOwOFptcjR71H1YyXl/cC/RUv78net49rekPH/03Qxzsm++Dl5eUd/T/ZeXkPWM8xWF5eXv0Vb1dXz/3AO7n3bu2Zl1d/xTvW+1ri/WN9792OLy8vLy8vLy8vLy+v66M7e41v8BqvW9RbtCzv2t4F+iteXl5e+SQvLy8vLy/vtzonyvDO5f0ptKQ35HvD4u05s83z8vLyDvLuqWvOzt+8z63wXsAb1vaGhd7+xcsrhBBCCCGEEEKIa8UfDAgOZA==", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition Map2Nyr = new(176, "2@nyr", 240, 240, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [Map2Nyr];

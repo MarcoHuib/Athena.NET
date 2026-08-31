@@ -22,7 +22,7 @@ public sealed class TutorialFamilyCompletenessTests
     [Fact]
     public void EveryStartPointFamilyMember_HasNpcWarpNavigationAndMobCoverage()
     {
-        var world = MapServerWorld.Build(new GameplayRuleServices(new RenewalBasicAttackRules()));
+        var world = MapServerWorld.Build(new GameplayRuleServices(new RenewalBasicAttackRules()), servedMaps: MapServerHostingScope.ServedMaps);
         var registry = WorldMapRegistry.Tutorial;
 
         var missing = new List<string>();

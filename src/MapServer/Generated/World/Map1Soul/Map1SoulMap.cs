@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.Map1Soul;
 
 internal static class Map1SoulMap
 {
-    internal static readonly GeneratedMapDefinition Map1Soul = new("1@soul", 140, 140, "eNrt1zERAAAIAzHq3zQG2Fg65AX0sjapacLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLC8p+5YmFhYWFhYWFhYWHxSVhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWKosTS0HK0nB", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition Map1Soul = new(110, "1@soul", 140, 140, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [Map1Soul];

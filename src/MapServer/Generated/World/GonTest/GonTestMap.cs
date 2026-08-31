@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.GonTest;
 
 internal static class GonTestMap
 {
-    internal static readonly GeneratedMapDefinition GonTest = new("gon_test", 100, 120, "eNrt2kEOgCAMRNHp/S/txoUajbRarPBnRdi8UERMrFl6ZKUM7YIxkbEOfm+k1mqr5J3zUKVqGum1shAxqTHEHYWBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgfGFITn/RhYzdBMMjJnPR+K7RNnGoRaBDY/3AbgQOfo8go9um9GU8kYj+XjPexiPViKz9JVUNi7nXjN8LVkh42SWb1EMDIwhjB5ZAGTzKoY=", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition GonTest = new(479, "gon_test", 100, 120, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [GonTest];

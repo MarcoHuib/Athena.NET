@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.JalbeIn;
 
 internal static class JalbeInMap
 {
-    internal static readonly GeneratedMapDefinition JalbeIn = new("jalbe_in", 200, 200, "eNrtndtygzAMBa3//+l2OoSAM2mQjciR2G1e0/GODb5JihkAAAAARNJ+wUPLo4JJDY/WKni0hgcekR65VUp6JNbBAw88fCb5PTKv4bueKOORddfVj6vsu8ej7cNDcI3/99eqrCnZsOBxUvst+9Dazfh5Pdo/VHG5l4eO+KSHFfFY3nb2dZnZ/nh88FB47y6D6tv3FFPzoNDbempdIjjhDDVHx2NuXEitAibboeOxaYs1U/WIPmco5hE2D7b2cqYY7XHV2Wicx+NBs4je6Mdu3lgf7qPwwAMPPIhbuq+HGbG7Oh5meBCDjEfteOo6HgAAAAAAcPp1S2qHVsBjs12r4BG2/Wybz/m3ohd6uP/1JvBHKA5gyKO7Sfb2RdDzsVza5vYYigmT8/CP2ZFhHu6xC9Q7dmg9+riGPuaLxxolnNSjm2MPRsmMeozOPAMenm+YnIcjuKs3d60bzMLnwIs8wu5bBt+7cldA18wf+h6GR8x+07tu19zTuT0qxGfgAQAAAAAAYLesGc5+EI/7erxvY4ZssLWmRwGPT03clYORr2n5to1LDjweKrVSRcolHe2Lt43cPx9qMoc9unGFB+PKGfXTpOvzTN76ZfA40saEHpbb49M6Ufuqtg+xyF0xnP0gHngAAAAAAACwj8KjoMeaReg67ZKTmUky1TzczZyPM5VXZEXyo9L+5qtm1eGXvNTAPOELa4oMeCjWePHnn5uWx0Qefd7fdq6Yl5p3FhT2cNZh0fxl7ir9MVaJXtLDXTfqWfuC8wAAAACYW4n8ABe3kYk=", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition JalbeIn = new(590, "jalbe_in", 200, 200, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [JalbeIn];

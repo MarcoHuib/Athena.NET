@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.Dali02;
 
 internal static class Dali02Map
 {
-    internal static readonly GeneratedMapDefinition Dali02 = new("dali02", 200, 200, "eNrt3G1yxiAIBODl/pfuTP82aVRYPpx9D9DwNIlBQc2u+MHkkEMOOeSQQw455JBDDjnkkEMOOeSQQw455JBDDjnkkEMOOeSQQw45nNf9/Y13AMEQlDLiIKhlhEFQzIiCyHGlYyukto7NmLo6toNqOl5th9XTAY/D7nBYVwcI40KJYyW4GQ4UMMLHq5UA5zgw0vEEwUTH3i1hMELz3UVJe8cfyVjHCgQTHAsSCoMwH/x6S6Y4vm7JHMd/EGCQ401CmM+y10seIMBAx3OywpPA7oAgb8GNCoFVQubUP7IgsHaQIyKyl6W/HIf3ClYMCXro5OA7EO7wDS1dHN5BsonDPdr3cOA+BwY7UOewXo4MRoIDh3lJdH7lgxz8z4+uBG61G43ydsfL12sedXjt8HfZnV8dXZswKEXku5sX/xtvE8defvIULRUCRjvMW6xECDx9PS+xbBVzgiA4b1B6iRZ7xbUKx8rSx+JTE31DELuGs/7wB0PATF4Tm8lAzMIzu8lAm07kdveBNS9KblMkOSy7T5HjyO/XR2m5LA6C2hpTGKTYYRc60Os7WLM3B+VV8VscMZBeDkx2hEDQodeiwmFcByY7ImpFPXpf/Le0SeeL94+gSSuSe8zr0uTm/QhVzQWDIaiZmtc6KJXWfAepZJzs4NW+Ux3fa7neL0CK42NtPeRTljDu7tY03C0DHMdBUcMFYeQlO89+1KMV79h8hSNGLUbejuO9s4Q9HucOZ1UjEYJgRhUEoTvL6yAIZ9RAEHpgQR0ElIwnH8Jx5ENYX7VsCFiZWzKE1zuRCwExBc2ELOaJZhkHtFDrUZEbWKaeZ5kHgd0Byd6XOvac1CQIsncPyiGHHME73uQgQWafsz0+vwrJNnV+uxxyyCGHHHLIIYcccsghhxxyyCGHHHLIIYcccsghhxxyyCFHZ8ctvx/E44nc", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition Dali02 = new(340, "dali02", 200, 200, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [Dali02];

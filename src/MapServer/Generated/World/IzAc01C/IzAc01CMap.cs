@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.IzAc01C;
 
 internal static class IzAc01CMap
 {
-    internal static readonly GeneratedMapDefinition IzAc01C = new("iz_ac01_c", 220, 200, "eNrtnOuyqyAMRsn7v/SZOe1WkDsFAri+H9VeRlkmJAixIgghhBBCCCGEEEIIoZzMV7AtznHjOG9CH8M2tsnfhnsfycPfPm9MgW42k92bYA77hBeuC9fK9jmcuQ78f3t/NpfNPNjs6z3AbgONF2WTTmwSsKCx7KbB1tluEuEdx+a0xt77a8PnxYqT4hnVeFluDZ9MsEmIrUJyHeIRS9yoMpwt1DLTh03NbibHZiW/VjbxiGROLMmwxceLyf72+JVOLKn3ryqzSc6Cm7LFe9ms/FbT0ga7iRMTvdg5eFwyli1vwRXY2nVlNT/TmTV88ie6TH5bEa3HkdZlu7Jx87HGsUl9YChlq6LVQ2sysjqbTMndumxiojvPqCZi4m22v9+O7dvJEnfc1/eBaYloI8bPKQRumZNsdiw5gM3xyQBb3Cf1posb2fw7NZdNpkyxlkyFOy3p0t/+jrjI7Lm1dYcNW7MVGNh+LckBu621KWYs2GB7FVvteHIdawTS3pOtJQes4miJ8oPt2KS807T5ZPlM2JlsenMKv/mkXkg9ma2Gr9InvVFoaBu6W9Jia1nreDeb7MZm8myzwknofH3W37Jsw0PJGLaYL85hM4Vs49euzmQTg91gq40lfdaolONksDS51/rbdDZJ3Js+vSc67+xVXwZ/ND13V7FZlXnhmwBrm2ebPOZKsIn5dd103fGkdPfJsXGytjSrgS1/JtX51KY4qc72HA/H8vZVUtcSSwouywpsTf0tepbBc3iPq+ZfR1M7HZeMkxqz/Gm29sUOt8qQhZw12Lz+qV+ZMNCn5bgnTuXg54Rh23TNW/YOkq9lM7DtxRar7zqC7cD+FksCm7Pdz9iG4+UW9ZIvZEs9wi5H9DfYYINtJpvzDzX3/CV2w25quTvGxriE/kZ/w27YDZ+EDZ8kdzPmIk4SJ/FJ7IbdYHubTzIuwSdfEEtCpeyRPwfYk834bEaLraNPrlHPARtsMTbtCm7peonfw6ZdY9S3HemHL85gi+4ewRauzz/CJ9eoxTw4lrwjB4j8HtKiD2rCtlEs0fZJ4iRsq+XuUWwrjLkG+eTBY+Wj73GOzwGrsclJ+W3ik2ewrf9EruacuQz+wwrNtQ6EEEIIIYQQQgghhBBCCCGEEEJohv4BmziJdA==", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition IzAc01C = new(558, "iz_ac01_c", 220, 200, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [IzAc01C];

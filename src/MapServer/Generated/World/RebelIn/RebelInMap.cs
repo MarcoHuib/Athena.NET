@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.RebelIn;
 
 internal static class RebelInMap
 {
-    internal static readonly GeneratedMapDefinition RebelIn = new("rebel_in", 220, 100, "eNrt3NmWwiAQBFDq/396jmfMwjIkcdiqLB6UY3zwhk4DHRWQbQG22WabbbbZxvKBj2abbbYNtoWk2WabbbatZgv/arbNt2EIjmfcSGx797ezHbs4AxS2vQs922u4ECFlcgnSmJTKk1e20gmhmLuxxyQqtvTyo1mXvLuox2RzW8+9aSgkSjEbZl1vg8YtGb9+ti38R9oQE+O5u5FtZO01nwMEbU+mabpxE7YF2+banq1ka5SrXNJZ97W20DkmO+O+1IYPS1c3iLaR22Db6rmkYJs5dyvasrm2xdydFx9o15PKtmpUytnygoqcDbY5Jm1rayvfhRCxVdaizLbzfWI52xGTWG092dM2uxbUMyY5bbiZS+bWFJrYqrMDt23VWlBTG/Ico2Lb9vHRRpU9l0Tf6jreSGqL6i3v53z0KO+/FW1Qsz34Ugr3/g21VKNX57JtfVv9uG2qtufn4bxC6Gm7c5zBdj3nfRKJtvWyxQv82mt/vdrOlu4SAY5fu2nZ4qWbbYw22Zi8/THTyjxBLkl3tpV3Rz3blojLm7bTA8O4hefXm+h/6uxnwv8XZJttttlmm6RNuf0Ame5EtQ==", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition RebelIn = new(1114, "rebel_in", 220, 100, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [RebelIn];

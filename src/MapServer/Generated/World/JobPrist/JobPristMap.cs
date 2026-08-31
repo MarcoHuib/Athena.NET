@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.JobPrist;
 
 internal static class JobPristMap
 {
-    internal static readonly GeneratedMapDefinition JobPrist = new("job_prist", 200, 200, "eNrt3VFywjAMRVG//W+6H53OhDItNsQg3dwsgMkBybIdxSSIa0SHDh06dOjQoUOHjqaOcbh0FFK0jqsZhg4dp+d4OwdmvBqM/OjsoMSVDh06dOjQ8Y56Ph5c277JyziyFFc63hlXfR2r4xXF8b9k4x3oMD8cr6znEId5rsM6qKPNuGs912E95zscr6znOpwn6tChw3mi86uNcTXT72M9N8916NCh464JANLPQOkv6VvPbz5pIq7q1vM1h+PVZsftCyA63Bfd4KDst0McgdTztK7nFEcgcRX7kHXs3Bf9nv0C8oOS54HsU3d2QOogxsGMK+ugzwdPX0flI/mR09+EbO5A/B4DElfH/V3OOSytz/GCvLfNcPyKq76O5edqOjyfYcoRnCOUPB86Ph5XYdSP2wW65+JUyg/KeJXWcTUzMzE/dGztA9Ch46rnU3POudNR65xtHf4vwBYEw+F4VW233bjSsaWAQByuP4wrn3PS6+Dft9ttvuv/sbTYLungOPb7jEDmV/b76HAd9dJ79DpcDy43NEw7KvVR3zkW1h/lHE+Nu9U620GOJ/p9Kr5rkCf6fWo61sfdko6sPzeo6QjFsdzvUzQ/GI4g8zw6dJzb4Z7mjp87ezR76eCYmYXp0LHXUXQ9eGFHyX2GSzuaXjp06NChQ4cOgINyfQEN9oJK", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition JobPrist = new(621, "job_prist", 200, 200, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [JobPrist];

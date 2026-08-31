@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.UmIn;
 
 internal static class UmInMap
 {
-    internal static readonly GeneratedMapDefinition UmIn = new("um_in", 200, 140, "eNrt3Mt2gzAMBNDR//90Nyk1TThFIxlL7rDqxo0vll8gbLbFBZNDDjnkkKOAA68r8I9DpbMdfF0KODA6wBBe/2C143wRLVGhPU4CAhIPyRTHUP/vP0jGyvY4tQMBiTRkvmO8pd76rHd8ABCBVcfx3tNJhy11/LqX/IBlcmT2j0CIP664cNiSEE8fd48lUt91+09M7eBY0lMnrK/6MT7vo7ohdnc06+N67iOHHHLIIYcclSrDr4fkkGNzR2j3Vs+B3o7gfrqSIxJaKNXFj2eAfR3BwIIV7CDYxQE5ejOqOM7v86y1Y3z3skdcyVEstuSwUuvFPRxbtIdt5Jg5nwe2ar5y3PiLBx5lMBlDUxw45TlMDxRmSsQDWxx/qfG3UMNBlvP+ZFHHsIq/F8twDB1EheCrzWW655+l3Q6yNZjsWTjGLp+DfiqFWg73VGAhx5i+urZ/kJPaOfvW8vq5kf2Dd2SPu8dHEOw0EGlGq+MwxMIRifO5BVclfLnbJXG715Gblchq31Eyb/GiPAA55JBDDjnkkEMOOeSQQw455JBDDjnkkEMOOeSYlOsjRz3HI3lb/8lxvDzt7cAWjugJM8GS7R257529aVDX95XNtcQcx0MtkpzP8H6covugUebjRuLGwZle58yjGm6FcUlCSY5QFxkdk2MRt+OCctCf0bl/6gmHf3+Q7YjF1VAdarxy5Hb6+znx/a//o46Bnzju8qfxjrl9THtMmgepfTAskhdeZ11igXF31joRbfe1TU6GhCeXtvdzhhbHW+p5ohxyyCHHwmNDOl9fsV1lXA==", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition UmIn = new(1222, "um_in", 200, 140, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [UmIn];

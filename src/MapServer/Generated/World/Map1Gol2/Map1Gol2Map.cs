@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.Map1Gol2;
 
 internal static class Map1Gol2Map
 {
-    internal static readonly GeneratedMapDefinition Map1Gol2 = new("1@gol2", 100, 100, "eNrt2UEOgDAIRFHm/pd2Y9yZAAXU+ll0+2JbaaaV2suEgfELw87CwMDAwKg1LFklhq6hz5j4Doxt15xegoGB0W5owtDAXPVnzjDyujX3H0shY+H4w8B41HAwFf8gBnsXA4N+Rb/CwPAYd5w7j1QYdfkjETziGWcTw9KTlcycNpBr7eP3JeL9HAMDA2PRmKgD6O4e7g==", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition Map1Gol2 = new(71, "1@gol2", 100, 100, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [Map1Gol2];

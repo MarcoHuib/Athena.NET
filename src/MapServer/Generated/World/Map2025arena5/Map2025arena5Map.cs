@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.Map2025arena5;
 
 internal static class Map2025arena5Map
 {
-    internal static readonly GeneratedMapDefinition Map2025arena5 = new("2025arena5", 200, 160, "eNrt3MEOgiAAgGE88P6v3KmtTUEQmBDff+pgi28rDNKOQ5IkSZIkSZIkSZJaC6c4OHZxhCFxcHBwcOziiMnOo7w/lmOc43eEZUdxcPyn4/lMy8HBwfGGo27e5eBY2ZFf4aQc5Z/uEkePVRYHR19HyT7AaEePvYhdHLkxfR+lxp9+Tu41ONocde8rDo5qx+X65G3Hw2VSy0JrLkdc25Hdtl7HETk4OEogc81X9efBOOV50PcrDo5dHPf7DHXr2nn3S+Zw2E/k4PB7FAeH6wA4ODg4gutFOTjcb7CUI7gfh4ODg4PD/wFwcEiSJEmSJEmSJEnatA+OjH52", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition Map2025arena5 = new(165, "2025arena5", 200, 160, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [Map2025arena5];

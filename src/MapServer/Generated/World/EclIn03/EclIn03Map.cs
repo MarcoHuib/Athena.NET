@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.EclIn03;
 
 internal static class EclIn03Map
 {
-    internal static readonly GeneratedMapDefinition EclIn03 = new("ecl_in03", 280, 116, "eNrt3MGCgyAMRdG8///p2TitItQIAVEvs6qtgkdAhDgSKZMMAlxwwQUXXHDBBRdccMGFhMtdXGxJuOCCCy644IILLrjgggsuuOCCCy644IILLrjgggsuuOCCCy644IILLrjgcicXKyRccPGaXGyDy4Qu5ky43MulRxHtZArMV8ufNdeXZ7l4jmk15R+vEieDSyHX4ke/S69SWmXCZWyes7kkt4nv9tX3m+2drsQ5l35XL3eE7flvv5/JJb9nhEx+/129WP2i+Vqcb6IeF/V3Mcu1l29bmtIluCWl+9unbmRr51tdSke2tLeJcVmarA7Azaui722iqZi73W3fWhKMyCxLLumBbfSTbrp3tnuNraM1p+J0OdreWMj0ux+n8x6X8rhmNpdtT6L0/jHMZRkGN+VY+Zhhp44VMILZiz/Axeqf+eZJn+m68gXyu6SDAHtU0q4m2qn53Ie66LSLnueyOffv6ajZpWlqaSoXU0x9ORha3LT9ZM/V61L4XG5WcmyJOZ9ifhrQ7xZZasYT//NQrpJr++uAceT+Pl01fklLFDdD77mm0rA5dsdzgHwuepdL+TEmdkFnhEvs87TkcYlZCT0qbGiGzS4aMI95dN8Iqp+xLuq2/JdMirpcZFbfoCrmAc2znBu8rlZdXyJybJv33o411Gm98XcfE9Wfxbv0WqD2jGClbheiaf3oeOYuEqazy/m1dvP0keEROlUuPccwIfFSUjhMd5ffNDVxh+snzrg4t8vCyJxHtjPDDXWK/xsUdWhRcWTr23V+miIOJl0n6RaMWfpUF9fcIT68vOLQiyUyTlUPi4O/g4sueDkgNA7+SpnXvq824dtHc7zHl05Kz/Ain831JmwSWCfeExb/Jx8XXHDBBRcSLrjgggsuuOCCy+1dSPn0B1xxZts=", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition EclIn03 = new(360, "ecl_in03", 280, 116, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [EclIn03];

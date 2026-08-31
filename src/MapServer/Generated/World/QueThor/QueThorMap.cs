@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.QueThor;
 
 internal static class QueThorMap
 {
-    internal static readonly GeneratedMapDefinition QueThor = new("que_thor", 200, 100, "eNrt2tG2xBAMheGd93/pc39WVUQiq+Z3qSq+0hqM2RVJhgMHDhw4cODA8UmH/qVDjZxHxfFlh1ocynaoxaFsh1ocynXoMXUoNhwapQZEyPF4f7njsdlZjsfceoczqtfhyi5wWK7Dm5/sGPEWHeMbSztkGDbokMOhc93xGlUhRuUnyxV1wfHa1Lo5xPn05HM42lkwHzqqHBXRcucWDi5XhSHHftiUF3z+jHcc1uOwzzgC5bYchgNHnSN9DnSVW5oHHRUWzOWBqNsOa3FYqiP7x5XbYTc4lO3QHQ71OJTrqFx7BAZB0FG7hgpcx1H3ejQ4SqbB6VLa7VCHQ4UOHVpBrW0yeB1LmyXnzgAXHVrcfqk66bDIPpzeU5FlNer4+obDzjvm+3ARhzU4ZvtXoRqtxfG+Pk+rMRHyww61OIQj11F00L8e9TaHtTgMx+XjCgeOku+V8X9qHDhw4MCBAwcOHDhw4MCBAwcOHDhw4MCB4+cdt6Q/xbpC7Q==", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition QueThor = new(1082, "que_thor", 200, 100, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [QueThor];

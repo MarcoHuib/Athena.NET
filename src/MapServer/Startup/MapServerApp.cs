@@ -39,21 +39,14 @@ public static class MapServerApp
         var gameplayOptions = new GameplayOptions { RuleSet = mergedConfig.GameplayRuleSet };
         MapLogger.Status($"Gameplay ruleset: {gameplayOptions.RuleSet}");
         var gameplayRules = GameplayRulesFactory.Create(gameplayOptions);
-        // `--map-cache-path` (StartupOptions.MapCachePathOverride) wins over the configured
-        // `map_cache_path` value - see StartupOptions' own doc comment. Filesystem resource
-        // resolution is a deployment/runtime concern, not something one CWD-relative config value
-        // can correctly serve for every launcher: direct local execution from the repo root and
-        // Docker (WORKDIR /app) both happen to have a CWD the configured relative
-        // `legacy/rathena/db/map_cache.dat` resolves correctly against, but Aspire's AppHost
-        // launches this process with no such guarantee - it already knows its own discovered
-        // repository root and already passes other config paths as absolutes the same way
-        // (src/AppHost/Program.cs), so it supplies this override instead of relying on CWD luck.
+        // `--map-cache-path` wins over the configured `map_cache_path` value. Either value is an
+        // explicit legacy/debug override; with neither set, startup opens the generated production
+        // Athena Map Pack copied next to MapServer by build/publish.
         var effectiveMapCachePath = options.MapCachePathOverride ?? mergedConfig.MapCachePath;
-        // Fails startup loudly (does not fall back to EmptyMapCollisionProvider) if the configured
+        // Fails startup loudly if the generated pack or configured override is missing/malformed.
         // map_cache_path/map_collision_artifact source is missing/malformed/duplicated - see
         // MapCollisionStartupLoader's own doc comment. An unconfigured server (neither key set) is
-        // unaffected: Load returns EmptyMapCollisionProvider.Instance, the same default
-        // MapServerWorld.Build already used.
+        // An unconfigured server uses GeneratedMapCollisionProvider.
         // ruleSet: MapCollisionStartupLoader merges pinned rAthena's own db/import/map_cache.dat
         // and ruleset-specific overlay (db/re/map_cache.dat for Renewal) over the configured
         // generic map_cache_path, matching pinned map_readallmaps' own three-layer load order
@@ -61,6 +54,7 @@ public static class MapServerApp
         // pinned "prontera" geometry exists ONLY in db/re/map_cache.dat, not the generic
         // db/map_cache.dat this project was previously loading alone).
         var collisionProvider = MapCollisionStartupLoader.Load(mergedConfig.CollisionArtifacts, effectiveMapCachePath, gameplayOptions.RuleSet);
+        using var collisionProviderLifetime = collisionProvider as IDisposable;
         // Production-only fail-closed guard (never applied inside MapServerWorld.Build itself, so
         // tests can still freely compose a collision-less world on purpose) - see that method's own
         // doc comment. A live MapServer with generated monster spawns and no real collision source
@@ -74,7 +68,7 @@ public static class MapServerApp
         // first player movement request throws with no collision data loaded).
         MapServerHostingScope.RequireCollisionForAllServedMaps(collisionProvider);
         MapLogger.Status(
-            $"Monster spawn positioning: {(ReferenceEquals(collisionProvider, EmptyMapCollisionProvider.Instance) ? "none configured (no generated monster spawns)" : "rAthena collision-backed")}");
+            $"Monster spawn positioning: {(ReferenceEquals(collisionProvider, EmptyMapCollisionProvider.Instance) ? "none configured (no generated monster spawns)" : "collision-backed")}");
         MapLogger.Status($"Customs (handwritten Athena.NET development content): {(mergedConfig.CustomsEnabled ? "enabled" : "disabled")}");
         // Explicit runtime/deployment hosting scope for MapServerWorld.Build's servedMaps parameter
         // - see MapServerHostingScope's own doc comment for why this is a hand-declared set, never

@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.PvpN31;
 
 internal static class PvpN31Map
 {
-    internal static readonly GeneratedMapDefinition PvpN31 = new("pvp_n_3-1", 200, 200, "eNrt3duO4yAMgGH7Iu//yqPVTme7zQmIbYzn56ZSq6J8ARKCgaiWSKI4cODAgQMHDhw4cOC4yKErff5hVceBCwcOHIUdf/5bwrF+eWiNeqVKO8fh5FDFQb3CgQMHDhz5HH+ze+8GLukYKac0DqnhODuk6Iolhi1c9fXEHd/QxfI69erBThhqEPPrbbfDRPLIoddjCJG1y748RGfcEGXSfTyXw1CzquNfiZq0dZnZPyzQPm46Neu08yLlUcYhtoFb7h84cODA8UsdUsUhOHI5HlFyOcYpqRxaw6EPRuUoD0nVQHBIKkiQo2+4aw3HdpVGWUGO7edju0nv5fb96epoHFv//zxvDSnW0Rgj2IYcMfWqqz7ldQwxOhx7yaqOzzTbsT/H+RzXdaL9+2kOuTmikx+zOW6P5+TX5RxbZsdVC8aBA0e7o+++MtMxciw5HNvjhAMHDhw4cODAgQMHDhwpHW7j1LEOwYEDBw4ckQ6p4ZAlHVbTZiY7pIZDqjq0lqN/CVjOejXbcR7tOXRIzvbRPb9kEYfsHW5zRuUgFjjosJsvKlrCYTN/d9SRbR5yi+NoHpMNAccjx26m8ZL16mDGdJ71Bg0O8wUHqvb7sNw6Hu9j6bFXUZ/DZ/mHhjl8l7HgMHQYiFwcUqQ8ijgk2qHqsa+aBDtU7R19eadSvDs6M8/tiF3O6ebQGo7g5bXq5FAcONI5FAf1Ckd2h0TdB+3fjbNzSJHy6Mn7wZbBEY7IjjuOpufaoG1SXR3a6RiOQ3k7tMvxLJ7m7GgMWP/ElZM9D3ZCyjlyXLHkbOOe1gYiuR3i2cP6eBGNq0OCHI7xD29HVNygMXscsntXk0v8o4Cjq7iz1qvu3HE4Ogayx4Gj1xG4WaqnI/KtRRkcWsWRJNV2qJZw6MoOXZnx6dBV07pHjgMHDhw4cOBwf4tHdPoCfGHGVg==", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition PvpN31 = new(977, "pvp_n_3-1", 200, 200, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [PvpN31];

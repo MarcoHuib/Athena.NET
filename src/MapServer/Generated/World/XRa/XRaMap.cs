@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.XRa;
 
 internal static class XRaMap
 {
-    internal static readonly GeneratedMapDefinition XRa = new("x_ra", 140, 140, "eNrtm9tuwyAMQG3t//952tSkIdj4TtgK0vrQLOHUGN9wEPfYY4899nhmQNGQpnhf3SwfytI88FGW9wOPj0ks7/suT1iJ5TLN6wP459MsCB1Sc1kD3c+suIOUy+83P1Cvv1a+MgplPSMsoGNBieTCEtCXU8zd9wh6qYRYXgt0LjnCYE3oCzaWgW98rxMO//H8DVG5CCwoQUxiEa5rAoyHWFCmibBYA69D2Svk4mEZPd7PYg1IkZDL3TeNtIzeD3XB8TQW0i/jEyzIsKj1JTmBUYmhmqUJkwp8oxbjEukYWSCZZeSn57J40qF6FnSw4FS54EIssDaLeGNhjYZmeaZe9CDLMIddjQVsueb8Gp5nH0WnKWBxYgkRbqfqJhZs6z3S/LeA3sDCZzintNdgAQ9L76YTWWIlVTKXG+nLwiwJ+1rNgptFcp1K3VXS0eHuZiFSJ4OfLrIvDcswl4VJLLAIS68vgOQ+i89LZfn07/bIRT6fYX42eQdX4us2WpxF2HQ8q4bFGEWG1et/suA6LAkW4F+yrLRGS7HU7iO3rUOtpS6zuyDZ3QhLtm+ct6drah4T5vyTLNyRYogUZUWmWRQNRxFheFn68Dd3YVQs95aSmD5hiOUul7AXBjfL6Pg7bzuRDW83Fub4u6wHzyyXOhZQZPfQly+DVgZdLGhvqLQ14YkdPMxMfdGEd9MjUh3LsLIMpz5LLBHbp/QBtFyQrYUL0ZPH1vGdB0CZZqhjuRqZ8TEdWXdiyVL6A9g+DSCaZCGZpW/H1RX9TD1C2mYfXINFlz1wjcypLFT/BA5YGn/r8Tt8mw3npzmWW4bH26ioXLrFoFhQYgE3yy1rBxTWCES5RPdRKxdeyiZ7a2sqUe+j/sg4m4WNm/nGuHksoquUd3Qn3SbM5bVIGyIy5zyeQJP10wEWyGYZnHw9wMIawAyWaM/JoW/rsOgCO9nuZveGcuo1h6WNT4aZyRSWnJrPB7LATBb5PajNUvB2aqq+BDke1d2VWKCchdfPT2Mx9OtjQsNz5MWVZH05Zv1qBgblgtUshpjByTJrbJbNslk2y7QXZ6xxHPco6hupZP4NwVAl4A==", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition XRa = new(1265, "x_ra", 140, 140, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [XRa];

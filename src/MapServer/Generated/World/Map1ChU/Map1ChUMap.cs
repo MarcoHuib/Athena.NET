@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.Map1ChU;
 
 internal static class Map1ChUMap
 {
-    internal static readonly GeneratedMapDefinition Map1ChU = new("1@ch_u", 400, 80, "eNrt28GOgkAQRVH4/582JC4UCdp0v1DIuSvHSKWnTtyIzrMkSZIkSZIk6cpNP3fuzNzcWhvgUWkDU1Ojz5L6H1vm1toADx48ePDgwYMHDx5X8/h4ZvX3/pV7s4+epn9mbm58A19fwoMHj+2XLA+OnWZ5eHePwMzVVk8+TcfnfqPm1toAj6Z3XQGP3jsqqTs1laeO+uyfBw8ePHjw4MGDBw8ePHjw4MHjLz1mHjx4JDx6v++cm5mbm99ACzqPShsY/XuA1Mzc3Fob4MGDBw8ePHjw4MGDBw8ePHjw4MGjuMfrDzxGnWb4zNzcWhvYuvL9iTGn6Z2Zm1trA9vvpeclx08zfGZubrUNuF/r+yU8JEmSJEmSJEmS7tAD6t9hdQ==", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition Map1ChU = new(33, "1@ch_u", 400, 80, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [Map1ChU];

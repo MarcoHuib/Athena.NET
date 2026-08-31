@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.LhzCube;
 
 internal static class LhzCubeMap
 {
-    internal static readonly GeneratedMapDefinition LhzCube = new("lhz_cube", 260, 212, "eNrt3UEOgjAQBdDp/S/tAhSUBq0LFP5rQlwNsS91asYpthY/CgEDBgwYMGDAgEHPoDbjw9CD49axg5Pcj2LQMRi/81FxDBgwkBMZMGDAgIG9kQEDBnIig98ZnKrsxYABAwYMGDBgwIABAwYMGDBgwIABAwYMGDBgwIABAwYMGDBgwIABAwYM/t5Abx4DvboMGDCQExkwYMCAgb2RAQMGciIDtTQGDBgwYMCAAQMGDBgwYJBk4DnbDBgwYMCAAQMGDBgwYMCAAQMGDBgwYMCAAQMGDBgwYOB/fRmcweCYsxgMGDCQExkwYMCAgb2RAQMGciIDtTQGDBgwYMCAAQMGDBgwYMCAAQMGDBgwYMCAAQMGDBgwYMCAAYMLTbB6vSJP/SIBBiuK6bUFGtR0PQzqZd5Zn4X7OpghYnLievrz7CvPYIJYDGprcO3evCUHRhv0R1CvLoMdg8rs2U5dB98YXK9nezwfMGCQZNAYMIj7fvBmFUQZNOtgI5Fl0H/PuWf7OoUk5xv9xsKAAQMGDBgwYDBWfg8aN1/Jwsk=", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition LhzCube = new(694, "lhz_cube", 260, 212, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [LhzCube];

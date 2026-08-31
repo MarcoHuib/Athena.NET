@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.JobWiz;
 
 internal static class JobWizMap
 {
-    internal static readonly GeneratedMapDefinition JobWiz = new("job_wiz", 200, 200, "eNrt29sOgyAMAFCI4f9/eXvbTGY25WIHp++2nGAMFMx5ikiZg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg2MlRzqKc3XapOFoNILUGZIulz8xhjZZODg4+jrKvnC55qjLYj44ODg4ODg4ODg4rNu9VxzLOnKL+l+yDHAM6IvqU6/pyM6jODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4jo/yA90CWNBRNYgpHANuX/3sqBkDR2TH9gyOCI6ydxTzcbdjewsODo7Xs9uH4ODg8L2Kuo/iiNBniLRObOGIsG6vKhFsPjji9Bk4hvw9OKjf3r8tOujcYHpHco7DwcHBwcHBwcFx52btb+IBHlKPxQ==", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition JobWiz = new(627, "job_wiz", 200, 200, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [JobWiz];

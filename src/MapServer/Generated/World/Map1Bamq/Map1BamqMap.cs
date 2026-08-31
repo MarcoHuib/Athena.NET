@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.Map1Bamq;
 
 internal static class Map1BamqMap
 {
-    internal static readonly GeneratedMapDefinition Map1Bamq = new("1@bamq", 160, 80, "eNrt2esOgjAMhuEsTe//lg2LYobDjm6Fie/+QIh+PK6OQ5rS1EMSPnz48OHDd3OftA3fiXzZTT7N31s2431GdulT2Ut6HV82Pp+d3TJ/XzPyKZJ7/ozsLt8zIMS34rz/v+K3Xrs+NHD9atT6rRQ5YP50RH2nvP6NQDqz8eHDhw8fPnz4Rvgin692fYFT11MXfPhO9Q1YH4eR+K73cX/Dhw8fPnz/68udiqD3j2p2zfcRWXy47/3oaPYv+owaSGB9xej/vlsRuu1N6LrrbeV6sumf48OHDx8+fPjw4cN3I9/s4wEdelMH", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition Map1Bamq = new(26, "1@bamq", 160, 80, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [Map1Bamq];

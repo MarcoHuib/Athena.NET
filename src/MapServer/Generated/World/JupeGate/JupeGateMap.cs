@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.JupeGate;
 
 internal static class JupeGateMap
 {
-    internal static readonly GeneratedMapDefinition JupeGate = new("jupe_gate", 100, 200, "eNrt2rENACAMA0Fn/6VpWAAhIgT3C1xHEVx1vBSDwWAwGE8YmTEYjCzEYPxmeEsYDAaDwWDca7gBMBgMBoPBYDAYDAaDwWAwGAwGg8FgMBgMBsP/OYNhT81g2FMzGAwGg8Gwp2YwGAwGg8FgMHaNjgaPBUhW", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition JupeGate = new(670, "jupe_gate", 100, 200, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [JupeGate];

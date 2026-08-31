@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.JupeEleR;
 
 internal static class JupeEleRMap
 {
-    internal static readonly GeneratedMapDefinition JupeEleR = new("jupe_ele_r", 100, 160, "eNrt2TEKgDAMBdD0/pd2UEGKLko1qe8vaae3lATS1oYnGoPBYDAYDAaD8diILQxGJSO6VDV6ZQ5j1LtiMBhfGjc7STpjVY6VwWAwMhtmVA4jTsJgMOYy9ESG/RWDwWAw8hn7qa5xfatkNP/ODAaDwWAwGAwGg8FgMBgMBoPxM+ONLNIZObI=", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition JupeEleR = new(669, "jupe_ele_r", 100, 160, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [JupeEleR];

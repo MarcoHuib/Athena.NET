@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.LunaSf2;
 
 internal static class LunaSf2Map
 {
-    internal static readonly GeneratedMapDefinition LunaSf2 = new("luna_sf2", 300, 300, "eNrt3d1ymzAQgFF2Orz/K7fNz6QmtiuiFazFORd1uIhG/ooxGE8UAQAAAAAAwD3LDlpppZVWWmk1dIbnzKSpV2i1Z8fqGGjADBPGmKrV+69q1Ts3rbTSSiuttEqYVd656CVaJe1YWu1vdf+nGc5FS7cqdo2z+eXl2fZJ14NRr9W6/m3z598H2+e1ijGtOg4L7duHt4oRrWLSVpHfqnMabduntPoc/uPx7fjQ1Squ0Cpnv+wep3H7lFa5Z7WhVevkQqv200itGieX8nacc2xPv8ZJbtV7hzBu2zzdfslWkX2XcMf24c+rWKt1x/bVW5Xer6LYV0CyWgEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQHSv+dg36K97ij3b81u9j9vfKntuWmk1Ym4VW+Ucr/Lntr5IqwitXqmV16BWQ+a2HWSd5lw0a24fy9ouM7daE1slPMPL7FdlWw04F419q3Ue16p3VeYRrertVzkrWF+pVcFzhti+jWl1cKt1llYx/jW49i83fZlWy5StFsf2/c8x96ZCWqsRNzy0ap7bOmurzmuczeL2S85zPK/VmGN7VqveT+cOadW34nja8Wp0q75hUlZnr3psX9fbx/2t4t/TvWqtvibS93YTA+7wp7SKeb/7ce/nz/9VAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOLIvx0dD/7ytjhajViPfsSgp6x98J9FFpuHq93q4fqIWrW2WrVqHkerccer2K7wUahV1G0Vfa3urtYxa6tFq8aRYulutV3qRaung9yZmlZHt/rx4rlXaXWzxlWlVlG7VanXYO85w9DXYFS4Hiy9XxW7dv5akW/RaqZWP1zZ9xLnot/f/KZplX6N863VLOcMQ1rdHCXmaTXgM5mHu36t86sK9yYej35yq2Ef28/UKrTS6pqvwc7z23qtht6j37xTn3ztnNFqGf19hnPvpaa1irjQWvLL5lErAAAAAAAAAMr7DZW1RMs=", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition LunaSf2 = new(717, "luna_sf2", 300, 300, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [LunaSf2];

@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.QueHouseS;
 
 internal static class QueHouseSMap
 {
-    internal static readonly GeneratedMapDefinition QueHouseS = new("que_house_s", 96, 60, "eNrtlkEOgDAIBOH/n/ZgNKIm3W1A0rhzaQ90aisluAshhBBCiFpM/l6/re6v3WFVv73wA/8ZNlrxvb/mxFX+uavBt+Azp8lvlf93vI6ICrHHLNG/R4H+5ymRbLv7mfvv9GfkD+73OGRVk5n85F5ALJ+OPU22GkY/0WGh1fb6TWrgRWLXswFOGBPg", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition QueHouseS = new(1057, "que_house_s", 96, 60, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [QueHouseS];

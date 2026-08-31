@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.New13;
 
 internal static class New13Map
 {
-    internal static readonly GeneratedMapDefinition New13 = new("new_1-3", 200, 200, "eNrt3cmOwyAMgGH7wPu/8oxUpdM1BOLgZX4uvVQVXzFLCTWqJYooDhw4cODAgQMHDhw4cJRwyG/J5ZDBEtQh4gsRL4YxRFwIG8QO4+qQ9A61Di5x6ho1HPadHcdphyoO4goHDhw4cMRz3D7ucRmY0jHTTmEcUsPxrUqrA0sMe7jq9ot7fUcXy3FqW8E6bDWI+Xg77DCRnHJ8rrF6TCNBHKcl4jSPx3IYarI6/prUpK+L5/qwQP/oLGpwrB6visTV2xjB/IEDBw4cOBwgcRyCI5bjFCWWY56C4wJClfbQQnElOGI5JLJjaLsriaPtleCOdn9pnbLacXBv/fF77iNu71zpOPiMoCVxyP9wtAlHa1UcM64rHa/jaUTH3vj/qb7ZHO1LdWM69uexVsHRcODAUd8xNq94OmbqEsPRThccOHDgwIEDBw4cOHDgiOi4bp8aBw4cOHAUdmgNh6Z0rD23dJlDajikqkNxEFf7o88Bh8R0DJ8vSeKQd4fzudc5xtx5URw2jgznqft1tnGo4jjheIz3InGV0mGbKcMkocyEYycFy1jOWkPGoCPkX1Lnzy3hiOswUNEeOMwdqo551aIpnNtDFQcOHAsuzsCBI7ZDcRBXOHBcdjcO7XEuZXAkh0Wj4IjTPyzvVsPB/BHKobQHjoscBg+kcBBXNcddreLQA5nluznoQ9zD28/0370TIMZ9wi+/oo5HnGqo+7afHXnvDV/wJeOYhiR2PO+c5HZsSy3N7tAqjiAFBw4cOHDgwIEDBw4cCRxVyg9PtMuK", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition New13 = new(825, "new_1-3", 200, 200, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [New13];

@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.QueGod01;
 
 internal static class QueGod01Map
 {
-    internal static readonly GeneratedMapDefinition QueGod01 = new("que_god01", 300, 140, "eNrt3O2ugyAMgOE23v89n2Rmm3wpBdwR+vbHyUzM2XwCWFCqSlSGQIAVVlhhhRVWBFZYYYUVVlgRWGGFFVZYYUVghRVWWGGFFYEVVlhhhRVWBFZYYYUVVlgRWGF1r5XEkT/16gQ/Vq/Psh9cWL2P/Fq9uESr2pXL1oVVYx88/L0erzxbXbaW4ByPo3uTlfq8E8ZWJxmX67Eqa3WuQB+sa1fvmyS5qG1spw9+codyw1LHWob54J5SHURd5lf7TNBo5W94l+x4VJRSdTxkiTUfcHwjZK0PK6xqLui+LBCrBaxarxUrrLDCCiussMIKK6ywwgorrLDCCiussMIKK6z+36rmTZlfXjNWM1tJY2CF1W+tenSx8m5V/jWurNIvxSra3ybJ9rj0OHqzDas7rNRuJcv3wdKpDVay+tg+0koWzxl6ktfOYQ4rcWdV1QfTb8BqVqvxazLp1WJVeRcz/Pa8lSy8hhxtBTvfoJ/d0BnvwlvbqrVdfcpFhEkwVuVd+o25w8RWkh7VWLUnaB6eeYnkaiGFV4zVmVU4h8Yqtto/b9umqRtWWDVmZIFVWEADq7zVNxPFqnYt5piNYoVVj1XhCCushs2KJKq+iBVWPc+qwgJTWM1rZf/vI39PYLR958pYzWtlX1brfeJZmjun4/xxpR6rqa30utpxWD15RC3b3DroE9f6so+IsSpZZUoYWqz6626Pekt8Dqs71hkeaTWgD/qoFdZgFZ8sT6nN+nwrVawM45W66YPFV1xqrNRX7eiolK9YrLwUss3n7WKxan8XfU4rza4dWdqVS6uqpZbxc+eJrDR9akKc711SqFr2LhG1uShRXG9Hilr3P3g9hcjGH4Nukeg=", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition QueGod01 = new(1055, "que_god01", 300, 140, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [QueGod01];

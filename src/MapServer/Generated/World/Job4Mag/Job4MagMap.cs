@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.Job4Mag;
 
 internal static class Job4MagMap
 {
-    internal static readonly GeneratedMapDefinition Job4Mag = new("job4_mag", 240, 240, "eNrt3Qtu4yAQAFChuf+dV5W6bZxtYqtrYGAeB6h4wQwMv7ZWqkTj5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXlfVG3j5LT26VqnyWfN3pULap6o4b346+223tJ3Fi1Bbrvre3bJ14lbd/o1b75+m+3mqWNzx2/6JbQ2ylimT/z8vLy8vLy8vLy8vLy8vLy8vLy8v7n0m0pb4d1+cTePrt++b1Rw/spreZthbytYPuW8kabGLCiVng2/m4+wYpWK0eRH/Hy8vLy8vLy8vLy8vLy8vLy8vLy8vLy8vLy8q71Ks6K3jG/QxrvoIMOubz9Dypl8Y46iJbB+/ApF/AeXmfZ1Xssj/237e/t9+ZQQu/hER73F3h5eXl5eXl5refwZgLP8gbv3t5J5Jn5b6n73ZPEMSc0TwPHrJFokjimjbtzvuqYN28+78gdfpAYfHP/HHxYfF/W+6LWz6QfF+PvFMdU7ps9h6M3VvKef5P/ftcrt+95+/zUUY/9eEPv27nJKt5rMfbFDvgDeH9vW9B7MTV4c2Ln7gW+GJUM/XJwvnvPPxIku3FxMpLdezHVjRPvSvnCVe+wxfnk3uXywd9H54Xz32reRBtovLxz1wJ4l/eWup8Shbx/H98c18Yx/z9WD91mSOSN7b0Rw8ExNzDX8k7owTF3HDpod/Y+bwFW8D5Hq2LevftvvL6JVMarfXf2tr3bt1Z8blXHo68ceO94Vc37vdPyMI/ePh/8Om1UZH2j2nod7+be4SegeXlH7DBEqfYt4x1+TSVqcRN4x+4Az/Y27zHy8vLy8vLy8vLy8vLy8vLy8vLy8vLy8vLy8vLy8vLy8vLy8vKu4a1W/gAYG+8X", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition Job4Mag = new(609, "job4_mag", 240, 240, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [Job4Mag];

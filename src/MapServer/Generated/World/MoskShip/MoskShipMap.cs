@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.MoskShip;
 
 internal static class MoskShipMap
 {
-    internal static readonly GeneratedMapDefinition MoskShip = new("mosk_ship", 200, 200, "eNrt12EKgDAIBlCl+985FhTU/rZCeR87wB7KdJktsiUHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHB0cRRxzJcao64pGajogWjujh+PD6Cx33MtStx9ROHRynhkNfvQlJ7645uFJSd9/t4rg0pfd2/0EODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg6OXxxdsgMVFJ5e", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition MoskShip = new(816, "mosk_ship", 200, 200, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [MoskShip];

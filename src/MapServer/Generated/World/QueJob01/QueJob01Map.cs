@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.QueJob01;
 
 internal static class QueJob01Map
 {
-    internal static readonly GeneratedMapDefinition QueJob01 = new("que_job01", 160, 100, "eNrt2tsSgjAMBNDk/39aR8GhQmEkm3HTbn22HEpvSetOXczlm8RnzyLfPZ81JVQh9i2n9AGFG5+/frw+7vbbPmB8H0xYxhfvf7g+nDN+1zpmbT+ADz+CrZ0V2H3BkYtfgbE+dO/D+7LWD9BeH6wr44NVh44R5JNP+QP55JNPPvnkG9z3tcOQLxYhDOjLPYcY3WeWkqfq5TfL+a6eaZYlPKyVzLfLv6r9YvnNsA86Msr4+vPf9TOz5ufDt2bzedyXu7Jd7a/+ewuhgu98f8/py13z5Rvnfk6ejzk+l08++eSTb3wfdJUs5MNEjuBdhnxT+JBRkny/+PadAvqFIb4l67lcA+bzfTxvn3N938ZJ2P+a7JjaLzZ+jW1+bk8t4MLE9pvJd7/2/j9YfN659czhW4lJEVYRH+HN2Ml86YdKpOUB8vc4Jw==", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition QueJob01 = new(1059, "que_job01", 160, 100, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [QueJob01];

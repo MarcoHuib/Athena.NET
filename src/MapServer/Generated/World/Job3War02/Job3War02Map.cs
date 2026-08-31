@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.Job3War02;
 
 internal static class Job3War02Map
 {
-    internal static readonly GeneratedMapDefinition Job3War02 = new("job3_war02", 52, 52, "eNrt1EsKwDAIRdHr/jddCGlxoMQXGtqBjj0h+DOTA2vTps3CAIphmlgRvj9yIVHERDM8qWSIhLg4YfjO1Hrq61adA92sv0eBoPfniKlU+40ZdSsg78+9QMqeIt+QHdO3t82PzE5cftoI7Q==", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition Job3War02 = new(607, "job3_war02", 52, 52, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [Job3War02];

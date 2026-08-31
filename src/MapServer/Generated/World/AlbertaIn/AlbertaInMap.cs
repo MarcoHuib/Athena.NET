@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.AlbertaIn;
 
 internal static class AlbertaInMap
 {
-    internal static readonly GeneratedMapDefinition AlbertaIn = new("alberta_in", 200, 200, "eNrt3dtuwzAIBmB4/5eetKoHN41tsCFA/lxtUrP6W33GpMwlLmI44IADDjjggAMOODTFpbs5iCIrmtJ9/kK/XksZGG1BSzroeQWuV/SuU0kd1F6ddp7KQXDAcbEjFOm/LLJ2ftothHKM+90MjplxMKijUzgajDSUpKnT+SsP88tgkNG8/fW6kF3wSX3vOsQrgitWIcUdsvLB4eMQNboIy/otjrm2FN4RoX8mu6VmfEc7UiZ2PObMh/lnTsfvK1v7gOM4+CR2vDqJ3I7ttRGOGo4zREKHdhw8bAFc6FiZl2g+P895omqSfKljbRiPVK/ajSR5OeK087Uog5fDep+hmMOsfbTV3nDf59Fpm/VXbo7dW0WduEHkow0iB9dwUKZzTYnianBkd3DIcwBSx9dqKauDOf251zoOZoYDDjhqOxj5BnDcyjGau2Z0MBxxHCejA3EySPb+arBApUw5Xp35BhzOuXbNptrEudeQjo9Q5PPnjI6J/ai0jtG58DyOfh4kHNvHtgyONrkmreNdDL0jQjuXOE7i1COHXEYOB5hHkTLaEIJV7ArTEmTqf2nuoGNYWHYbh3TMbvKLHCunqbwc8vi5pvkZ1atfuai9eqU9Fi2sjObnfbro0xOXHNDBwo331xItiuNr4Tjx1+V3ODpovpHI7zjOE/fvU8t7w9XTD1b5Bj79rv/5q6wO+egc5kRNUcfrAUAka6sx8znljpjxQTgQr4UDDjjggAMOOOCAAw447umwXEcZrbvggMPJMf/sBGneteGuXd/Re7tHQrSkVJabwaSLsajiBVUczvVq5h+ncZhmvJI+tr9WrWwdkveSR+E++104rndUqVd3a+cKZ8h+d49j7t3sHLqHUZV3bJ8nzva7Bo6t83Zvh9U6yrtewbHbIXnuamXHBd9vA8cFDu9+F44d59rhgMPSETWOczfHvnXttf2u6gOBw/CZu7naB+/8QOBwmO9iXQtHtHm7Xd6Eq8Mwdum6ri3ioBIO23w1L4dHHqRHv+uRlzrz2k0Ots4T9hgH5cFt1R0eDmEevfyO0RO8dzmkCdjaO+wcvs+ZGH2fxopDeoBQnQ4//jx4cb7r9ByWcS+Y37Far/yeU+Rw7lX+5Tsbv66n0jn96PvtyJuAAw444KjkqHL9AV1aimQ=", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition AlbertaIn = new(210, "alberta_in", 200, 200, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [AlbertaIn];

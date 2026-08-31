@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.Map1Pop3;
 
 internal static class Map1Pop3Map
 {
-    internal static readonly GeneratedMapDefinition Map1Pop3 = new("1@pop3", 116, 116, "eNrtmO0OgjAMRdv3f2kVNG6kwpb0FtFzfmAUw+GyD7q5AwAAAAAAAMBfYWb3w+PjyfKbStVY+m/rfUiVW9az1U5JUPsGZ3gfUqcvTpdKbSxnpnS3MTXSbkS6RwNF4PTWuTM9pEn7K29zmco5Q6Xz9cfKoO92yJEOeXOlJzhn+k6SMxyG4pzhMBS/0754fP6Ac8qbNcUPudKcNtxr82LOOuv7T96jLZY21yl2Tr67s0qwYud0jVLuvHLMo0mhL7lrIirWn/UNeVKX9YMVYIkzXg6Knm4Y2jUt2havcVmrUW6q61YlU9YG/Oi0c5wF+6ji2WdoR6xw27hWCAAAAAAAAJfnBjrFLYU=", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition Map1Pop3 = new(103, "1@pop3", 116, 116, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [Map1Pop3];

@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.Airport;
 
 internal static class AirportMap
 {
-    internal static readonly GeneratedMapDefinition Airport = new("airport", 300, 120, "eNrt3AuOgyAQANDh/pfeTbqbVisIlirqmzT9WjSvIDJoUxKVEQhYsWLFihUrwYoVK1asuqz6N+avH1FaihWrNalaq0G0WJ3Eaklv+X1W57f637aYRd/tfi0pFoPV9axKwYpVi1U0RZ9jhr3Wxuooq8wmTh9Zsdpglaqt0sfbf6d6xWom8271siCrA60qPrqHVT4D02p1mB2rXvv2z/chrx1nTF+1WM2/m45onF+22lTgqHv9b7bBrfgxaB8Zi2nJLlaxU1yhXl3XSr069piBFStWrM54LJrrPmrXlS/pOla5d2fjlfJdlEo61iov1/sXfZZTfjZuXpRVi1Vujr6PVcS5z4Fk9YnVSkIq3dsqVVulSLvNSwyTcY/WOtOnXrG6k1VdL7333CCr81vteb728hmWEctLsGK1zao8xmLFatt1JpGZKHRNHKtt7TA/6RYjcZ3DKu5stZbtYTXJyjzyGul5nu6i1UgZnCHq1bvG1Cr0g4XcH6sNVuHa8MY2yqpsNbtnVWelDapX9lcjjIFYtYyCWJWGQX839Sr5/ytWghUrVqxYsWIlWLFixYoVK8GKFStWrFgJVqxYsWLFSrBixYoVK1aCFStWrFixEqxYsWJ1NitRHz/hWXt/", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition Airport = new(206, "airport", 300, 120, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [Airport];

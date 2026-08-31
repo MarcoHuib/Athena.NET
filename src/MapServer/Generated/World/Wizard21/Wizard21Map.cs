@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.Wizard21;
 
 internal static class Wizard21Map
 {
-    internal static readonly GeneratedMapDefinition Wizard21 = new("wizard_2-1", 200, 200, "eNrt3EtqwzAUQNGn/W+6tIESCJZjOfq9nDPqpOAbFFuS7ZQCAAAAAAAAAACQTvzSsVKFjsUydMjokBF/f27e8CxJhg4dOnToGFyiY2bHS8v+E6zNZ4ph/WFZ2zFEhw4dOnTosE+tw0TRAiRO6Vin47Fu12FcDeuY0Fg7opaO/3tvg0OydRwd09NxvXzLT+pnfQc+0RGTOqqjJK4PrDknswsH9V7HpLPyyWFFXCyZcHlpOKqzkikXyris7b96p+jYvaNV/44xNTpuDK6WYXcwNxh6Kax8dA2f9lvzyOHzq4ZRE7Oe/7s5v6o/x7javL2lY8X1R1vH+PX50bml7Zw6u6N8tmOxfZ96zT77V1k66iU6VtkXHTzv6NtRyt53pkrZ/+7g5jc6szxnmeb5xGTPARQdOnTo0KHD++deZFln4p5h7ZEqZJ8nyDJ2hPdrdejQoUPH7Ul7jvfP99xlt79rWWub4Rt/PbEAAAAAAAAAAADk8wOrqJFB", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition Wizard21 = new(1260, "wizard_2-1", 200, 200, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [Wizard21];

@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.XmasIn;
 
 internal static class XmasInMap
 {
-    internal static readonly GeneratedMapDefinition XmasIn = new("xmas_in", 200, 200, "eNrt3YluwyAMgGH7/V96k5o2HDk4HAzRH2lapWkr3zBHKA6qr7hEceDAgQMHDhw4cODAgQMHjpc65Hd5l/K2DDeO/5/P45A2h0SXK+G+DAWOz6tVHeHv+dWISGFUvNwhh5dXN1VQihuHbl+fVuLhCOKh2hHpHVt75NjLVeXIa9PZIZft9MwR/h2XNnLUOC8KcOeo6cMf76mqHQf14uvIx4IlHbquI3xjbXRcjYbejpMylDn2efz4kfBw5trs8JrwRqX+9r69jvHjYN791oznZ33GWEc+CueRdusIhs9wouUQVNmIXjffTRzqOL/qciSx6XRvG0JOY+rOoencxud+8KwXLr+vnWGlweL+vGhGsMK6Tz6k63rronOsw7FOjQMHDhw4cODAgQMHDhw4cODAgQMHDhw4cODAgePtjmRHnuDwcsjFruxHPI85fqkjEznq31kur0Ud6Zb5Ye0j34JWK0n+gD6enyTP7BMdGFGnDosy2Dra8j+MHUXbwJ5xVOTzXI+A0ba61hZy8B+VVkfH2yfpG2qRQVHl6Ol39Sj9pKNmrRzSk4bZFVdxTGz7kKWlnbfvPzauj69D2h1tEoueN/2H1jriPOMeR2mqr7XjuwtZPxMKU4fquLiKf7fHEUakQWx2OHQORx4rhY4wy6ClDHb3Hv2O8MvE0TQOpV1/U1wFVdPkUCNHMsURqct3jvNZXOvjLtNLytK/O949T6oxaGnV+VEGD+oIV7B8HH15NGF9aHNcFc5u5PEHp2ygdkfRcxqer489rrR/oaEtn9PmQTZxFqDJfe3Adeq4v9rHs9XW2w/73TUdMjB3XYY9J2Lxz3F0TN4eDuXzWhw4cODAgQMHDhw4cODAgQMHDhw4cODAgQMHDhw4cODAgQOH13OEpyimyXleOHBYOOY4zQtHli8oBSfsjDxDqnIf8i/XL3ixpmOOqJLjA+9q6uPshYdD1DCu/M9oqN8XPlVcRd+06ryiqeJKpccxT1yF387LvEB/FaTNvcVRGVfbicjRuSz+pztfnsYlzU+o8HA05RXN49C9nbfkFc0CSRysl+DAgQMHDhw4cODAgQMHjvc53nL9AWyJkGI=", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition XmasIn = new(1270, "xmas_in", 200, 200, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [XmasIn];

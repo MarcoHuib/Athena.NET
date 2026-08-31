@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.PrtSewb2;
 
 internal static class PrtSewb2Map
 {
-    internal static readonly GeneratedMapDefinition PrtSewb2 = new("prt_sewb2", 200, 200, "eNrt3YlqhDAQANAJIf//yz3Esi2GNWLXifsGUTyC8yCaRFBLuUVE4eDg4ODg4ODI6Yj4nL5nHBw3dMQaORyD6XD0ip/oqLUecdQ6UDB65z3PseTzesdQ+ayO1pbyrXGoVxc4duYXR4/bziOic0Pl4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4OCYz1HXDcsax9WOPzGzozUO9YqDg4ND+6Fe6SdybJ83Zh8PcnBwcHBwcHCMO3a91saRy7F2wDlSOH6GR7M71mcGHK9ytOjG1746ieNZcHBwcHBwbMbk7eC+yN8veTNH+vHg6PciOFI4goODg4ODg+O4o9zI8Zg5x8XXR3+0ycHx9g73K+05BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwfHAUc5/3fst3AMezk4ODjyO36l10s3u2OA+7jkyArk4ODg4ODg4OD4p37/5PEB0a6iBA==", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition PrtSewb2 = new(956, "prt_sewb2", 200, 200, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [PrtSewb2];

@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.MocPryd04;
 
 internal static class MocPryd04Map
 {
-    internal static readonly GeneratedMapDefinition MocPryd04 = new("moc_pryd04", 200, 200, "eNrtncmSgzAMRK3D/P8vzyHJFPGkCgew1WqeL2Qj+CW4pQYvERalBRxwTOJoxcsfxxbl8fj1iua2q68dh8t59XgclZi29YVDhwQOONZw9MJctZ17cNjlV/Ug/DiM8qt/bUi4eX/Bof3ju3N0b4k3mBjVq7IcpnoFhzHHAjuw6P9YcAAzDvJd8l109/YciX4kBus3yiGVp9tz7Hw0uQHFVfGjDAe6Cwf+A/+B/8B/4D/gKMoxMSLEwfoc5UjN0+05vtx1coOKVfFDlgPdhQP/gf/Af+A/iB9wmHCciBBx0fGv4kja2ZTj5FedrEioxA8ZDvQKDmGOZzCIbrt1IW9bYY7Po+XaxxF0cEz2H9ESLh9N8B/pHOiVp+62nMurszh+doo8x/OrhjgKxI80jot1d+l5NfH6VRrHxWWQQz5+VOew0V3iBxzED12OwYR07/lJ3T16uPtw9ONVd56f4jh6sDtx0D5yOIgfJeIH+VVxDvwHvtaRg/hB/CB+oLs3u4/TuD/I/XPun9O/pA6HRb8ldBcO+u/69t+lf7sch8W4CXQXDsYP3n78IONrGbeN7sKRFj+Yv0Rr/hLm95HjsJg3Ct2FA/+B/8B/4D/QXTiy4gfzt2vN3876BnIcFutmoLtw4D/wH/gP/Ae6C0dW/GD9Wq31a1nfWY7DYt1w8l3yXebre28fERGVmF619uYodS7Fpu5wwLGAo1I79+awy6+2wqy67eprx2FyXhkUOMQ4XMov7wMjHQ==", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition MocPryd04 = new(794, "moc_pryd04", 200, 200, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [MocPryd04];

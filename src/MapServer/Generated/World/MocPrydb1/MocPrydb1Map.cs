@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.MocPrydb1;
 
 internal static class MocPrydb1Map
 {
-    internal static readonly GeneratedMapDefinition MocPrydb1 = new("moc_prydb1", 200, 200, "eNrt3duOgyAQANDh/396E11v3TZR6qiwh6QNLxRPncFKoJbSRYnCwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwZH14UPZ1jjudIyvdY3jJsdvJMXcT2poRXZuxFCbHdGqY6yl53p6XL04Gs2PIaSmt4bzI5bzES3nR/uOXuJqTclGcHC0eh91gYGDg4ODg4OD4185ivl2Dg4ODg4ODg4ODg4ODg4ODg4ODvO7HBwcHBwH1x/tObaaNh9bneX40EG6Y//qzOc6pn7LrhX+j42r7UpsjtvzfLWwv2nHsQHr2eNVbDfDZDhyr4NJjppvqNqRGFfVji/O4LLxJTLzPNuRMe6WXhzVef6suLrFkZDn7661FzpOG3ff/Php2VH6iKs/twdJjteLeWnVMR95wrjbm+Nguy8dYz/nx9XhaaJ6Ryyb79t2HGsY18zCpc/EcXBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwdOgo07MBODg4ODg4iv+T4eDg4DjlkULNlh9qe5IT", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition MocPrydb1 = new(797, "moc_prydb1", 200, 200, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [MocPrydb1];

@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.BatRoom;
 
 internal static class BatRoomMap
 {
-    internal static readonly GeneratedMapDefinition BatRoom = new("bat_room", 300, 300, "eNrt3WGrgjAYgFHf//+ng7LmpnPSSKud88WL4oUeNOcyigAAAAAAAAAAAAAAAAAAAAAAAAAAAIBe0+xft2mllVZaaaWVVlqd3QoAAGNR43attNJKK6200sr8FQAAAAAAEI3PNr7hf2illVZaaaXVda2er/a9pVZaaaWVVlpppZVWWml1zrO5vbTSanUOzi936lg6rhxXWml15ndU8r/XHR9r6/uM2CqV2V+jVXFVzOvkC63mk63SarFt1Fa1Hke3DdsqLdK9X+P81CpV0WqrVra+bNXYZ9RWkb0zRbFhzFbpBjrui0OtYrFHDPcUllbOwQ9fB19HzsZ1cLHNmMGYwVj0inscrY7fO5tnMCdjrs8css8mtNJKK608z+C48qyaVlpppZVWWmmllVZaaeW74VpppZVWWmkFAAAAAABA+I318Hv0WmmllVZaaaXVT7UCAMBY1LhdK6200korrbQyfwUAAAAAAAAAAAAAAAAAAAAAAAAAAOy7AQLcTIU=", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition BatRoom = new(276, "bat_room", 300, 300, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [BatRoom];

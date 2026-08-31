@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.Nakhyang;
 
 internal static class NakhyangMap
 {
-    internal static readonly GeneratedMapDefinition Nakhyang = new("nakhyang", 68, 64, "eNrt1eEKgCAMBGDv/V+6MiTIsV1sScQd9MNqn7nCAEVRgNYjo8IYlZYRqsfl/bCMfpowWphzmhQxHoYwHI5ZC6477Wq6H/D64RoVa6noKe7zzcPo3ZpF5nCh4X+s/zGajGcG464w5t3iFQPfNyg58c/NGYqiKAqz4242Eg0J", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition Nakhyang = new(819, "nakhyang", 68, 64, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [Nakhyang];

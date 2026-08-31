@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.MoskQue;
 
 internal static class MoskQueMap
 {
-    internal static readonly GeneratedMapDefinition MoskQue = new("mosk_que", 100, 240, "eNrt3DkSwyAQBEDP/z/tyGUdiQOxwLonUdhVQlxbiERERP43r0sKiBFIM+Og7f+u0sTw7S5ipInRoT1uzKbGVdDmPxjp0z9SMEfFWLKAEe/KepcxbTs4xdDm1onag/EMUlGMq6j4pQBhMBgMBoPBYDAYDMYae7X9985qGQzG3PJVcXXMvMFgMBiNjFHnY45nP74PxgKG/sFgMBhtjZLiWEl1zP9RDAaDwYjzic4nMvY0ksF1rIz+ZT/jjTAYjN5GzWg1esA1/zHUr9SvnjWSfY0PlII7IAqMV0ruTnA/A4NxX72d7kNiTDdOrb+voQ8udGGGiIjskjetPlMA", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition MoskQue = new(815, "mosk_que", 100, 240, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [MoskQue];

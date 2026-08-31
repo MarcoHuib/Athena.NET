@@ -11,6 +11,7 @@ public sealed class GeneratedWorldRegistryTests
     public void Maps_AreCompleteUniqueAndLookupIsNormalized()
     {
         Assert.Equal(1296, GeneratedMapRegistry.Count);
+        Assert.Equal(Enumerable.Range(0, 1296), GeneratedMapRegistry.All.Select(map => map.AssetId).Order());
         Assert.Equal(1296, GeneratedMapRegistry.All.Select(map => map.Name).Distinct(StringComparer.OrdinalIgnoreCase).Count());
         Assert.True(GeneratedMapRegistry.TryGet("IZ_INT03.GAT", out var map));
         Assert.Equal("iz_int03", map.Name);
@@ -23,7 +24,10 @@ public sealed class GeneratedWorldRegistryTests
     public void GeneratedCollision_PreservesDimensionsAndCells()
     {
         var definition = GeneratedMapRegistry.Get("prontera");
-        var collision = definition.CreateCollisionMap();
+        using var provider = GeneratedMapCollisionProvider.OpenProduction();
+        Assert.True(provider.TryGetMap("prontera", out var collision));
+        Assert.True(provider.TryGetMap("PRONTERA.GAT", out var cached));
+        Assert.Same(collision, cached);
         Assert.Equal(definition.Width, collision.Width);
         Assert.Equal(definition.Height, collision.Height);
         Assert.Equal("prontera", collision.MapName);

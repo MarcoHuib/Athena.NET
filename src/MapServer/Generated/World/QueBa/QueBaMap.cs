@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.QueBa;
 
 internal static class QueBaMap
 {
-    internal static readonly GeneratedMapDefinition QueBa = new("que_ba", 300, 300, "eNrt3Y1uqjAAgFGbhfd/5W34Q8EirRYscL5k9267yaLnQumgYgiSJGkfXW6RYFXPiVXBNsWqcP9jdTary6S579kH+2fT/X903fWP/nv/X1SyCge26uu/qPX8TmB12x1ZzY9X9caq81ldPt62jml1H9EnQzurF9vVyMp2tbgPdsYrVm8/g6TVferwmEzWstqp16sjXzeMV6Hi2L7bbSvfqtp2dUireOp+ca4hzMzQh89YvRrbw+P8SfRZ1d+dP/t56/0WVv4IUlY1Hkvtn8NqD1bRWbnJA3j/saRGwXUOR1+7OjV5GKy2sRqe3br7IKuzWCVOFZ7A6udaYLWVVf25R8NWP6yOYdXEXHQn++CxrOqO7Skxc4bGV+A1PhdlxWqN352btWrwnExLJ95bP9fHyrWJo193Hl/zuqu55rV8LZXVa6vu6RPX6Eu2K2s/UmN7vJpvWIdsTVHqfz1eLdpZh5y1M45X1rKaseqmK5CtrZ1ds321egJjNXtA7OqedjzuPvi3UU2Wt7OaPJP73ncbsfo/vXYp+Uy6sdVjjA9eEzdn9ff39Xu15g2He63l6NDnNbxeG87KvSxY0XDvHVaSJEmSJEmSJEmSJEmSJEmSJEmSJEmSJEmSJEmSJEmSJEmSJEmSJEkK279b8MtYsaphZc/LteLDagUrPNlWdFjVt2LDihUrVqxObkXQeQZz0u2tEmx0klbJLYxOyiqwKrOKtQKrlNX1g1WeVYh84l2SztM+mD4CssqcX5FiZd7OqtHj4MxXYsWKVctjOxFWrFgZ21mxEiud4eL26OokK0sASq36q0ROleVaOa1YYmUfZMXqmwuWWJkzrGtlOeoHVpwyFoajiq3C0vCEanltyaCpzO3KZrU8XrEqtTKylx0HIeXP2yGxYvVdLUSsWLEyth/DKv4HSIsnGVixsg8a21mxYsUq+2aTrFjZB1mxYsVKgxWGbCsKBTf20RsvIhMrVqxYHeEevwe3WlwNy2psFc24P5pOnmAfjI1Ysap8epdVwXGQ1YZWp7lXJitWrFjtzcopAFbeS4hVKy+zDXxYudc9qx2/5wur+dMmrFjZB9uck/Jh9cl76pFitc09yUmxcq97Vt7zhRUrsTK2s7KsmpUkSZKkNvoFl2xKng==", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition QueBa = new(1051, "que_ba", 300, 300, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [QueBa];

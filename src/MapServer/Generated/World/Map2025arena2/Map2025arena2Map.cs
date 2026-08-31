@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.Map2025arena2;
 
 internal static class Map2025arena2Map
 {
-    internal static readonly GeneratedMapDefinition Map2025arena2 = new("2025arena2", 200, 160, "eNrt3OuSgiAYgGGaWe//lndnMisTwTAO2/P+hEZ4RU4f5uUCAAAAAAAAAAAAABiZaZuw8Jw+mEcIMZFehXjw4MGDB493PcJBePD4No/cfs6DBw8etYkMp/faXmv8kryGRw2P7aeNR8PnKpXMo5pHdgaPCh63MXdJvouM5hHJCj14PJS8tz96J+/p4tVuf7HHz47Hh1SWC2d67O9mM9rjWtzpPulS92v6fKCT53F+uxwp9VbT9RT4OGgd8zjP5B2PeH/p1uOlYquEVbeP/7yJxzSnT/u9YZ4zEr1nmus7Vff425FGJ7VXj+R4NQetPztHHo8S7jRHOB55bOOxdaeLrsDjTI9QrNGNRxjSI/Uc9dXP88fdrNx24272PJizimw3Dx5Yl6Ry265LPr7/6MMjUtmm6/byfVRJe9jXVoozpD3EfU6aIweIw5XERYM4NQ/nOP/Pw3mt9wC+2+PifR8ePHgM6uF9ah48/B+HBw8ePHjwKPiuQf8fOAAAAAAAAAAAAAAAZPEL1cGKtQ==", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition Map2025arena2 = new(162, "2025arena2", 200, 160, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [Map2025arena2];

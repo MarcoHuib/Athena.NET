@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.QueMoon;
 
 internal static class QueMoonMap
 {
-    internal static readonly GeneratedMapDefinition QueMoon = new("que_moon", 200, 184, "eNrt2UkOgCAQRcHm/pd2ZUyIwaGFKFbvefm11VKmuCgcHBwcHBwcHC93xM5dTI8scHBwcHBwcHBwcHBwcHBwcHzAUVdyr+868iuqRDrQTETfFVsiHWgnovOKNZEOHCSi94pBhb84SnbEoEKciKS/hQ8o+P/BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHxsGOWWwBurYhc", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition QueMoon = new(1064, "que_moon", 200, 184, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [QueMoon];

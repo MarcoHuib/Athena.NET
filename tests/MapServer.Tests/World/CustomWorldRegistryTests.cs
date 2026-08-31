@@ -19,7 +19,7 @@ public sealed class CustomWorldRegistryTests
     [Fact]
     public void Build_CustomsDisabled_AthenaTestNpcIsAbsent()
     {
-        var world = MapServerWorld.Build(RenewalRules(), customsEnabled: false);
+        var world = MapServerWorld.Build(RenewalRules(), customsEnabled: false, warpDefinitions: []);
 
         Assert.False(world.Maps.TryGetActor("custom:int_land04:athena test npc", "int_land04", out _));
     }
@@ -27,7 +27,7 @@ public sealed class CustomWorldRegistryTests
     [Fact]
     public void Build_CustomsEnabled_AthenaTestNpcIsRegistered()
     {
-        var world = MapServerWorld.Build(RenewalRules(), customsEnabled: true);
+        var world = MapServerWorld.Build(RenewalRules(), customsEnabled: true, warpDefinitions: []);
 
         Assert.True(world.Maps.TryGetActor("custom:int_land04:athena test npc", "int_land04", out var actor));
         Assert.Equal("Athena Test NPC", actor.Name);
@@ -40,7 +40,7 @@ public sealed class CustomWorldRegistryTests
     [Fact]
     public void Build_CustomsEnabled_GeneratedWorldContentRemainsRegistered()
     {
-        var world = MapServerWorld.Build(RenewalRules(), customsEnabled: true);
+        var world = MapServerWorld.Build(RenewalRules(), customsEnabled: true, warpDefinitions: []);
 
         // A representative generated NPC (Captain Carocc, generic int_land) must still be present
         // alongside the enabled custom content - customs are additive, never a replacement.

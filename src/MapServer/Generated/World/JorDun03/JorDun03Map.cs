@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.JorDun03;
 
 internal static class JorDun03Map
 {
-    internal static readonly GeneratedMapDefinition JorDun03 = new("jor_dun03", 120, 120, "eNrt11sKxCAQBdG++9/0wJjJAxoSwnhbtIr85eMgGo0SERERERERvS+2cHFxcXFxV3SFi4vLvoE7nhtHHm5/LrVXfrf3wFdzU88AB+4AEzzXwsqd/nA+uu5ujOyGaXaHcaOPq1v333RTL5DNbR+sCtxHWc+E+VzlW7LD1XdFq+QgPAa+Y9Zf+PP913tjqXArpldFyyrdG1dztX3bJvl3Qrqv+2aXiIiIiIiIZugDMDUzqQ==", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition JorDun03 = new(643, "jor_dun03", 120, 120, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [JorDun03];

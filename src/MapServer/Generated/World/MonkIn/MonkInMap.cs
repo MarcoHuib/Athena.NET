@@ -9,7 +9,7 @@ namespace Athena.Net.MapServer.Generated.World.MonkIn;
 
 internal static class MonkInMap
 {
-    internal static readonly GeneratedMapDefinition MonkIn = new("monk_in", 200, 200, "eNrt3NuWgiAUAFD4/5+el6aVRqKIcnH7MCtcObaLOwdjnOIIkYODg4ODg4ODg4ODg4ODg4ODg2NwR3gfHBzjO0LyaO3Y8akGcXz+fZhjiXmdGjBfnXCEQ0e/5aN3x9771nfsvn4gRyqdd3x/qoc58pz3G8u+mf/zF+erxT/5T6ROdu5YXbJ60bScF9ePMfnynnq3Xju4bs9PO5a9k/qOXz/8ZrIgvx5yFNzp10WZEyfr87scu05xhPrj2q3bJBLVRje3OL6//eqjtKvmGY45+p0v4ejdEZMJDg6O8R2v/mjSsey9ctycrxYjm4HLxwSOsHYEDg4O9ZV2kEN/l4ODw/wVB8eGI7tuMIojt5LAces6TtN1zprrUfXXnZusc2bjAIZxZOIyDjly0QkhW3OecmzFyRx3pFI74jLOO9JxS6fiMn6MJ6s47opPPOQoyFedO54dL7qeNvlOnYzra+H4GA9WcLTLV3Grt/Ugx4l6t09HSTtYPOK52nGoX5KYqu3AURL3WuzobB9LxZG0fV4z7ruzn5Mj2n/OwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwfFYxy2rnBwcHBw1d1GES2M0OJ7h+FU+OFo5FnGi7/twtMxXEzrCmI70Y7FHbD/mcKQfWz5s+zGh4+COIg75auJyrv2Qr5Rz7Yd8pZxrPz73o47dfow+rp1nnsH8lXlRjp1PJYvWPzisc3JwcDzSEcXDcXBwcHBwcFzxiNaOjz+aUYVn", "Base", new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
+    internal static readonly GeneratedMapDefinition MonkIn = new(801, "monk_in", 200, 200, MapSourceLayer.Base, new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/map_cache.dat", 0));
 
     internal static readonly GeneratedMapDefinition[] All =
         [MonkIn];
