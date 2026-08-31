@@ -19,7 +19,8 @@ public sealed class CompleteWorldGenerationTests
     {
         var root = FindRepositoryRoot(); var rathena = Path.Combine(root, "legacy/rathena");
         var effective = RathenaMapCacheLayers.Merge(File.ReadAllBytes(Path.Combine(rathena, "db/map_cache.dat")), File.ReadAllBytes(Path.Combine(rathena, "db/re/map_cache.dat")));
-        var bytes = File.ReadAllBytes(Path.Combine(root, "src/MapServer/Generated/World/MapData/AthenaMaps.bin"));
+        Assert.False(Directory.Exists(Path.Combine(root, "src/MapServer/Generated/World/MapData")));
+        var bytes = File.ReadAllBytes(Path.Combine(root, "src/MapServer/Generated/Assets/Maps/AthenaMaps.bin"));
         var header = AthenaMapPackFormat.ReadHeader(bytes);
         Assert.Equal(1296u, header.MapCount);
         Assert.Equal((ulong)(AthenaMapPackFormat.HeaderSize + 1296 * AthenaMapPackFormat.IndexEntrySize), header.PayloadOffset);

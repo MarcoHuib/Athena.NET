@@ -9,7 +9,7 @@ dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- generat
 
 `generate-maps` uses the shared `RathenaMapCacheLayers.Merge` authority (import → Renewal → base,
 first match wins), assigns AssetIds from the ordinally sorted 1,296-map collection, and emits both
-small map metadata C# plus `Generated/World/MapData/AthenaMaps.bin` from that same in-memory list.
+small map metadata C# plus `Generated/Assets/Maps/AthenaMaps.bin` from that same in-memory list.
 Athena Map Pack v1 has a 32-byte header, 24-byte fixed index entries, and exact Packed4 GAT values
 (two cells per byte, no zlib/Base64/general compression). The pack is atomically replaced and is a
 separate published `MapData/AthenaMaps.bin` runtime asset; normal startup needs no rAthena cache.
@@ -19,6 +19,8 @@ unresolved source/destination map, emits all 4,468 ordinary warps under source-m
 exact file/line provenance, and builds `GeneratedWarpRegistry` as an index. Cleanup requires both
 the exact generated filename family and the standard auto-generated header; `*World.cs`, NPC,
 MobSpawns, and Scripts content is never owned by these commands.
+The obsolete `Generated/World/MapData/AthenaMaps.bin` is removed only when both its exact path and
+valid Athena Map Pack header prove generator ownership; the empty legacy directory is then removed.
 
 `WorldDataImporter` is the compatibility CLI for the emerging Athena world
 compiler. Its pipeline is source loading -> hand-written lexer -> recursive-

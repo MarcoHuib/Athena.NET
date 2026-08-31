@@ -14,7 +14,7 @@ namespace Athena.Net.MapServer.World;
 // boundary). The production pack reader opens the generated pack once, reads its small index at
 // startup, and loads each immutable map block lazily on first use. Nothing reads per session.
 //
-// With neither override configured, production uses Generated/World/MapData/AthenaMaps.bin.
+// With neither override configured, production uses Generated/Assets/Maps/AthenaMaps.bin.
 // Two mutually exclusive explicit/debug overrides remain (MapConfigLoader rejects both together):
 //   - map_cache_path: pinned rAthena map-cache layers, useful for import/debug comparison.
 //   - map_collision_artifact (one or more): locally supplied .gat-derived

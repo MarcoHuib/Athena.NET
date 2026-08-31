@@ -14,7 +14,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Content Include="Generated/World/MapData/AthenaMaps.bin" Link="MapData/AthenaMaps.bin" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="Always" />
+    <Content Include="Generated/Assets/Maps/AthenaMaps.bin" Link="MapData/AthenaMaps.bin" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="Always" />
   </ItemGroup>
 
   <!-- Embed source revision for runtime build provenance. -->

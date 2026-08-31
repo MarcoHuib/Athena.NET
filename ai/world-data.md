@@ -11,8 +11,9 @@ Production world geometry and ordinary declarative warps are generated C# under
 first-match-wins precedence is import, then Renewal, then base. The pinned tree has no import
 cache, 8 Renewal entries, and 1,288 base entries, producing 1,296 effective maps. Each map module
 stores small readable metadata plus its deterministic zero-based `AssetId` and
-repository/commit/layer/file provenance. Exact GAT cells live in the separate generated runtime
-asset `MapData/AthenaMaps.bin`; generated map C# contains no collision payload.
+repository/commit/layer/file provenance. Exact GAT cells live in the separate generated source
+asset `src/MapServer/Generated/Assets/Maps/AthenaMaps.bin`, published as
+`MapData/AthenaMaps.bin`; generated map C# contains no collision payload.
 
 Athena Map Pack v1 uses 8-byte magic `ATHMAP\0\0`, a 32-byte little-endian header, and a 24-byte
 fixed index entry per AssetId. The header fields are magic, UInt16 version/header-size, UInt32 map
@@ -1885,7 +1886,7 @@ runtime data as a shortcut.
 
 This section documents the still-supported explicit `map_cache_path` debugging/import override.
 It was the production path before complete map generation. The normal production source is now
-`Generated/World/MapData/AthenaMaps.bin`, described in the generated-world section above; normal
+`Generated/Assets/Maps/AthenaMaps.bin`, described in the generated-world section above; normal
 startup performs no rAthena map-cache I/O.
 
 The override source is pinned rAthena's own `legacy/rathena/db/map_cache.dat`, read at MapServer startup —
