@@ -43,16 +43,55 @@ public sealed class MapTcpServer
     // Focused tests which exercise the existing process-local simulation do not start an Orleans
     // cluster. Production startup always uses the overload above and requires IWorldRuntime.
     internal MapTcpServer(MapConfigStore configStore, CharServerConnector charConnector, MapServerWorld world, TimeProvider? timeProvider = null)
-        : this(configStore, charConnector, world, NullWorldRuntime.Instance, timeProvider)
+        : this(configStore, charConnector, world, new InMemoryTestWorldRuntime(), timeProvider)
     {
     }
 
-    private sealed class NullWorldRuntime : IWorldRuntime
+    private sealed class InMemoryTestWorldRuntime : IWorldRuntime
     {
-        public static readonly NullWorldRuntime Instance = new();
+        private readonly Dictionary<(string MapId, uint CharacterId), MapPlayerPresence> _presences = [];
+        private readonly Lock _gate = new();
+
         public Task<MapPresenceRegistration> RegisterPresenceAsync(string mapId, MapPlayerPresence presence, CancellationToken cancellationToken) =>
-            Task.FromResult(new MapPresenceRegistration(MapName.NormalizeWorld(mapId), true, 1));
-        public Task<bool> UnregisterPresenceAsync(string mapId, uint characterId, CancellationToken cancellationToken) => Task.FromResult(true);
+            Task.FromResult(Register(mapId, presence));
+
+        public Task<MapPresenceUnregistration> UnregisterPresenceAsync(string mapId, uint characterId, Guid presenceId, CancellationToken cancellationToken) =>
+            Task.FromResult(Unregister(mapId, characterId, presenceId));
+
+        private MapPresenceRegistration Register(string mapId, MapPlayerPresence presence)
+        {
+            var normalized = MapName.NormalizeWorld(mapId).ToLowerInvariant();
+            var key = (normalized, presence.CharacterId);
+            lock (_gate)
+            {
+                if (!_presences.TryGetValue(key, out var existing))
+                {
+                    _presences.Add(key, presence);
+                    return new(normalized, MapPresenceRegistrationStatus.Registered, Count(normalized));
+                }
+                if (existing.PresenceId != presence.PresenceId)
+                    return new(normalized, MapPresenceRegistrationStatus.Conflict, Count(normalized));
+                _presences[key] = presence;
+                return new(normalized, MapPresenceRegistrationStatus.AlreadyRegistered, Count(normalized));
+            }
+        }
+
+        private MapPresenceUnregistration Unregister(string mapId, uint characterId, Guid presenceId)
+        {
+            var normalized = MapName.NormalizeWorld(mapId).ToLowerInvariant();
+            var key = (normalized, characterId);
+            lock (_gate)
+            {
+                if (!_presences.TryGetValue(key, out var existing))
+                    return new(normalized, MapPresenceUnregistrationStatus.AlreadyAbsent, Count(normalized));
+                if (existing.PresenceId != presenceId)
+                    return new(normalized, MapPresenceUnregistrationStatus.PresenceMismatch, Count(normalized));
+                _presences.Remove(key);
+                return new(normalized, MapPresenceUnregistrationStatus.Removed, Count(normalized));
+            }
+        }
+
+        private int Count(string mapId) => _presences.Keys.Count(key => key.MapId == mapId);
     }
 
     public int BoundPort { get; private set; }

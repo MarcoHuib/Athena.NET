@@ -8,5 +8,5 @@ namespace Athena.Net.MapServer.World;
 public interface IWorldRuntime
 {
     Task<MapPresenceRegistration> RegisterPresenceAsync(string mapId, MapPlayerPresence presence, CancellationToken cancellationToken);
-    Task<bool> UnregisterPresenceAsync(string mapId, uint characterId, CancellationToken cancellationToken);
+    Task<MapPresenceUnregistration> UnregisterPresenceAsync(string mapId, uint characterId, Guid presenceId, CancellationToken cancellationToken);
 }

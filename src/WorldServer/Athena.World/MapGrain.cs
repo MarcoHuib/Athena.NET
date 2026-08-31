@@ -16,18 +16,48 @@ public sealed class MapGrain : Grain, IMapGrain
 
     public Task<MapPresenceRegistration> RegisterPresenceAsync(MapPlayerPresence presence)
     {
-        if (presence.ActorId == 0 || presence.CharacterId == 0)
-            throw new ArgumentException("Player actor and character identities must be non-zero.", nameof(presence));
+        Validate(presence);
+        var mapId = this.GetPrimaryKeyString();
+        if (!_players.TryGetValue(presence.CharacterId, out var existing))
+        {
+            _players.Add(presence.CharacterId, presence);
+            return Task.FromResult(new MapPresenceRegistration(mapId, MapPresenceRegistrationStatus.Registered, _players.Count));
+        }
 
-        var registered = _players.TryAdd(presence.CharacterId, presence);
-        return Task.FromResult(new MapPresenceRegistration(this.GetPrimaryKeyString(), registered, _players.Count));
+        if (existing.PresenceId != presence.PresenceId)
+            return Task.FromResult(new MapPresenceRegistration(mapId, MapPresenceRegistrationStatus.Conflict, _players.Count));
+
+        // A caller can replay after the first execution committed but its response was lost. The
+        // immutable snapshot may be refreshed for that same logical lifecycle without duplicating it.
+        _players[presence.CharacterId] = presence;
+        return Task.FromResult(new MapPresenceRegistration(mapId, MapPresenceRegistrationStatus.AlreadyRegistered, _players.Count));
     }
 
-    public Task<bool> UnregisterPresenceAsync(uint characterId) =>
-        Task.FromResult(_players.Remove(characterId));
+    public Task<MapPresenceUnregistration> UnregisterPresenceAsync(uint characterId, Guid presenceId)
+    {
+        if (characterId == 0) throw new ArgumentOutOfRangeException(nameof(characterId));
+        if (presenceId == Guid.Empty) throw new ArgumentException("Presence identity must be non-empty.", nameof(presenceId));
+
+        var mapId = this.GetPrimaryKeyString();
+        if (!_players.TryGetValue(characterId, out var existing))
+            return Task.FromResult(new MapPresenceUnregistration(mapId, MapPresenceUnregistrationStatus.AlreadyAbsent, _players.Count));
+        if (existing.PresenceId != presenceId)
+            return Task.FromResult(new MapPresenceUnregistration(mapId, MapPresenceUnregistrationStatus.PresenceMismatch, _players.Count));
+
+        _players.Remove(characterId);
+        return Task.FromResult(new MapPresenceUnregistration(mapId, MapPresenceUnregistrationStatus.Removed, _players.Count));
+    }
 
     public Task<MapPresenceSnapshot> GetPresenceAsync() =>
         Task.FromResult(new MapPresenceSnapshot(
             this.GetPrimaryKeyString(),
             _players.Values.OrderBy(player => player.CharacterId).ToArray()));
+
+    private static void Validate(MapPlayerPresence presence)
+    {
+        if (presence.PresenceId == Guid.Empty)
+            throw new ArgumentException("Presence identity must be non-empty.", nameof(presence));
+        if (presence.ActorId == 0 || presence.CharacterId == 0)
+            throw new ArgumentException("Player actor and character identities must be non-zero.", nameof(presence));
+    }
 }

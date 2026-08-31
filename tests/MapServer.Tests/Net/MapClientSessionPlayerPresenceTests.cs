@@ -5,11 +5,57 @@ using System.Text;
 using Athena.Net.MapServer.Config;
 using Athena.Net.MapServer.Net;
 using Athena.Net.MapServer.World;
+using Athena.Net.World.Contracts;
 
 namespace Athena.Net.MapServer.Tests.Net;
 
 public sealed class MapClientSessionPlayerPresenceTests
 {
+    [Fact]
+    public async Task RepeatedWorldEntry_ReusesPresenceId_AndCleanupUsesSameIdentity()
+    {
+        var runtime = new RecordingWorldRuntime();
+        var players = new PlayerPresenceRegistry();
+        var coordinator = new PlayerVisibilityCoordinator(players);
+        await using var session = await ConnectAsync(10, 110, "Retry", 100, 100, players, coordinator, runtime);
+
+        await EnterWorldAsync(session);
+        await runtime.WaitForRegistrationsAsync(1);
+        // Models a registration replay after the first response was not observed by the caller.
+        await EnterWorldAsync(session);
+        await runtime.WaitForRegistrationsAsync(2);
+
+        Assert.NotEqual(Guid.Empty, runtime.Registrations[0].PresenceId);
+        Assert.Equal(runtime.Registrations[0].PresenceId, runtime.Registrations[1].PresenceId);
+
+        await session.Session.StopAsync();
+        await runtime.WaitForUnregistrationsAsync(1);
+        Assert.Equal(runtime.Registrations[0].PresenceId, runtime.Unregistrations[0].PresenceId);
+    }
+
+    [Fact]
+    public async Task IndependentWorldPresenceLifecycle_ReceivesNewPresenceId()
+    {
+        var runtime = new RecordingWorldRuntime();
+        var players = new PlayerPresenceRegistry();
+        var coordinator = new PlayerVisibilityCoordinator(players);
+
+        await using (var first = await ConnectAsync(20, 120, "First", 100, 100, players, coordinator, runtime))
+        {
+            await EnterWorldAsync(first);
+            await runtime.WaitForRegistrationsAsync(1);
+            await first.Session.StopAsync();
+            await runtime.WaitForUnregistrationsAsync(1);
+        }
+
+        await using (var second = await ConnectAsync(20, 120, "Second", 100, 100, players, coordinator, runtime))
+        {
+            await EnterWorldAsync(second);
+            await runtime.WaitForRegistrationsAsync(2);
+            Assert.NotEqual(runtime.Registrations[0].PresenceId, runtime.Registrations[1].PresenceId);
+        }
+    }
+
     [Fact]
     public async Task TwoRealSessions_DiscoverMoveLookInfoAndDisconnectReciprocally()
     {
@@ -82,7 +128,7 @@ public sealed class MapClientSessionPlayerPresenceTests
     }
 
     private static async Task<TestSession> ConnectAsync(uint accountId, uint charId, string name, ushort x, ushort y,
-        PlayerPresenceRegistry players, PlayerVisibilityCoordinator coordinator)
+        PlayerPresenceRegistry players, PlayerVisibilityCoordinator coordinator, IWorldRuntime? worldRuntime = null)
     {
         using var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
@@ -104,7 +150,8 @@ public sealed class MapClientSessionPlayerPresenceTests
             new CharServerConnector(new MapConfigStore(new MapConfig(), "unused")), true,
             gameplayStatePersistence: new FixedGameplayStatePersistence(state),
             players: players, playerVisibility: coordinator,
-            visibilityOptions: WorldVisibilityOptions.Default);
+            visibilityOptions: WorldVisibilityOptions.Default,
+            distributedWorld: worldRuntime);
         var auth = new MapAuthOkData(accountId, charId, 1, 2, 0, 0, false, "prontera", x, y, 0, 0, 1, name,
             HairStyle: 4, HairColor: 2, ClothesColor: 1);
         await session.CompleteIroAuthenticationAsync(auth);
@@ -153,6 +200,50 @@ public sealed class MapClientSessionPlayerPresenceTests
     {
         public Task<CharacterGameplayState?> GetAsync(uint accountId, uint characterId, CancellationToken cancellationToken) => Task.FromResult<CharacterGameplayState?>(state);
         public Task<CharacterGameplayState?> UpdateAsync(uint accountId, CharacterGameplayState expected, CharacterGameplayState updated, CancellationToken cancellationToken) => Task.FromResult<CharacterGameplayState?>(updated);
+    }
+
+    private sealed class RecordingWorldRuntime : IWorldRuntime
+    {
+        private readonly Lock _gate = new();
+        private readonly List<MapPlayerPresence> _registrations = [];
+        private readonly List<(uint CharacterId, Guid PresenceId)> _unregistrations = [];
+
+        public IReadOnlyList<MapPlayerPresence> Registrations { get { lock (_gate) return _registrations.ToArray(); } }
+        public IReadOnlyList<(uint CharacterId, Guid PresenceId)> Unregistrations { get { lock (_gate) return _unregistrations.ToArray(); } }
+
+        public Task<MapPresenceRegistration> RegisterPresenceAsync(string mapId, MapPlayerPresence presence, CancellationToken cancellationToken)
+        {
+            lock (_gate)
+            {
+                var status = _registrations.Any(existing => existing.CharacterId == presence.CharacterId && existing.PresenceId == presence.PresenceId)
+                    ? MapPresenceRegistrationStatus.AlreadyRegistered
+                    : MapPresenceRegistrationStatus.Registered;
+                _registrations.Add(presence);
+                return Task.FromResult(new MapPresenceRegistration(mapId, status, 1));
+            }
+        }
+
+        public Task<MapPresenceUnregistration> UnregisterPresenceAsync(string mapId, uint characterId, Guid presenceId, CancellationToken cancellationToken)
+        {
+            lock (_gate)
+            {
+                _unregistrations.Add((characterId, presenceId));
+                return Task.FromResult(new MapPresenceUnregistration(mapId, MapPresenceUnregistrationStatus.Removed, 0));
+            }
+        }
+
+        public Task WaitForRegistrationsAsync(int count) => WaitUntilAsync(() => Registrations.Count >= count);
+        public Task WaitForUnregistrationsAsync(int count) => WaitUntilAsync(() => Unregistrations.Count >= count);
+
+        private static async Task WaitUntilAsync(Func<bool> condition)
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            while (!condition())
+            {
+                timeout.Token.ThrowIfCancellationRequested();
+                await Task.Delay(5, timeout.Token);
+            }
+        }
     }
 
     private sealed class TestSession(TcpClient client, TcpClient server, NetworkStream stream, MapClientSession session, Task runTask) : IAsyncDisposable

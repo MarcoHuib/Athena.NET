@@ -14,7 +14,10 @@ public sealed class OrleansWorldRuntime(IClusterClient clusterClient) : IWorldRu
         var started = Stopwatch.GetTimestamp();
         try
         {
-            return await clusterClient.GetGrain<IMapGrain>(NormalizeMapId(mapId)).RegisterPresenceAsync(presence).WaitAsync(cancellationToken);
+            var result = await clusterClient.GetGrain<IMapGrain>(NormalizeMapId(mapId)).RegisterPresenceAsync(presence).WaitAsync(cancellationToken);
+            if (result.Status == MapPresenceRegistrationStatus.Conflict)
+                MapTelemetry.WorldCommandFailures.Add(1, new KeyValuePair<string, object?>("world.command", "register-presence-conflict"));
+            return result;
         }
         catch
         {
@@ -27,8 +30,8 @@ public sealed class OrleansWorldRuntime(IClusterClient clusterClient) : IWorldRu
         }
     }
 
-    public Task<bool> UnregisterPresenceAsync(string mapId, uint characterId, CancellationToken cancellationToken) =>
-        clusterClient.GetGrain<IMapGrain>(NormalizeMapId(mapId)).UnregisterPresenceAsync(characterId).WaitAsync(cancellationToken);
+    public Task<MapPresenceUnregistration> UnregisterPresenceAsync(string mapId, uint characterId, Guid presenceId, CancellationToken cancellationToken) =>
+        clusterClient.GetGrain<IMapGrain>(NormalizeMapId(mapId)).UnregisterPresenceAsync(characterId, presenceId).WaitAsync(cancellationToken);
 
     private static string NormalizeMapId(string mapId) => MapName.NormalizeWorld(mapId).ToLowerInvariant();
 }

@@ -22,6 +22,17 @@ flow constructs authoritative server-side player state, MapServer registers a pr
 transition cleanup unregister it. The existing process-local presence/AOI projection remains active so
 client-visible spawn, movement, and disappearance packets retain their proven behavior during phase 1.
 
+Presence registration is retry-safe. A `PresenceId` is created by `MapClientSession` once for one
+logical world-presence lifecycle and is reused if registration is replayed. The first
+`CharacterId + PresenceId` command returns `Registered`; replaying that same identity returns
+`AlreadyRegistered` and remains success with one stored entry. A different `PresenceId` for a
+character already owned by another presence returns `Conflict` and cannot overwrite the owner.
+
+Unregistration includes both `CharacterId` and `PresenceId`. Replaying cleanup after removal returns
+`AlreadyAbsent`, while delayed cleanup from an older lifecycle returns `PresenceMismatch` and cannot
+remove a newer presence. Session takeover, map-transfer ownership, epochs, leases, and fencing tokens
+remain explicitly deferred to later phases.
+
 `IMapGrain` is intentionally coarse. Realtime movement, combat, monsters, NPC execution, collision,
 pathfinding, and visibility are intended to execute locally inside the map authority as they migrate.
 They must not become actor-per-monster, actor-per-cell, or per-operation distributed call graphs.
