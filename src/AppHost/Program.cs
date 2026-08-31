@@ -103,9 +103,7 @@ var worldCluster = builder
     .WithDevelopmentClustering();
 
 var world = builder
-    .AddProject(
-        "athena-world",
-        "../WorldServer/Athena.World/Athena.World.csproj")
+    .AddProject<Projects.Athena_World>("athena-world")
 
     // Adds the Orleans silo configuration and creates the
     // "orleans-silo" and "orleans-gateway" endpoints.
@@ -155,9 +153,7 @@ var world = builder
         "athena-world");
 
 builder
-    .AddProject(
-        "login-server",
-        "../LoginServer/LoginServer.csproj")
+    .AddProject<Projects.LoginServer>("login-server")
     .WithEndpoint("tcp", endpoint =>
     {
         endpoint.Port = 6900;
@@ -203,9 +199,7 @@ builder
         "--auto-migrate");
 
 builder
-    .AddProject(
-        "char-server",
-        "../CharServer/CharServer.csproj")
+    .AddProject<Projects.CharServer>("char-server")
     .WithEndpoint("tcp", endpoint =>
     {
         endpoint.Port = 6121;
@@ -249,9 +243,7 @@ builder
         "--auto-migrate");
 
 builder
-    .AddProject(
-        "map-server",
-        "../MapServer/MapServer.csproj")
+    .AddProject<Projects.MapServer>("map-server")
     .WithEndpoint("tcp", endpoint =>
     {
         endpoint.Port = 5121;

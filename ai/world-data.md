@@ -2008,8 +2008,10 @@ picking an implicit precedence, since silently choosing one source over the
 other could hide a real operator mistake. Configuring neither key selects the generated Athena
 Map Pack and is the normal production configuration.
 
-The generated `AthenaMaps.bin` is copied to build and publish output under `MapData/`; production
-deployments therefore require neither this override nor the `legacy/rathena` checkout.
+The generated `AthenaMaps.bin` is copied to publish output under `MapData/`; production
+deployments therefore require neither this override nor the `legacy/rathena` checkout. Ordinary
+development builds do not copy the 51 MiB pack because Aspire supplies the explicit legacy map
+cache override above.
 
 ### Still missing
 

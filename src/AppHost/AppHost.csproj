@@ -15,7 +15,9 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="../CharServer/CharServer.csproj" />
     <ProjectReference Include="../LoginServer/LoginServer.csproj" />
+    <ProjectReference Include="../MapServer/MapServer.csproj" />
     <ProjectReference Include="../WorldServer/Athena.World/Athena.World.csproj" />
   </ItemGroup>
 </Project>
