@@ -8,6 +8,7 @@ using Athena.Net.MapServer.Gameplay.Rates;
 using Athena.Net.MapServer.Logging;
 using Athena.Net.MapServer.World;
 using Athena.Net.MapServer.World.GeneratedScripts;
+using Athena.Net.World.Contracts;
 
 namespace Athena.Net.MapServer.Net;
 
@@ -81,6 +82,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     private readonly GameplayRateOptions _rates;
     private readonly PlayerPresenceRegistry _players;
     private readonly PlayerVisibilityCoordinator _playerVisibility;
+    private readonly IWorldRuntime? _distributedWorld;
     private readonly WorldVisibilityOptions _visibilityOptions;
     // Owns authoritative per-cell walk timing (see CharacterMovementState's own doc comment for the
     // rAthena unit_walktoxy_timer trace this replaces). _x/_y/_mapName remain the fields every other
@@ -161,6 +163,10 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     private byte _direction;
     private byte _headDirection;
     private PlayerPresence? _presence;
+    // Created once per logical world-visible lifecycle and retained across registration retries.
+    // It is independent of Ragnarok packets, transport endpoints, and Orleans activation identity.
+    private Guid? _presenceId;
+    private string? _presenceMapId;
     private PlayerSessionLifecycle _playerLifecycle = PlayerSessionLifecycle.Unauthenticated;
     private readonly object _playerPresenceGate = new();
     private PlayerAuthAppearance _authAppearance = new();
@@ -206,10 +212,10 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     // WorldMapRegistry.Tutorial: that static singleton builds its OWN private WorldActorIdAllocator,
     // so silently falling back to it here would reintroduce a second, independent actor-ID
     // namespace alongside the composed MonsterRegistry's shared one.
-    public MapClientSession(int sessionId, TcpClient client, CharServerConnector charConnector, MapServerWorld world)
+    public MapClientSession(int sessionId, TcpClient client, CharServerConnector charConnector, MapServerWorld world, IWorldRuntime worldRuntime)
         : this(sessionId, client, charConnector, world.Maps, monsters: world.Monsters, combat: world.Combat, spatialInspector: world.SpatialInspector,
                movementPathProvider: world.MovementPathProvider, monsterRuntime: world.MonsterRuntime, collisionProvider: world.Collision, rates: world.Rates,
-               players: world.Players, playerVisibility: world.PlayerVisibility, visibilityOptions: world.Visibility)
+               players: world.Players, playerVisibility: world.PlayerVisibility, visibilityOptions: world.Visibility, distributedWorld: worldRuntime)
     {
     }
 
@@ -234,7 +240,8 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         GameplayRateOptions? rates = null,
         PlayerPresenceRegistry? players = null,
         PlayerVisibilityCoordinator? playerVisibility = null,
-        WorldVisibilityOptions? visibilityOptions = null)
+        WorldVisibilityOptions? visibilityOptions = null,
+        IWorldRuntime? distributedWorld = null)
     {
         SessionId = sessionId;
         _client = client;
@@ -258,6 +265,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         _visibilityOptions = visibilityOptions ?? WorldVisibilityOptions.Default;
         _players = players ?? new PlayerPresenceRegistry(_visibilityOptions);
         _playerVisibility = playerVisibility ?? new PlayerVisibilityCoordinator(_players, _visibilityOptions);
+        _distributedWorld = distributedWorld;
         _statusEffects = new CharacterStatusEffectState(_timeProvider);
     }
 
@@ -292,7 +300,8 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         GameplayRateOptions? rates = null,
         PlayerPresenceRegistry? players = null,
         PlayerVisibilityCoordinator? playerVisibility = null,
-        WorldVisibilityOptions? visibilityOptions = null)
+        WorldVisibilityOptions? visibilityOptions = null,
+        IWorldRuntime? distributedWorld = null)
         : this(
             sessionId,
             client,
@@ -322,7 +331,8 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
             rates,
             players,
             playerVisibility,
-            visibilityOptions)
+            visibilityOptions,
+            distributedWorld)
     {
         _iroAuthRequested = iroAuthenticated;
         _authRequested = iroAuthenticated;
@@ -2845,9 +2855,24 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
 
     private async Task EnterPlayerWorldAsync(CancellationToken cancellationToken)
     {
+        Guid presenceId;
+        bool firstRegistration;
         lock (_playerPresenceGate)
         {
-            if (_playerLifecycle != PlayerSessionLifecycle.AuthenticatedButNotWorldVisible) return;
+            if (_playerLifecycle == PlayerSessionLifecycle.AuthenticatedButNotWorldVisible)
+            {
+                presenceId = _presenceId ??= Guid.NewGuid();
+                firstRegistration = true;
+            }
+            else if (_playerLifecycle == PlayerSessionLifecycle.WorldVisible)
+            {
+                // A repeated load-end can represent a caller replay after it did not observe the
+                // first registration result. Reuse the lifecycle identity and let the grain's
+                // idempotent contract distinguish this from a genuinely different presence.
+                presenceId = _presenceId ?? throw new InvalidOperationException("World-visible player has no logical presence identity.");
+                firstRegistration = false;
+            }
+            else return;
         }
 
         var presence = BuildCurrentPresence(movement: null);
@@ -2856,10 +2881,31 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         // public projection is eligible to become world-visible.
         if (presence is null) return;
 
-        await _playerVisibility.RegisterAsync(presence, this, cancellationToken);
+        if (firstRegistration)
+            await _playerVisibility.RegisterAsync(presence, this, cancellationToken);
+        if (_distributedWorld is not null)
+        {
+            try
+            {
+                var registration = await _distributedWorld.RegisterPresenceAsync(
+                    presence.MapName,
+                    new MapPlayerPresence(presenceId, presence.ActorId, presence.CharacterId, presence.X, presence.Y),
+                    cancellationToken);
+                if (registration.Status == MapPresenceRegistrationStatus.Conflict)
+                    throw new InvalidOperationException($"Character {presence.CharacterId} is already present in map authority '{registration.MapId}'.");
+            }
+            catch
+            {
+                if (firstRegistration)
+                    await _playerVisibility.UnregisterAsync(presence.ActorId, CancellationToken.None);
+                throw;
+            }
+        }
+        if (!firstRegistration) return;
         lock (_playerPresenceGate)
         {
             _presence = presence;
+            _presenceMapId = presence.MapName;
             _playerLifecycle = PlayerSessionLifecycle.WorldVisible;
         }
     }
@@ -2908,6 +2954,9 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     private async Task LeavePlayerWorldAsync(PlayerSessionLifecycle after, CancellationToken cancellationToken)
     {
         uint actorId;
+        uint characterId;
+        Guid presenceId;
+        string presenceMapId;
         lock (_playerPresenceGate)
         {
             if (_playerLifecycle != PlayerSessionLifecycle.WorldVisible)
@@ -2917,17 +2966,30 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
             }
             _playerLifecycle = PlayerSessionLifecycle.ChangingMapOrUnregistering;
             actorId = _accountId;
+            characterId = _charId;
+            presenceId = _presenceId ?? throw new InvalidOperationException("World-visible player has no logical presence identity.");
+            presenceMapId = _presenceMapId ?? throw new InvalidOperationException("World-visible player has no registered map identity.");
         }
 
         try
         {
-            await _playerVisibility.UnregisterAsync(actorId, CancellationToken.None);
+            try
+            {
+                await _playerVisibility.UnregisterAsync(actorId, CancellationToken.None);
+            }
+            finally
+            {
+                if (_distributedWorld is not null)
+                    await _distributedWorld.UnregisterPresenceAsync(presenceMapId, characterId, presenceId, CancellationToken.None);
+            }
         }
         finally
         {
             lock (_playerPresenceGate)
             {
                 _presence = null;
+                _presenceId = null;
+                _presenceMapId = null;
                 _playerLifecycle = after;
             }
         }

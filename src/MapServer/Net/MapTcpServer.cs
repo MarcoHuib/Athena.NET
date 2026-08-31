@@ -7,6 +7,7 @@ using Athena.Net.MapServer.Config;
 using Athena.Net.MapServer.Logging;
 using Athena.Net.MapServer.Telemetry;
 using Athena.Net.MapServer.World;
+using Athena.Net.World.Contracts;
 
 namespace Athena.Net.MapServer.Net;
 
@@ -22,19 +23,75 @@ public sealed class MapTcpServer
     private readonly MapConfigStore _configStore;
     private readonly CharServerConnector _charConnector;
     private readonly MapServerWorld _world;
+    private readonly IWorldRuntime _worldRuntime;
     private readonly TcpListener _listener;
     private readonly ConcurrentDictionary<int, MapClientSession> _sessions = new();
     private readonly MonsterEngagementTickProcessor _engagementProcessor;
     private int _nextSessionId;
 
-    public MapTcpServer(MapConfigStore configStore, CharServerConnector charConnector, MapServerWorld world, TimeProvider? timeProvider = null)
+    public MapTcpServer(MapConfigStore configStore, CharServerConnector charConnector, MapServerWorld world, IWorldRuntime worldRuntime, TimeProvider? timeProvider = null)
     {
         _configStore = configStore;
         _charConnector = charConnector;
         _world = world;
+        _worldRuntime = worldRuntime;
         var config = _configStore.Current;
         _listener = new TcpListener(config.BindIp, config.MapPort);
         _engagementProcessor = new MonsterEngagementTickProcessor(_world.Monsters, _world.Collision, _world.MovementPathProvider, timeProvider ?? TimeProvider.System);
+    }
+
+    // Focused tests which exercise the existing process-local simulation do not start an Orleans
+    // cluster. Production startup always uses the overload above and requires IWorldRuntime.
+    internal MapTcpServer(MapConfigStore configStore, CharServerConnector charConnector, MapServerWorld world, TimeProvider? timeProvider = null)
+        : this(configStore, charConnector, world, new InMemoryTestWorldRuntime(), timeProvider)
+    {
+    }
+
+    private sealed class InMemoryTestWorldRuntime : IWorldRuntime
+    {
+        private readonly Dictionary<(string MapId, uint CharacterId), MapPlayerPresence> _presences = [];
+        private readonly Lock _gate = new();
+
+        public Task<MapPresenceRegistration> RegisterPresenceAsync(string mapId, MapPlayerPresence presence, CancellationToken cancellationToken) =>
+            Task.FromResult(Register(mapId, presence));
+
+        public Task<MapPresenceUnregistration> UnregisterPresenceAsync(string mapId, uint characterId, Guid presenceId, CancellationToken cancellationToken) =>
+            Task.FromResult(Unregister(mapId, characterId, presenceId));
+
+        private MapPresenceRegistration Register(string mapId, MapPlayerPresence presence)
+        {
+            var normalized = MapName.NormalizeWorld(mapId).ToLowerInvariant();
+            var key = (normalized, presence.CharacterId);
+            lock (_gate)
+            {
+                if (!_presences.TryGetValue(key, out var existing))
+                {
+                    _presences.Add(key, presence);
+                    return new(normalized, MapPresenceRegistrationStatus.Registered, Count(normalized));
+                }
+                if (existing.PresenceId != presence.PresenceId)
+                    return new(normalized, MapPresenceRegistrationStatus.Conflict, Count(normalized));
+                _presences[key] = presence;
+                return new(normalized, MapPresenceRegistrationStatus.AlreadyRegistered, Count(normalized));
+            }
+        }
+
+        private MapPresenceUnregistration Unregister(string mapId, uint characterId, Guid presenceId)
+        {
+            var normalized = MapName.NormalizeWorld(mapId).ToLowerInvariant();
+            var key = (normalized, characterId);
+            lock (_gate)
+            {
+                if (!_presences.TryGetValue(key, out var existing))
+                    return new(normalized, MapPresenceUnregistrationStatus.AlreadyAbsent, Count(normalized));
+                if (existing.PresenceId != presenceId)
+                    return new(normalized, MapPresenceUnregistrationStatus.PresenceMismatch, Count(normalized));
+                _presences.Remove(key);
+                return new(normalized, MapPresenceUnregistrationStatus.Removed, Count(normalized));
+            }
+        }
+
+        private int Count(string mapId) => _presences.Keys.Count(key => key.MapId == mapId);
     }
 
     public int BoundPort { get; private set; }
@@ -207,7 +264,7 @@ public sealed class MapTcpServer
         MapLogger.Info($"[iRO MAP DEBUG] Client connected: {endpoint}");
 
         using (client)
-        await using (var session = new MapClientSession(sessionId, client, _charConnector, _world))
+        await using (var session = new MapClientSession(sessionId, client, _charConnector, _world, _worldRuntime))
         {
             _sessions[sessionId] = session;
             try

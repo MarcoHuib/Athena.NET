@@ -55,6 +55,14 @@ var sql = builder.AddSqlServer("sql", sqlPassword)
 
 var loginDb = sql.AddDatabase("LoginDb");
 var charDb = sql.AddDatabase("CharDb");
+var worldCluster = builder.AddOrleans("athena-world")
+    .WithDevelopmentClustering();
+
+var world = builder.AddProject("athena-world", "../WorldServer/Athena.World/Athena.World.csproj")
+    .WithReference(worldCluster)
+    .WithEnvironment("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317")
+    .WithEnvironment("OTEL_EXPORTER_OTLP_PROTOCOL", "grpc")
+    .WithEnvironment("OTEL_SERVICE_NAME", "athena-world");
 
 builder.AddProject("login-server", "../LoginServer/LoginServer.csproj")
     .WithEndpoint("tcp", endpoint =>
@@ -118,6 +126,8 @@ builder.AddProject("map-server", "../MapServer/MapServer.csproj")
     .WithEnvironment("OTEL_LOGS_EXPORTER", "otlp")
     .WithEnvironment("OTEL_METRICS_EXPORTER", "otlp")
     .WithEnvironment("OTEL_TRACES_EXPORTER", "otlp")
+    .WithReference(worldCluster.AsClient())
+    .WaitFor(world)
     .WithArgs(
         "--map-config", mapConfigPath,
         "--map-cache-path", mapCachePath,
