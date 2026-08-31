@@ -181,6 +181,8 @@ public static class MapServerApp
             var connectTask =
                 connector.RunAsync(cts.Token);
 
+            await connector.WaitUntilReadyAsync(cts.Token);
+
             await mapServer.RunAsync(cts.Token);
 
             await connectTask;
