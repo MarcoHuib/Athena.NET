@@ -1,5 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
-  <Sdk Name="Aspire.AppHost.Sdk" Version="13.5.0" />
+<Project Sdk="Aspire.AppHost.Sdk/13.5.3">
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net10.0</TargetFramework>
@@ -10,14 +9,15 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Aspire.Hosting" Version="13.5.0" />
-    <PackageReference Include="Aspire.Hosting.SqlServer" Version="13.5.0" />
-    <PackageReference Include="Aspire.Hosting.AppHost" Version="13.5.0" />
-    <PackageReference Include="Aspire.Hosting.Orleans" Version="13.5.0" />
+    <PackageReference Include="Aspire.Hosting" Version="13.5.3" />
+    <PackageReference Include="Aspire.Hosting.SqlServer" Version="13.5.3" />
+    <PackageReference Include="Aspire.Hosting.Orleans" Version="13.5.3" />
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="../CharServer/CharServer.csproj" />
     <ProjectReference Include="../LoginServer/LoginServer.csproj" />
+    <ProjectReference Include="../MapServer/MapServer.csproj" />
     <ProjectReference Include="../WorldServer/Athena.World/Athena.World.csproj" />
   </ItemGroup>
 </Project>

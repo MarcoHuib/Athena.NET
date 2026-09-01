@@ -28,7 +28,10 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
     };
 
     private readonly MapConfigStore _configStore;
+    private readonly TimeSpan _initialRetryDelay = TimeSpan.FromSeconds(1);
     private readonly TimeSpan _retryDelay = TimeSpan.FromSeconds(10);
+    private readonly TaskCompletionSource<bool> _initialReady =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly ConcurrentDictionary<uint, PendingAuthRequest> _pendingAuth = new();
     private readonly ConcurrentDictionary<(uint CharId, uint QuestId), TaskCompletionSource<CharacterQuestStatus?>> _pendingQuestStates = new();
     private readonly ConcurrentDictionary<uint, TaskCompletionSource<bool>> _pendingSavePoints = new();
@@ -49,6 +52,9 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
 
     public bool IsConnected => _connection != null;
 
+    public Task WaitUntilReadyAsync(CancellationToken cancellationToken)
+        => _initialReady.Task.WaitAsync(cancellationToken);
+
     public async Task RunAsync(CancellationToken cancellationToken)
     {
         while (!cancellationToken.IsCancellationRequested)
@@ -56,7 +62,10 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
             var connected = await TryConnectAsync(cancellationToken);
             if (!connected && !cancellationToken.IsCancellationRequested)
             {
-                await Task.Delay(_retryDelay, cancellationToken);
+                var delay = _initialReady.Task.IsCompleted
+                    ? _retryDelay
+                    : _initialRetryDelay;
+                await Task.Delay(delay, cancellationToken);
             }
         }
     }
@@ -404,6 +413,7 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
         }
 
         MapLogger.Status("Char server accepted map server registration.");
+        _initialReady.TrySetResult(true);
         _ = TrySendMapListAsync();
         return true;
     }

@@ -14,7 +14,7 @@ namespace Athena.Net.MapServer.World;
 // boundary). The production pack reader opens the generated pack once, reads its small index at
 // startup, and loads each immutable map block lazily on first use. Nothing reads per session.
 //
-// With neither override configured, production uses Generated/Assets/Maps/AthenaMaps.bin.
+// With neither override configured, production uses the published MapData/AthenaMaps.bin.
 // Two mutually exclusive explicit/debug overrides remain (MapConfigLoader rejects both together):
 //   - map_cache_path: pinned rAthena map-cache layers, useful for import/debug comparison.
 //   - map_collision_artifact (one or more): locally supplied .gat-derived
@@ -22,14 +22,24 @@ namespace Athena.Net.MapServer.World;
 //     logical map name aliases.
 public static class MapCollisionStartupLoader
 {
-    public static IMapCollisionProvider Load(IReadOnlyList<MapCollisionArtifactConfig> artifacts, string? mapCachePath = null, RagnarokRuleSet ruleSet = RagnarokRuleSet.Renewal)
+    public static IMapCollisionProvider Load(IReadOnlyList<MapCollisionArtifactConfig> artifacts, string? mapCachePath = null, RagnarokRuleSet ruleSet = RagnarokRuleSet.Renewal) =>
+        Load(artifacts, mapCachePath, ruleSet, GeneratedMapCollisionProvider.OpenProduction);
+
+    // Test-only seam: the generated-provider branch is normally GeneratedMapCollisionProvider.
+    // OpenProduction(), which opens the PUBLISHED AppContext.BaseDirectory/MapData/AthenaMaps.bin
+    // layout eagerly in its constructor - a file this project deliberately does not copy into
+    // ordinary test output (see MapServer.csproj and ai/world-data.md). Injecting an alternate
+    // factory (e.g. () => GeneratedMapCollisionProvider.Open(TestGeneratedMapAssets.MapPackPath))
+    // lets tests exercise this exact dispatch branch against the checked-in source asset instead,
+    // without changing OpenProduction's own resolved path or eager-open behavior for real callers.
+    internal static IMapCollisionProvider Load(IReadOnlyList<MapCollisionArtifactConfig> artifacts, string? mapCachePath, RagnarokRuleSet ruleSet, Func<GeneratedMapCollisionProvider> openGeneratedProvider)
     {
         if (mapCachePath is { Length: > 0 })
             return LoadFromMapCache(mapCachePath, ruleSet);
 
         if (artifacts.Count == 0)
         {
-            return GeneratedMapCollisionProvider.OpenProduction();
+            return openGeneratedProvider();
         }
 
         return LoadFromArtifacts(artifacts);

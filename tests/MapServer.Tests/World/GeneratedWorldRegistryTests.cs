@@ -1,6 +1,7 @@
 using Athena.Net.MapServer.Generated.World;
 using Athena.Net.MapServer.Gameplay.Rules;
 using Athena.Net.MapServer.Gameplay.Rules.Renewal;
+using Athena.Net.MapServer.Tests.Testing;
 using Athena.Net.MapServer.World;
 
 namespace Athena.Net.MapServer.Tests.World;
@@ -24,7 +25,7 @@ public sealed class GeneratedWorldRegistryTests
     public void GeneratedCollision_PreservesDimensionsAndCells()
     {
         var definition = GeneratedMapRegistry.Get("prontera");
-        using var provider = GeneratedMapCollisionProvider.OpenProduction();
+        using var provider = GeneratedMapCollisionProvider.Open(TestGeneratedMapAssets.MapPackPath);
         Assert.True(provider.TryGetMap("prontera", out var collision));
         Assert.True(provider.TryGetMap("PRONTERA.GAT", out var cached));
         Assert.Same(collision, cached);
