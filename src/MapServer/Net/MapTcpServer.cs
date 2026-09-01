@@ -108,6 +108,20 @@ public sealed class MapTcpServer
             }
         }
 
+        public Task<WorldMovementResult> TruncateMovementAsync(WorldMovementTruncation command, CancellationToken cancellationToken) =>
+            Task.FromResult(new WorldMovementResult(WorldMovementStatus.Moved, _presences.GetValueOrDefault(command.CharacterId), MovementId: command.MovementId));
+
+        public Task<WorldMovementAdvanceResult> AdvanceMovementAsync(WorldMovementAdvance command, CancellationToken cancellationToken)
+        {
+            lock (_gate)
+            {
+                if (!_presences.TryGetValue(command.CharacterId, out var current)) return Task.FromResult(new WorldMovementAdvanceResult(WorldMovementAdvanceStatus.NotFound, null));
+                if (current.X != command.ExpectedX || current.Y != command.ExpectedY) return Task.FromResult(new WorldMovementAdvanceResult(WorldMovementAdvanceStatus.SourceMismatch, current));
+                var advanced = current with { X = command.NewX, Y = command.NewY }; _presences[command.CharacterId] = advanced;
+                return Task.FromResult(new WorldMovementAdvanceResult(WorldMovementAdvanceStatus.Advanced, advanced));
+            }
+        }
+
         public Task<WorldTransferResult> TransferPlayerAsync(WorldTransferCommand command, CancellationToken cancellationToken)
         {
             lock (_gate)
@@ -312,7 +326,7 @@ public sealed class MapTcpServer
             }
             catch (Exception ex)
             {
-                MapLogger.Warning($"Client session error: {ex.Message}");
+                MapLogger.Warning($"Client session error: {ex}");
             }
             finally
             {

@@ -142,6 +142,14 @@ var world = builder
         "Development")
 
     .WithEnvironment(
+        "ATHENA_WORLD_PARTITIONS_PATH",
+        worldPartitionsPath)
+
+    .WithEnvironment(
+        "ATHENA_WORLD_MAP_CACHE_PATH",
+        mapCachePath)
+
+    .WithEnvironment(
         "OTEL_EXPORTER_OTLP_ENDPOINT",
         "http://localhost:4317")
 

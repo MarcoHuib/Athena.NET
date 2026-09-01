@@ -2,6 +2,7 @@ using Athena.Net.World.Contracts;
 using Orleans.TestingHost;
 using Microsoft.Extensions.DependencyInjection;
 using Orleans.Hosting;
+using Athena.Net.World.Runtime;
 
 namespace Athena.Net.World.Tests;
 
@@ -38,8 +39,11 @@ public sealed class WorldPartitionGrainTests : IAsyncLifetime
         var result = await grain.MovePlayerAsync(command);
 
         Assert.Equal(WorldMovementStatus.Moved, result.Status);
-        Assert.Equal((ushort)152, result.Presence!.X);
-        Assert.Equal((ushort)181, result.Presence.Y);
+        Assert.Equal((ushort)150, result.Presence!.X);
+        Assert.Equal((ushort)180, result.Presence.Y);
+        var movementId = Assert.IsType<Guid>(result.MovementId);
+        Assert.Equal(WorldMovementAdvanceStatus.Advanced, (await grain.AdvanceMovementAsync(
+            new(movementId, presence.PresenceId, presence.CharacterId, "prontera", 150, 180, 151, 181))).Status);
     }
 
     [Fact]
@@ -131,6 +135,7 @@ public sealed class WorldPartitionGrainTests : IAsyncLifetime
     public sealed class TopologyConfigurator : ISiloConfigurator
     {
         public void Configure(ISiloBuilder siloBuilder) => siloBuilder.Services.AddSingleton<IWorldPartitionResolver>(
-            WorldPartitionResolver.CreateDevelopment(["prontera", "prt_fild08d", "izlude", "geffen"]));
+            WorldPartitionResolver.CreateDevelopment(["prontera", "prt_fild08d", "izlude", "geffen"]))
+            .AddSingleton<IMovementPathProvider, UnverifiedGridLineMovementPathProvider>();
     }
 }

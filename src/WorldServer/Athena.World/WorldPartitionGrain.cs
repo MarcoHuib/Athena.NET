@@ -2,15 +2,17 @@ using Athena.Net.World.Contracts;
 using Athena.Net.World.Telemetry;
 using Orleans;
 using System.Diagnostics.CodeAnalysis;
+using Athena.Net.World.Runtime;
 
 namespace Athena.Net.World;
 
-public sealed class WorldPartitionGrain(IWorldPartitionResolver resolver) : Grain, IWorldPartitionGrain
+public sealed class WorldPartitionGrain(IWorldPartitionResolver resolver, IMovementPathProvider movementPathProvider) : Grain, IWorldPartitionGrain
 {
     private readonly Dictionary<string, MapRuntime> _maps = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<uint, string> _mapByCharacter = [];
     private readonly Dictionary<Guid, TransferRecord> _outgoing = [];
     private readonly Dictionary<Guid, IncomingRecord> _incoming = [];
+    private readonly Dictionary<uint, ActiveMovement> _movements = [];
     private string PartitionId => this.GetPrimaryKeyString();
 
     public override Task OnActivateAsync(CancellationToken cancellationToken)
@@ -56,11 +58,47 @@ public sealed class WorldPartitionGrain(IWorldPartitionResolver resolver) : Grai
             return Task.FromResult(new WorldMovementResult(WorldMovementStatus.SourceMismatch, current));
         if (_outgoing.Values.Any(x => !x.Finalized && x.Source.CharacterId == command.CharacterId))
             return Task.FromResult(new WorldMovementResult(WorldMovementStatus.Rejected, current));
-        var path = ComputePath(command.FromX, command.FromY, command.DestinationX, command.DestinationY);
+        var path = movementPathProvider.ComputePath(mapId, command.FromX, command.FromY, command.DestinationX, command.DestinationY)
+            .Select(cell => new WorldPosition(cell.X, cell.Y)).ToArray();
         if (path.Count < 2) return Task.FromResult(new WorldMovementResult(WorldMovementStatus.Rejected, current));
-        var moved = current with { X = command.DestinationX, Y = command.DestinationY };
-        Map(mapId).Players[command.CharacterId] = moved;
-        return Task.FromResult(new WorldMovementResult(WorldMovementStatus.Moved, moved, path));
+        var movementId = Guid.NewGuid();
+        _movements[command.CharacterId] = new(movementId, command.PresenceId, mapId, path);
+        return Task.FromResult(new WorldMovementResult(WorldMovementStatus.Moved, current, path, movementId));
+    }
+
+    public Task<WorldMovementResult> TruncateMovementAsync(WorldMovementTruncation command)
+    {
+        var mapId = RequireOwnedMap(command.MapId);
+        if (!TryFind(command.CharacterId, out var current)) return Task.FromResult(new WorldMovementResult(WorldMovementStatus.NotFound, null));
+        if (current.PresenceId != command.PresenceId) return Task.FromResult(new WorldMovementResult(WorldMovementStatus.PresenceMismatch, current));
+        if (!_movements.TryGetValue(command.CharacterId, out var movement) || movement.MovementId != command.MovementId || !Same(movement.MapId, mapId))
+            return Task.FromResult(new WorldMovementResult(WorldMovementStatus.SourceMismatch, current));
+        var index = movement.Path.ToList().FindIndex(cell => cell.X == command.DestinationX && cell.Y == command.DestinationY);
+        if (index < 1) return Task.FromResult(new WorldMovementResult(WorldMovementStatus.Rejected, current));
+        movement.Path = movement.Path.Take(index + 1).ToArray();
+        return Task.FromResult(new WorldMovementResult(WorldMovementStatus.Moved, current, movement.Path, movement.MovementId));
+    }
+
+    public Task<WorldMovementAdvanceResult> AdvanceMovementAsync(WorldMovementAdvance command)
+    {
+        var mapId = RequireOwnedMap(command.MapId);
+        if (!TryFind(command.CharacterId, out var current)) return Task.FromResult(new WorldMovementAdvanceResult(WorldMovementAdvanceStatus.NotFound, null));
+        if (current.PresenceId != command.PresenceId) return Task.FromResult(new WorldMovementAdvanceResult(WorldMovementAdvanceStatus.PresenceMismatch, current));
+        if (!Same(current.MapId, mapId) || current.X != command.ExpectedX || current.Y != command.ExpectedY)
+        {
+            if (current.X == command.NewX && current.Y == command.NewY) return Task.FromResult(new WorldMovementAdvanceResult(WorldMovementAdvanceStatus.AlreadyAdvanced, current));
+            return Task.FromResult(new WorldMovementAdvanceResult(WorldMovementAdvanceStatus.SourceMismatch, current));
+        }
+        if (!_movements.TryGetValue(command.CharacterId, out var movement) || movement.MovementId != command.MovementId || !Same(movement.MapId, mapId))
+            return Task.FromResult(new WorldMovementAdvanceResult(WorldMovementAdvanceStatus.StaleRoute, current));
+        var nextIndex = movement.Position + 1;
+        if (nextIndex >= movement.Path.Count || movement.Path[nextIndex].X != command.NewX || movement.Path[nextIndex].Y != command.NewY)
+            return Task.FromResult(new WorldMovementAdvanceResult(WorldMovementAdvanceStatus.Rejected, current));
+        var advanced = current with { X = command.NewX, Y = command.NewY };
+        Map(mapId).Players[command.CharacterId] = advanced;
+        movement.Position = nextIndex;
+        if (nextIndex == movement.Path.Count - 1) _movements.Remove(command.CharacterId);
+        return Task.FromResult(new WorldMovementAdvanceResult(WorldMovementAdvanceStatus.Advanced, advanced));
     }
 
     public async Task<WorldTransferResult> TransferPlayerAsync(WorldTransferCommand command)
@@ -77,6 +115,7 @@ public sealed class WorldPartitionGrain(IWorldPartitionResolver resolver) : Grai
         var destinationMap = WorldMapId.Normalize(command.DestinationMapId);
         var destinationPartition = resolver.ResolvePartition(destinationMap);
         var destination = current with { MapId = destinationMap, X = command.DestinationX, Y = command.DestinationY };
+        _movements.Remove(command.CharacterId);
         var type = Same(destinationPartition, PartitionId) ? WorldTransferType.SamePartition : WorldTransferType.CrossPartition;
         var normalized = command with { SourceMapId = sourceMap, DestinationMapId = destinationMap };
         var record = new TransferRecord(normalized, current, destination, destinationPartition, type);
@@ -155,19 +194,12 @@ public sealed class WorldPartitionGrain(IWorldPartitionResolver resolver) : Grai
         if (!Same(owner, PartitionId)) throw new InvalidOperationException($"World partition '{PartitionId}' cannot own map '{normalized}'; its owner is '{owner}'.");
         return normalized;
     }
-    private static IReadOnlyList<WorldPosition> ComputePath(ushort x0, ushort y0, ushort x1, ushort y1)
-    {
-        var result = new List<WorldPosition>(); var x = (int)x0; var y = (int)y0; var dx = Math.Abs(x1 - x); var sx = x < x1 ? 1 : -1;
-        var dy = -Math.Abs(y1 - y); var sy = y < y1 ? 1 : -1; var error = dx + dy;
-        while (true) { result.Add(new((ushort)x, (ushort)y)); if (x == x1 && y == y1) break; var twice = 2 * error; if (twice >= dy) { error += dy; x += sx; } if (twice <= dx) { error += dx; y += sy; } }
-        return result;
-    }
     private static bool Same(string a, string b) => string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
     private MapRuntime Map(string mapId) => _maps.TryGetValue(mapId, out var map) ? map : _maps[mapId] = new();
     private void Add(WorldPlayerPresence presence) { Map(presence.MapId).Players[presence.CharacterId] = presence; _mapByCharacter[presence.CharacterId] = presence.MapId; }
     private bool TryFind(uint characterId, [NotNullWhen(true)] out WorldPlayerPresence? presence)
     { if (_mapByCharacter.TryGetValue(characterId, out var mapId) && Map(mapId).Players.TryGetValue(characterId, out var found)) { presence = found; return true; } presence = null; return false; }
-    private void Remove(WorldPlayerPresence presence) { Map(presence.MapId).Players.Remove(presence.CharacterId); _mapByCharacter.Remove(presence.CharacterId); }
+    private void Remove(WorldPlayerPresence presence) { Map(presence.MapId).Players.Remove(presence.CharacterId); _mapByCharacter.Remove(presence.CharacterId); _movements.Remove(presence.CharacterId); }
     private int Count => _mapByCharacter.Count;
     private WorldPresenceRegistration Registration(string mapId, WorldPresenceRegistrationStatus status) => new(PartitionId, mapId, status, Count);
     private WorldPresenceUnregistration Unregistration(string mapId, WorldPresenceUnregistrationStatus status) => new(PartitionId, mapId, status, Count);
@@ -176,4 +208,6 @@ public sealed class WorldPartitionGrain(IWorldPartitionResolver resolver) : Grai
     private sealed class TransferRecord(WorldTransferCommand command, WorldPlayerPresence source, WorldPlayerPresence destination, string destinationPartition, WorldTransferType type)
     { public WorldTransferCommand Command { get; } = command; public WorldPlayerPresence Source { get; } = source; public WorldPlayerPresence Destination { get; } = destination; public string DestinationPartition { get; } = destinationPartition; public WorldTransferType Type { get; } = type; public bool Finalized { get; set; } }
     private sealed class IncomingRecord(IncomingWorldTransfer transfer, WorldPlayerPresence presence) { public IncomingWorldTransfer Transfer { get; } = transfer; public WorldPlayerPresence Presence { get; } = presence; public bool Committed { get; set; } }
+    private sealed class ActiveMovement(Guid movementId, Guid presenceId, string mapId, IReadOnlyList<WorldPosition> path)
+    { public Guid MovementId { get; } = movementId; public Guid PresenceId { get; } = presenceId; public string MapId { get; } = mapId; public IReadOnlyList<WorldPosition> Path { get; set; } = path; public int Position { get; set; } }
 }

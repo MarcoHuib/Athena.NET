@@ -18,5 +18,6 @@
 
   <ItemGroup>
     <ProjectReference Include="../Athena.World.Contracts/Athena.World.Contracts.csproj" />
+    <ProjectReference Include="../Athena.World.Runtime/Athena.World.Runtime.csproj" />
   </ItemGroup>
 </Project>

@@ -91,6 +91,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     // new movement request always retargets from the character's ACTUAL current cell rather than
     // wherever a previous request's destination happened to be.
     private CharacterMovementState? _movement;
+    private Guid? _worldMovementId;
     // Guards all reads/mutations of _movement, _pendingArrival, and the position fields they drive
     // (_mapName/_x/_y/_positionDirty) against a race between the movement loop (background task,
     // below) and a packet-handling call (HandleIroMovementAsync, TeleportTo) running concurrently -
@@ -676,6 +677,8 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     private async Task ProcessDueMovementAsync(CancellationToken cancellationToken)
     {
         IReadOnlyList<(ushort X, ushort Y)> crossed;
+        ushort authoritativeFromX;
+        ushort authoritativeFromY;
         PendingMovementArrival? arrival;
         string mapAtAdvance;
         (ushort X, ushort Y)? movementDestinationAfterAdvance;
@@ -692,8 +695,11 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         {
             var movement = _movement;
             if (movement is null) return;
+            authoritativeFromX = movement.CurrentX;
+            authoritativeFromY = movement.CurrentY;
             crossed = movement.AdvanceTo(_timeProvider.GetUtcNow());
             if (crossed.Count == 0) return;
+            await AdvanceDistributedMovementAsync(authoritativeFromX, authoritativeFromY, crossed, cancellationToken);
             _x = movement.CurrentX;
             _y = movement.CurrentY;
             _positionDirty = true;
@@ -711,7 +717,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
             {
                 var fromX = _x;
                 var fromY = _y;
-                var resolved = ResolveMovementTarget(fromX, fromY, retarget.X, retarget.Y);
+                var resolved = await ResolveWorldMovementTargetAsync(fromX, fromY, retarget.X, retarget.Y, cancellationToken);
                 // CurrentCellReachedAt (the exact boundary AdvanceTo just crossed to), NEVER a
                 // second independent _timeProvider.GetUtcNow() sample here - re-sampling wall-clock
                 // time between the AdvanceTo call above and this StartWalk silently gifts the
@@ -1091,6 +1097,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         _x = x;
         _y = y;
         _movement?.Teleport(map, x, y);
+        _worldMovementId = null;
 
         // Invalidate any pending arrival action from the walk being cancelled - otherwise a movement
         // loop iteration already in flight (or a later one, if this teleport did not itself originate
@@ -1163,6 +1170,50 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         return new ResolvedMovementTarget(targetX, targetY, path, arrival, intersectsWarp, intersectsScript, intersection, scriptIntersection);
     }
 
+    private ResolvedMovementTarget ResolveMovementProjection(ushort fromX, ushort fromY, ushort requestedX, ushort requestedY,
+        IReadOnlyList<(ushort X, ushort Y)> authoritativePath)
+    {
+        WarpIntersection intersection = default;
+        ScriptTouchIntersection scriptIntersection = default;
+        var intersectsWarp = false;
+        var intersectsScript = false;
+        var triggerIndex = authoritativePath.Count;
+        for (var index = 1; index < authoritativePath.Count; index++)
+        {
+            var prior = authoritativePath[index - 1]; var cell = authoritativePath[index];
+            if (_worldMapRegistry.TryFindFirstWarpAlongRoute(_mapName, prior.X, prior.Y, cell.X, cell.Y, out intersection))
+            { intersectsWarp = true; triggerIndex = index; break; }
+            if (!HasActiveScript && _worldMapRegistry.TryFindFirstScriptTouchEnterAlongRoute(_mapName, prior.X, prior.Y, cell.X, cell.Y, out scriptIntersection))
+            { intersectsScript = true; triggerIndex = index; break; }
+        }
+        var targetX = intersectsWarp ? intersection.X : intersectsScript ? scriptIntersection.X : requestedX;
+        var targetY = intersectsWarp ? intersection.Y : intersectsScript ? scriptIntersection.Y : requestedY;
+        var path = triggerIndex < authoritativePath.Count ? authoritativePath.Take(triggerIndex + 1).ToArray() : authoritativePath;
+        PendingMovementArrival? arrival = intersectsWarp ? new PendingWarpArrival(intersection.Warp)
+            : intersectsScript ? new PendingScriptTouchArrival(scriptIntersection.Binding.Entity, scriptIntersection.Binding.Actor.ActorId, scriptIntersection.Binding.Script) : null;
+        return new(targetX, targetY, path, arrival, intersectsWarp, intersectsScript, intersection, scriptIntersection);
+    }
+
+    private async Task<ResolvedMovementTarget> ResolveWorldMovementTargetAsync(ushort fromX, ushort fromY, ushort requestedX, ushort requestedY, CancellationToken cancellationToken)
+    {
+        if (_distributedWorld is null) return ResolveMovementTarget(fromX, fromY, requestedX, requestedY);
+        var presenceId = _presenceId ?? throw new InvalidOperationException("Authenticated movement has no world presence identity.");
+        var result = await _distributedWorld.MovePlayerAsync(new WorldMovementCommand(
+            presenceId, _charId, _mapName, fromX, fromY, requestedX, requestedY), cancellationToken);
+        if (result.Status != WorldMovementStatus.Moved || result.Path is not { Count: > 1 } || result.MovementId is not { } movementId)
+            throw new InvalidOperationException($"World authority rejected movement status={result.Status} map='{_mapName}' from=({fromX},{fromY}) target=({requestedX},{requestedY}).");
+        var authoritativePath = result.Path.Select(cell => (cell.X, cell.Y)).ToArray();
+        var resolved = ResolveMovementProjection(fromX, fromY, requestedX, requestedY, authoritativePath);
+        if (resolved.TargetX != requestedX || resolved.TargetY != requestedY)
+        {
+            var truncated = await _distributedWorld.TruncateMovementAsync(new WorldMovementTruncation(
+                movementId, presenceId, _charId, _mapName, resolved.TargetX, resolved.TargetY), cancellationToken);
+            if (truncated.Status != WorldMovementStatus.Moved) throw new InvalidOperationException($"World movement truncation failed status={truncated.Status}.");
+        }
+        _worldMovementId = movementId;
+        return resolved;
+    }
+
     private async Task HandleIroMovementAsync(byte[] packet, CancellationToken cancellationToken)
     {
         if (!IroMovementPackets.TryParseRequest(packet, out var request))
@@ -1205,28 +1256,9 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         MapLogger.Info(
             $"[iRO MAP DEBUG] Movement request from=({fromX},{fromY}) target=({request.TargetX},{request.TargetY})");
 
-        var resolved = ResolveMovementTarget(fromX, fromY, request.TargetX, request.TargetY);
-        if (_distributedWorld is not null)
-        {
-            var presenceId = _presenceId ?? throw new InvalidOperationException("Authenticated movement has no world presence identity.");
-            var worldMove = await _distributedWorld.MovePlayerAsync(
-                new WorldMovementCommand(
-                    presenceId,
-                    _charId,
-                    _mapName,
-                    fromX,
-                    fromY,
-                    resolved.TargetX,
-                    resolved.TargetY),
-                cancellationToken);
-            if (worldMove.Status != WorldMovementStatus.Moved)
-            {
-                MapLogger.Warning($"World authority rejected movement status={worldMove.Status} map='{_mapName}' from=({fromX},{fromY}) target=({resolved.TargetX},{resolved.TargetY}).");
-                return;
-            }
-            if (worldMove.Path is { Count: > 1 })
-                resolved = resolved with { Path = worldMove.Path.Select(cell => (cell.X, cell.Y)).ToArray() };
-        }
+        ResolvedMovementTarget resolved;
+        try { resolved = await ResolveWorldMovementTargetAsync(fromX, fromY, request.TargetX, request.TargetY, cancellationToken); }
+        catch (InvalidOperationException ex) { MapLogger.Warning(ex.Message); return; }
         var now = _timeProvider.GetUtcNow();
 
         // Warp/OnTouch must fire only when the destination cell is actually reached over real
@@ -3120,6 +3152,23 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
             var changed = current with { X = cell.X, Y = cell.Y, Movement = movement };
             SetCurrentPresence(changed);
             await _playerVisibility.UpdateMovementAsync(changed, broadcastMovement: false, cancellationToken);
+        }
+    }
+
+    private async Task AdvanceDistributedMovementAsync(ushort fromX, ushort fromY,
+        IReadOnlyList<(ushort X, ushort Y)> crossed, CancellationToken cancellationToken)
+    {
+        if (_distributedWorld is null || crossed.Count == 0) return;
+        var movementId = _worldMovementId ?? throw new InvalidOperationException("Timed movement has no World route identity.");
+        var presenceId = _presenceId ?? throw new InvalidOperationException("Timed movement has no World presence identity.");
+        var expectedX = fromX; var expectedY = fromY;
+        foreach (var cell in crossed)
+        {
+            var result = await _distributedWorld.AdvanceMovementAsync(new WorldMovementAdvance(
+                movementId, presenceId, _charId, _mapName, expectedX, expectedY, cell.X, cell.Y), cancellationToken);
+            if (result.Status is not (WorldMovementAdvanceStatus.Advanced or WorldMovementAdvanceStatus.AlreadyAdvanced))
+                throw new InvalidOperationException($"World rejected timed movement advance status={result.Status} map='{_mapName}' expected=({expectedX},{expectedY}) next=({cell.X},{cell.Y}).");
+            expectedX = cell.X; expectedY = cell.Y;
         }
     }
 

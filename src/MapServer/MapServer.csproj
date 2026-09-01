@@ -16,6 +16,11 @@
 
   <ItemGroup>
     <ProjectReference Include="../WorldServer/Athena.World.Contracts/Athena.World.Contracts.csproj" />
+    <ProjectReference Include="../WorldServer/Athena.World.Runtime/Athena.World.Runtime.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Remove="World/MapCollision.cs;World/MovementPathProvider.cs;World/RathenaCompatibleMovementPathProvider.cs;World/GridLineTraversal.cs;World/RathenaMapCacheFormat.cs;World/RathenaMapCacheLayers.cs" />
   </ItemGroup>
 
   <ItemGroup>

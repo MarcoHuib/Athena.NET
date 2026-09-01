@@ -271,6 +271,12 @@ public sealed class MapClientSessionPlayerPresenceTests
             }
         }
 
+        public Task<WorldMovementResult> TruncateMovementAsync(WorldMovementTruncation command, CancellationToken cancellationToken) =>
+            Task.FromResult(new WorldMovementResult(WorldMovementStatus.Moved, null, MovementId: command.MovementId));
+
+        public Task<WorldMovementAdvanceResult> AdvanceMovementAsync(WorldMovementAdvance command, CancellationToken cancellationToken) =>
+            Task.FromResult(new WorldMovementAdvanceResult(WorldMovementAdvanceStatus.Advanced, null));
+
         public Task<WorldTransferResult> TransferPlayerAsync(WorldTransferCommand command, CancellationToken cancellationToken) =>
             Task.FromResult(new WorldTransferResult(WorldTransferStatus.Completed, WorldTransferType.SamePartition, null));
 

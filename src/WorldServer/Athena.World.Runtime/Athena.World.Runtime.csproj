@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>Athena.Net.World.Runtime</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../MapServer/World/MapCollision.cs" Link="Collision/MapCollision.cs" />
+    <Compile Include="../../MapServer/World/MovementPathProvider.cs" Link="Movement/MovementPathProvider.cs" />
+    <Compile Include="../../MapServer/World/RathenaCompatibleMovementPathProvider.cs" Link="Movement/RathenaCompatibleMovementPathProvider.cs" />
+    <Compile Include="../../MapServer/World/GridLineTraversal.cs" Link="Movement/GridLineTraversal.cs" />
+    <Compile Include="../../MapServer/World/RathenaMapCacheFormat.cs" Link="Collision/RathenaMapCacheFormat.cs" />
+    <Compile Include="../../MapServer/World/RathenaMapCacheLayers.cs" Link="Collision/RathenaMapCacheLayers.cs" />
+  </ItemGroup>
+</Project>

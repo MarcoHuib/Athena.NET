@@ -8,6 +8,8 @@ public interface IWorldPartitionGrain : IGrainWithStringKey
     Task<WorldPresenceRegistration> RegisterPresenceAsync(WorldPlayerPresence presence);
     Task<WorldPresenceUnregistration> UnregisterPresenceAsync(string mapId, uint characterId, Guid presenceId);
     Task<WorldMovementResult> MovePlayerAsync(WorldMovementCommand command);
+    Task<WorldMovementResult> TruncateMovementAsync(WorldMovementTruncation command);
+    Task<WorldMovementAdvanceResult> AdvanceMovementAsync(WorldMovementAdvance command);
     Task<WorldTransferResult> TransferPlayerAsync(WorldTransferCommand command);
     Task<IncomingTransferResult> PrepareIncomingTransferAsync(IncomingWorldTransfer transfer);
     Task<IncomingTransferResult> CommitIncomingTransferAsync(Guid transferId);
@@ -61,7 +63,35 @@ public readonly record struct WorldPosition([property: Id(0)] ushort X, [propert
 public sealed record WorldMovementResult(
     [property: Id(0)] WorldMovementStatus Status,
     [property: Id(1)] WorldPlayerPresence? Presence,
-    [property: Id(2)] IReadOnlyList<WorldPosition>? Path = null);
+    [property: Id(2)] IReadOnlyList<WorldPosition>? Path = null,
+    [property: Id(3)] Guid? MovementId = null);
+
+[GenerateSerializer]
+public sealed record WorldMovementTruncation(
+    [property: Id(0)] Guid MovementId,
+    [property: Id(1)] Guid PresenceId,
+    [property: Id(2)] uint CharacterId,
+    [property: Id(3)] string MapId,
+    [property: Id(4)] ushort DestinationX,
+    [property: Id(5)] ushort DestinationY);
+
+[GenerateSerializer]
+public sealed record WorldMovementAdvance(
+    [property: Id(0)] Guid MovementId,
+    [property: Id(1)] Guid PresenceId,
+    [property: Id(2)] uint CharacterId,
+    [property: Id(3)] string MapId,
+    [property: Id(4)] ushort ExpectedX,
+    [property: Id(5)] ushort ExpectedY,
+    [property: Id(6)] ushort NewX,
+    [property: Id(7)] ushort NewY);
+
+public enum WorldMovementAdvanceStatus { Advanced, AlreadyAdvanced, NotFound, PresenceMismatch, SourceMismatch, StaleRoute, Rejected }
+
+[GenerateSerializer]
+public sealed record WorldMovementAdvanceResult(
+    [property: Id(0)] WorldMovementAdvanceStatus Status,
+    [property: Id(1)] WorldPlayerPresence? Presence);
 
 public enum WorldTransferType { SamePartition, CrossPartition }
 public enum WorldTransferStatus { Completed, AlreadyCompleted, Conflict, SourceMismatch, NotFound }

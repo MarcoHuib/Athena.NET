@@ -1,4 +1,4 @@
-namespace Athena.Net.MapServer.World;
+namespace Athena.Net.World.Runtime;
 
 // Separates WHICH cells a walk passes through from HOW LONG each cell takes (CharacterMovementState).
 // Pinned rAthena keeps these as two genuinely separate concepts too: unit_walktoxy_sub calls
