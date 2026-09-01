@@ -2510,18 +2510,26 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     async Task INpcScriptHost.NextAsync(uint actorId, CancellationToken cancellationToken)
     {
         var continuation = new GeneratedContinuation(GeneratedContinuationKind.Next, NewContinuation());
+        var suspended = _generatedSuspended;
+        // Publish the accepted input before exposing the boundary packet to the client. A peer can
+        // receive 0x00B5 and send 0x00B9 before NetworkStream.WriteAsync's continuation runs; if
+        // publication happens after the write, that valid reply observes null and is discarded.
         _generatedContinuation = continuation;
         await WriteAsync(IroNpcDialoguePackets.BuildNext(actorId), cancellationToken);
-        _generatedSuspended.TrySetResult();
+        // Signal the boundary captured above, not the mutable field. An early 0x00B9 replaces the
+        // field with the NEXT boundary; signaling through the field would then wake the wrong wait
+        // and orphan the StartGeneratedScriptAsync/previous-resume waiter.
+        suspended.TrySetResult();
         await continuation.Completion.Task.WaitAsync(cancellationToken);
     }
 
     async Task<int> INpcScriptHost.SelectAsync(uint actorId, IReadOnlyList<string> options, CancellationToken cancellationToken)
     {
         var continuation = new GeneratedContinuation(GeneratedContinuationKind.Selection, NewContinuation());
+        var suspended = _generatedSuspended;
         _generatedContinuation = continuation;
         await WriteAsync(IroNpcDialoguePackets.BuildMenu(actorId, options), cancellationToken);
-        _generatedSuspended.TrySetResult();
+        suspended.TrySetResult();
         return await continuation.Completion.Task.WaitAsync(cancellationToken);
     }
 
@@ -2531,9 +2539,10 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     async Task INpcScriptHost.Close2Async(uint actorId, CancellationToken cancellationToken)
     {
         var continuation = new GeneratedContinuation(GeneratedContinuationKind.Close2, NewContinuation());
+        var suspended = _generatedSuspended;
         _generatedContinuation = continuation;
         await WriteAsync(IroNpcDialoguePackets.BuildClose(actorId), cancellationToken);
-        _generatedSuspended.TrySetResult();
+        suspended.TrySetResult();
         await continuation.Completion.Task.WaitAsync(cancellationToken);
     }
 

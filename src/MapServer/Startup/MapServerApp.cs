@@ -5,10 +5,10 @@ using Athena.Net.MapServer.Net;
 using Athena.Net.MapServer.Telemetry;
 using Athena.Net.MapServer.World;
 using Athena.Net.MapServer.World.GeneratedScripts;
+using Athena.Net.World.Contracts;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Orleans;
-using Athena.Net.World.Contracts;
 
 namespace Athena.Net.MapServer.Startup;
 
@@ -21,79 +21,196 @@ public static class MapServerApp
         var config = MapConfigLoader.Load(options.ConfigPath);
         var secrets = SecretConfig.Load(options.SecretsPath);
         var mergedConfig = secrets.ApplyTo(config);
+
         MapLogger.Configure(mergedConfig);
+
         using var telemetry = MapTelemetry.Start();
-        var configStore = new MapConfigStore(mergedConfig, options.ConfigPath);
 
-        MapLogger.Status($"Map server starting (PACKETVER {PacketConstants.PacketVer}, build={BuildRevision.Current})");
+        var configStore = new MapConfigStore(
+            mergedConfig,
+            options.ConfigPath);
 
+        MapLogger.Status(
+            $"Map server starting " +
+            $"(PACKETVER {PacketConstants.PacketVer}, " +
+            $"build={BuildRevision.Current})");
+
+        //
+        // Application cancellation
+        //
+        // Do NOT use Console.CancelKeyPress here.
+        //
+        // Under Aspire/DCP on macOS, registering Console.CancelKeyPress
+        // caused a ~17 second startup delay.
+        //
+        // Cancellation is instead connected to the Generic Host's
+        // IHostApplicationLifetime below. The host handles SIGINT/SIGTERM
+        // and Aspire shutdown, after which this token is cancelled.
+        //
         using var cts = new CancellationTokenSource();
-        Console.CancelKeyPress += (_, e) =>
+
+        //
+        // Gameplay rules
+        //
+        // Gameplay.RuleSet is selected exactly once here at the
+        // composition root.
+        //
+        var gameplayOptions = new GameplayOptions
         {
-            e.Cancel = true;
-            cts.Cancel();
+            RuleSet = mergedConfig.GameplayRuleSet
         };
 
-        // Gameplay.RuleSet is selected ONCE here, at the composition root - see
-        // GameplayRulesFactory's own doc comment for why an unsupported ruleset must
-        // fail startup loudly instead of being silently downgraded to Renewal.
-        // MapServerWorld.Build receives the already-composed GameplayRuleServices
-        // bundle and never itself inspects GameplayOptions/RagnarokRuleSet or calls
-        // GameplayRulesFactory - this is the one and only place that decision is made.
-        var gameplayOptions = new GameplayOptions { RuleSet = mergedConfig.GameplayRuleSet };
-        MapLogger.Status($"Gameplay ruleset: {gameplayOptions.RuleSet}");
-        var gameplayRules = GameplayRulesFactory.Create(gameplayOptions);
-        // `--map-cache-path` wins over the configured `map_cache_path` value. Either value is an
-        // explicit legacy/debug override; with neither set, startup opens the generated production
-        // Athena Map Pack copied next to MapServer by build/publish.
-        var effectiveMapCachePath = options.MapCachePathOverride ?? mergedConfig.MapCachePath;
-        // Fails startup loudly if the generated pack or configured override is missing/malformed.
-        // map_cache_path/map_collision_artifact source is missing/malformed/duplicated - see
-        // MapCollisionStartupLoader's own doc comment. An unconfigured server (neither key set) is
-        // An unconfigured server uses GeneratedMapCollisionProvider.
-        // ruleSet: MapCollisionStartupLoader merges pinned rAthena's own db/import/map_cache.dat
-        // and ruleset-specific overlay (db/re/map_cache.dat for Renewal) over the configured
-        // generic map_cache_path, matching pinned map_readallmaps' own three-layer load order
-        // exactly - see that loader's own doc comment for why this is required (real example:
-        // pinned "prontera" geometry exists ONLY in db/re/map_cache.dat, not the generic
-        // db/map_cache.dat this project was previously loading alone).
-        var collisionProvider = MapCollisionStartupLoader.Load(mergedConfig.CollisionArtifacts, effectiveMapCachePath, gameplayOptions.RuleSet);
-        using var collisionProviderLifetime = collisionProvider as IDisposable;
-        // Production-only fail-closed guard (never applied inside MapServerWorld.Build itself, so
-        // tests can still freely compose a collision-less world on purpose) - see that method's own
-        // doc comment. A live MapServer with generated monster spawns and no real collision source
-        // must refuse to start rather than silently place monsters on
-        // UnverifiedFallbackMobSpawnCellSelector's fabricated deterministic raster.
-        MapServerWorld.RequireRealCollisionSourceIfMobSpawnsExist(GeneratedScriptRegistry.MobSpawns.Count > 0, collisionProvider);
-        // Broader than the mob-spawn guard above: a served map with NO monster spawns at all
-        // (e.g. "prontera") still needs real collision data for ordinary player movement - see
-        // MapServerHostingScope.RequireCollisionForAllServedMaps's own doc comment for the live
-        // crash this specifically catches (reproduced on head 57dc569: auth+bootstrap succeed,
-        // first player movement request throws with no collision data loaded).
-        MapServerHostingScope.RequireCollisionForAllServedMaps(collisionProvider);
         MapLogger.Status(
-            $"Monster spawn positioning: {(ReferenceEquals(collisionProvider, EmptyMapCollisionProvider.Instance) ? "none configured (no generated monster spawns)" : "collision-backed")}");
-        MapLogger.Status($"Customs (handwritten Athena.NET development content): {(mergedConfig.CustomsEnabled ? "enabled" : "disabled")}");
-        // Explicit runtime/deployment hosting scope for MapServerWorld.Build's servedMaps parameter
-        // - see MapServerHostingScope's own doc comment for why this is a hand-declared set, never
-        // derived from the warp graph or collision-data availability.
-        var world = MapServerWorld.Build(gameplayRules, collisionProvider: collisionProvider, rates: mergedConfig.GameplayRates, customsEnabled: mergedConfig.CustomsEnabled, servedMaps: MapServerHostingScope.ServedMaps);
-        var partitionTopologyPath = Environment.GetEnvironmentVariable("ATHENA_WORLD_PARTITIONS_PATH")
-            ?? Path.Combine("conf", "world_partitions.json");
-        var partitionResolver = WorldPartitionTopologyLoader.Load(partitionTopologyPath, MapServerHostingScope.ServedMaps);
-        WorldPartitionActorRanges.Validate(WorldPartitionActorRanges.Development);
-        var hostBuilder = Host.CreateApplicationBuilder(args);
-        hostBuilder.UseOrleansClient();
-        using var orleansHost = hostBuilder.Build();
-        await orleansHost.StartAsync(cts.Token);
-        var worldRuntime = new OrleansWorldRuntime(orleansHost.Services.GetRequiredService<IClusterClient>(), partitionResolver);
-        var connector = new CharServerConnector(configStore);
-        var mapServer = new MapTcpServer(configStore, connector, world, worldRuntime);
+            $"Gameplay ruleset: {gameplayOptions.RuleSet}");
 
-        var connectTask = connector.RunAsync(cts.Token);
-        await mapServer.RunAsync(cts.Token);
-        await connectTask;
-        await orleansHost.StopAsync();
+        var gameplayRules =
+            GameplayRulesFactory.Create(gameplayOptions);
+
+        //
+        // Collision data
+        //
+        // --map-cache-path wins over the configured map_cache_path.
+        //
+        // Either value is an explicit legacy/debug override.
+        // Without either override, startup uses the generated
+        // production Athena Map Pack.
+        //
+        var effectiveMapCachePath =
+            options.MapCachePathOverride ??
+            mergedConfig.MapCachePath;
+
+        var collisionProvider =
+            MapCollisionStartupLoader.Load(
+                mergedConfig.CollisionArtifacts,
+                effectiveMapCachePath,
+                gameplayOptions.RuleSet);
+
+        using var collisionProviderLifetime =
+            collisionProvider as IDisposable;
+
+        //
+        // Production fail-closed validation.
+        //
+        // A live MapServer with generated monster spawns must have
+        // real collision data available.
+        //
+        MapServerWorld.RequireRealCollisionSourceIfMobSpawnsExist(
+            GeneratedScriptRegistry.MobSpawns.Count > 0,
+            collisionProvider);
+
+        //
+        // All served maps require real collision data for ordinary
+        // player movement, even if a map contains no monster spawns.
+        //
+        MapServerHostingScope.RequireCollisionForAllServedMaps(
+            collisionProvider);
+
+        MapLogger.Status(
+            $"Monster spawn positioning: " +
+            $"{(ReferenceEquals(
+                collisionProvider,
+                EmptyMapCollisionProvider.Instance)
+                ? "none configured (no generated monster spawns)"
+                : "collision-backed")}");
+
+        MapLogger.Status(
+            $"Customs (handwritten Athena.NET development content): " +
+            $"{(mergedConfig.CustomsEnabled
+                ? "enabled"
+                : "disabled")}");
+
+        //
+        // Compose the local MapServer world.
+        //
+        // The served-map set is an explicit deployment/runtime scope
+        // and is not inferred from the warp graph or collision data.
+        //
+        var world = MapServerWorld.Build(
+            gameplayRules,
+            collisionProvider: collisionProvider,
+            rates: mergedConfig.GameplayRates,
+            customsEnabled: mergedConfig.CustomsEnabled,
+            servedMaps: MapServerHostingScope.ServedMaps);
+
+        var partitionTopologyPath =
+            Environment.GetEnvironmentVariable("ATHENA_WORLD_PARTITIONS_PATH") ??
+            Path.Combine("conf", "world_partitions.json");
+
+        var partitionResolver =
+            WorldPartitionTopologyLoader.Load(
+                partitionTopologyPath,
+                MapServerHostingScope.ServedMaps);
+
+        WorldPartitionActorRanges.Validate(
+            WorldPartitionActorRanges.Development);
+
+        //
+        // Orleans client host
+        //
+        var hostBuilder =
+            Host.CreateApplicationBuilder(args);
+
+        hostBuilder.UseOrleansClient();
+
+        using var orleansHost =
+            hostBuilder.Build();
+
+        //
+        // Let Microsoft.Extensions.Hosting own process lifetime.
+        //
+        // Aspire shutdown, SIGTERM and Ctrl+C are handled by the
+        // Generic Host's ConsoleLifetime.
+        //
+        // When the host starts stopping, propagate that cancellation
+        // to MapServer's own long-running loops.
+        //
+        var applicationLifetime =
+            orleansHost.Services
+                .GetRequiredService<IHostApplicationLifetime>();
+
+        using var stoppingRegistration =
+            applicationLifetime.ApplicationStopping.Register(
+                cts.Cancel);
+
+        await orleansHost.StartAsync(cts.Token);
+
+        var worldRuntime =
+            new OrleansWorldRuntime(
+                orleansHost.Services
+                    .GetRequiredService<IClusterClient>(),
+                partitionResolver);
+
+        var connector =
+            new CharServerConnector(configStore);
+
+        var mapServer =
+            new MapTcpServer(
+                configStore,
+                connector,
+                world,
+                worldRuntime);
+
+        try
+        {
+            var connectTask =
+                connector.RunAsync(cts.Token);
+
+            await connector.WaitUntilReadyAsync(cts.Token);
+
+            await mapServer.RunAsync(cts.Token);
+
+            await connectTask;
+        }
+        catch (OperationCanceledException)
+            when (cts.IsCancellationRequested)
+        {
+            // Expected during normal Aspire shutdown, Ctrl+C or SIGTERM.
+        }
+        finally
+        {
+            await orleansHost.StopAsync(
+                CancellationToken.None);
+        }
 
         return 0;
     }

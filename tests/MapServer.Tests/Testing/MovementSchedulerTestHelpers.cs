@@ -21,14 +21,18 @@ internal static class MovementSchedulerTestHelpers
     // whole walk in one deterministic step, and let the caller's own bounded network read (already
     // required for every assertion in these tests) be the actual completion signal for whatever
     // side effect the arrival produces.
-    public static async Task AdvanceEntireWalkAsync(ControllableTimeProvider clock, int cellCount)
+    public static async Task AdvanceEntireWalkAsync(
+        ControllableTimeProvider clock,
+        long registrationGenerationBeforeMovement,
+        int cellCount)
     {
         // The movement loop's very first CreateTimer call for this walk is itself asynchronous
         // relative to the packet handler that started it (HandleIroMovementAsync releases
         // _movementSignal and returns; RunMovementLoopAsync wakes and reschedules on its own
         // background task) - so the first registration must be awaited before advancing time, or
         // the advance can race ahead of a timer that hasn't been armed yet.
-        await clock.WaitForRegistrationAfterAsync(-1).WaitAsync(TimeSpan.FromSeconds(5));
+        await clock.WaitForRegistrationAfterAsync(registrationGenerationBeforeMovement)
+            .WaitAsync(TimeSpan.FromSeconds(5));
 
         // One atomic clock step covering the entire known route: CharacterMovementState.AdvanceTo
         // stops exactly at the walk's destination regardless of how far past it `now` is, so there
