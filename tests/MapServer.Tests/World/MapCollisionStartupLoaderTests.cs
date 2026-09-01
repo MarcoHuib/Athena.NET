@@ -114,7 +114,16 @@ public sealed class MapCollisionStartupLoaderTests
     [Fact]
     public void Load_NoArtifacts_ReturnsCompleteGeneratedProvider()
     {
-        var provider = MapCollisionStartupLoader.Load([]);
+        // Load's public overload dispatches this branch to GeneratedMapCollisionProvider.
+        // OpenProduction(), which only ever resolves the PUBLISHED AppContext.BaseDirectory/
+        // MapData/AthenaMaps.bin layout - not present under this test project's own bin/ output, by
+        // design (MapServer.csproj deliberately does not copy the 53 MiB generated pack into
+        // ordinary build/test output; see ai/world-data.md). The internal factory-injecting overload
+        // exercises the exact same "no artifacts, no map cache path" dispatch branch against the
+        // checked-in source asset instead, proving the branch itself resolves real generated data
+        // without requiring that copy or touching OpenProduction's own production path.
+        var provider = MapCollisionStartupLoader.Load([], mapCachePath: null, RagnarokRuleSet.Renewal,
+            () => GeneratedMapCollisionProvider.Open(Athena.Net.MapServer.Tests.Testing.TestGeneratedMapAssets.MapPackPath));
 
         Assert.True(provider.TryGetMap("prontera", out _));
     }
