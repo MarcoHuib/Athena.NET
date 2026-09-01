@@ -41,12 +41,10 @@ public sealed class OrleansWorldRuntime(IClusterClient clusterClient, IWorldPart
     public async Task<WorldTransferResult> TransferPlayerAsync(WorldTransferCommand command, CancellationToken cancellationToken)
     {
         var sourcePartition = resolver.ResolvePartition(command.SourceMapId);
-        var targetPartition = resolver.ResolvePartition(command.DestinationMapId);
         var routed = command with
         {
             SourceMapId = WorldMapId.Normalize(command.SourceMapId),
             DestinationMapId = WorldMapId.Normalize(command.DestinationMapId),
-            DestinationPartitionId = targetPartition,
         };
         var started = Stopwatch.GetTimestamp();
         try

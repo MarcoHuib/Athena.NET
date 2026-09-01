@@ -1217,14 +1217,15 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
                     fromX,
                     fromY,
                     resolved.TargetX,
-                    resolved.TargetY,
-                    resolved.Path.Select(cell => new WorldPosition(cell.X, cell.Y)).ToArray()),
+                    resolved.TargetY),
                 cancellationToken);
             if (worldMove.Status != WorldMovementStatus.Moved)
             {
                 MapLogger.Warning($"World authority rejected movement status={worldMove.Status} map='{_mapName}' from=({fromX},{fromY}) target=({resolved.TargetX},{resolved.TargetY}).");
                 return;
             }
+            if (worldMove.Path is { Count: > 1 })
+                resolved = resolved with { Path = worldMove.Path.Select(cell => (cell.X, cell.Y)).ToArray() };
         }
         var now = _timeProvider.GetUtcNow();
 
@@ -3053,8 +3054,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
                 operation.Item1,
                 operation.Item2,
                 x,
-                y,
-                string.Empty),
+                y),
             cancellationToken);
         if (result.Status is not (WorldTransferStatus.Completed or WorldTransferStatus.AlreadyCompleted))
             throw new InvalidOperationException($"World transfer failed status={result.Status} source='{sourceMap}' destination='{destinationMap}'.");

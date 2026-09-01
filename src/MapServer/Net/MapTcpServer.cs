@@ -49,7 +49,8 @@ public sealed class MapTcpServer
 
     private sealed class InMemoryTestWorldRuntime : IWorldRuntime
     {
-        private readonly Dictionary<(string MapId, uint CharacterId), WorldPlayerPresence> _presences = [];
+        private readonly Dictionary<uint, WorldPlayerPresence> _presences = [];
+        private readonly Dictionary<Guid, WorldTransferResult> _transfers = [];
         private readonly Lock _gate = new();
 
         public Task<WorldPresenceRegistration> RegisterPresenceAsync(string mapId, WorldPlayerPresence presence, CancellationToken cancellationToken) =>
@@ -61,17 +62,16 @@ public sealed class MapTcpServer
         private WorldPresenceRegistration Register(string mapId, WorldPlayerPresence presence)
         {
             var normalized = MapName.NormalizeWorld(mapId).ToLowerInvariant();
-            var key = (normalized, presence.CharacterId);
             lock (_gate)
             {
-                if (!_presences.TryGetValue(key, out var existing))
+                if (!_presences.TryGetValue(presence.CharacterId, out var existing))
                 {
-                    _presences.Add(key, presence);
+                    _presences.Add(presence.CharacterId, presence with { MapId = normalized });
                     return new("test-partition", normalized, WorldPresenceRegistrationStatus.Registered, Count(normalized));
                 }
-                if (existing.PresenceId != presence.PresenceId)
+                if (existing.PresenceId != presence.PresenceId || existing.ActorId != presence.ActorId || !string.Equals(existing.MapId, normalized, StringComparison.OrdinalIgnoreCase))
                     return new("test-partition", normalized, WorldPresenceRegistrationStatus.Conflict, Count(normalized));
-                _presences[key] = presence;
+                _presences[presence.CharacterId] = presence with { MapId = normalized };
                 return new("test-partition", normalized, WorldPresenceRegistrationStatus.AlreadyRegistered, Count(normalized));
             }
         }
@@ -79,25 +79,50 @@ public sealed class MapTcpServer
         private WorldPresenceUnregistration Unregister(string mapId, uint characterId, Guid presenceId)
         {
             var normalized = MapName.NormalizeWorld(mapId).ToLowerInvariant();
-            var key = (normalized, characterId);
             lock (_gate)
             {
-                if (!_presences.TryGetValue(key, out var existing))
+                if (!_presences.TryGetValue(characterId, out var existing))
                     return new("test-partition", normalized, WorldPresenceUnregistrationStatus.AlreadyAbsent, Count(normalized));
                 if (existing.PresenceId != presenceId)
                     return new("test-partition", normalized, WorldPresenceUnregistrationStatus.PresenceMismatch, Count(normalized));
-                _presences.Remove(key);
+                if (!string.Equals(existing.MapId, normalized, StringComparison.OrdinalIgnoreCase))
+                    return new("test-partition", normalized, WorldPresenceUnregistrationStatus.MapMismatch, Count(normalized));
+                _presences.Remove(characterId);
                 return new("test-partition", normalized, WorldPresenceUnregistrationStatus.Removed, Count(normalized));
             }
         }
 
-        private int Count(string mapId) => _presences.Keys.Count(key => key.MapId == mapId);
+        private int Count(string mapId) => _presences.Values.Count(value => string.Equals(value.MapId, mapId, StringComparison.OrdinalIgnoreCase));
 
-        public Task<WorldMovementResult> MovePlayerAsync(WorldMovementCommand command, CancellationToken cancellationToken) =>
-            Task.FromResult(new WorldMovementResult(WorldMovementStatus.Moved, null));
+        public Task<WorldMovementResult> MovePlayerAsync(WorldMovementCommand command, CancellationToken cancellationToken)
+        {
+            lock (_gate)
+            {
+                if (!_presences.TryGetValue(command.CharacterId, out var current)) return Task.FromResult(new WorldMovementResult(WorldMovementStatus.NotFound, null));
+                if (current.PresenceId != command.PresenceId) return Task.FromResult(new WorldMovementResult(WorldMovementStatus.PresenceMismatch, current));
+                if (!string.Equals(current.MapId, WorldMapId.Normalize(command.MapId), StringComparison.OrdinalIgnoreCase) || current.X != command.FromX || current.Y != command.FromY)
+                    return Task.FromResult(new WorldMovementResult(WorldMovementStatus.SourceMismatch, current));
+                var moved = current with { X = command.DestinationX, Y = command.DestinationY };
+                _presences[command.CharacterId] = moved;
+                return Task.FromResult(new WorldMovementResult(WorldMovementStatus.Moved, moved));
+            }
+        }
 
-        public Task<WorldTransferResult> TransferPlayerAsync(WorldTransferCommand command, CancellationToken cancellationToken) =>
-            Task.FromResult(new WorldTransferResult(WorldTransferStatus.Completed, WorldTransferType.SamePartition, null));
+        public Task<WorldTransferResult> TransferPlayerAsync(WorldTransferCommand command, CancellationToken cancellationToken)
+        {
+            lock (_gate)
+            {
+                if (_transfers.TryGetValue(command.TransferId, out var replay)) return Task.FromResult(replay with { Status = WorldTransferStatus.AlreadyCompleted });
+                if (!_presences.TryGetValue(command.CharacterId, out var current)) return Task.FromResult(new WorldTransferResult(WorldTransferStatus.NotFound, WorldTransferType.SamePartition, null));
+                if (current.PresenceId != command.PresenceId || !string.Equals(current.MapId, WorldMapId.Normalize(command.SourceMapId), StringComparison.OrdinalIgnoreCase))
+                    return Task.FromResult(new WorldTransferResult(WorldTransferStatus.SourceMismatch, WorldTransferType.SamePartition, current));
+                var moved = current with { MapId = WorldMapId.Normalize(command.DestinationMapId), X = command.DestinationX, Y = command.DestinationY };
+                _presences[command.CharacterId] = moved;
+                var result = new WorldTransferResult(WorldTransferStatus.Completed, WorldTransferType.SamePartition, moved);
+                _transfers.Add(command.TransferId, result);
+                return Task.FromResult(result);
+            }
+        }
     }
 
     public int BoundPort { get; private set; }
