@@ -32,6 +32,7 @@ public sealed class GeneratedShipOut03IntegrationTests
         await ReadDynamic(stream); // lying Wounded Swordsman
         await ReadDynamic(stream); // initially cloaked sitting Wounded Swordsman
         Assert.Equal((short)0x08e2, BinaryPrimitives.ReadInt16LittleEndian(await ReadExact(stream, 27))); // generated guidance toward int_land
+        var registrationGenerationBeforeMovement = clock.RegistrationGeneration;
         await stream.WriteAsync(MovementPacket(56, 15));
         Assert.Equal((short)0x0087, BinaryPrimitives.ReadInt16LittleEndian(await ReadExact(stream, 12)));
 
@@ -43,7 +44,10 @@ public sealed class GeneratedShipOut03IntegrationTests
         // packet is written - so completion is the bounded packet reads below, not the session's
         // position or socket buffer. 64 cells is a generous bound for this short route; the walk
         // stops at its destination regardless of how far the clock advances past it.
-        await MovementSchedulerTestHelpers.AdvanceEntireWalkAsync(clock, cellCount: 64);
+        await MovementSchedulerTestHelpers.AdvanceEntireWalkAsync(
+            clock,
+            registrationGenerationBeforeMovement,
+            cellCount: 64);
 
         var shipSpawn = await ReadDynamic(stream);
         Assert.Equal(actor.ActorId, BinaryPrimitives.ReadUInt32LittleEndian(shipSpawn.AsSpan(5)));

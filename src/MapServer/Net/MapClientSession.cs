@@ -2483,28 +2483,26 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     async Task INpcScriptHost.NextAsync(uint actorId, CancellationToken cancellationToken)
     {
         var continuation = new GeneratedContinuation(GeneratedContinuationKind.Next, NewContinuation());
-        await WriteAsync(IroNpcDialoguePackets.BuildNext(actorId), cancellationToken);
-        // Publish the continuation and signal the suspension boundary together, only AFTER the
-        // write completes. Publishing _generatedContinuation before the write let the client's
-        // response race ahead of it: the receive loop could read the just-written packet, dispatch
-        // the client's reply, and call TryResumeGeneratedScriptAsync - which reassigns
-        // _generatedSuspended to a fresh signal - before this method ever reached its own
-        // _generatedSuspended.TrySetResult() below. That stale reassignment orphaned whichever
-        // signal WaitForGeneratedBoundaryAsync was actually awaiting (set by an EARLIER caller,
-        // e.g. StartGeneratedScriptAsync), which then never completes - the exact lost-wakeup
-        // hang this fixes (see GeneratedIntroToIzludeIntegrationTests's CI failure investigation).
+        var suspended = _generatedSuspended;
+        // Publish the accepted input before exposing the boundary packet to the client. A peer can
+        // receive 0x00B5 and send 0x00B9 before NetworkStream.WriteAsync's continuation runs; if
+        // publication happens after the write, that valid reply observes null and is discarded.
         _generatedContinuation = continuation;
-        _generatedSuspended.TrySetResult();
+        await WriteAsync(IroNpcDialoguePackets.BuildNext(actorId), cancellationToken);
+        // Signal the boundary captured above, not the mutable field. An early 0x00B9 replaces the
+        // field with the NEXT boundary; signaling through the field would then wake the wrong wait
+        // and orphan the StartGeneratedScriptAsync/previous-resume waiter.
+        suspended.TrySetResult();
         await continuation.Completion.Task.WaitAsync(cancellationToken);
     }
 
     async Task<int> INpcScriptHost.SelectAsync(uint actorId, IReadOnlyList<string> options, CancellationToken cancellationToken)
     {
         var continuation = new GeneratedContinuation(GeneratedContinuationKind.Selection, NewContinuation());
-        await WriteAsync(IroNpcDialoguePackets.BuildMenu(actorId, options), cancellationToken);
-        // See NextAsync's own comment: publish+signal together, only after the write completes.
+        var suspended = _generatedSuspended;
         _generatedContinuation = continuation;
-        _generatedSuspended.TrySetResult();
+        await WriteAsync(IroNpcDialoguePackets.BuildMenu(actorId, options), cancellationToken);
+        suspended.TrySetResult();
         return await continuation.Completion.Task.WaitAsync(cancellationToken);
     }
 
@@ -2514,10 +2512,10 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     async Task INpcScriptHost.Close2Async(uint actorId, CancellationToken cancellationToken)
     {
         var continuation = new GeneratedContinuation(GeneratedContinuationKind.Close2, NewContinuation());
-        await WriteAsync(IroNpcDialoguePackets.BuildClose(actorId), cancellationToken);
-        // See NextAsync's own comment: publish+signal together, only after the write completes.
+        var suspended = _generatedSuspended;
         _generatedContinuation = continuation;
-        _generatedSuspended.TrySetResult();
+        await WriteAsync(IroNpcDialoguePackets.BuildClose(actorId), cancellationToken);
+        suspended.TrySetResult();
         await continuation.Completion.Task.WaitAsync(cancellationToken);
     }
 

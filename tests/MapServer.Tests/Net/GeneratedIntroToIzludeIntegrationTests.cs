@@ -30,6 +30,7 @@ public sealed class GeneratedIntroToIzludeIntegrationTests
             positionPersistence: persistence, questPersistence: persistence, accountId: 7, charId: 9, timeProvider: clock);
         var run = session.RunAsync(CancellationToken.None);
 
+        var registrationGenerationBeforeMovement = clock.RegistrationGeneration;
         await stream.WriteAsync(BuildMovementPacket(49, 57));
         Assert.Equal((short)0x0087, BinaryPrimitives.ReadInt16LittleEndian(await ReadExact(stream, 12)));
 
@@ -41,7 +42,10 @@ public sealed class GeneratedIntroToIzludeIntegrationTests
         // completion is the bounded packet reads below (the NPC actor spawn/OnTouch script only
         // start once ProcessDueMovementAsync's PendingScriptTouchArrival branch actually runs), not
         // the session's position or socket buffer.
-        await MovementSchedulerTestHelpers.AdvanceEntireWalkAsync(clock, cellCount: 64);
+        await MovementSchedulerTestHelpers.AdvanceEntireWalkAsync(
+            clock,
+            registrationGenerationBeforeMovement,
+            cellCount: 64);
 
         var actorId = await ReadActorId(stream);
         Assert.Equal("^4d4dffOnce you leave this island there is no way back.\0", ReadMessage(await ReadDynamic(stream)));
