@@ -77,6 +77,8 @@ Use Aspire for local dev when you want the dashboard and managed dependencies.
 dotnet run --project src/AppHost
 ```
 
+Aspire runs the pinned SQL Server 2025 Developer container and creates separate LoginDb and CharDb databases. See [SQL Server development database](sql-server-development.md), including the Apple Silicon limitations.
+
 ## Production-like (Docker Compose)
 
 Copy the env template and set a strong SA password:
@@ -90,6 +92,8 @@ Then start services:
 ```sh
 docker compose up --build
 ```
+
+The Compose file maps `SA_PASSWORD` from the host environment to SQL Server's required `MSSQL_SA_PASSWORD` container variable.
 
 For production guidance, see `docs/production.md`.
 

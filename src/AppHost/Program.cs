@@ -14,7 +14,7 @@ if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("ASPNETCORE_ENV
         "Development");
 }
 
-EnsureSqlEdgePassword();
+EnsureSqlServerPassword();
 
 if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("ASPIRE_ALLOW_UNSECURED_TRANSPORT")))
 {
@@ -60,16 +60,16 @@ var mapCachePath = Path.Combine(
     "map_cache.dat");
 
 var sqlPassword = builder.AddParameter(
-    "sql-edge-password",
+    "sql-server-password",
     secret: true);
 
 var sql = builder
     .AddSqlServer(
         "sql",
         sqlPassword)
-    .WithImage("azure-sql-edge")
-    .WithImageTag("latest")
-    .WithDataVolume("athena-sql")
+    .WithImage("mssql/server")
+    .WithImageTag("2025-CU8-ubuntu-24.04")
+    .WithDataVolume("athena-sql-server-2025")
     .WithEnvironment("ACCEPT_EULA", "Y")
     .WithEndpoint("tcp", endpoint =>
     {
@@ -308,12 +308,27 @@ builder
 
 builder.Build().Run();
 
-static void EnsureSqlEdgePassword()
+static void EnsureSqlServerPassword()
 {
     if (!string.IsNullOrWhiteSpace(
             Environment.GetEnvironmentVariable(
-                "Parameters__sql-edge-password")))
+                "Parameters__sql-server-password")))
     {
+        return;
+    }
+
+    // Temporary compatibility alias for existing local developer environments.
+    // New configuration should use the engine-neutral parameter name above.
+    var legacySqlEdgePassword =
+        Environment.GetEnvironmentVariable(
+            "Parameters__sql-edge-password");
+
+    if (!string.IsNullOrWhiteSpace(legacySqlEdgePassword))
+    {
+        Environment.SetEnvironmentVariable(
+            "Parameters__sql-server-password",
+            legacySqlEdgePassword);
+
         return;
     }
 
@@ -326,15 +341,15 @@ static void EnsureSqlEdgePassword()
             out var secretsPassword))
     {
         Environment.SetEnvironmentVariable(
-            "Parameters__sql-edge-password",
+            "Parameters__sql-server-password",
             secretsPassword);
 
         return;
     }
 
     throw new InvalidOperationException(
-        "Missing SQL Edge SA password. " +
-        "Set Parameters__sql-edge-password or " +
+        "Missing SQL Server SA password." +
+        "Set Parameters__sql-server-password or " +
         "SqlServer.SaPassword in solutionfiles/secrets/secret.json.");
 }
 
