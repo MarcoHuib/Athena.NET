@@ -48,20 +48,20 @@ public sealed class MapServerWorldGameplayRulesTests
         // A real (non-Empty) provider makes Build compose RathenaCompatibleMobSpawnCellSelector
         // (see MapServerWorld.Build's own doc comment on the explicit either/or selector choice),
         // which throws for any SERVED generated spawn map the provider doesn't cover - so this
-        // provider must supply every map MapServerHostingScope.ServedMaps declares (both
-        // AcademyMobSpawns.GPoringSpawns' int_land/01/02/03/04 - the FULL family, not just the *0N
-        // instanced duplicates - and PrtFild08dMobSpawns' prt_fild08d - see ai/world-data.md), each
-        // large enough to satisfy the pinned map-edge margin. Plain prt_fild08 (generated but NOT
-        // served) is deliberately excluded from both this provider and servedMaps below.
+        // provider must supply every map MapServerHostingScope.MobSpawnMaps declares (Academy's
+        // int_land/01/02/03/04 - the FULL family, not just the *0N instanced duplicates - and the
+        // complete prt_fild08/a/b/c/d family, now that rectangular/fixed-point spawn geometry is
+        // implemented - see MobSpawnCellSelector.cs's own doc comment), each large enough to
+        // satisfy the pinned map-edge margin.
         var maps = new[]
             {
                 "int_land", "int_land01", "int_land02", "int_land03", "int_land04",
-                "prt_fild08d", "prontera",
+                "prt_fild08", "prt_fild08a", "prt_fild08b", "prt_fild08c", "prt_fild08d", "prontera",
             }
             .Select(name => new MapCollisionMap(name, 100, 100, Enumerable.Repeat(MapCellFlags.Walkable, 100 * 100).ToArray()));
         var provider = new MapCollisionProvider(maps);
 
-        var world = MapServerWorld.Build(new GameplayRuleServices(new RenewalBasicAttackRules()), collisionProvider: provider, servedMaps: MapServerHostingScope.ServedMaps);
+        var world = MapServerWorld.Build(new GameplayRuleServices(new RenewalBasicAttackRules()), collisionProvider: provider, servedMaps: MapServerHostingScope.ServedMaps, mobSpawnMaps: MapServerHostingScope.MobSpawnMaps);
 
         Assert.True(world.Collision.TryGetMap("int_land03", out var resolved));
         Assert.True(resolved.IsWalkable(0, 0));
@@ -102,7 +102,7 @@ public sealed class MapServerWorldGameplayRulesTests
         var provider = new MapCollisionProvider(maps); // Generic int_land deliberately uncovered.
 
         var exception = Assert.Throws<InvalidOperationException>(
-            () => MapServerWorld.Build(new GameplayRuleServices(new RenewalBasicAttackRules()), collisionProvider: provider, servedMaps: MapServerHostingScope.ServedMaps));
+            () => MapServerWorld.Build(new GameplayRuleServices(new RenewalBasicAttackRules()), collisionProvider: provider, servedMaps: MapServerHostingScope.ServedMaps, mobSpawnMaps: MapServerHostingScope.MobSpawnMaps));
         Assert.Contains("int_land", exception.Message);
     }
 
@@ -218,10 +218,7 @@ public sealed class MapServerHostingScopeStartupValidationTests
         Assert.DoesNotContain(GeneratedScriptRegistry.MobSpawns, spawn => string.Equals(spawn.Map, "izlude_d", StringComparison.OrdinalIgnoreCase));
         Assert.Contains("izlude_d", MapServerHostingScope.ServedMaps);
 
-        var provider = CollisionProviderFor(
-            "int_land", "int_land01", "int_land02", "int_land03", "int_land04",
-            "iz_int", "iz_int01", "iz_int02", "iz_int03", "iz_int04",
-            "prontera", "prt_fild08d"); // izlude_d deliberately absent.
+        var provider = CollisionProviderFor(MapServerHostingScope.ServedMaps.Where(map => !string.Equals(map, "izlude_d", StringComparison.OrdinalIgnoreCase)).ToArray());
 
         var exception = Assert.Throws<InvalidOperationException>(() =>
             MapServerHostingScope.RequireCollisionForAllServedMaps(provider));
@@ -305,7 +302,7 @@ public sealed class MapServerWorldProductionCollisionCompositionTests
         // this uses the real production hosting scope rather than every generated spawn map
         // unfiltered - matching exactly what MapServerApp.RunAsync composes against this same real
         // map cache.
-        var world = MapServerWorld.Build(new GameplayRuleServices(new RenewalBasicAttackRules()), collisionProvider: provider, servedMaps: MapServerHostingScope.ServedMaps);
+        var world = MapServerWorld.Build(new GameplayRuleServices(new RenewalBasicAttackRules()), collisionProvider: provider, servedMaps: MapServerHostingScope.ServedMaps, mobSpawnMaps: MapServerHostingScope.MobSpawnMaps);
 
         var intLandFamily = new[] { "int_land", "int_land01", "int_land02", "int_land03", "int_land04" };
         var gPorings = world.Monsters.AllInstances.Where(instance => intLandFamily.Contains(instance.Map)).ToArray();
@@ -347,9 +344,9 @@ public sealed class MapServerWorldServedMapsTests
     [Fact]
     public void ServedStartMapWithNoStaticWarp_IsInstantiatedNormally()
     {
-        var provider = CollisionProviderFor("int_land", "int_land01", "int_land02", "int_land03", "int_land04", "prt_fild08d", "prontera");
+        var provider = CollisionProviderFor(MapServerHostingScope.ServedMaps.ToArray());
 
-        var world = MapServerWorld.Build(new GameplayRuleServices(new RenewalBasicAttackRules()), collisionProvider: provider, servedMaps: MapServerHostingScope.ServedMaps);
+        var world = MapServerWorld.Build(new GameplayRuleServices(new RenewalBasicAttackRules()), collisionProvider: provider, servedMaps: MapServerHostingScope.ServedMaps, mobSpawnMaps: MapServerHostingScope.MobSpawnMaps);
 
         Assert.Equal(40, world.Monsters.AllInstances.Count(instance => instance.Map == "int_land"));
     }
@@ -363,26 +360,28 @@ public sealed class MapServerWorldServedMapsTests
     [Fact]
     public void ServedScriptedWarpMap_DoesNotBlockCompositionOfTheRestOfTheWorld()
     {
-        var provider = CollisionProviderFor("int_land", "int_land01", "int_land02", "int_land03", "int_land04", "prt_fild08d", "prontera");
+        var provider = CollisionProviderFor(MapServerHostingScope.ServedMaps.ToArray());
 
-        var world = MapServerWorld.Build(new GameplayRuleServices(new RenewalBasicAttackRules()), collisionProvider: provider, servedMaps: MapServerHostingScope.ServedMaps);
+        var world = MapServerWorld.Build(new GameplayRuleServices(new RenewalBasicAttackRules()), collisionProvider: provider, servedMaps: MapServerHostingScope.ServedMaps, mobSpawnMaps: MapServerHostingScope.MobSpawnMaps);
 
         Assert.Contains("izlude_d", MapServerHostingScope.ServedMaps);
         Assert.True(world.Monsters.AllInstances.Count > 0);
     }
 
-    // Plain prt_fild08 (generic/base family member) is NOT in MapServerHostingScope.ServedMaps -
-    // its generated PrtFild08dMobSpawns.PoringSpawns/etc. rows for that map must be silently
-    // excluded before MonsterRegistry construction, never instantiated, and never throw even
-    // though no collision data is supplied for it at all.
+    // The generic/base field is the destination paired with the generic tutorial start variant.
+    // RathenaCompatibleMobSpawnCellSelector now implements rectangular/fixed-point spawn geometry
+    // (see MobSpawnCellSelector.cs's own doc comment), closing the gap that previously excluded
+    // prt_fild08 from MobSpawnMaps - the complete source-backed prt_fild08 family is now activated.
     [Fact]
-    public void UnservedMapWithGeneratedMobs_IsNotInstantiated()
+    public void GenericTravelCorridorMap_IsHostedWithMonsterRuntimeScopeNowIncludingIt()
     {
-        var provider = CollisionProviderFor("int_land", "int_land01", "int_land02", "int_land03", "int_land04", "prt_fild08d", "prontera");
+        var provider = CollisionProviderFor(MapServerHostingScope.ServedMaps.ToArray());
 
-        var world = MapServerWorld.Build(new GameplayRuleServices(new RenewalBasicAttackRules()), collisionProvider: provider, servedMaps: MapServerHostingScope.ServedMaps);
+        var world = MapServerWorld.Build(new GameplayRuleServices(new RenewalBasicAttackRules()), collisionProvider: provider, servedMaps: MapServerHostingScope.ServedMaps, mobSpawnMaps: MapServerHostingScope.MobSpawnMaps);
 
-        Assert.DoesNotContain(world.Monsters.AllInstances, instance => instance.Map == "prt_fild08");
+        Assert.Contains("prt_fild08", MapServerHostingScope.ServedMaps);
+        Assert.Contains("prt_fild08", MapServerHostingScope.MobSpawnMaps);
+        Assert.Contains(world.Monsters.AllInstances, instance => instance.Map == "prt_fild08");
     }
 
     // Plain prt_fild08's generated definitions remain complete/source-backed regardless of hosting
@@ -393,7 +392,7 @@ public sealed class MapServerWorldServedMapsTests
         var allGeneratedSpawnMaps = GeneratedScriptRegistry.MobSpawns.Select(spawn => spawn.Map).ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         Assert.Contains("prt_fild08", allGeneratedSpawnMaps);
-        Assert.DoesNotContain("prt_fild08", MapServerHostingScope.ServedMaps);
+        Assert.Contains("prt_fild08", MapServerHostingScope.ServedMaps);
     }
 
     // A served map with missing collision data must still fail loudly (matching
@@ -403,11 +402,14 @@ public sealed class MapServerWorldServedMapsTests
     [Fact]
     public void ServedMapWithMissingCollisionData_FailsLoudly()
     {
-        // prt_fild08d IS served but deliberately not covered by this provider.
-        var provider = CollisionProviderFor("int_land", "int_land01", "int_land02", "int_land03", "int_land04", "prontera");
+        // prt_fild08d IS served but deliberately not covered by this provider - every other
+        // spawn-activated map (including the rest of the prt_fild08 family, now that rectangular
+        // spawn geometry is implemented) IS covered, so this isolates prt_fild08d specifically.
+        var provider = CollisionProviderFor("int_land", "int_land01", "int_land02", "int_land03", "int_land04",
+            "prt_fild08", "prt_fild08a", "prt_fild08b", "prt_fild08c", "prontera");
 
         var exception = Assert.Throws<InvalidOperationException>(() =>
-            MapServerWorld.Build(new GameplayRuleServices(new RenewalBasicAttackRules()), collisionProvider: provider, servedMaps: MapServerHostingScope.ServedMaps));
+            MapServerWorld.Build(new GameplayRuleServices(new RenewalBasicAttackRules()), collisionProvider: provider, servedMaps: MapServerHostingScope.ServedMaps, mobSpawnMaps: MapServerHostingScope.MobSpawnMaps));
 
         Assert.Contains("prt_fild08d", exception.Message);
     }
@@ -429,9 +431,10 @@ public sealed class MapServerWorldServedMapsTests
     [Fact]
     public void PrtFild08d_ServedAndCollisionBacked_InstantiatesFullSourceBackedPopulation()
     {
-        var provider = CollisionProviderFor("int_land", "int_land01", "int_land02", "int_land03", "int_land04", "prt_fild08d", "prontera");
+        var provider = CollisionProviderFor("int_land", "int_land01", "int_land02", "int_land03", "int_land04",
+            "prt_fild08", "prt_fild08a", "prt_fild08b", "prt_fild08c", "prt_fild08d", "prontera");
 
-        var world = MapServerWorld.Build(new GameplayRuleServices(new RenewalBasicAttackRules()), collisionProvider: provider, servedMaps: MapServerHostingScope.ServedMaps);
+        var world = MapServerWorld.Build(new GameplayRuleServices(new RenewalBasicAttackRules()), collisionProvider: provider, servedMaps: MapServerHostingScope.ServedMaps, mobSpawnMaps: MapServerHostingScope.MobSpawnMaps);
 
         var onPrtFild08d = world.Monsters.AllInstances.Where(instance => instance.Map == "prt_fild08d").ToArray();
         Assert.Equal(340, onPrtFild08d.Length);

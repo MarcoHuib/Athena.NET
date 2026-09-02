@@ -79,6 +79,7 @@ public sealed class GeneratedIntroToIzludeIntegrationTests
         Assert.Null(session.ActiveGeneratedScriptEntityId);
         Assert.Equal(CharacterQuestStatus.Completed, persistence.Quests[21008]);
         Assert.Equal(CharacterQuestStatus.Completed, persistence.Quests[21001]);
+        Assert.Equal(("izlude_d", (ushort)196, (ushort)209), persistence.Position);
         Assert.Equal(("izlude_d", (ushort)128, (ushort)142), persistence.SavePoint);
 
         client.Close(); await run.WaitAsync(TimeSpan.FromSeconds(5)); listener.Stop();
@@ -112,10 +113,11 @@ public sealed class GeneratedIntroToIzludeIntegrationTests
     private sealed class RecordingPersistence : ICharacterQuestPersistence, ICharacterPositionPersistence
     {
         public Dictionary<uint, CharacterQuestStatus> Quests { get; } = [];
+        public (string Map, ushort X, ushort Y) Position { get; private set; }
         public (string Map, ushort X, ushort Y) SavePoint { get; private set; }
         public Task<CharacterQuestStatus?> GetQuestStateAsync(uint accountId, uint charId, uint questId, CancellationToken cancellationToken) => Task.FromResult<CharacterQuestStatus?>(Quests.GetValueOrDefault(questId, CharacterQuestStatus.Absent));
         public Task<bool> SetQuestStateAsync(uint accountId, uint charId, uint questId, CharacterQuestStatus state, CancellationToken cancellationToken) { Quests[questId] = state; return Task.FromResult(true); }
-        public Task<bool> SavePositionAsync(uint accountId, uint charId, string map, ushort x, ushort y, CancellationToken cancellationToken) => Task.FromResult(true);
+        public Task<bool> SavePositionAsync(uint accountId, uint charId, string map, ushort x, ushort y, CancellationToken cancellationToken) { Position = (map, x, y); return Task.FromResult(true); }
         public Task<bool> SavePointAsync(uint accountId, uint charId, string map, ushort x, ushort y, CancellationToken cancellationToken) { SavePoint = (map, x, y); return Task.FromResult(true); }
     }
 }

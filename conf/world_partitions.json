@@ -1,0 +1,9 @@
+{
+  "prontera-region": {
+    "includeMaps": ["prontera", "prt_fild*"]
+  },
+  "world-rest": {
+    "includeMaps": ["*"],
+    "excludeMaps": ["prontera", "prt_fild*"]
+  }
+}

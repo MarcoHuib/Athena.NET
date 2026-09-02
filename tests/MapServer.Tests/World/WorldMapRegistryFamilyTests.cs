@@ -15,6 +15,15 @@ public sealed class WorldMapRegistryFamilyTests
     // "" is the generic/base map (iz_int/int_land); "01".."04" are the pinned instanced duplicates.
     public static TheoryData<string> Suffixes => new("", "01", "02", "03", "04");
 
+    public static TheoryData<string, string, string> TravelVariants => new()
+    {
+        { "", "izlude", "prt_fild08" },
+        { "01", "izlude_a", "prt_fild08a" },
+        { "02", "izlude_b", "prt_fild08b" },
+        { "03", "izlude_c", "prt_fild08c" },
+        { "04", "izlude_d", "prt_fild08d" },
+    };
+
     [Theory]
     [MemberData(nameof(Suffixes))]
     public void WoundedSwordsman_FirstState_Class687_ExistsAndIsInitiallyVisible(string suffix)
@@ -130,6 +139,21 @@ public sealed class WorldMapRegistryFamilyTests
         Assert.Equal(intLand, entity.Actor!.Map);
         Assert.Equal((ushort)49, entity.Actor.X);
         Assert.Equal((ushort)57, entity.Actor.Y);
+    }
+
+    [Theory]
+    [MemberData(nameof(TravelVariants))]
+    public void EveryConfiguredTutorialVariant_HasItsSourceBackedHostedTravelCorridor(
+        string tutorialSuffix, string izludeMap, string fieldMap)
+    {
+        Assert.Contains("int_land" + tutorialSuffix, MapServerHostingScope.ServedMaps);
+        Assert.Contains(izludeMap, MapServerHostingScope.ServedMaps);
+        Assert.Contains(fieldMap, MapServerHostingScope.ServedMaps);
+        var registry = WorldMapRegistry.Tutorial;
+        Assert.True(registry.TryFindWarp(izludeMap, 20, 98, out var exit));
+        Assert.Equal((fieldMap, (ushort)367, (ushort)212), (exit.DestinationMap, exit.DestinationX, exit.DestinationY));
+        Assert.True(registry.TryFindWarp(fieldMap, 170, 378, out var toProntera));
+        Assert.Equal("prontera", toProntera.DestinationMap);
     }
 
     [Theory]

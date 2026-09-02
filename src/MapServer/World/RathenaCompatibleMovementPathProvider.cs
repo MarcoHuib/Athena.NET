@@ -1,4 +1,4 @@
-namespace Athena.Net.MapServer.World;
+namespace Athena.Net.World.Runtime;
 
 // Source-traced reproduction of pinned rAthena's A* walkpath search (path.cpp:269-432
 // path_search, the non-"easy"/flag&1 branch - "We always use A* for finding walkpaths because it

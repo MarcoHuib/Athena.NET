@@ -1,6 +1,7 @@
 namespace Athena.Net.MapServer.Tests.World;
 
 using Athena.Net.MapServer.World;
+using Athena.Net.MapServer.Gameplay.Rules;
 
 // Source-traced A* reproduction (path.cpp:269-432 path_search's non-easy branch) - see
 // RathenaCompatibleMovementPathProvider's own doc comment for the exact pinned-source mapping.
@@ -329,6 +330,95 @@ public sealed class RathenaCompatibleMovementPathProviderTests
 
         Assert.NotEmpty(path);
         Assert.All(path, cell => Assert.True(map.IsTraversalCell(cell.X, cell.Y)));
+    }
+
+    // The following tests use the REAL production three-layer collision composition
+    // (MapCollisionStartupLoader.Load, exactly as production startup composes it: base
+    // db/map_cache.dat + optional db/import overlay + Renewal ruleset db/re overlay), not the raw
+    // base cache file alone - int_land/izlude/prt_fild08/etc all genuinely need this because
+    // prontera/prt_fild08 exist ONLY in the Renewal overlay, not in the base cache at all.
+    private static RathenaCompatibleMovementPathProvider CreateProductionPathfinder(out IMapCollisionProvider provider)
+    {
+        var mapCachePath = Path.Combine(FindRepositoryRoot(), "legacy/rathena/db/map_cache.dat");
+        provider = MapCollisionStartupLoader.Load([], mapCachePath, RagnarokRuleSet.Renewal);
+        return new RathenaCompatibleMovementPathProvider(provider);
+    }
+
+    // Bug 2 root-cause regression: (44,54) on int_land04 is a genuine wall cell in the real pinned
+    // collision data, so World rejecting a click there is source-compatible, correct behavior - not
+    // an architecture bug to route around. Confirmed by direct inspection of the real data before
+    // writing this test (see the PR investigation): the entire row y=54 in this x-range is blocked.
+    [Fact]
+    public void ComputePath_IntLand04_BlockedTutorialCell_ReturnsEmptyPath()
+    {
+        var pathfinder = CreateProductionPathfinder(out var provider);
+        Assert.True(provider.TryGetMap("int_land04", out var map));
+
+        Assert.False(map.IsTraversalCell(44, 54));
+        Assert.True(map.IsTraversalCell(51, 60));
+
+        var path = pathfinder.ComputePath("int_land04", 51, 60, 44, 54);
+
+        Assert.Empty(path);
+    }
+
+    // Isolates "that specific click was blocked" from "the trigger itself is unreachable": the
+    // #intro_to_izlude_d warp trigger (legacy/rathena/npc/re/warps/cities/izlude.txt:113) sits at
+    // int_land04 (49,57) radius (2,2) - a genuinely different, reachable location from (44,54).
+    [Fact]
+    public void ComputePath_IntLand04_ReachesIntroToIzludeTrigger_FromRealisticApproach()
+    {
+        var pathfinder = CreateProductionPathfinder(out var provider);
+        Assert.True(provider.TryGetMap("int_land04", out var map));
+
+        // Find a walkable cell within the trigger's rectangle (center 49,57 radius 2,2).
+        ushort? triggerX = null, triggerY = null;
+        for (var dx = -2; dx <= 2 && triggerX is null; dx++)
+        {
+            for (var dy = -2; dy <= 2; dy++)
+            {
+                var x = (ushort)(49 + dx);
+                var y = (ushort)(57 + dy);
+                if (map.IsInBounds(x, y) && map.IsTraversalCell(x, y)) { triggerX = x; triggerY = y; break; }
+            }
+        }
+        Assert.NotNull(triggerX);
+
+        var path = pathfinder.ComputePath("int_land04", 51, 60, triggerX!.Value, triggerY!.Value);
+
+        Assert.NotEmpty(path);
+        Assert.All(path, cell => Assert.True(map.IsTraversalCell(cell.X, cell.Y)));
+    }
+
+    // Grounds the izlude_a (20,97) spawn-lock scenario (Bug 1) in real collision data too.
+    [Fact]
+    public void ComputePath_IzludeA_SpawnCellIsWalkable()
+    {
+        var pathfinder = CreateProductionPathfinder(out var provider);
+        Assert.True(provider.TryGetMap("izlude_a", out var map));
+
+        Assert.True(map.IsTraversalCell(20, 97));
+        Assert.True(map.IsTraversalCell(20, 98));
+    }
+
+    // Known-good control (live scenario C): prontera -> prt_fild08 already works and must never
+    // regress. Both maps exist ONLY in the Renewal ruleset overlay (db/re/map_cache.dat), not in
+    // the base cache - this test only passes because CreateProductionPathfinder uses the real
+    // three-layer composition, proving that composition is required, not merely convenient.
+    [Fact]
+    public void ComputePath_Prontera_ToPrtFild08Warp_KnownGoodControl()
+    {
+        var pathfinder = CreateProductionPathfinder(out var provider);
+        Assert.True(provider.TryGetMap("prontera", out var prontera));
+        Assert.True(provider.TryGetMap("prt_fild08", out var prtFild08));
+
+        Assert.True(prontera.IsTraversalCell(156, 26));
+        Assert.True(prtFild08.IsTraversalCell(170, 375));
+
+        var path = pathfinder.ComputePath("prontera", 156, 26, 156, 24);
+
+        Assert.NotEmpty(path);
+        Assert.All(path, cell => Assert.True(prontera.IsTraversalCell(cell.X, cell.Y)));
     }
 
     private static string FindRepositoryRoot()

@@ -917,10 +917,11 @@ deterministic (canonical relative source path, then source line).
   `MonsterRegistry.ScheduleRespawnIfNeeded` - real respawn timing still uses only the base delay.
 - `DeclaredLevel`/`EffectiveLevelOverride` are preserved losslessly as data but no runtime consumes
   a level override - see "Pinned syntax and modeled fields" above.
-- Fixed/rectangular spawn-area placement (`Xs`/`Ys` > 0) still throws `NotSupportedException` from
-  `RathenaCompatibleMobSpawnCellSelector` for maps with real collision data (see that type's own
-  doc comment) - only map-wide-random (`Xs=Ys=0`) declarations resolve real collision-backed cells
-  today.
+- Fixed/rectangular spawn-area placement (`Xs`/`Ys` > 0) is now implemented by
+  `RathenaCompatibleMobSpawnCellSelector` (pinned `npc_parse_mob` normalization +
+  `mob_spawn`/`map_search_freecell`'s rectangular/fixed-point search, see that type's own doc
+  comment) - map-wide, rectangular, and fixed-point declarations all resolve real collision-backed
+  cells; the type no longer throws `NotSupportedException` for any declared geometry.
 - No new maps were added to `MapServerHostingScope.ServedMaps` by this branch - registry
   completeness does not imply a map is actually hosted.
 - This project resolves only the RENEWAL script-config graph (`RathenaScriptConfigGraph`, rooted at
@@ -1072,9 +1073,9 @@ field with its load-class string (`"RenewalDefault"`/`"AthenaOverlay"`/`"PreRene
 exactly 10,068 entities, one per declaration); this is additive metadata, never a redefinition of
 the existing metric.
 
-## Travel corridor: Izlude -> prt_fild08d -> Prontera
+## Travel corridor: Izlude family -> prt_fild08 family -> Prontera
 
-`izlude-prontera-travel-trace.txt` documents the capture evidence for the next slice beyond
+`izlude-prontera-travel-trace.txt` documents the captured `d` member of the next slice beyond
 Academy: tutorial/ship -> `izlude_d` (196,209) -> free walk -> `prt_fild08d` (367,212) -> free
 walk -> `prontera` (156,34) -> free walk. Source captures: `Full-izlude.pcapng` (SHA-256
 `ee3bcbf2429d944c512d2ced10ce9c8db099dec79ad499f23b977462a0af2ec9`),
@@ -1090,6 +1091,14 @@ CharServer position/save-point persistence, and PR #19's `PlayerPresenceRegistry
 and map-name-agnostic — none take a map allowlist, and `TeleportTo`/`WarpAsync` accept any
 string. The entire gap was content generation: `izlude_d`, `prt_fild08d`, and `prontera` had
 zero compiled maps/warps/NPCs anywhere in `Generated/World/`.
+
+The pinned start-point configuration actually selects five tutorial family members: `iz_int` and
+`iz_int01` through `iz_int04`. `StrNpcInfo(2)` preserves the executing NPC's semantic suffix, so
+the corresponding generated exits correctly resolve to `izlude`, `izlude_a`, `izlude_b`,
+`izlude_c`, or `izlude_d`; the pinned city warps then lead to the matching `prt_fild08` family
+member. Hosting only the captured `d` member stranded legitimate `01` characters on `izlude_a`.
+The runtime therefore hosts all five source-backed corridors; it does not synthesize aliases or
+copy the `d` warp onto another map.
 
 ### Route-critical warps
 
@@ -1508,10 +1517,9 @@ Generated/World/PrtFild08/
 
 The directory/class names describe the canonical `prt_fild08` source-map family; each generated
 NPC placement and `MobSpawnDefinition` entry within it still preserves its own exact concrete map
-identity (`prt_fild08`, `prt_fild08a`, `b`, `c`, `d`) in its data/provenance - only `d` is
-currently a real travel-corridor destination (has a pinned warp actually leading to it), so no
-warp/script content is fabricated for the other four beyond what pinned source and the current
-generation selection (`Resting Adventurer#iz`, the four mobs) already provide.
+identity (`prt_fild08`, `prt_fild08a`, `b`, `c`, `d`) in its data/provenance. All five are real
+pinned travel-corridor destinations; no warp/script content is fabricated beyond pinned source
+and the current generation selection (`Resting Adventurer#iz`, the four mobs).
 
 All references the global `GeneratedMobs.*` constants — never a map-local copy of a mob's stats.
 In map-centric mode, the output root is treated as one generation unit: every existing
@@ -1524,8 +1532,9 @@ is byte-identical to the original single-mob command shape (verified by `Compile
 which risked one map's spawn command silently owning/overwriting the shared global definition
 class — corrected before that shape was ever composed into the live world).
 
-`MapServerHostingScope.ServedMaps` remains the sole runtime decision for which concrete map
-populations are actually instantiated (only `prt_fild08d` today) — generation is never scoped by
+`MapServerHostingScope.ServedMaps` decides which maps and warps are hosted.
+`MapServerHostingScope.MobSpawnMaps` is the narrower explicit activation boundary for generated
+monster populations (`prt_fild08d`, but not the newly hosted base/a/b/c field members, today) — generation is never scoped by
 what is currently served; every pinned family member's data is generated and registered
 regardless. File layout (category+range sharding for definitions, map-centric or duplicate-family
 for spawns) is purely organizational — consumers always reference `GeneratedMobs.<Name>` /
@@ -1534,10 +1543,9 @@ same pattern `GeneratedItems` is expected to use as more categories are imported
 
 #### Hosting scope: `servedMaps`
 
-A real pre-existing gap surfaced once `prt_fild08d`'s spawns were composed into the live world:
-pinned `legacy/rathena/db/map_cache.dat` has collision data for `prt_fild08a/b/c/d` but **not**
-for the plain/generic `prt_fild08` family member (confirmed by direct binary search) — a genuine
-upstream data gap, not something this project can fabricate a fix for.
+The root cache alone lacks plain `prt_fild08`, but the production Renewal layer merge includes its
+real 400x400 record from `legacy/rathena/db/re/map_cache.dat`. Startup validation always sees the
+merged collision source, matching rAthena's ruleset layering.
 
 "Reachable via a warp" and "served by this MapServer build" are different concepts (a character
 start_point, a persisted reconnect position, or a save point can make a map served with zero
@@ -1545,24 +1553,25 @@ static warps at all), so hosting scope is a new, explicit, hand-declared
 `MapServerHostingScope.ServedMaps` (`src/MapServer/World/MapServerHostingScope.cs`) — never
 inferred from the warp graph (`WorldMapRegistry.ReachableMaps` remains a diagnostic-only view, not
 a hosting-scope source) and never inferred from collision-data availability. `MapServerWorld.Build`
-gained an optional `servedMaps` parameter (`IReadOnlySet<string>?`, default `null` = no filtering,
-preserving every existing test's behavior); when supplied, a generated `MobSpawnDefinition` whose
-map is not in the set is excluded before `MonsterRegistry` construction — generated source data is
-untouched either way, only runtime instantiation is filtered. `MapServerApp.RunAsync` (the
-production composition root) always passes `MapServerHostingScope.ServedMaps` explicitly.
+accepts an optional `servedMaps` map/warp scope and a separately optional `mobSpawnMaps` activation
+scope (both default to the legacy unfiltered behavior when omitted). A generated
+`MobSpawnDefinition` outside the latter is excluded before `MonsterRegistry` construction —
+generated source data is untouched either way, only runtime instantiation is filtered.
+`MapServerApp.RunAsync` always passes both explicit production scopes.
 
 Semantics, with no per-map special case anywhere in `MonsterRegistry`:
 
-- generated spawn map **not** in `ServedMaps` → generated source data retained, nothing
-  instantiated, no error (`prt_fild08` today).
-- generated spawn map **in** `ServedMaps`, collision data present → instantiated normally
+- generated spawn map **not** in `MobSpawnMaps` → generated source data retained, nothing
+  instantiated, no error.
+- generated spawn map **in** `MobSpawnMaps`, collision data present → instantiated normally
   (`prt_fild08d`, `int_land*`, etc. today).
-- generated spawn map **in** `ServedMaps`, collision data missing → fails loudly via the existing
+- generated spawn map **in** `MobSpawnMaps`, collision data missing → fails loudly via the existing
   `RathenaCompatibleMobSpawnCellSelector` contract (a world-data/configuration error, never a
   silent gap).
 
-Current `ServedMaps`: the tutorial `int_land`/`iz_int` families (base + 01-04) and the travel
-corridor (`izlude_d`, `prt_fild08d`, `prontera`) — see `MapServerHostingScope`'s own doc comment.
+Current `ServedMaps`: the tutorial `int_land`/`iz_int` families (base + 01-04) and all five
+source-corresponding travel corridors (`izlude`/`izlude_a..d`, `prt_fild08`/`prt_fild08a..d`,
+then `prontera`) — see `MapServerHostingScope`'s own doc comment.
 
 ## Still missing
 

@@ -1,62 +1,81 @@
-# Orleans world runtime — phase 1
+# Orleans world runtime — Phase 2A
 
-## Current architecture
+## Authority model
 
 ```text
 Ragexe
   ↓ Ragnarok TCP
-MapServer (protocol and connection adapter)
-  ↓ protocol-independent Orleans client calls
-Athena.World (Orleans silo)
-  ↓
-IMapGrain("prontera")
+MapServer (protocol adapter and client projection)
+  ↓ protocol-independent commands containing logical MapId values
+IWorldRuntime / WorldPartitionResolver
+  ↓ Orleans
+WorldPartitionGrain
+  └── MapRuntime (map-local simulation unit inside the partition)
 ```
 
-Aspire models one local-development Orleans cluster, starts `Athena.World` as its silo, and supplies
-the client configuration to MapServer. LoginServer and CharServer remain ordinary services. They are
-not grains, and authentication, character persistence, SQL, and content loading remain outside Orleans.
+`WorldPartitionGrain` is the distributed authority. `MapRuntime` is a local simulation unit inside
+that authority; a map is not an Orleans grain. Partition IDs are routing details resolved below the
+gameplay boundary. The logical topology is independent of physical silo placement, and both initial
+partitions may run in one silo.
 
-The first migrated vertical slice is authenticated map presence. After the existing Ragnarok load-end
-flow constructs authoritative server-side player state, MapServer registers a protocol-independent
-`MapPlayerPresence` with the grain addressed by the normalized logical map name. Disconnect and map
-transition cleanup unregister it. The existing process-local presence/AOI projection remains active so
-client-visible spawn, movement, and disappearance packets retain their proven behavior during phase 1.
-
-Presence registration is retry-safe. A `PresenceId` is created by `MapClientSession` once for one
-logical world-presence lifecycle and is reused if registration is replayed. The first
-`CharacterId + PresenceId` command returns `Registered`; replaying that same identity returns
-`AlreadyRegistered` and remains success with one stored entry. A different `PresenceId` for a
-character already owned by another presence returns `Conflict` and cannot overwrite the owner.
-
-Unregistration includes both `CharacterId` and `PresenceId`. Replaying cleanup after removal returns
-`AlreadyAbsent`, while delayed cleanup from an older lifecycle returns `PresenceMismatch` and cannot
-remove a newer presence. Session takeover, map-transfer ownership, epochs, leases, and fencing tokens
-remain explicitly deferred to later phases.
-
-`IMapGrain` is intentionally coarse. Realtime movement, combat, monsters, NPC execution, collision,
-pathfinding, and visibility are intended to execute locally inside the map authority as they migrate.
-They must not become actor-per-monster, actor-per-cell, or per-operation distributed call graphs.
-
-## World actor IDs
-
-The current `MapServerWorld.Build` composition shares one `WorldActorIdAllocator` across NPC, warp, and
-monster registries, preserving the global `110,000,000+` runtime actor namespace. This phase does not
-instantiate those registries inside independent grain activations, so it does not create competing
-allocators. Before map simulation itself moves into Orleans, phase 2 must assign non-overlapping actor-ID
-ownership (or another simple globally unique scheme) while preserving the client-visible invariant.
-
-## Future direction (not implemented here)
+The initial topology is loaded from the shared `conf/world_partitions.json` representation by both
+MapServer and Athena.World:
 
 ```text
-Ragexe
-  ↓ TCP localhost
-Athena.Client
-  ↓ QUIC
-Athena.Edge
-  ↓ Orleans client
-Athena.World
+prontera-region
+├── prontera
+└── prt_fild*
+
+world-rest
+└── every other served map
 ```
 
-QUIC, Athena.Client, Athena.Edge, production clustering, custom placement, Orleans persistence, and the
-rest of the world migration are later phases. Physical silo IDs, hosts, and addresses must never enter
-gameplay-facing contracts: gameplay always addresses logical map identities such as `prontera`.
+Each grain resolves every map it is asked to own and rejects a map whose configured owner differs
+from its own grain key. MapServer cannot bypass this authority check by addressing the wrong grain.
+
+## Presence and transfer invariants
+
+A connected world session creates one stable `PresenceId`. Both `PresenceId` and the player
+`ActorId` remain unchanged across same-partition and cross-partition map transfers. Incoming
+transfers carry the immutable authoritative source `WorldPlayerPresence`; the destination never
+reconstructs an actor ID from a character ID.
+
+Unregister requires `CharacterId`, `PresenceId`, and the expected `MapId`. A cleanup for an old map
+returns `MapMismatch` and cannot remove the same presence after it has moved to a newer map.
+
+Same-partition transfers update the two local map runtimes atomically within one grain turn. A
+cross-partition transfer uses this bounded, explicit state machine:
+
+```text
+source Active → outgoing TransferringOut
+target PrepareIncoming → PendingIncoming (CharacterId reserved)
+target CommitIncoming → Active
+source FinalizeOutgoing → old Active removed, transfer completed
+```
+
+Prepare stores the source snapshot and reserves its `CharacterId`; ordinary registration and a
+different transfer cannot claim or overwrite that pending owner. Replaying the same prepare returns
+`AlreadyPrepared`, replaying commit returns `AlreadyCommitted`, replaying finalization returns
+`AlreadyFinalized`, and replaying the full transfer returns `AlreadyCompleted`. Source authority is
+not released before target commit succeeds. Finalization validates the recorded source map and
+presence identity, so a delayed operation cannot remove a newer owner created by a later transfer.
+
+## Movement
+
+The public movement command is protocol-independent intent: presence identity, character identity,
+logical map, expected source position, and requested destination. It contains neither Ragnarok
+packet data nor a MapServer-asserted `CollisionValidatedPath`. World resolves the authoritative route
+and position; MapServer uses the returned route only as a timed per-cell client projection. A rejected
+expected source position or route must not start local walking.
+
+Timed traversal, retargeting, arrival, OnTouch, NPC touch, and warp packet ordering remain MapServer
+projection responsibilities during this migration slice. Accepting an intent does not turn walking
+into an instant client-visible teleport: cells are still emitted according to the existing movement
+clock, and movement response ordering remains before a resulting map-change packet.
+
+## Deferred work
+
+The configured non-overlapping `WorldPartitionActorRanges` are reserved for Phase 2B, when NPC and
+monster runtime begins moving into partitions. Phase 2A does not allocate player IDs during transfer
+and does not migrate monsters, NPC execution, combat, drops, status effects, or persistence into
+Orleans.

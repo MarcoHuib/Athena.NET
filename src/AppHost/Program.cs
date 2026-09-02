@@ -46,6 +46,7 @@ var interConfigPath = Path.Combine(repoRoot, "conf", "inter_athena.conf");
 var subnetConfigPath = Path.Combine(repoRoot, "conf", "subnet_athena.conf");
 var loginMsgPath = Path.Combine(repoRoot, "conf", "msg_conf", "login_msg.conf");
 var secretsPath = Path.Combine(repoRoot, "solutionfiles", "secrets", "secret.json");
+var worldPartitionsPath = Path.Combine(repoRoot, "conf", "world_partitions.json");
 
 // MapServer's configured map_cache_path is CWD-relative.
 // Aspire does not guarantee that the MapServer child process starts
@@ -139,6 +140,14 @@ var world = builder
     .WithEnvironment(
         "DOTNET_ENVIRONMENT",
         "Development")
+
+    .WithEnvironment(
+        "ATHENA_WORLD_PARTITIONS_PATH",
+        worldPartitionsPath)
+
+    .WithEnvironment(
+        "ATHENA_WORLD_MAP_CACHE_PATH",
+        mapCachePath)
 
     .WithEnvironment(
         "OTEL_EXPORTER_OTLP_ENDPOINT",
@@ -273,6 +282,9 @@ builder
     .WithEnvironment(
         "OTEL_TRACES_EXPORTER",
         "otlp")
+    .WithEnvironment(
+        "ATHENA_WORLD_PARTITIONS_PATH", 
+        worldPartitionsPath)
 
     // Gives MapServer the same ClusterId, ServiceId and
     // development clustering configuration as Athena.World.

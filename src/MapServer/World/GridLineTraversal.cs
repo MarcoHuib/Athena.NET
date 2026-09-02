@@ -1,4 +1,4 @@
-namespace Athena.Net.MapServer.World;
+namespace Athena.Net.World.Runtime;
 
 public static class GridLineTraversal
 {

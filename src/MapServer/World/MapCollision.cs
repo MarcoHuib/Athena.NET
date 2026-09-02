@@ -1,4 +1,4 @@
-namespace Athena.Net.MapServer.World;
+namespace Athena.Net.World.Runtime;
 
 // Pinned rAthena's STATIC terrain cell state (legacy/rathena/src/map/map.hpp struct mapcell,
 // e985006171d2eb320ee512a653f4c83aea3d81b6): exactly three bits - walkable, shootable, water -

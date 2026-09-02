@@ -952,6 +952,7 @@
         "type": "Project",
         "dependencies": {
           "Athena.World.Contracts": "[1.0.0, )",
+          "Athena.World.Runtime": "[1.0.0, )",
           "Microsoft.Orleans.Server": "[10.3.0, )",
           "OpenTelemetry.Exporter.OpenTelemetryProtocol": "[1.17.0, )",
           "OpenTelemetry.Extensions.Hosting": "[1.17.0, )"
@@ -962,6 +963,9 @@
         "dependencies": {
           "Microsoft.Orleans.Sdk": "[10.3.0, )"
         }
+      },
+      "athena.world.runtime": {
+        "type": "Project"
       }
     }
   }

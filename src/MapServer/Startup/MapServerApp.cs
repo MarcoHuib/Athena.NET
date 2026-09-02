@@ -5,6 +5,7 @@ using Athena.Net.MapServer.Net;
 using Athena.Net.MapServer.Telemetry;
 using Athena.Net.MapServer.World;
 using Athena.Net.MapServer.World.GeneratedScripts;
+using Athena.Net.World.Contracts;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Orleans;
@@ -129,7 +130,20 @@ public static class MapServerApp
             collisionProvider: collisionProvider,
             rates: mergedConfig.GameplayRates,
             customsEnabled: mergedConfig.CustomsEnabled,
-            servedMaps: MapServerHostingScope.ServedMaps);
+            servedMaps: MapServerHostingScope.ServedMaps,
+            mobSpawnMaps: MapServerHostingScope.MobSpawnMaps);
+
+        var partitionTopologyPath =
+            Environment.GetEnvironmentVariable("ATHENA_WORLD_PARTITIONS_PATH") ??
+            Path.Combine("conf", "world_partitions.json");
+
+        var partitionResolver =
+            WorldPartitionTopologyLoader.Load(
+                partitionTopologyPath,
+                MapServerHostingScope.ServedMaps);
+
+        WorldPartitionActorRanges.Validate(
+            WorldPartitionActorRanges.Development);
 
         //
         // Orleans client host
@@ -164,7 +178,8 @@ public static class MapServerApp
         var worldRuntime =
             new OrleansWorldRuntime(
                 orleansHost.Services
-                    .GetRequiredService<IClusterClient>());
+                    .GetRequiredService<IClusterClient>(),
+                partitionResolver);
 
         var connector =
             new CharServerConnector(configStore);

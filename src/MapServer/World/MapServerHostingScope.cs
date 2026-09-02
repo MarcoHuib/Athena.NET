@@ -12,19 +12,18 @@ namespace Athena.Net.MapServer.World;
 // data is then missing; an unserved map's generated spawns are retained as source truth but never
 // instantiated).
 //
-// Current scope covers exactly what Athena.NET genuinely hosts today: the tutorial `int_land`
-// family (base + 01-04 instanced duplicates) and the Izlude -> prt_fild08d -> Prontera travel
-// corridor (ai/world-data.md's "Travel corridor" section). Plain `prt_fild08` is NOT included -
-// this remains a deliberate SCOPE decision (this build does not yet serve the generic/base field
-// map, only its instanced `d` duplicate the travel corridor actually routes players to), not a
-// collision-data limitation: an earlier version of this comment claimed pinned
+// Current scope covers exactly what Athena.NET genuinely hosts today: the complete tutorial family
+// and its five source-corresponding Izlude -> prt_fild08 -> Prontera corridors. CharServer's pinned
+// start-point configuration selects iz_int or iz_int01..04; the generated scripts consequently
+// derive izlude, izlude_a..d and the matching prt_fild08, prt_fild08a..d. Hosting only the `d`
+// member stranded legitimate `01` players on izlude_a. This remains an explicit scope decision,
+// not a derivation from collision coverage. An earlier version of this comment claimed pinned
 // `legacy/rathena/db/map_cache.dat` had no collision data for `prt_fild08` at all - that claim is
 // now KNOWN STALE. MapCollisionStartupLoader's ruleset-specific overlay merge (added to fix the
 // live Prontera collision crash - see ai/map-server.md's "Live stock-iRO acceptance fixes"
 // section) resolved this incidentally: pinned `legacy/rathena/db/re/map_cache.dat` genuinely
 // contains a real `prt_fild08` record (400x400) alongside its `a`/`b`/`c`/`d` instanced
-// duplicates. Adding `prt_fild08` to ServedMaps remains a separate, not-yet-made scope decision -
-// see `MapCollisionStartupLoaderTests.Load_RenewalRuleSet_RealPinnedMapCache_
+// duplicates. See `MapCollisionStartupLoaderTests.Load_RenewalRuleSet_RealPinnedMapCache_
 // PrtFild08BaseMapNowResolvesViaOverlay` for the regression proof this data now exists.
 public static class MapServerHostingScope
 {
@@ -32,8 +31,24 @@ public static class MapServerHostingScope
     {
         "int_land", "int_land01", "int_land02", "int_land03", "int_land04",
         "iz_int", "iz_int01", "iz_int02", "iz_int03", "iz_int04",
-        "izlude_d",
-        "prt_fild08d",
+        "izlude", "izlude_a", "izlude_b", "izlude_c", "izlude_d",
+        "prt_fild08", "prt_fild08a", "prt_fild08b", "prt_fild08c", "prt_fild08d",
+        "prontera",
+    };
+
+    // Gameplay map hosting and generated monster activation are intentionally separate scopes -
+    // this set remains a deliberate, hand-declared scope decision, never derived from ServedMaps
+    // or from collision-data availability. It previously excluded prt_fild08/a/b/c because
+    // RathenaCompatibleMobSpawnCellSelector only implemented pinned rAthena's map-wide spawn
+    // search and threw NotSupportedException for the base map's real rectangular declarations
+    // (e.g. the Poring spawn at legacy/rathena/npc/re/mobs/fields/prontera.txt:97,
+    // X:305,Y:233,Xs:10,Ys:10) - that gap is now closed (see MobSpawnCellSelector.cs's own doc
+    // comment for the full rectangular/fixed-point search this selector now reproduces), so the
+    // complete source-backed prt_fild08 family is included below.
+    public static readonly IReadOnlySet<string> MobSpawnMaps = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        "int_land", "int_land01", "int_land02", "int_land03", "int_land04",
+        "prt_fild08", "prt_fild08a", "prt_fild08b", "prt_fild08c", "prt_fild08d",
         "prontera",
     };
 

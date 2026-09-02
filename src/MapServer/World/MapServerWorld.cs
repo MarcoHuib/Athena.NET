@@ -67,12 +67,15 @@ public sealed record MapServerWorld(WorldMapRegistry Maps, MonsterRegistry Monst
     // that don't care about ruleset selection (most existing tests) construct
     // `new GameplayRuleServices(new RenewalBasicAttackRules())` directly, the same
     // way they already construct every other dependency this method takes.
-    // `collisionProvider` defaults to EmptyMapCollisionProvider.Instance: no map in this
-    // repository has imported collision data yet (see MapCollisionArtifact/MapCollisionCompiler's
-    // own doc comments - the proprietary source .gat files and any real derived artifact stay
-    // local/gitignored, never committed). Threaded through composition now so a future branch can
-    // supply a real provider without touching this signature's callers again; nothing in the
-    // current gameplay runtime consumes it yet.
+    // `collisionProvider` defaults to EmptyMapCollisionProvider.Instance: the proprietary source
+    // .gat files and any real derived artifact stay local/gitignored, never committed, so a caller
+    // that doesn't explicitly configure one (map_cache_path/map_collision_artifact - see
+    // MapCollisionArtifact/MapCollisionCompiler's own doc comments) gets the collision-less
+    // placeholder. This is no longer "nothing consumes it yet" - a REAL provider (the normal
+    // production startup case, see ai/world-data.md) drives player movement pathing
+    // (RathenaCompatibleMovementPathProvider), monster spawn cell selection
+    // (RathenaCompatibleMobSpawnCellSelector), monster idle movement (MonsterRuntime), and combat
+    // range checks, all through this same `resolvedCollisionProvider` instance below.
     // `customsEnabled` composes Athena.NET's own handwritten Customs/World content (currently
     // just the Athena Test NPC - see ai/map-server.md's "Handwritten custom world content"
     // section) alongside the generated world on the SAME WorldRegistryBuilder instance
@@ -101,7 +104,7 @@ public sealed record MapServerWorld(WorldMapRegistry Maps, MonsterRegistry Monst
     // relies on this default and never derives it from WorldMapRegistry.ReachableMaps (that
     // property remains a purely diagnostic/navigation view of the warp graph - see its own doc
     // comment - not a hosting-scope source).
-    public static MapServerWorld Build(GameplayRuleServices gameplayRules, IMobSpawnCellSelector? cellSelector = null, TimeProvider? timeProvider = null, IMapCollisionProvider? collisionProvider = null, GameplayRateOptions? rates = null, bool customsEnabled = false, IReadOnlySet<string>? servedMaps = null, IEnumerable<WarpDefinition>? warpDefinitions = null)
+    public static MapServerWorld Build(GameplayRuleServices gameplayRules, IMobSpawnCellSelector? cellSelector = null, TimeProvider? timeProvider = null, IMapCollisionProvider? collisionProvider = null, GameplayRateOptions? rates = null, bool customsEnabled = false, IReadOnlySet<string>? servedMaps = null, IEnumerable<WarpDefinition>? warpDefinitions = null, IReadOnlySet<string>? mobSpawnMaps = null)
     {
         var resolvedCollisionProvider = collisionProvider ?? EmptyMapCollisionProvider.Instance;
         var allocator = new WorldActorIdAllocator();
@@ -118,7 +121,8 @@ public sealed record MapServerWorld(WorldMapRegistry Maps, MonsterRegistry Monst
         IMobSpawnCellSelector defaultCellSelector = ReferenceEquals(resolvedCollisionProvider, EmptyMapCollisionProvider.Instance)
             ? new UnverifiedFallbackMobSpawnCellSelector()
             : new RathenaCompatibleMobSpawnCellSelector(resolvedCollisionProvider);
-        var servedMobSpawns = servedMaps is null ? world.MobSpawns : world.MobSpawns.Where(spawn => servedMaps.Contains(spawn.Map)).ToArray();
+        var effectiveMobSpawnMaps = mobSpawnMaps ?? servedMaps;
+        var servedMobSpawns = effectiveMobSpawnMaps is null ? world.MobSpawns : world.MobSpawns.Where(spawn => effectiveMobSpawnMaps.Contains(spawn.Map)).ToArray();
         var monsters = new MonsterRegistry(
             servedMobSpawns,
             allocator,

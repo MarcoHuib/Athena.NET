@@ -104,8 +104,25 @@ public sealed class WorldMapRegistry
     }
     public bool TryFindFirstWarpAlongRoute(string mapName, ushort fromX, ushort fromY, ushort toX, ushort toY, out WarpIntersection intersection)
     {
-        foreach (var (x, y) in GridLineTraversal.Enumerate(fromX, fromY, toX, toY)) if (TryFindWarp(mapName, x, y, out var warp)) { intersection = new(warp, x, y); return true; }
+        // Mirrors TryFindFirstScriptTouchEnterAlongRoute's own start-cell skip: the caller's current
+        // cell must never be re-reported as a newly-discovered intersection (pinned rAthena instead
+        // checks the start cell immediately on map load - see WorldMapRegistry.TryFindWarp's use in
+        // MapClientSession.TryFireImmediateSpawnTouchAsync).
+        var first = true;
+        foreach (var (x, y) in GridLineTraversal.Enumerate(fromX, fromY, toX, toY))
+        {
+            if (first) { first = false; continue; }
+            if (TryFindWarp(mapName, x, y, out var warp)) { intersection = new(warp, x, y); return true; }
+        }
         intersection = default; return false;
+    }
+    public bool TryFindTouchAt(string mapName, ushort x, ushort y, out WarpDefinition? warp, out ScriptTouchBinding? script)
+    {
+        if (TryFindWarp(mapName, x, y, out var foundWarp)) { warp = foundWarp; script = null; return true; }
+        script = _touchScripts.FirstOrDefault(candidate =>
+            string.Equals(candidate.Script.Map, mapName, StringComparison.OrdinalIgnoreCase) && candidate.Contains(x, y));
+        warp = null;
+        return script is not null;
     }
     public bool TryFindFirstScriptTouchEnterAlongRoute(string mapName, ushort fromX, ushort fromY, ushort toX, ushort toY, out ScriptTouchIntersection intersection)
     {

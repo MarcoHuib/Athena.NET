@@ -12,6 +12,29 @@ namespace Athena.Net.MapServer.Tests.Net;
 public sealed class MapClientSessionPlayerPresenceTests
 {
     [Fact]
+    public async Task RagnarokMovementRequest_FlowsThroughProtocolIndependentWorldAuthority()
+    {
+        var runtime = new RecordingWorldRuntime();
+        var players = new PlayerPresenceRegistry();
+        var coordinator = new PlayerVisibilityCoordinator(players);
+        await using var session = await ConnectAsync(30, 130, "Mover", 100, 100, players, coordinator, runtime);
+        await EnterWorldAsync(session);
+        await runtime.WaitForRegistrationsAsync(1);
+
+        await session.Stream.WriteAsync(BuildMovementRequest(102, 101));
+        Assert.Equal((short)0x0087, BinaryPrimitives.ReadInt16LittleEndian(await ReadExactAsync(session.Stream, 12)));
+        await runtime.WaitForMovementsAsync(1);
+
+        var command = Assert.Single(runtime.Movements);
+        Assert.Equal("prontera", command.MapId);
+        Assert.Equal((ushort)100, command.FromX);
+        Assert.Equal((ushort)100, command.FromY);
+        Assert.Equal((ushort)102, command.DestinationX);
+        Assert.Equal((ushort)101, command.DestinationY);
+        Assert.Equal(runtime.Registrations[0].PresenceId, command.PresenceId);
+    }
+
+    [Fact]
     public async Task RepeatedWorldEntry_ReusesPresenceId_AndCleanupUsesSameIdentity()
     {
         var runtime = new RecordingWorldRuntime();
@@ -205,35 +228,64 @@ public sealed class MapClientSessionPlayerPresenceTests
     private sealed class RecordingWorldRuntime : IWorldRuntime
     {
         private readonly Lock _gate = new();
-        private readonly List<MapPlayerPresence> _registrations = [];
+        private readonly List<WorldPlayerPresence> _registrations = [];
         private readonly List<(uint CharacterId, Guid PresenceId)> _unregistrations = [];
+        private readonly List<WorldMovementCommand> _movements = [];
 
-        public IReadOnlyList<MapPlayerPresence> Registrations { get { lock (_gate) return _registrations.ToArray(); } }
+        public IReadOnlyList<WorldPlayerPresence> Registrations { get { lock (_gate) return _registrations.ToArray(); } }
         public IReadOnlyList<(uint CharacterId, Guid PresenceId)> Unregistrations { get { lock (_gate) return _unregistrations.ToArray(); } }
+        public IReadOnlyList<WorldMovementCommand> Movements { get { lock (_gate) return _movements.ToArray(); } }
 
-        public Task<MapPresenceRegistration> RegisterPresenceAsync(string mapId, MapPlayerPresence presence, CancellationToken cancellationToken)
+        public Task<WorldPresenceRegistration> RegisterPresenceAsync(string mapId, WorldPlayerPresence presence, CancellationToken cancellationToken)
         {
             lock (_gate)
             {
                 var status = _registrations.Any(existing => existing.CharacterId == presence.CharacterId && existing.PresenceId == presence.PresenceId)
-                    ? MapPresenceRegistrationStatus.AlreadyRegistered
-                    : MapPresenceRegistrationStatus.Registered;
+                    ? WorldPresenceRegistrationStatus.AlreadyRegistered
+                    : WorldPresenceRegistrationStatus.Registered;
                 _registrations.Add(presence);
-                return Task.FromResult(new MapPresenceRegistration(mapId, status, 1));
+                return Task.FromResult(new WorldPresenceRegistration("test-partition", mapId, status, 1));
             }
         }
 
-        public Task<MapPresenceUnregistration> UnregisterPresenceAsync(string mapId, uint characterId, Guid presenceId, CancellationToken cancellationToken)
+        public Task<WorldPresenceUnregistration> UnregisterPresenceAsync(string mapId, uint characterId, Guid presenceId, CancellationToken cancellationToken)
         {
             lock (_gate)
             {
                 _unregistrations.Add((characterId, presenceId));
-                return Task.FromResult(new MapPresenceUnregistration(mapId, MapPresenceUnregistrationStatus.Removed, 0));
+                return Task.FromResult(new WorldPresenceUnregistration("test-partition", mapId, WorldPresenceUnregistrationStatus.Removed, 0));
             }
         }
 
         public Task WaitForRegistrationsAsync(int count) => WaitUntilAsync(() => Registrations.Count >= count);
         public Task WaitForUnregistrationsAsync(int count) => WaitUntilAsync(() => Unregistrations.Count >= count);
+
+        public Task<WorldMovementResult> MovePlayerAsync(WorldMovementCommand command, CancellationToken cancellationToken)
+        {
+            lock (_gate)
+            {
+                _movements.Add(command);
+                var registered = _registrations.Last();
+                var movementId = Guid.NewGuid();
+                WorldPosition[] path = [new(command.FromX, command.FromY), new(command.DestinationX, command.DestinationY)];
+                return Task.FromResult(new WorldMovementResult(WorldMovementStatus.Moved,
+                    registered, path, movementId));
+            }
+        }
+
+        public Task<WorldMovementResult> TruncateMovementAsync(WorldMovementTruncation command, CancellationToken cancellationToken) =>
+            Task.FromResult(new WorldMovementResult(WorldMovementStatus.Moved, null, MovementId: command.MovementId));
+
+        public Task<WorldMovementAdvanceResult> AdvanceMovementAsync(WorldMovementAdvance command, CancellationToken cancellationToken) =>
+            Task.FromResult(new WorldMovementAdvanceResult(WorldMovementAdvanceStatus.Advanced, null));
+
+        public Task<WorldMovementCancellationResult> CancelMovementAsync(WorldMovementCancellation command, CancellationToken cancellationToken) =>
+            Task.FromResult(new WorldMovementCancellationResult(WorldMovementCancellationStatus.Cancelled, null));
+
+        public Task<WorldTransferResult> TransferPlayerAsync(WorldTransferCommand command, CancellationToken cancellationToken) =>
+            Task.FromResult(new WorldTransferResult(WorldTransferStatus.Completed, WorldTransferType.SamePartition, null));
+
+        public Task WaitForMovementsAsync(int count) => WaitUntilAsync(() => Movements.Count >= count);
 
         private static async Task WaitUntilAsync(Func<bool> condition)
         {
