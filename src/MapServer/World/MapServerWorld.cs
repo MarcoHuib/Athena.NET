@@ -101,7 +101,7 @@ public sealed record MapServerWorld(WorldMapRegistry Maps, MonsterRegistry Monst
     // relies on this default and never derives it from WorldMapRegistry.ReachableMaps (that
     // property remains a purely diagnostic/navigation view of the warp graph - see its own doc
     // comment - not a hosting-scope source).
-    public static MapServerWorld Build(GameplayRuleServices gameplayRules, IMobSpawnCellSelector? cellSelector = null, TimeProvider? timeProvider = null, IMapCollisionProvider? collisionProvider = null, GameplayRateOptions? rates = null, bool customsEnabled = false, IReadOnlySet<string>? servedMaps = null, IEnumerable<WarpDefinition>? warpDefinitions = null)
+    public static MapServerWorld Build(GameplayRuleServices gameplayRules, IMobSpawnCellSelector? cellSelector = null, TimeProvider? timeProvider = null, IMapCollisionProvider? collisionProvider = null, GameplayRateOptions? rates = null, bool customsEnabled = false, IReadOnlySet<string>? servedMaps = null, IEnumerable<WarpDefinition>? warpDefinitions = null, IReadOnlySet<string>? mobSpawnMaps = null)
     {
         var resolvedCollisionProvider = collisionProvider ?? EmptyMapCollisionProvider.Instance;
         var allocator = new WorldActorIdAllocator();
@@ -118,7 +118,8 @@ public sealed record MapServerWorld(WorldMapRegistry Maps, MonsterRegistry Monst
         IMobSpawnCellSelector defaultCellSelector = ReferenceEquals(resolvedCollisionProvider, EmptyMapCollisionProvider.Instance)
             ? new UnverifiedFallbackMobSpawnCellSelector()
             : new RathenaCompatibleMobSpawnCellSelector(resolvedCollisionProvider);
-        var servedMobSpawns = servedMaps is null ? world.MobSpawns : world.MobSpawns.Where(spawn => servedMaps.Contains(spawn.Map)).ToArray();
+        var effectiveMobSpawnMaps = mobSpawnMaps ?? servedMaps;
+        var servedMobSpawns = effectiveMobSpawnMaps is null ? world.MobSpawns : world.MobSpawns.Where(spawn => effectiveMobSpawnMaps.Contains(spawn.Map)).ToArray();
         var monsters = new MonsterRegistry(
             servedMobSpawns,
             allocator,

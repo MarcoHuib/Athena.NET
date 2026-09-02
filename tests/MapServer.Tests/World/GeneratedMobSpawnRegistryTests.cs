@@ -68,7 +68,7 @@ public sealed class GeneratedMobSpawnRegistryTests
         Assert.Equal([267, 268, 269], evtZombieSpawns.Select(spawn => spawn.Source.Line));
         Assert.DoesNotContain("evt_zombie", MapServerHostingScope.ServedMaps);
 
-        var world = MapServerWorld.Build(new GameplayRuleServices(new RenewalBasicAttackRules()), servedMaps: MapServerHostingScope.ServedMaps);
+        var world = MapServerWorld.Build(new GameplayRuleServices(new RenewalBasicAttackRules()), servedMaps: MapServerHostingScope.ServedMaps, mobSpawnMaps: MapServerHostingScope.MobSpawnMaps);
         Assert.DoesNotContain(world.Monsters.AllInstances, instance => instance.Map == "evt_zombie");
     }
 
@@ -206,7 +206,7 @@ public sealed class GeneratedMobSpawnRegistryTests
         // Never a valid/served map - runtime activation stays disabled regardless of the
         // organizational Events/ placement used to generate these three declarations.
         Assert.DoesNotContain("evt_zombie", MapServerHostingScope.ServedMaps);
-        var world = MapServerWorld.Build(new GameplayRuleServices(new RenewalBasicAttackRules()), servedMaps: MapServerHostingScope.ServedMaps);
+        var world = MapServerWorld.Build(new GameplayRuleServices(new RenewalBasicAttackRules()), servedMaps: MapServerHostingScope.ServedMaps, mobSpawnMaps: MapServerHostingScope.MobSpawnMaps);
         Assert.DoesNotContain(world.Monsters.AllInstances, instance => instance.Map == "evt_zombie");
     }
 }
@@ -271,7 +271,7 @@ public sealed class GeneratedMobSpawnLoadProfilesTests
         Assert.All(academyDeclarations, spawn => Assert.Contains(spawn, effectiveSet));
 
         // Still reachable through a live built world exactly as today (unchanged behavior).
-        var world = MapServerWorld.Build(new GameplayRuleServices(new RenewalBasicAttackRules()), servedMaps: MapServerHostingScope.ServedMaps);
+        var world = MapServerWorld.Build(new GameplayRuleServices(new RenewalBasicAttackRules()), servedMaps: MapServerHostingScope.ServedMaps, mobSpawnMaps: MapServerHostingScope.MobSpawnMaps);
         Assert.Contains(world.Monsters.AllInstances, instance => instance.Map == "prt_fild08d" && instance.Spawn.Mob.AegisName == "PORING");
     }
 

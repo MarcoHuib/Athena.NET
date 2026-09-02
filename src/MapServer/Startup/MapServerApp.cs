@@ -130,7 +130,8 @@ public static class MapServerApp
             collisionProvider: collisionProvider,
             rates: mergedConfig.GameplayRates,
             customsEnabled: mergedConfig.CustomsEnabled,
-            servedMaps: MapServerHostingScope.ServedMaps);
+            servedMaps: MapServerHostingScope.ServedMaps,
+            mobSpawnMaps: MapServerHostingScope.MobSpawnMaps);
 
         var partitionTopologyPath =
             Environment.GetEnvironmentVariable("ATHENA_WORLD_PARTITIONS_PATH") ??

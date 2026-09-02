@@ -60,7 +60,7 @@ public sealed class WorldPartitionGrain(IWorldPartitionResolver resolver, IMovem
             return Task.FromResult(new WorldMovementResult(WorldMovementStatus.Rejected, current));
         var path = movementPathProvider.ComputePath(mapId, command.FromX, command.FromY, command.DestinationX, command.DestinationY)
             .Select(cell => new WorldPosition(cell.X, cell.Y)).ToArray();
-        if (path.Count < 2) return Task.FromResult(new WorldMovementResult(WorldMovementStatus.Rejected, current));
+        if (path.Length < 2) return Task.FromResult(new WorldMovementResult(WorldMovementStatus.Rejected, current));
         var movementId = Guid.NewGuid();
         _movements[command.CharacterId] = new(movementId, command.PresenceId, mapId, path);
         return Task.FromResult(new WorldMovementResult(WorldMovementStatus.Moved, current, path, movementId));

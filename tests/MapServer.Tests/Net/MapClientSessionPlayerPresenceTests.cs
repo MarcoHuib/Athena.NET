@@ -266,8 +266,10 @@ public sealed class MapClientSessionPlayerPresenceTests
             {
                 _movements.Add(command);
                 var registered = _registrations.Last();
+                var movementId = Guid.NewGuid();
+                WorldPosition[] path = [new(command.FromX, command.FromY), new(command.DestinationX, command.DestinationY)];
                 return Task.FromResult(new WorldMovementResult(WorldMovementStatus.Moved,
-                    registered with { X = command.DestinationX, Y = command.DestinationY }));
+                    registered, path, movementId));
             }
         }
 

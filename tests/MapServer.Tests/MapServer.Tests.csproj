@@ -20,6 +20,7 @@
 
   <ItemGroup>
     <ProjectReference Include="../../src/MapServer/MapServer.csproj" />
+    <ProjectReference Include="../../src/WorldServer/Athena.World.Runtime/Athena.World.Runtime.csproj" />
   </ItemGroup>
 
 </Project>

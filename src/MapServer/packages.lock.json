@@ -591,6 +591,9 @@
         "dependencies": {
           "Microsoft.Orleans.Sdk": "[10.3.0, )"
         }
+      },
+      "athena.world.runtime": {
+        "type": "Project"
       }
     }
   }

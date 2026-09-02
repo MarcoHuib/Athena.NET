@@ -51,6 +51,7 @@ public sealed class MapTcpServer
     {
         private readonly Dictionary<uint, WorldPlayerPresence> _presences = [];
         private readonly Dictionary<Guid, WorldTransferResult> _transfers = [];
+        private readonly Dictionary<uint, TestMovement> _movements = [];
         private readonly Lock _gate = new();
 
         public Task<WorldPresenceRegistration> RegisterPresenceAsync(string mapId, WorldPlayerPresence presence, CancellationToken cancellationToken) =>
@@ -102,22 +103,41 @@ public sealed class MapTcpServer
                 if (current.PresenceId != command.PresenceId) return Task.FromResult(new WorldMovementResult(WorldMovementStatus.PresenceMismatch, current));
                 if (!string.Equals(current.MapId, WorldMapId.Normalize(command.MapId), StringComparison.OrdinalIgnoreCase) || current.X != command.FromX || current.Y != command.FromY)
                     return Task.FromResult(new WorldMovementResult(WorldMovementStatus.SourceMismatch, current));
-                var moved = current with { X = command.DestinationX, Y = command.DestinationY };
-                _presences[command.CharacterId] = moved;
-                return Task.FromResult(new WorldMovementResult(WorldMovementStatus.Moved, moved));
+                var movementId = Guid.NewGuid();
+                WorldPosition[] path = [new(command.FromX, command.FromY), new(command.DestinationX, command.DestinationY)];
+                _movements[command.CharacterId] = new(movementId, path);
+                return Task.FromResult(new WorldMovementResult(WorldMovementStatus.Moved, current, path, movementId));
             }
         }
 
-        public Task<WorldMovementResult> TruncateMovementAsync(WorldMovementTruncation command, CancellationToken cancellationToken) =>
-            Task.FromResult(new WorldMovementResult(WorldMovementStatus.Moved, _presences.GetValueOrDefault(command.CharacterId), MovementId: command.MovementId));
+        public Task<WorldMovementResult> TruncateMovementAsync(WorldMovementTruncation command, CancellationToken cancellationToken)
+        {
+            lock (_gate)
+            {
+                if (!_movements.TryGetValue(command.CharacterId, out var movement) || movement.Id != command.MovementId)
+                    return Task.FromResult(new WorldMovementResult(WorldMovementStatus.Rejected, _presences.GetValueOrDefault(command.CharacterId)));
+                var index = Array.FindIndex(movement.Path, cell => cell.X == command.DestinationX && cell.Y == command.DestinationY);
+                if (index < 1) return Task.FromResult(new WorldMovementResult(WorldMovementStatus.Rejected, _presences.GetValueOrDefault(command.CharacterId)));
+                var path = movement.Path[..(index + 1)];
+                _movements[command.CharacterId] = movement with { Path = path };
+                return Task.FromResult(new WorldMovementResult(WorldMovementStatus.Moved, _presences.GetValueOrDefault(command.CharacterId), path, command.MovementId));
+            }
+        }
 
         public Task<WorldMovementAdvanceResult> AdvanceMovementAsync(WorldMovementAdvance command, CancellationToken cancellationToken)
         {
             lock (_gate)
             {
                 if (!_presences.TryGetValue(command.CharacterId, out var current)) return Task.FromResult(new WorldMovementAdvanceResult(WorldMovementAdvanceStatus.NotFound, null));
+                if (current.PresenceId != command.PresenceId) return Task.FromResult(new WorldMovementAdvanceResult(WorldMovementAdvanceStatus.PresenceMismatch, current));
                 if (current.X != command.ExpectedX || current.Y != command.ExpectedY) return Task.FromResult(new WorldMovementAdvanceResult(WorldMovementAdvanceStatus.SourceMismatch, current));
+                if (!_movements.TryGetValue(command.CharacterId, out var movement) || movement.Id != command.MovementId)
+                    return Task.FromResult(new WorldMovementAdvanceResult(WorldMovementAdvanceStatus.StaleRoute, current));
+                var currentIndex = Array.FindIndex(movement.Path, cell => cell.X == current.X && cell.Y == current.Y);
+                if (currentIndex < 0 || currentIndex + 1 >= movement.Path.Length || movement.Path[currentIndex + 1] != new WorldPosition(command.NewX, command.NewY))
+                    return Task.FromResult(new WorldMovementAdvanceResult(WorldMovementAdvanceStatus.Rejected, current));
                 var advanced = current with { X = command.NewX, Y = command.NewY }; _presences[command.CharacterId] = advanced;
+                if (currentIndex + 1 == movement.Path.Length - 1) _movements.Remove(command.CharacterId);
                 return Task.FromResult(new WorldMovementAdvanceResult(WorldMovementAdvanceStatus.Advanced, advanced));
             }
         }
@@ -137,6 +157,8 @@ public sealed class MapTcpServer
                 return Task.FromResult(result);
             }
         }
+
+        private sealed record TestMovement(Guid Id, WorldPosition[] Path);
     }
 
     public int BoundPort { get; private set; }
