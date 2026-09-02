@@ -348,7 +348,7 @@ static void EnsureSqlServerPassword()
     }
 
     throw new InvalidOperationException(
-        "Missing SQL Edge SA password. " +
+        "Missing SQL Server SA password." +
         "Set Parameters__sql-server-password or " +
         "SqlServer.SaPassword in solutionfiles/secrets/secret.json.");
 }
