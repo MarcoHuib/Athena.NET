@@ -104,10 +104,16 @@ public sealed record MapServerWorld(WorldMapRegistry Maps, MonsterRegistry Monst
     // relies on this default and never derives it from WorldMapRegistry.ReachableMaps (that
     // property remains a purely diagnostic/navigation view of the warp graph - see its own doc
     // comment - not a hosting-scope source).
-    public static MapServerWorld Build(GameplayRuleServices gameplayRules, IMobSpawnCellSelector? cellSelector = null, TimeProvider? timeProvider = null, IMapCollisionProvider? collisionProvider = null, GameplayRateOptions? rates = null, bool customsEnabled = false, IReadOnlySet<string>? servedMaps = null, IEnumerable<WarpDefinition>? warpDefinitions = null, IReadOnlySet<string>? mobSpawnMaps = null)
+    // `actorIdAllocator` defaults to null, which means "construct the default 110,000,000-based
+    // WorldActorIdAllocator here" - every existing caller/test that doesn't pass one keeps
+    // behaving exactly as before. Production (MapServerApp.RunAsync) passes an explicit allocator
+    // seeded from conf/world_partitions.json's reserved npcWarpActorIdRange (see
+    // WorldActorIdAllocator's own doc comment) so the NPC/warp domain this parameter feeds into
+    // WorldMapRegistry never overlaps a monster partition's own actor-ID range.
+    public static MapServerWorld Build(GameplayRuleServices gameplayRules, IMobSpawnCellSelector? cellSelector = null, TimeProvider? timeProvider = null, IMapCollisionProvider? collisionProvider = null, GameplayRateOptions? rates = null, bool customsEnabled = false, IReadOnlySet<string>? servedMaps = null, IEnumerable<WarpDefinition>? warpDefinitions = null, IReadOnlySet<string>? mobSpawnMaps = null, WorldActorIdAllocator? actorIdAllocator = null)
     {
         var resolvedCollisionProvider = collisionProvider ?? EmptyMapCollisionProvider.Instance;
-        var allocator = new WorldActorIdAllocator();
+        var allocator = actorIdAllocator ?? new WorldActorIdAllocator();
         var builder = new WorldRegistryBuilder();
         GeneratedScriptRegistry.Register(builder);
         if (customsEnabled) CustomWorldRegistry.Register(builder);
@@ -125,7 +131,7 @@ public sealed record MapServerWorld(WorldMapRegistry Maps, MonsterRegistry Monst
         var servedMobSpawns = effectiveMobSpawnMaps is null ? world.MobSpawns : world.MobSpawns.Where(spawn => effectiveMobSpawnMaps.Contains(spawn.Map)).ToArray();
         var monsters = new MonsterRegistry(
             servedMobSpawns,
-            allocator,
+            allocator.Allocate,
             cellSelector ?? defaultCellSelector,
             timeProvider ?? TimeProvider.System);
         var questDrops = new QuestDropResolver(GeneratedQuestDrops.All);

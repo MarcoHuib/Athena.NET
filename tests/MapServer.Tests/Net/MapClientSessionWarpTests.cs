@@ -249,7 +249,7 @@ public sealed class MapClientSessionWarpTests
         var allocator = new WorldActorIdAllocator();
         var registry = new WorldMapRegistry([warp], [], scripts: null, allocator: allocator);
         var spawn = new MobSpawnDefinition(GeneratedMobs.GPoring, "test-warp-map", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "test", 0));
-        var monsters = new MonsterRegistry([spawn], allocator, new FixedCellSelector(10, 5), TimeProvider.System);
+        var monsters = new MonsterRegistry([spawn], allocator.Allocate, new FixedCellSelector(10, 5), TimeProvider.System);
         Assert.Single(monsters.AllInstances);
         Assert.True(monsters.AllInstances[0].IsAlive);
         Assert.Single(monsters.GetVisibleInstances("test-warp-map", 10, 0));
@@ -363,7 +363,7 @@ public sealed class MapClientSessionWarpTests
         var allocator = new WorldActorIdAllocator();
         var registry = new WorldMapRegistry([], [], scripts: null, allocator: allocator);
         var spawn = new MobSpawnDefinition(GeneratedMobs.GPoring, "aoi-map", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "test", 0));
-        var monsters = new MonsterRegistry([spawn], allocator, new FixedCellSelector(25, 5), TimeProvider.System);
+        var monsters = new MonsterRegistry([spawn], allocator.Allocate, new FixedCellSelector(25, 5), TimeProvider.System);
         var monsterActorId = monsters.AllInstances[0].ActorId;
         var clock = new Athena.Net.MapServer.Tests.Testing.ControllableTimeProvider();
         await using var session = new MapClientSession(

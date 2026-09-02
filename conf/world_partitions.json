@@ -1,9 +1,12 @@
 {
+  "npcWarpActorIdRange": { "start": 200000000, "end": 209999999 },
   "prontera-region": {
-    "includeMaps": ["prontera", "prt_fild*"]
+    "includeMaps": ["prontera", "prt_fild*"],
+    "actorIdRange": { "start": 110000000, "end": 119999999 }
   },
   "world-rest": {
     "includeMaps": ["*"],
-    "excludeMaps": ["prontera", "prt_fild*"]
+    "excludeMaps": ["prontera", "prt_fild*"],
+    "actorIdRange": { "start": 120000000, "end": 129999999 }
   }
 }

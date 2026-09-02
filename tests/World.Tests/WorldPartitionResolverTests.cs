@@ -155,12 +155,19 @@ public sealed class WorldPartitionResolverTests
     public void DuplicatePartitionIds_FailValidation() => Assert.Throws<InvalidOperationException>(() =>
         new WorldPartitionResolver([new("a", ["prontera"]), new("a", ["izlude"])], []));
 
+    // Config-driven actor-ID ranges (replacing the removed hardcoded WorldPartitionActorRanges.
+    // Development table) - loaded from the SAME real conf/world_partitions.json document
+    // WorldPartitionTopologyLoader.LoadDocument production callers use, proving the per-partition
+    // actorIdRange entries AND the reserved npcWarpActorIdRange sibling together validate as
+    // non-overlapping and that two different partitions' allocators genuinely draw from disjoint
+    // ranges.
     [Fact]
-    public void DevelopmentActorRanges_DoNotOverlap()
+    public void ProductionActorRanges_DoNotOverlap()
     {
-        WorldPartitionActorRanges.Validate(WorldPartitionActorRanges.Development);
-        var prontera = new PartitionWorldActorIdAllocator(WorldPartitionActorRanges.Development[0]);
-        var rest = new PartitionWorldActorIdAllocator(WorldPartitionActorRanges.Development[1]);
+        var document = WorldPartitionTopologyLoader.LoadDocument(TestWorldPartitionsPath.Resolve());
+        WorldPartitionActorRanges.ValidateAll(document);
+        var prontera = new PartitionWorldActorIdAllocator(document.Partitions.Single(p => p.PartitionId == "prontera-region").ActorIdRange!.Value);
+        var rest = new PartitionWorldActorIdAllocator(document.Partitions.Single(p => p.PartitionId == "world-rest").ActorIdRange!.Value);
         Assert.NotEqual(prontera.Allocate(), rest.Allocate());
     }
 

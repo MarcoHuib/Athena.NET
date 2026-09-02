@@ -101,7 +101,7 @@ public sealed class MapTcpServerMonsterEngagementFanOutTests
     {
         var allocator = new WorldActorIdAllocator();
         var spawnDefinition = new MobSpawnDefinition(GeneratedMobs.GPoring, Map, 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "test", 0));
-        var registry = new MonsterRegistry([spawnDefinition], allocator, new FixedCellSelector(monsterX, monsterY), timeProvider);
+        var registry = new MonsterRegistry([spawnDefinition], allocator.Allocate, new FixedCellSelector(monsterX, monsterY), timeProvider);
         var questDrops = new QuestDropResolver(GeneratedQuestDrops.All);
         var combat = new MonsterCombatCoordinator(registry, questDrops, new RenewalBasicAttackRules());
         var collisionMap = new MapCollisionMap(Map, 100, 100, Enumerable.Repeat(MapCellFlags.Walkable, 100 * 100).ToArray());
@@ -207,7 +207,7 @@ public sealed class MapTcpServerMonsterEngagementFanOutTests
         // fan-out) is unaffected by which Attack value the mob_db row happens to carry (see
         // MapClientSessionMobEngagementTests' own identical convention/comment for this fixture).
         var strongMobSpawn = world.Poring.Spawn with { Mob = world.Poring.Spawn.Mob with { Attack = 1000, AttackDelay = 2000 } };
-        var strongRegistry = new MonsterRegistry([strongMobSpawn], new WorldActorIdAllocator(), new FixedCellSelector(76, 51), clock);
+        var strongRegistry = new MonsterRegistry([strongMobSpawn], new WorldActorIdAllocator().Allocate, new FixedCellSelector(76, 51), clock);
         var strongPoring = strongRegistry.AllInstances[0];
         var strongWorld = world with { Registry = strongRegistry, Poring = strongPoring };
         var strongServer = MakeServerFor(strongWorld, clock);

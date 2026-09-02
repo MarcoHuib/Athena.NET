@@ -78,7 +78,7 @@ public sealed class PoringQuestDropIntegrationTests
         var clock = new FakeTimeProvider();
         var registry = new MonsterRegistry(
             [GeneratedMobSpawnRegistry.GetForMap("int_land03").Single(s => s.Mob.Id == GeneratedMobs.GPoring.Id)], // matching real generated data.
-            new WorldActorIdAllocator(),
+            new WorldActorIdAllocator().Allocate,
             new FixedCellSelector(50, 50),
             clock);
         var questDrops = new QuestDropResolver(GeneratedQuestDrops.All);
@@ -134,7 +134,7 @@ public sealed class PoringQuestDropIntegrationTests
         var clock = new FakeTimeProvider();
         var registry = new MonsterRegistry(
             [GeneratedMobSpawnRegistry.GetForMap("int_land").Single(s => s.Mob.Id == GeneratedMobs.GPoring.Id)],
-            new WorldActorIdAllocator(),
+            new WorldActorIdAllocator().Allocate,
             new FixedCellSelector(50, 50),
             clock);
         var combat = new MonsterCombatCoordinator(registry, new QuestDropResolver(GeneratedQuestDrops.All), new RenewalBasicAttackRules());
@@ -162,7 +162,7 @@ public sealed class PoringQuestDropIntegrationTests
         var clock = new FakeTimeProvider();
         var registry = new MonsterRegistry(
             [GeneratedMobSpawnRegistry.GetForMap("int_land").Single(s => s.Mob.Id == GeneratedMobs.GPoring.Id)],
-            new WorldActorIdAllocator(),
+            new WorldActorIdAllocator().Allocate,
             new FixedCellSelector(50, 50),
             clock);
         var combat = new MonsterCombatCoordinator(registry, new QuestDropResolver(GeneratedQuestDrops.All), new RenewalBasicAttackRules());

@@ -94,7 +94,7 @@ public sealed class PrtFild08dMonsterVisibilityAndRespawnIntegrationTests
 
         var clock = new FakeTimeProvider();
         var allocator = new WorldActorIdAllocator();
-        var registry = new MonsterRegistry([spawn with { Count = 1 }], allocator, new FixedCellSelector(500, 500), clock);
+        var registry = new MonsterRegistry([spawn with { Count = 1 }], allocator.Allocate, new FixedCellSelector(500, 500), clock);
         var combat = new MonsterCombatCoordinator(registry, new QuestDropResolver(Generated.GameData.Quests.GeneratedQuestDrops.All), new RenewalBasicAttackRules());
         var target = registry.AllInstances[0];
         Assert.Equal("prt_fild08d", target.Map);

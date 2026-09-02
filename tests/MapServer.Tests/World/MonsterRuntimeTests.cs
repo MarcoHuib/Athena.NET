@@ -26,7 +26,7 @@ public sealed class MonsterRuntimeTests
         IEnumerable<MobSpawnDefinition> spawns, ushort spawnX, ushort spawnY, MapCollisionMap map)
     {
         var clock = new FakeTimeProvider();
-        var registry = new MonsterRegistry(spawns, new WorldActorIdAllocator(), new FixedCellSelector(spawnX, spawnY), clock);
+        var registry = new MonsterRegistry(spawns, new WorldActorIdAllocator().Allocate, new FixedCellSelector(spawnX, spawnY), clock);
         var provider = new MapCollisionProvider([map]);
         var pathProvider = new RathenaCompatibleMovementPathProvider(provider);
         var runtime = new MonsterRuntime(registry, provider, pathProvider, clock);
@@ -150,7 +150,7 @@ public sealed class MonsterRuntimeTests
         // monster" - two different FixedCellSelector-placed spawns would collapse to the same cell
         // otherwise, so this test simply extends MakeRuntime's single-selector limit by asserting
         // both instances (from two spawns dispatched through one registry) evolve independently.
-        var registry = new MonsterRegistry([spawnA, spawnB], new WorldActorIdAllocator(), new FixedCellSelector(20, 20), clock);
+        var registry = new MonsterRegistry([spawnA, spawnB], new WorldActorIdAllocator().Allocate, new FixedCellSelector(20, 20), clock);
         var provider = new MapCollisionProvider([map]);
         var pathProvider = new RathenaCompatibleMovementPathProvider(provider);
         var runtime = new MonsterRuntime(registry, provider, pathProvider, clock);
@@ -217,7 +217,7 @@ public sealed class MonsterRuntimeTests
         var map = MakeAllWalkableMap("test_map", 40);
         var spawn = MakeSpawn(walkSpeed: 400) with { RespawnDelay = 1000 };
         var clock = new FakeTimeProvider();
-        var registry = new MonsterRegistry([spawn], new WorldActorIdAllocator(), new FixedCellSelector(20, 20), clock);
+        var registry = new MonsterRegistry([spawn], new WorldActorIdAllocator().Allocate, new FixedCellSelector(20, 20), clock);
         var provider = new MapCollisionProvider([map]);
         var pathProvider = new RathenaCompatibleMovementPathProvider(provider);
         var runtime = new MonsterRuntime(registry, provider, pathProvider, clock);
@@ -256,7 +256,7 @@ public sealed class MonsterRuntimeTests
         var map = MakeAllWalkableMap("test_map", 40);
         var spawn = MakeSpawn();
         var clock = new FakeTimeProvider();
-        var registry = new MonsterRegistry([spawn], new WorldActorIdAllocator(), new FixedCellSelector(20, 20), clock);
+        var registry = new MonsterRegistry([spawn], new WorldActorIdAllocator().Allocate, new FixedCellSelector(20, 20), clock);
         var provider = new MapCollisionProvider([map]);
         var pathProvider = new RathenaCompatibleMovementPathProvider(provider);
         var runtime = new MonsterRuntime(registry, provider, pathProvider, clock, randomSearchSeed: () => 0, randomDirection: () => rdir);
@@ -298,7 +298,7 @@ public sealed class MonsterRuntimeTests
 
         var spawn = MakeSpawn();
         var clock = new FakeTimeProvider();
-        var registry = new MonsterRegistry([spawn], new WorldActorIdAllocator(), new FixedCellSelector(spawnX, spawnY), clock);
+        var registry = new MonsterRegistry([spawn], new WorldActorIdAllocator().Allocate, new FixedCellSelector(spawnX, spawnY), clock);
         var provider = new MapCollisionProvider([map]);
         var pathProvider = new RathenaCompatibleMovementPathProvider(provider);
         var runtime = new MonsterRuntime(registry, provider, pathProvider, clock, randomSearchSeed: () => 0, randomDirection: () => rdir);
@@ -335,7 +335,7 @@ public sealed class MonsterRuntimeTests
             var map = new MapCollisionMap("test_map", width, height, cells);
             var spawn = MakeSpawn();
             var clock = new FakeTimeProvider();
-            var registry = new MonsterRegistry([spawn], new WorldActorIdAllocator(), new FixedCellSelector(spawnX, spawnY), clock);
+            var registry = new MonsterRegistry([spawn], new WorldActorIdAllocator().Allocate, new FixedCellSelector(spawnX, spawnY), clock);
             var provider = new MapCollisionProvider([map]);
             var pathProvider = new RathenaCompatibleMovementPathProvider(provider);
             var runtime = new MonsterRuntime(registry, provider, pathProvider, clock, randomSearchSeed: () => 0, randomDirection: () => rdir);
@@ -390,7 +390,7 @@ public sealed class MonsterRuntimeTests
 
         var clock = new FakeTimeProvider();
         var spawn = MakeSpawn();
-        var registry = new MonsterRegistry([spawn], new WorldActorIdAllocator(), new FixedCellSelector(spawnX, spawnY), clock);
+        var registry = new MonsterRegistry([spawn], new WorldActorIdAllocator().Allocate, new FixedCellSelector(spawnX, spawnY), clock);
         var provider = new MapCollisionProvider([trappedMap]);
         var pathProvider = new RathenaCompatibleMovementPathProvider(provider);
         // Pinned dx=r%(d*2+1)-d, dy=r/(d*2+1)%(d*2+1)-d (mob.cpp:1698-1699) - r=160 forces the
@@ -440,7 +440,7 @@ public sealed class MonsterRuntimeTests
 
         var clock = new FakeTimeProvider();
         var spawn = MakeSpawn();
-        var registry = new MonsterRegistry([spawn], new WorldActorIdAllocator(), new FixedCellSelector(spawnX, spawnY), clock);
+        var registry = new MonsterRegistry([spawn], new WorldActorIdAllocator().Allocate, new FixedCellSelector(spawnX, spawnY), clock);
         var provider = new MapCollisionProvider([map]);
         var pathProvider = new RathenaCompatibleMovementPathProvider(provider);
         var runtime = new MonsterRuntime(registry, provider, pathProvider, clock, randomJitterMs: () => 0);
@@ -496,7 +496,7 @@ public sealed class MonsterRuntimeTests
         var map = MakeAllWalkableMap("test_map", 40);
         var spawn = MakeSpawn();
         var clock = new FakeTimeProvider();
-        var registry = new MonsterRegistry([spawn], new WorldActorIdAllocator(), new FixedCellSelector(20, 20), clock);
+        var registry = new MonsterRegistry([spawn], new WorldActorIdAllocator().Allocate, new FixedCellSelector(20, 20), clock);
         var provider = new MapCollisionProvider([map]);
         var pathProvider = new RathenaCompatibleMovementPathProvider(provider);
         // r=119 forces a first-try candidate offset of exactly (+7,0) - a full-radius straight walk

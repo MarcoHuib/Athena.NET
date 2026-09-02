@@ -120,6 +120,35 @@ public static class MapServerApp
                 : "disabled")}");
 
         //
+        // Load world-partition topology and its reserved actor-ID ranges FIRST: the NPC/warp
+        // WorldActorIdAllocator composed into MapServerWorld.Build below must be seeded from
+        // the SAME config document that defines each monster partition's own actorIdRange, so
+        // the entire global 110,000,000+ actor-ID namespace is validated together (one config
+        // source of truth, never two independently-maintained range tables that could overlap
+        // without either one knowing - see WorldActorIdAllocator's own doc comment).
+        //
+        var partitionTopologyPath =
+            Environment.GetEnvironmentVariable("ATHENA_WORLD_PARTITIONS_PATH") ??
+            Path.Combine("conf", "world_partitions.json");
+
+        var partitionTopologyDocument =
+            WorldPartitionTopologyLoader.LoadDocument(
+                partitionTopologyPath);
+
+        WorldPartitionActorRanges.ValidateAll(
+            partitionTopologyDocument);
+
+        var partitionResolver =
+            new WorldPartitionResolver(
+                partitionTopologyDocument.Partitions,
+                MapServerHostingScope.ServedMaps);
+
+        var npcWarpActorIdAllocator =
+            partitionTopologyDocument.NpcWarpActorIdRange is { } npcWarpRange
+                ? new WorldActorIdAllocator(npcWarpRange.StartInclusive - 1L)
+                : new WorldActorIdAllocator();
+
+        //
         // Compose the local MapServer world.
         //
         // The served-map set is an explicit deployment/runtime scope
@@ -131,19 +160,8 @@ public static class MapServerApp
             rates: mergedConfig.GameplayRates,
             customsEnabled: mergedConfig.CustomsEnabled,
             servedMaps: MapServerHostingScope.ServedMaps,
-            mobSpawnMaps: MapServerHostingScope.MobSpawnMaps);
-
-        var partitionTopologyPath =
-            Environment.GetEnvironmentVariable("ATHENA_WORLD_PARTITIONS_PATH") ??
-            Path.Combine("conf", "world_partitions.json");
-
-        var partitionResolver =
-            WorldPartitionTopologyLoader.Load(
-                partitionTopologyPath,
-                MapServerHostingScope.ServedMaps);
-
-        WorldPartitionActorRanges.Validate(
-            WorldPartitionActorRanges.Development);
+            mobSpawnMaps: MapServerHostingScope.MobSpawnMaps,
+            actorIdAllocator: npcWarpActorIdAllocator);
 
         //
         // Orleans client host

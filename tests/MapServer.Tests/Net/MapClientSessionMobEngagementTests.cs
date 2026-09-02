@@ -162,7 +162,7 @@ public sealed class MapClientSessionMobEngagementTests
     {
         var allocator = new WorldActorIdAllocator();
         var spawnDefinition = new MobSpawnDefinition(GeneratedMobs.GPoring, map, 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "test", 0));
-        var registry = new MonsterRegistry([spawnDefinition], allocator, new FixedCellSelector(monsterX, monsterY), TimeProvider.System);
+        var registry = new MonsterRegistry([spawnDefinition], allocator.Allocate, new FixedCellSelector(monsterX, monsterY), TimeProvider.System);
         var questDrops = new QuestDropResolver(GeneratedQuestDrops.All);
         var combat = new MonsterCombatCoordinator(registry, questDrops, new RenewalBasicAttackRules());
         var collisionMap = new MapCollisionMap(map, 100, 100, Enumerable.Repeat(MapCellFlags.Walkable, 100 * 100).ToArray());
@@ -333,7 +333,7 @@ public sealed class MapClientSessionMobEngagementTests
         // ORCHESTRATION under test (processor -> domain -> calculator -> session -> fan-out) is
         // unaffected by which Attack value the mob_db row happens to carry.
         var strongMobDefinition = world.Poring.Spawn.Mob with { Attack = 1000, AttackDelay = 2000 };
-        var strongRegistry = new MonsterRegistry([world.Poring.Spawn with { Mob = strongMobDefinition }], new WorldActorIdAllocator(), new FixedCellSelector(76, 51), TimeProvider.System);
+        var strongRegistry = new MonsterRegistry([world.Poring.Spawn with { Mob = strongMobDefinition }], new WorldActorIdAllocator().Allocate, new FixedCellSelector(76, 51), TimeProvider.System);
         var strongProcessor = new MonsterEngagementTickProcessor(strongRegistry, world.Collision, world.PathProvider, clock);
         var strongMob = strongRegistry.AllInstances[0];
         strongMob.TryAcquireTarget(AccountId, mode: MobMode.None);
@@ -638,7 +638,7 @@ public sealed class MapClientSessionMobEngagementTests
         using var _disposeBystander = bystander.Client;
 
         var strongMobSpawn = world.Poring.Spawn with { Mob = world.Poring.Spawn.Mob with { Attack = 1000 } };
-        var strongRegistry = new MonsterRegistry([strongMobSpawn], new WorldActorIdAllocator(), new FixedCellSelector(76, 51), TimeProvider.System);
+        var strongRegistry = new MonsterRegistry([strongMobSpawn], new WorldActorIdAllocator().Allocate, new FixedCellSelector(76, 51), TimeProvider.System);
         var strongProcessor = new MonsterEngagementTickProcessor(strongRegistry, world.Collision, world.PathProvider, TimeProvider.System);
         var strongMob = strongRegistry.AllInstances[0];
         strongMob.TryAcquireTarget(AccountId, mode: MobMode.None);
@@ -683,7 +683,7 @@ public sealed class MapClientSessionMobEngagementTests
         var mobDefinition = GeneratedMobs.GPoring with { Attack = 1000 };
         var spawnA = new MobSpawnDefinition(mobDefinition, "int_land03", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "test", 0));
         var spawnB = new MobSpawnDefinition(mobDefinition, "int_land03", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "test", 1));
-        var registry = new MonsterRegistry([spawnA, spawnB], allocator, new FixedCellSelector(76, 51), TimeProvider.System);
+        var registry = new MonsterRegistry([spawnA, spawnB], allocator.Allocate, new FixedCellSelector(76, 51), TimeProvider.System);
         var questDrops = new QuestDropResolver(GeneratedQuestDrops.All);
         var combat = new MonsterCombatCoordinator(registry, questDrops, new RenewalBasicAttackRules());
         var collisionMap = new MapCollisionMap("int_land03", 100, 100, Enumerable.Repeat(MapCellFlags.Walkable, 100 * 100).ToArray());
