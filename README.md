@@ -160,7 +160,7 @@ Athena.NET has progressed beyond login/bootstrap experiments and now has a **pla
 ### Database
 
 - [Database migrations](docs/migrations.md)
-- [SQL Edge](docs/sql-edge.md)
+- [SQL Server development database](docs/sql-server-development.md)
 
 Local development can be run through **.NET Aspire**, which starts Athena.NET services and supporting infrastructure together.
 

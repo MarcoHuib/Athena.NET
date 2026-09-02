@@ -1,14 +1,15 @@
 services:
   sql:
-    image: mcr.microsoft.com/azure-sql-edge:latest
+    image: mcr.microsoft.com/mssql/server:2025-CU8-ubuntu-24.04
+    platform: linux/amd64
     environment:
       ACCEPT_EULA: "Y"
       MSSQL_PID: "Developer"
-      SA_PASSWORD: "${SA_PASSWORD}"
+      MSSQL_SA_PASSWORD: "${SA_PASSWORD}"
     ports:
       - "1433:1433"
     volumes:
-      - sql-edge-data:/var/opt/mssql
+      - sql-server-2025-data:/var/opt/mssql
     restart: unless-stopped
 
   login-server:
@@ -64,4 +65,4 @@ services:
     restart: unless-stopped
 
 volumes:
-  sql-edge-data:
+  sql-server-2025-data:
