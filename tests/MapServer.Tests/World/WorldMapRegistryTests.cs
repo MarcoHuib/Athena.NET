@@ -113,6 +113,75 @@ public sealed class WorldMapRegistryTests
         Assert.Equal((ushort)3, intersection.X);
     }
 
+    // Bug 1 root cause regression (izlude_a (20,97) movement lock): TryFindFirstWarpAlongRoute must
+    // never report the caller's OWN starting cell as a newly-discovered intersection, matching its
+    // sibling TryFindFirstScriptTouchEnterAlongRoute's existing skip-first-cell behavior exactly.
+    [Fact]
+    public void TryFindFirstWarpAlongRoute_NeverReportsTheStartingCellItself()
+    {
+        // A warp whose rectangle contains ONLY the start cell of the route (not any other cell the
+        // route passes through) must report no intersection at all - the already-occupied start
+        // cell must be skipped, matching TryFindFirstScriptTouchEnterAlongRoute's own behavior.
+        var warp = new WarpDefinition("solo-cell-warp", "test", 5, 5, 0, 0, "dest", 1, 1, true, "test", 1);
+        var registry = new WorldMapRegistry([warp]);
+
+        Assert.False(registry.TryFindFirstWarpAlongRoute("test", 5, 5, 10, 5, out _));
+    }
+
+    [Fact]
+    public void TryFindFirstWarpAlongRoute_StillDetectsTheWarpWhenReachedLaterAlongTheRoute()
+    {
+        var warp = new WarpDefinition("later-warp", "test", 10, 5, 1, 1, "dest", 1, 1, true, "test", 1);
+        var registry = new WorldMapRegistry([warp]);
+
+        Assert.True(registry.TryFindFirstWarpAlongRoute("test", 0, 5, 12, 5, out var intersection));
+        Assert.Same(warp, intersection.Warp);
+    }
+
+    [Fact]
+    public void TryFindTouchAt_DetectsAWarpAtAPoint()
+    {
+        // iz001_a-shaped fixture: a static warp whose rectangle already contains the queried point,
+        // matching the izlude_a (20,97) spawn-inside-warp-rectangle scenario.
+        var warp = new WarpDefinition("iz001_a", "izlude_a", 20, 98, 3, 3, "prt_fild08a", 1, 1, true, "test", 1);
+        var registry = new WorldMapRegistry([warp]);
+
+        Assert.True(registry.TryFindTouchAt("izlude_a", 20, 97, out var foundWarp, out var foundScript));
+        Assert.Same(warp, foundWarp);
+        Assert.Null(foundScript);
+    }
+
+    [Fact]
+    public void TryFindTouchAt_DetectsAScriptTouchAtAPoint_UsingRealGeneratedIntroToIzludeEntity()
+    {
+        // Real generated #intro_to_izlude_d OnTouch entity (also used by
+        // IntroToIzludeDuplicate_IsGeneratedExecutableOnTouch above): center (49,57).
+        Assert.True(WorldMapRegistry.Tutorial.TryFindTouchAt("int_land04", 49, 57, out var foundWarp, out var foundScript));
+        Assert.Null(foundWarp);
+        Assert.NotNull(foundScript);
+        Assert.Equal("warp:int_land04:intro_to_izlude_d", foundScript.Entity.Id);
+    }
+
+    [Fact]
+    public void TryFindTouchAt_ReturnsFalseWhenNeitherWarpNorScriptCoversThePoint()
+    {
+        Assert.False(WorldMapRegistry.Tutorial.TryFindTouchAt("int_land04", 0, 0, out var foundWarp, out var foundScript));
+        Assert.Null(foundWarp);
+        Assert.Null(foundScript);
+    }
+
+    [Fact]
+    public void TryFindTouchAt_PrefersAWarpOverAScriptCoveringTheSamePoint()
+    {
+        // Mirrors npc_touch_areanpc's own array-order convention ("warp type sorted first").
+        var warp = new WarpDefinition("overlap-warp", "test", 5, 5, 3, 3, "dest", 1, 1, true, "test", 1);
+        var registry = new WorldMapRegistry([warp]);
+
+        Assert.True(registry.TryFindTouchAt("test", 5, 5, out var foundWarp, out var foundScript));
+        Assert.Same(warp, foundWarp);
+        Assert.Null(foundScript);
+    }
+
     [Fact]
     public void IntroToIzludeDuplicate_IsGeneratedExecutableOnTouch()
     {

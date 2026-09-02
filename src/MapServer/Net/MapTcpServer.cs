@@ -116,11 +116,28 @@ public sealed class MapTcpServer
             {
                 if (!_movements.TryGetValue(command.CharacterId, out var movement) || movement.Id != command.MovementId)
                     return Task.FromResult(new WorldMovementResult(WorldMovementStatus.Rejected, _presences.GetValueOrDefault(command.CharacterId)));
-                var index = Array.FindIndex(movement.Path, cell => cell.X == command.DestinationX && cell.Y == command.DestinationY);
-                if (index < 1) return Task.FromResult(new WorldMovementResult(WorldMovementStatus.Rejected, _presences.GetValueOrDefault(command.CharacterId)));
-                var path = movement.Path[..(index + 1)];
+                if (command.DestinationIndex < 1 || command.DestinationIndex >= movement.Path.Length)
+                    return Task.FromResult(new WorldMovementResult(WorldMovementStatus.Rejected, _presences.GetValueOrDefault(command.CharacterId)));
+                var path = movement.Path[..(command.DestinationIndex + 1)];
                 _movements[command.CharacterId] = movement with { Path = path };
                 return Task.FromResult(new WorldMovementResult(WorldMovementStatus.Moved, _presences.GetValueOrDefault(command.CharacterId), path, command.MovementId));
+            }
+        }
+
+        public Task<WorldMovementCancellationResult> CancelMovementAsync(WorldMovementCancellation command, CancellationToken cancellationToken)
+        {
+            lock (_gate)
+            {
+                if (!_presences.TryGetValue(command.CharacterId, out var current))
+                    return Task.FromResult(new WorldMovementCancellationResult(WorldMovementCancellationStatus.PresenceNotFound, null));
+                if (current.PresenceId != command.PresenceId)
+                    return Task.FromResult(new WorldMovementCancellationResult(WorldMovementCancellationStatus.PresenceMismatch, current));
+                if (!_movements.TryGetValue(command.CharacterId, out var movement))
+                    return Task.FromResult(new WorldMovementCancellationResult(WorldMovementCancellationStatus.AlreadyAbsent, current));
+                if (movement.Id != command.MovementId)
+                    return Task.FromResult(new WorldMovementCancellationResult(WorldMovementCancellationStatus.SourceMismatch, current));
+                _movements.Remove(command.CharacterId);
+                return Task.FromResult(new WorldMovementCancellationResult(WorldMovementCancellationStatus.Cancelled, current));
             }
         }
 

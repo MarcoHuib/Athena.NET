@@ -279,6 +279,9 @@ public sealed class MapClientSessionPlayerPresenceTests
         public Task<WorldMovementAdvanceResult> AdvanceMovementAsync(WorldMovementAdvance command, CancellationToken cancellationToken) =>
             Task.FromResult(new WorldMovementAdvanceResult(WorldMovementAdvanceStatus.Advanced, null));
 
+        public Task<WorldMovementCancellationResult> CancelMovementAsync(WorldMovementCancellation command, CancellationToken cancellationToken) =>
+            Task.FromResult(new WorldMovementCancellationResult(WorldMovementCancellationStatus.Cancelled, null));
+
         public Task<WorldTransferResult> TransferPlayerAsync(WorldTransferCommand command, CancellationToken cancellationToken) =>
             Task.FromResult(new WorldTransferResult(WorldTransferStatus.Completed, WorldTransferType.SamePartition, null));
 

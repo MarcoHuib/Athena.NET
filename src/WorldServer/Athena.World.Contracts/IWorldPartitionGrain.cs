@@ -10,6 +10,7 @@ public interface IWorldPartitionGrain : IGrainWithStringKey
     Task<WorldMovementResult> MovePlayerAsync(WorldMovementCommand command);
     Task<WorldMovementResult> TruncateMovementAsync(WorldMovementTruncation command);
     Task<WorldMovementAdvanceResult> AdvanceMovementAsync(WorldMovementAdvance command);
+    Task<WorldMovementCancellationResult> CancelMovementAsync(WorldMovementCancellation command);
     Task<WorldTransferResult> TransferPlayerAsync(WorldTransferCommand command);
     Task<IncomingTransferResult> PrepareIncomingTransferAsync(IncomingWorldTransfer transfer);
     Task<IncomingTransferResult> CommitIncomingTransferAsync(Guid transferId);
@@ -72,8 +73,21 @@ public sealed record WorldMovementTruncation(
     [property: Id(1)] Guid PresenceId,
     [property: Id(2)] uint CharacterId,
     [property: Id(3)] string MapId,
-    [property: Id(4)] ushort DestinationX,
-    [property: Id(5)] ushort DestinationY);
+    [property: Id(4)] int DestinationIndex);
+
+public enum WorldMovementCancellationStatus { Cancelled, AlreadyAbsent, PresenceNotFound, PresenceMismatch, SourceMismatch }
+
+[GenerateSerializer]
+public sealed record WorldMovementCancellation(
+    [property: Id(0)] Guid MovementId,
+    [property: Id(1)] Guid PresenceId,
+    [property: Id(2)] uint CharacterId,
+    [property: Id(3)] string MapId);
+
+[GenerateSerializer]
+public sealed record WorldMovementCancellationResult(
+    [property: Id(0)] WorldMovementCancellationStatus Status,
+    [property: Id(1)] WorldPlayerPresence? Presence);
 
 [GenerateSerializer]
 public sealed record WorldMovementAdvance(

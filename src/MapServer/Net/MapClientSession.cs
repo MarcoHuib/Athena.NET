@@ -365,6 +365,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     // rather than a stale destination from the last movement packet.
     internal ushort CurrentX { get { SyncPositionToNow(); return _x; } }
     internal ushort CurrentY { get { SyncPositionToNow(); return _y; } }
+    internal Guid? WorldMovementId => _worldMovementId;
     internal ScriptExecutionState? ActiveScriptState => _scriptExecutionSession?.State;
     internal string? ActiveGeneratedScriptEntityId => _generatedScriptEntityId;
     internal CharacterGameplayStateSession? GameplayState => _gameplayState;
@@ -699,7 +700,12 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
             authoritativeFromY = movement.CurrentY;
             crossed = movement.AdvanceTo(_timeProvider.GetUtcNow());
             if (crossed.Count == 0) return;
-            await AdvanceDistributedMovementAsync(authoritativeFromX, authoritativeFromY, crossed, cancellationToken);
+            var advanceResolution = await AdvanceDistributedMovementResolvedAsync(authoritativeFromX, authoritativeFromY, crossed, cancellationToken);
+            if (advanceResolution is AdvanceGameplayRejected rejected)
+            {
+                await ReconcileAfterGameplayRejectionAsync("advance", rejected.Status.ToString(), rejected.Presence, movement, cancellationToken);
+                return;
+            }
             _x = movement.CurrentX;
             _y = movement.CurrentY;
             _positionDirty = true;
@@ -717,7 +723,13 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
             {
                 var fromX = _x;
                 var fromY = _y;
-                var resolved = await ResolveWorldMovementTargetAsync(fromX, fromY, retarget.X, retarget.Y, cancellationToken);
+                var retargetResolution = await ResolveWorldMovementTargetAsync(fromX, fromY, retarget.X, retarget.Y, cancellationToken);
+                if (retargetResolution is MovementGameplayRejected retargetRejected)
+                {
+                    await ReconcileAfterGameplayRejectionAsync("deferred retarget", retargetRejected.Status.ToString(), retargetRejected.Presence, movement, cancellationToken);
+                    return;
+                }
+                var resolved = ((MovementAccepted)retargetResolution).Target;
                 // CurrentCellReachedAt (the exact boundary AdvanceTo just crossed to), NEVER a
                 // second independent _timeProvider.GetUtcNow() sample here - re-sampling wall-clock
                 // time between the AdvanceTo call above and this StartWalk silently gifts the
@@ -780,6 +792,46 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
                 await StartScriptAsync(scriptArrival.Entity, scriptArrival.ActorId, scriptArrival.Script, "OnTouch", cancellationToken);
                 break;
         }
+    }
+
+    // Handles both rejection points inside ProcessDueMovementAsync (a rejected per-tick
+    // AdvanceMovementAsync, and a rejected deferred retarget's MovePlayerAsync/TruncateMovementAsync).
+    // Must be called while still holding _movementGate, since it mutates `movement`/_worldMovementId/
+    // _x/_y - the exact same gate-protected state ProcessDueMovementAsync's own success path mutates.
+    //
+    // Governing rule (no exceptions): reconciliation NEVER fabricates or falls back to
+    // locally-derived coordinates. CharacterMovementState.AdvanceTo already mutates local state
+    // BEFORE World validates the crossed cell, so the local cell is specifically untrustworthy the
+    // moment World rejects - it is not a safe last resort. Only two outcomes are acceptable:
+    // (a) World returned a Presence -> reconcile exactly to it and send the pinned clif_fixpos/
+    //     ZC_STOPMOVE (0x0088) correction to the player's own client;
+    // (b) World returned no Presence for a rejection that requires reconciliation (a
+    //     NotFound/PresenceNotFound-shaped outcome) -> this means World has lost this presence
+    //     entirely, which is a lifecycle/invariant failure for an authenticated session, not a gap
+    //     to paper over locally - throw.
+    // Likewise, cancelling the stale World route only tolerates Cancelled/AlreadyAbsent;
+    // PresenceNotFound/PresenceMismatch/SourceMismatch are ALL invariant failures here, never a
+    // loggable non-fatal outcome - PresenceNotFound in particular must not be treated as a normal
+    // reconciliation case just because it superficially resembles "nothing to cancel".
+    private async Task ReconcileAfterGameplayRejectionAsync(string context, string status, WorldPlayerPresence? presence,
+        CharacterMovementState movement, CancellationToken cancellationToken)
+    {
+        MapLogger.Info($"[iRO MAP DEBUG] World rejected {context} status={status} map='{_mapName}' movementId={_worldMovementId}");
+        if (_worldMovementId is { } staleMovementId && _presenceId is { } presenceId)
+        {
+            var cancelled = await _distributedWorld!.CancelMovementAsync(new WorldMovementCancellation(staleMovementId, presenceId, _charId, _mapName), cancellationToken);
+            if (cancelled.Status is not (WorldMovementCancellationStatus.Cancelled or WorldMovementCancellationStatus.AlreadyAbsent))
+                throw new InvalidOperationException($"CancelMovementAsync invariant violated after rejected {context}: status={cancelled.Status} movementId={staleMovementId} map='{_mapName}'.");
+        }
+        if (presence is not { } reconcileTarget)
+            throw new InvalidOperationException($"World rejected {context} with no authoritative Presence to reconcile to: status={status} map='{_mapName}' movementId={_worldMovementId}.");
+        movement.Teleport(_mapName, reconcileTarget.X, reconcileTarget.Y);
+        _x = reconcileTarget.X;
+        _y = reconcileTarget.Y;
+        _worldMovementId = null;
+        _pendingArrival = null;
+        _positionDirty = true;
+        await WriteAsync(IroMonsterActorPackets.BuildStopMove(_accountId, _x, _y), cancellationToken);
     }
 
     private async Task CompleteIroAuthenticationSafelyAsync(MapAuthOkData authOk)
@@ -925,6 +977,8 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
                     await SendSelfInventoryAsync(cancellationToken);
                     _visibleActorIds.Clear();
                     await EnterPlayerWorldAsync(cancellationToken);
+                    var touchOutcome = await TryFireImmediateSpawnTouchAsync(cancellationToken);
+                    if (touchOutcome == ImmediateSpawnTouchOutcome.MapChanged) break;
                     await SendVisibleWarpActorsAsync(cancellationToken);
                     await SendVisibleMonsterActorsAsync(cancellationToken);
                     foreach (var navigation in _worldMapRegistry.GetNavigationAt(_mapName, _x, _y))
@@ -1144,7 +1198,15 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     // wherever the character ACTUALLY is when the retarget is applied, never reused from click-time.
     private readonly record struct ResolvedMovementTarget(
         ushort TargetX, ushort TargetY, IReadOnlyList<(ushort X, ushort Y)> Path, PendingMovementArrival? Arrival,
-        bool IntersectsWarp, bool IntersectsScript, WarpIntersection Warp, ScriptTouchIntersection Script);
+        bool IntersectsWarp, bool IntersectsScript, WarpIntersection Warp, ScriptTouchIntersection Script, int TriggerIndex = -1);
+
+    private abstract record MovementResolution;
+    private sealed record MovementAccepted(ResolvedMovementTarget Target) : MovementResolution;
+    private sealed record MovementGameplayRejected(WorldMovementStatus Status, WorldPlayerPresence? Presence) : MovementResolution;
+
+    private abstract record AdvanceResolution;
+    private sealed record AdvanceAccepted : AdvanceResolution;
+    private sealed record AdvanceGameplayRejected(WorldMovementAdvanceStatus Status, WorldPlayerPresence? Presence) : AdvanceResolution;
 
     private ResolvedMovementTarget ResolveMovementTarget(ushort fromX, ushort fromY, ushort requestedX, ushort requestedY)
     {
@@ -1191,27 +1253,56 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         var path = triggerIndex < authoritativePath.Count ? authoritativePath.Take(triggerIndex + 1).ToArray() : authoritativePath;
         PendingMovementArrival? arrival = intersectsWarp ? new PendingWarpArrival(intersection.Warp)
             : intersectsScript ? new PendingScriptTouchArrival(scriptIntersection.Binding.Entity, scriptIntersection.Binding.Actor.ActorId, scriptIntersection.Binding.Script) : null;
-        return new(targetX, targetY, path, arrival, intersectsWarp, intersectsScript, intersection, scriptIntersection);
+        return new(targetX, targetY, path, arrival, intersectsWarp, intersectsScript, intersection, scriptIntersection, triggerIndex);
     }
 
-    private async Task<ResolvedMovementTarget> ResolveWorldMovementTargetAsync(ushort fromX, ushort fromY, ushort requestedX, ushort requestedY, CancellationToken cancellationToken)
+    private async Task<MovementResolution> ResolveWorldMovementTargetAsync(ushort fromX, ushort fromY, ushort requestedX, ushort requestedY, CancellationToken cancellationToken)
     {
-        if (_distributedWorld is null) return ResolveMovementTarget(fromX, fromY, requestedX, requestedY);
+        if (_distributedWorld is null) return new MovementAccepted(ResolveMovementTarget(fromX, fromY, requestedX, requestedY));
         var presenceId = _presenceId ?? throw new InvalidOperationException("Authenticated movement has no world presence identity.");
         var result = await _distributedWorld.MovePlayerAsync(new WorldMovementCommand(
             presenceId, _charId, _mapName, fromX, fromY, requestedX, requestedY), cancellationToken);
         if (result.Status != WorldMovementStatus.Moved || result.Path is not { Count: > 1 } || result.MovementId is not { } movementId)
-            throw new InvalidOperationException($"World authority rejected movement status={result.Status} map='{_mapName}' from=({fromX},{fromY}) target=({requestedX},{requestedY}).");
+            return new MovementGameplayRejected(result.Status, result.Presence);
         var authoritativePath = result.Path.Select(cell => (cell.X, cell.Y)).ToArray();
         var resolved = ResolveMovementProjection(fromX, fromY, requestedX, requestedY, authoritativePath);
-        if (resolved.TargetX != requestedX || resolved.TargetY != requestedY)
+        if (resolved.TriggerIndex < authoritativePath.Length)
         {
             var truncated = await _distributedWorld.TruncateMovementAsync(new WorldMovementTruncation(
-                movementId, presenceId, _charId, _mapName, resolved.TargetX, resolved.TargetY), cancellationToken);
-            if (truncated.Status != WorldMovementStatus.Moved) throw new InvalidOperationException($"World movement truncation failed status={truncated.Status}.");
+                movementId, presenceId, _charId, _mapName, resolved.TriggerIndex), cancellationToken);
+            if (truncated.Status != WorldMovementStatus.Moved)
+            {
+                // MapServer derived TriggerIndex from World's OWN just-returned authoritative path;
+                // a rejection here means the two sides' understanding of the route has diverged -
+                // this is a protocol invariant violation, not a normal gameplay outcome. Abort the
+                // orphaned route explicitly rather than silently keeping or ignoring it.
+                var cancelled = await _distributedWorld.CancelMovementAsync(new WorldMovementCancellation(movementId, presenceId, _charId, _mapName), cancellationToken);
+                throw new InvalidOperationException($"World truncation invariant violated: status={truncated.Status} cancelStatus={cancelled.Status} map='{_mapName}' movementId={movementId} triggerIndex={resolved.TriggerIndex}.");
+            }
         }
         _worldMovementId = movementId;
-        return resolved;
+        return new MovementAccepted(resolved);
+    }
+
+    private async Task<AdvanceResolution> AdvanceDistributedMovementResolvedAsync(ushort fromX, ushort fromY,
+        IReadOnlyList<(ushort X, ushort Y)> crossed, CancellationToken cancellationToken)
+    {
+        if (_distributedWorld is null || crossed.Count == 0) return new AdvanceAccepted();
+        var movementId = _worldMovementId ?? throw new InvalidOperationException("Timed movement has no World route identity.");
+        var presenceId = _presenceId ?? throw new InvalidOperationException("Timed movement has no World presence identity.");
+        var expectedX = fromX; var expectedY = fromY;
+        foreach (var cell in crossed)
+        {
+            var result = await _distributedWorld.AdvanceMovementAsync(new WorldMovementAdvance(
+                movementId, presenceId, _charId, _mapName, expectedX, expectedY, cell.X, cell.Y), cancellationToken);
+            if (result.Status is WorldMovementAdvanceStatus.Advanced or WorldMovementAdvanceStatus.AlreadyAdvanced)
+            {
+                expectedX = cell.X; expectedY = cell.Y;
+                continue;
+            }
+            return new AdvanceGameplayRejected(result.Status, result.Presence);
+        }
+        return new AdvanceAccepted();
     }
 
     private async Task HandleIroMovementAsync(byte[] packet, CancellationToken cancellationToken)
@@ -1256,9 +1347,16 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         MapLogger.Info(
             $"[iRO MAP DEBUG] Movement request from=({fromX},{fromY}) target=({request.TargetX},{request.TargetY})");
 
-        ResolvedMovementTarget resolved;
-        try { resolved = await ResolveWorldMovementTargetAsync(fromX, fromY, request.TargetX, request.TargetY, cancellationToken); }
-        catch (InvalidOperationException ex) { MapLogger.Warning(ex.Message); return; }
+        var resolution = await ResolveWorldMovementTargetAsync(fromX, fromY, request.TargetX, request.TargetY, cancellationToken);
+        if (resolution is MovementGameplayRejected rejected)
+        {
+            // Pinned unit_walktoxy returns 0 with no state change on a blocked/unreachable click -
+            // no route was ever started here (unlike ProcessDueMovementAsync's mid-walk retarget
+            // rejection), so there is nothing to cancel/reconcile: the character simply doesn't move.
+            MapLogger.Info($"[iRO MAP DEBUG] Movement request rejected status={rejected.Status} map='{_mapName}' from=({fromX},{fromY}) target=({request.TargetX},{request.TargetY})");
+            return;
+        }
+        var resolved = ((MovementAccepted)resolution).Target;
         var now = _timeProvider.GetUtcNow();
 
         // Warp/OnTouch must fire only when the destination cell is actually reached over real
@@ -2924,6 +3022,35 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         await WriteAsync(IroInventoryListPackets.BuildInventoryEnd(), cancellationToken);
     }
 
+    private enum ImmediateSpawnTouchOutcome { None, ScriptStartedSameMap, MapChanged }
+
+    // Pinned clif_parse_LoadEndAck (clif.cpp:11151-11152) + npc_touch_area_allnpc/npc_touch_areanpc
+    // (npc.cpp:1958-1993, 1896-1949): touch areas - warp OR script OnTouch alike - are checked
+    // immediately at the character's own cell on map load, before the client can send any movement
+    // packet ("so you don't need to walk 1 step first"). This is the same generic touch mechanism
+    // used mid-walk (unit.cpp:685), not a static-warp-only special case. clif_parse_LoadEndAck has
+    // no guard after this call (unlike the mid-walk case's `if (bl->prev == nullptr) return 0;`) -
+    // it just keeps running using whatever map/position now holds, so the outcome here is derived
+    // from whether the map ACTUALLY changed, not from which touch type fired (a scripted OnTouch can
+    // itself call `warp`/`mapmove` and change the map, just like a static warp).
+    private async Task<ImmediateSpawnTouchOutcome> TryFireImmediateSpawnTouchAsync(CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(_mapName)) return ImmediateSpawnTouchOutcome.None;
+        if (!_worldMapRegistry.TryFindTouchAt(_mapName, _x, _y, out var warp, out var script)) return ImmediateSpawnTouchOutcome.None;
+        var mapBeforeTouch = _mapName;
+        if (warp is not null)
+        {
+            MapLogger.Info($"[iRO MAP DEBUG] Immediate spawn-cell warp triggered map='{mapBeforeTouch}' at=({_x},{_y})");
+            await SendSameServerWarpAsync(warp, cancellationToken);
+            return ImmediateSpawnTouchOutcome.MapChanged;
+        }
+        MapLogger.Info($"[iRO MAP DEBUG] Immediate spawn-cell script touch triggered entity='{script!.Entity.Id}' map='{mapBeforeTouch}' at=({_x},{_y})");
+        await StartScriptAsync(script.Entity, script.Actor.ActorId, script.Script, "OnTouch", cancellationToken);
+        return string.Equals(_mapName, mapBeforeTouch, StringComparison.OrdinalIgnoreCase)
+            ? ImmediateSpawnTouchOutcome.ScriptStartedSameMap
+            : ImmediateSpawnTouchOutcome.MapChanged;
+    }
+
     private async Task EnterPlayerWorldAsync(CancellationToken cancellationToken)
     {
         Guid presenceId;
@@ -3152,23 +3279,6 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
             var changed = current with { X = cell.X, Y = cell.Y, Movement = movement };
             SetCurrentPresence(changed);
             await _playerVisibility.UpdateMovementAsync(changed, broadcastMovement: false, cancellationToken);
-        }
-    }
-
-    private async Task AdvanceDistributedMovementAsync(ushort fromX, ushort fromY,
-        IReadOnlyList<(ushort X, ushort Y)> crossed, CancellationToken cancellationToken)
-    {
-        if (_distributedWorld is null || crossed.Count == 0) return;
-        var movementId = _worldMovementId ?? throw new InvalidOperationException("Timed movement has no World route identity.");
-        var presenceId = _presenceId ?? throw new InvalidOperationException("Timed movement has no World presence identity.");
-        var expectedX = fromX; var expectedY = fromY;
-        foreach (var cell in crossed)
-        {
-            var result = await _distributedWorld.AdvanceMovementAsync(new WorldMovementAdvance(
-                movementId, presenceId, _charId, _mapName, expectedX, expectedY, cell.X, cell.Y), cancellationToken);
-            if (result.Status is not (WorldMovementAdvanceStatus.Advanced or WorldMovementAdvanceStatus.AlreadyAdvanced))
-                throw new InvalidOperationException($"World rejected timed movement advance status={result.Status} map='{_mapName}' expected=({expectedX},{expectedY}) next=({cell.X},{cell.Y}).");
-            expectedX = cell.X; expectedY = cell.Y;
         }
     }
 

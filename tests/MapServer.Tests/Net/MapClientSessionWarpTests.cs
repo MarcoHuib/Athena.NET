@@ -3,11 +3,180 @@ using System.Net;
 using System.Net.Sockets;
 using Athena.Net.MapServer.Config;
 using Athena.Net.MapServer.Net;
+using Athena.Net.MapServer.World;
+using Athena.Net.MapServer.World.GeneratedScripts;
 
 namespace Athena.Net.MapServer.Tests.Net;
 
 public sealed class MapClientSessionWarpTests
 {
+    // Bug 1 root-cause regression (izlude_a (20,97) movement lock): spawning INSIDE a static warp's
+    // rectangle must fire the warp immediately on load (mirroring pinned clif_parse_LoadEndAck's
+    // "so you don't need to walk 1 step first"), before any movement packet - never leaving the
+    // player stuck making rejected movement requests forever.
+    [Fact]
+    public async Task SpawningInsideWarpRectangle_FiresWarpImmediatelyOnLoad_BeforeAnyMovementPacket()
+    {
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        using var client = new TcpClient();
+        var connectTask = client.ConnectAsync((IPEndPoint)listener.LocalEndpoint);
+        using var serverClient = await listener.AcceptTcpClientAsync();
+        await connectTask;
+        await using var clientStream = client.GetStream();
+        var connector = new CharServerConnector(new MapConfigStore(new MapConfig(), "unused.conf"));
+        // iz001_a-shaped fixture: center (20,98) radius (3,3), destination prt_fild08a - matching
+        // the exact live izlude_a (20,97) scenario, which sits inside this rectangle at spawn.
+        var warp = new WarpDefinition("iz001_a", "izlude_a", 20, 98, 3, 3, "prt_fild08a", 25, 99, true, "test", 1);
+        var registry = new WorldMapRegistry([warp]);
+        await using var session = new MapClientSession(
+            1, serverClient, connector, iroAuthenticated: true, mapName: "izlude_a", x: 20, y: 97,
+            worldMapRegistry: registry);
+        var runTask = session.RunAsync(CancellationToken.None);
+
+        // No CompleteIroAuthenticationAsync/gameplay state here, so no self-weapon/inventory
+        // packets are sent (SendSelfWeaponAppearanceAsync/SendSelfInventoryAsync return early with
+        // no equipment/gameplay state loaded) - the touch check response is the very first packet.
+        await clientStream.WriteAsync(new byte[] { 0x7d, 0x00, 0xaa });
+
+        // The warp must fire immediately - no movement packet was ever sent.
+        var mapChange = new byte[22];
+        await clientStream.ReadExactlyAsync(mapChange);
+        Assert.Equal((short)0x0091, BinaryPrimitives.ReadInt16LittleEndian(mapChange));
+        Assert.Equal("prt_fild08a", session.CurrentMapName);
+        Assert.Equal((ushort)25, session.CurrentX);
+        Assert.Equal((ushort)99, session.CurrentY);
+
+        client.Close();
+        await runTask.WaitAsync(TimeSpan.FromSeconds(5));
+        listener.Stop();
+    }
+
+    // Correction #5/#6: a script OnTouch entity whose handler does NOT warp must fire immediately
+    // on load too (the generic touch mechanism is not warp-only), but map initialization for the
+    // (unchanged) current map must still continue afterward - never a blanket "always break".
+    [Fact]
+    public async Task SpawningInsideScriptTouchRectangle_WithoutWarping_FiresImmediately_AndContinuesMapInitialization()
+    {
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        using var client = new TcpClient();
+        var connectTask = client.ConnectAsync((IPEndPoint)listener.LocalEndpoint);
+        using var serverClient = await listener.AcceptTcpClientAsync();
+        await connectTask;
+        await using var clientStream = client.GetStream();
+        var connector = new CharServerConnector(new MapConfigStore(new MapConfig(), "unused.conf"));
+
+        var entity = BuildTouchEntity("test-map", 50, 50, radius: 3, out var actorName);
+        var registration = new GeneratedScriptRegistration(entity, "OnTouch", static () => new NoOpScript());
+        var scripts = new NpcScriptRegistryBuilder().AddCustom(registration).Build();
+        var registry = new WorldMapRegistry([], [entity], scripts: scripts);
+        await using var session = new MapClientSession(
+            1, serverClient, connector, iroAuthenticated: true, mapName: "test-map", x: 50, y: 50,
+            worldMapRegistry: registry);
+        var runTask = session.RunAsync(CancellationToken.None);
+
+        await clientStream.WriteAsync(new byte[] { 0x7d, 0x00, 0xaa });
+
+        // Never warped - stays on the same map, at the same cell.
+        Assert.Equal("test-map", session.CurrentMapName);
+        Assert.Equal((ushort)50, session.CurrentX);
+        Assert.Equal((ushort)50, session.CurrentY);
+
+        // Map initialization for the (unchanged) current map must still continue: the visible warp
+        // actor list send is drained next by reading a further packet with no map-change opcode.
+        // The touch entity's actor spawn (from SendVisibleWarpActorsAsync, driven by
+        // GetVisibleWarpActors) is the next packet on the wire.
+        var next = await ReadDynamicOrFixed(clientStream);
+        Assert.NotEqual((short)0x0091, BinaryPrimitives.ReadInt16LittleEndian(next.AsSpan(0, 2)));
+
+        client.Close();
+        await runTask.WaitAsync(TimeSpan.FromSeconds(5));
+        listener.Stop();
+    }
+
+    // Correction #5: map change is not exclusive to the WARP branch - a script's OnTouch handler
+    // that itself warps must ALSO report MapChanged (derived from the actual post-touch map, never
+    // from "it was a script, not a warp").
+    [Fact]
+    public async Task SpawningInsideScriptTouchRectangle_WhoseHandlerWarps_ReportsMapChanged_SkipsOldMapProjection()
+    {
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        using var client = new TcpClient();
+        var connectTask = client.ConnectAsync((IPEndPoint)listener.LocalEndpoint);
+        using var serverClient = await listener.AcceptTcpClientAsync();
+        await connectTask;
+        await using var clientStream = client.GetStream();
+        var connector = new CharServerConnector(new MapConfigStore(new MapConfig(), "unused.conf"));
+
+        var entity = BuildTouchEntity("test-map", 50, 50, radius: 3, out _);
+        var registration = new GeneratedScriptRegistration(entity, "OnTouch", static () => new WarpingScript("other-map", 10, 10));
+        var scripts = new NpcScriptRegistryBuilder().AddCustom(registration).Build();
+        var registry = new WorldMapRegistry([], [entity], scripts: scripts);
+        await using var session = new MapClientSession(
+            1, serverClient, connector, iroAuthenticated: true, mapName: "test-map", x: 50, y: 50,
+            worldMapRegistry: registry);
+        var runTask = session.RunAsync(CancellationToken.None);
+
+        await clientStream.WriteAsync(new byte[] { 0x7d, 0x00, 0xaa });
+
+        var mapChange = new byte[22];
+        await clientStream.ReadExactlyAsync(mapChange);
+        Assert.Equal((short)0x0091, BinaryPrimitives.ReadInt16LittleEndian(mapChange));
+        Assert.Equal("other-map", session.CurrentMapName);
+        Assert.Equal((ushort)10, session.CurrentX);
+        Assert.Equal((ushort)10, session.CurrentY);
+
+        client.Close();
+        await runTask.WaitAsync(TimeSpan.FromSeconds(5));
+        listener.Stop();
+    }
+
+    private static WorldEntityDefinition BuildTouchEntity(string map, ushort x, ushort y, ushort radius, out string actorName)
+    {
+        actorName = "TouchNpc#test";
+        var actor = new WorldActorComponent(actorName, map, x, y, 0, 111);
+        var script = new ScriptBehaviorDefinition("OnTouch", map, x, y, radius, radius, SourceParsed: true, RuntimeExecutable: true, RequiredCapabilities: [], NormalizedSource: "");
+        return new WorldEntityDefinition(1, $"npc:{map}:{actorName}", "npc", actor, [], [script], new WorldSourceInfo("test", "unknown", "test", 1));
+    }
+
+    private sealed class NoOpScript : INpcScript
+    {
+        public Task ExecuteAsync(ScriptContext context, CancellationToken cancellationToken) => Task.CompletedTask;
+    }
+
+    private sealed class WarpingScript(string map, ushort x, ushort y) : INpcScript
+    {
+        public Task ExecuteAsync(ScriptContext context, CancellationToken cancellationToken) => context.WarpAsync(map, x, y, cancellationToken);
+    }
+
+    private static async Task<byte[]> ReadDynamicOrFixed(Stream stream)
+    {
+        var header = new byte[4];
+        await stream.ReadExactlyAsync(header);
+        var opcode = BinaryPrimitives.ReadInt16LittleEndian(header);
+        // 0x0091 (map change) is a fixed 22-byte packet with no embedded length prefix at bytes[2..4].
+        if (opcode == 0x0091)
+        {
+            var rest = new byte[18];
+            await stream.ReadExactlyAsync(rest);
+            return [.. header, .. rest];
+        }
+        var length = BinaryPrimitives.ReadUInt16LittleEndian(header.AsSpan(2));
+        var body = new byte[length - 4];
+        await stream.ReadExactlyAsync(body);
+        return [.. header, .. body];
+    }
+
+    private static async Task<byte[]> ReadExact(Stream stream, int length)
+    {
+        var buffer = new byte[length];
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        await stream.ReadExactlyAsync(buffer, cts.Token);
+        return buffer;
+    }
+
     [Fact]
     public async Task MovementIntoTutorialDoor_SendsMoveThenMapChangeAndContinuesOnDestination()
     {

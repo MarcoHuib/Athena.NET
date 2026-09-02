@@ -127,6 +127,122 @@ public sealed class WorldPartitionGrainTests : IAsyncLifetime
         Assert.Equal(presence.ActorId, Assert.Single((await rest.GetMapSnapshotAsync("geffen")).Players).ActorId);
     }
 
+    [Fact]
+    public async Task TruncateMovementAsync_ByValidIndex_ShortensPathAndAllowsAdvanceAlongIt()
+    {
+        var grain = Partition("prontera-region");
+        var presence = Presence(Guid.NewGuid(), "prontera");
+        await grain.RegisterPresenceAsync(presence);
+        var moveResult = await grain.MovePlayerAsync(new WorldMovementCommand(presence.PresenceId, presence.CharacterId, "prontera", 150, 180, 153, 180));
+        Assert.True(moveResult.Path!.Count >= 3, "Test requires a path with an interior cell to truncate to.");
+        var movementId = moveResult.MovementId!.Value;
+
+        var truncated = await grain.TruncateMovementAsync(new WorldMovementTruncation(movementId, presence.PresenceId, presence.CharacterId, "prontera", 1));
+
+        Assert.Equal(WorldMovementStatus.Moved, truncated.Status);
+        Assert.Equal(2, truncated.Path!.Count);
+        var nextCell = truncated.Path[1];
+        Assert.Equal(WorldMovementAdvanceStatus.Advanced, (await grain.AdvanceMovementAsync(
+            new(movementId, presence.PresenceId, presence.CharacterId, "prontera", 150, 180, nextCell.X, nextCell.Y))).Status);
+    }
+
+    [Fact]
+    public async Task TruncateMovementAsync_ToStartCellOrPastPathEnd_IsRejected_AndLeavesFullRouteActive()
+    {
+        var grain = Partition("prontera-region");
+        var presence = Presence(Guid.NewGuid(), "prontera");
+        await grain.RegisterPresenceAsync(presence);
+        var moveResult = await grain.MovePlayerAsync(new WorldMovementCommand(presence.PresenceId, presence.CharacterId, "prontera", 150, 180, 153, 180));
+        var movementId = moveResult.MovementId!.Value;
+        var fullPath = moveResult.Path!;
+
+        Assert.Equal(WorldMovementStatus.Rejected, (await grain.TruncateMovementAsync(
+            new WorldMovementTruncation(movementId, presence.PresenceId, presence.CharacterId, "prontera", 0))).Status);
+        Assert.Equal(WorldMovementStatus.Rejected, (await grain.TruncateMovementAsync(
+            new WorldMovementTruncation(movementId, presence.PresenceId, presence.CharacterId, "prontera", fullPath.Count))).Status);
+
+        // The rejected truncations must not have disturbed the original route.
+        var nextCell = fullPath[1];
+        Assert.Equal(WorldMovementAdvanceStatus.Advanced, (await grain.AdvanceMovementAsync(
+            new(movementId, presence.PresenceId, presence.CharacterId, "prontera", 150, 180, nextCell.X, nextCell.Y))).Status);
+    }
+
+    [Fact]
+    public async Task TruncateMovementAsync_WithStaleMovementIdOrWrongPresence_ReturnsMismatchStatuses()
+    {
+        var grain = Partition("prontera-region");
+        var presence = Presence(Guid.NewGuid(), "prontera");
+        await grain.RegisterPresenceAsync(presence);
+        var moveResult = await grain.MovePlayerAsync(new WorldMovementCommand(presence.PresenceId, presence.CharacterId, "prontera", 150, 180, 153, 180));
+
+        Assert.Equal(WorldMovementStatus.SourceMismatch, (await grain.TruncateMovementAsync(
+            new WorldMovementTruncation(Guid.NewGuid(), presence.PresenceId, presence.CharacterId, "prontera", 1))).Status);
+        Assert.Equal(WorldMovementStatus.PresenceMismatch, (await grain.TruncateMovementAsync(
+            new WorldMovementTruncation(moveResult.MovementId!.Value, Guid.NewGuid(), presence.CharacterId, "prontera", 1))).Status);
+    }
+
+    [Fact]
+    public async Task CancelMovementAsync_ContractDistinguishesCancelledAbsentAndMismatchOutcomes()
+    {
+        var grain = Partition("prontera-region");
+        var presence = Presence(Guid.NewGuid(), "prontera");
+        await grain.RegisterPresenceAsync(presence);
+        var moveResult = await grain.MovePlayerAsync(new WorldMovementCommand(presence.PresenceId, presence.CharacterId, "prontera", 150, 180, 153, 180));
+        var movementId = moveResult.MovementId!.Value;
+
+        var wrongPresence = await grain.CancelMovementAsync(new WorldMovementCancellation(movementId, Guid.NewGuid(), presence.CharacterId, "prontera"));
+        Assert.Equal(WorldMovementCancellationStatus.PresenceMismatch, wrongPresence.Status);
+
+        var wrongMovementId = await grain.CancelMovementAsync(new WorldMovementCancellation(Guid.NewGuid(), presence.PresenceId, presence.CharacterId, "prontera"));
+        Assert.Equal(WorldMovementCancellationStatus.SourceMismatch, wrongMovementId.Status);
+        // A SourceMismatch cancellation must not have removed the still-active, correctly-identified movement.
+        var nextCell = moveResult.Path![1];
+        Assert.Equal(WorldMovementAdvanceStatus.Advanced, (await grain.AdvanceMovementAsync(
+            new(movementId, presence.PresenceId, presence.CharacterId, "prontera", 150, 180, nextCell.X, nextCell.Y))).Status);
+
+        // Re-establish a fresh route to cancel for real, since the one above already advanced.
+        var moveAgain = await grain.MovePlayerAsync(new WorldMovementCommand(presence.PresenceId, presence.CharacterId, "prontera", nextCell.X, nextCell.Y, 153, 182));
+        var secondMovementId = moveAgain.MovementId!.Value;
+        var cancelled = await grain.CancelMovementAsync(new WorldMovementCancellation(secondMovementId, presence.PresenceId, presence.CharacterId, "prontera"));
+        Assert.Equal(WorldMovementCancellationStatus.Cancelled, cancelled.Status);
+        Assert.Equal(WorldMovementAdvanceStatus.StaleRoute, (await grain.AdvanceMovementAsync(
+            new(secondMovementId, presence.PresenceId, presence.CharacterId, "prontera", nextCell.X, nextCell.Y, moveAgain.Path![1].X, moveAgain.Path[1].Y))).Status);
+
+        var alreadyAbsent = await grain.CancelMovementAsync(new WorldMovementCancellation(secondMovementId, presence.PresenceId, presence.CharacterId, "prontera"));
+        Assert.Equal(WorldMovementCancellationStatus.AlreadyAbsent, alreadyAbsent.Status);
+    }
+
+    [Fact]
+    public async Task CancelMovementAsync_ForUnknownCharacter_ReturnsPresenceNotFound()
+    {
+        var grain = Partition("prontera-region");
+        var result = await grain.CancelMovementAsync(new WorldMovementCancellation(Guid.NewGuid(), Guid.NewGuid(), 999999, "prontera"));
+        Assert.Equal(WorldMovementCancellationStatus.PresenceNotFound, result.Status);
+    }
+
+    [Fact]
+    public async Task ConflictingCrossPartitionTransfer_PreservesInFlightMovementOnSourcePartition()
+    {
+        var prontera = Partition("prontera-region"); var rest = Partition("world-rest");
+        var presence = Presence(Guid.NewGuid(), "prontera");
+        await prontera.RegisterPresenceAsync(presence);
+        var moveResult = await prontera.MovePlayerAsync(new WorldMovementCommand(presence.PresenceId, presence.CharacterId, "prontera", 150, 180, 153, 180));
+        var movementId = moveResult.MovementId!.Value;
+
+        // Force a conflict on the destination partition by pre-preparing a different transfer for the same character.
+        var conflicting = new IncomingWorldTransfer(Guid.NewGuid(), presence, "prontera-region", "prontera", "izlude", 10, 20);
+        await rest.PrepareIncomingTransferAsync(conflicting);
+
+        var transfer = Transfer(presence, "izlude");
+        var result = await prontera.TransferPlayerAsync(transfer);
+        Assert.Equal(WorldTransferStatus.Conflict, result.Status);
+
+        // The conflicted transfer must not have discarded the in-flight movement on the source partition.
+        var nextCell = moveResult.Path![1];
+        Assert.Equal(WorldMovementAdvanceStatus.Advanced, (await prontera.AdvanceMovementAsync(
+            new(movementId, presence.PresenceId, presence.CharacterId, "prontera", 150, 180, nextCell.X, nextCell.Y))).Status);
+    }
+
     private IWorldPartitionGrain Partition(string id) => _cluster.GrainFactory.GetGrain<IWorldPartitionGrain>(id);
     private static WorldPlayerPresence Presence(Guid id, string map) => new(id, 2001, 1001, map, 150, 180);
     private static WorldTransferCommand Transfer(WorldPlayerPresence presence, string destination) =>

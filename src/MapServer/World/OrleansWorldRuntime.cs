@@ -50,6 +50,12 @@ public sealed class OrleansWorldRuntime(IClusterClient clusterClient, IWorldPart
         return Grain(resolver.ResolvePartition(mapId)).AdvanceMovementAsync(command with { MapId = mapId }).WaitAsync(cancellationToken);
     }
 
+    public Task<WorldMovementCancellationResult> CancelMovementAsync(WorldMovementCancellation command, CancellationToken cancellationToken)
+    {
+        var mapId = WorldMapId.Normalize(command.MapId);
+        return Grain(resolver.ResolvePartition(mapId)).CancelMovementAsync(command with { MapId = mapId }).WaitAsync(cancellationToken);
+    }
+
     public async Task<WorldTransferResult> TransferPlayerAsync(WorldTransferCommand command, CancellationToken cancellationToken)
     {
         var sourcePartition = resolver.ResolvePartition(command.SourceMapId);

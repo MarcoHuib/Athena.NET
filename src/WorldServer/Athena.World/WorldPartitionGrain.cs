@@ -73,9 +73,9 @@ public sealed class WorldPartitionGrain(IWorldPartitionResolver resolver, IMovem
         if (current.PresenceId != command.PresenceId) return Task.FromResult(new WorldMovementResult(WorldMovementStatus.PresenceMismatch, current));
         if (!_movements.TryGetValue(command.CharacterId, out var movement) || movement.MovementId != command.MovementId || !Same(movement.MapId, mapId))
             return Task.FromResult(new WorldMovementResult(WorldMovementStatus.SourceMismatch, current));
-        var index = movement.Path.ToList().FindIndex(cell => cell.X == command.DestinationX && cell.Y == command.DestinationY);
-        if (index < 1) return Task.FromResult(new WorldMovementResult(WorldMovementStatus.Rejected, current));
-        movement.Path = movement.Path.Take(index + 1).ToArray();
+        if (command.DestinationIndex < 1 || command.DestinationIndex >= movement.Path.Count)
+            return Task.FromResult(new WorldMovementResult(WorldMovementStatus.Rejected, current));
+        movement.Path = movement.Path.Take(command.DestinationIndex + 1).ToArray();
         return Task.FromResult(new WorldMovementResult(WorldMovementStatus.Moved, current, movement.Path, movement.MovementId));
     }
 
@@ -101,6 +101,19 @@ public sealed class WorldPartitionGrain(IWorldPartitionResolver resolver, IMovem
         return Task.FromResult(new WorldMovementAdvanceResult(WorldMovementAdvanceStatus.Advanced, advanced));
     }
 
+    public Task<WorldMovementCancellationResult> CancelMovementAsync(WorldMovementCancellation command)
+    {
+        var mapId = RequireOwnedMap(command.MapId);
+        if (!TryFind(command.CharacterId, out var current)) return Task.FromResult(new WorldMovementCancellationResult(WorldMovementCancellationStatus.PresenceNotFound, null));
+        if (current.PresenceId != command.PresenceId) return Task.FromResult(new WorldMovementCancellationResult(WorldMovementCancellationStatus.PresenceMismatch, current));
+        if (!_movements.TryGetValue(command.CharacterId, out var movement))
+            return Task.FromResult(new WorldMovementCancellationResult(WorldMovementCancellationStatus.AlreadyAbsent, current));
+        if (movement.MovementId != command.MovementId || !Same(movement.MapId, mapId))
+            return Task.FromResult(new WorldMovementCancellationResult(WorldMovementCancellationStatus.SourceMismatch, current));
+        _movements.Remove(command.CharacterId);
+        return Task.FromResult(new WorldMovementCancellationResult(WorldMovementCancellationStatus.Cancelled, current));
+    }
+
     public async Task<WorldTransferResult> TransferPlayerAsync(WorldTransferCommand command)
     {
         if (_outgoing.TryGetValue(command.TransferId, out var replay))
@@ -115,7 +128,6 @@ public sealed class WorldPartitionGrain(IWorldPartitionResolver resolver, IMovem
         var destinationMap = WorldMapId.Normalize(command.DestinationMapId);
         var destinationPartition = resolver.ResolvePartition(destinationMap);
         var destination = current with { MapId = destinationMap, X = command.DestinationX, Y = command.DestinationY };
-        _movements.Remove(command.CharacterId);
         var type = Same(destinationPartition, PartitionId) ? WorldTransferType.SamePartition : WorldTransferType.CrossPartition;
         var normalized = command with { SourceMapId = sourceMap, DestinationMapId = destinationMap };
         var record = new TransferRecord(normalized, current, destination, destinationPartition, type);
