@@ -250,8 +250,14 @@ public sealed class WorldPartitionGrainTests : IAsyncLifetime
 
     public sealed class TopologyConfigurator : ISiloConfigurator
     {
+        // The real conf/world_partitions.json topology, not a hand-rolled one -
+        // WorldPartitionTopologyLoader itself has no idea where this file lives (see its own doc
+        // comment); resolving that path is this TEST's own composition-root responsibility, exactly
+        // like MapServerApp.RunAsync/Athena.World's Program.cs resolve it for their own processes.
+        // "geffen" is not "prontera"/"prt_fild*", so it resolves to "world-rest" (the catch-all),
+        // matching this test's previous expectations exactly.
         public void Configure(ISiloBuilder siloBuilder) => siloBuilder.Services.AddSingleton<IWorldPartitionResolver>(
-            WorldPartitionResolver.CreateDevelopment(["prontera", "prt_fild08d", "izlude", "geffen"]))
+            WorldPartitionTopologyLoader.Load(TestWorldPartitionsPath.Resolve(), ["prontera", "prt_fild08d", "izlude", "geffen"]))
             .AddSingleton<IMovementPathProvider, UnverifiedGridLineMovementPathProvider>();
     }
 }

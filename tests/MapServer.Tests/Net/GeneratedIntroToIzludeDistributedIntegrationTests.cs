@@ -55,7 +55,7 @@ public sealed class GeneratedIntroToIzludeDistributedIntegrationTests : IAsyncLi
         // instance decides which partition/grain key a map routes to, independent of whatever
         // resolver the silo's own WorldPartitionGrain instances are constructed with (silo DI is
         // not reachable from _cluster.ServiceProvider, which is the CLIENT'S service provider).
-        var resolver = WorldPartitionResolver.CreateDevelopment(["int_land04", "izlude_d"]);
+        var resolver = WorldPartitionTopologyLoader.Load(Path.Combine(FindRepositoryRoot(), "conf", "world_partitions.json"), ["int_land04", "izlude_d"]);
         var worldRuntime = new OrleansWorldRuntime(_cluster.Client, resolver);
         var gameplayState = new CharacterGameplayState(9, 1, 0, 10, 5, 0, 0, 100, 20, 100, 20, 0, 0, 9, 9, 9, 9, 9, 9);
 
@@ -150,7 +150,7 @@ public sealed class GeneratedIntroToIzludeDistributedIntegrationTests : IAsyncLi
     [Fact]
     public async Task OrleansWorldRuntime_CancelMovementAsync_HonorsCancellationToken()
     {
-        var resolver = WorldPartitionResolver.CreateDevelopment(["int_land04", "izlude_d"]);
+        var resolver = WorldPartitionTopologyLoader.Load(Path.Combine(FindRepositoryRoot(), "conf", "world_partitions.json"), ["int_land04", "izlude_d"]);
         var worldRuntime = new OrleansWorldRuntime(_cluster.Client, resolver);
         using var cts = new CancellationTokenSource();
         cts.Cancel();
@@ -162,7 +162,7 @@ public sealed class GeneratedIntroToIzludeDistributedIntegrationTests : IAsyncLi
     public sealed class TopologyConfigurator : ISiloConfigurator
     {
         public void Configure(ISiloBuilder siloBuilder) => siloBuilder.Services
-            .AddSingleton<IWorldPartitionResolver>(WorldPartitionResolver.CreateDevelopment(["int_land04", "izlude_d"]))
+            .AddSingleton<IWorldPartitionResolver>(WorldPartitionTopologyLoader.Load(Path.Combine(FindRepositoryRoot(), "conf", "world_partitions.json"), ["int_land04", "izlude_d"]))
             .AddSingleton<IMapCollisionProvider>(_ => MapCollisionStartupLoader.Load(
                 [], System.IO.Path.Combine(FindRepositoryRoot(), "legacy/rathena/db/map_cache.dat"),
                 Athena.Net.MapServer.Gameplay.Rules.RagnarokRuleSet.Renewal))

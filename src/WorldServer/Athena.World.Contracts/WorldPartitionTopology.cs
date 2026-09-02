@@ -19,6 +19,17 @@ public interface IWorldPartitionResolver
     string ResolvePartition(string mapId);
 }
 
+// Generic partition-ownership resolver: normalizes map IDs, matches include/exclude glob
+// patterns, resolves exactly one owning partition, and validates topology invariants (no
+// duplicate partition IDs, every served map has exactly one owner). Deliberately contains NO
+// knowledge of any concrete Ragnarok map or deployment topology (no "prontera", "prt_fild*",
+// "izlude", etc.) - which maps exist and how they're grouped into partitions is configuration/
+// deployment policy, supplied entirely via the `definitions` constructor argument. This type also
+// has no concept of WHERE that configuration lives on disk (repository layout, container
+// filesystem, etc.) - see WorldPartitionTopologyLoader's own doc comment for where that
+// responsibility lives instead. Both production and development source their policy from the same
+// world_partitions.json shape via WorldPartitionTopologyLoader.Load, just pointed at different
+// absolute paths supplied by their own composition root.
 public sealed class WorldPartitionResolver : IWorldPartitionResolver
 {
     private readonly IReadOnlyList<WorldPartitionDefinition> _definitions;
@@ -56,14 +67,17 @@ public sealed class WorldPartitionResolver : IWorldPartitionResolver
             ? mapId.StartsWith(normalized[..^1], StringComparison.OrdinalIgnoreCase)
             : string.Equals(normalized, mapId, StringComparison.OrdinalIgnoreCase);
     }
-
-    public static WorldPartitionResolver CreateDevelopment(IEnumerable<string> servedMaps) => new(
-        [
-            new("prontera-region", ["prontera", "prt_fild*"]),
-            new("world-rest", ["*"], ["prontera", "prt_fild*"]),
-        ], servedMaps);
 }
 
+// Loads a WorldPartitionResolver from a world_partitions.json-shaped file at an EXPLICIT,
+// already-resolved absolute (or working-directory-relative) `path`. This type never searches
+// parent directories, never assumes a source-repository layout, and never knows about a solution
+// file - resolving WHERE the topology file lives (a checked-out repo's conf/ directory in
+// development, /etc/athena/world_partitions.json in a container, an env-var override, etc.) is
+// entirely the caller's/composition-root's responsibility (see MapServerApp.RunAsync and
+// Athena.World's own Program.cs, both of which already read the ATHENA_WORLD_PARTITIONS_PATH
+// environment variable for exactly this purpose - reuse that convention rather than inventing a
+// second path-discovery mechanism).
 public static class WorldPartitionTopologyLoader
 {
     public static WorldPartitionResolver Load(string path, IEnumerable<string> servedMaps)
