@@ -134,6 +134,49 @@ public sealed class MapClientSessionWarpTests
         listener.Stop();
     }
 
+    // Priority 6: a script OnTouch handler warping WITHIN THE SAME map name (e.g. a same-map
+    // teleport pad) still sends a real 0x0091 client-facing map transition and must report
+    // MapChanged - the OLD map-name-equality-only check would have wrongly reported
+    // ScriptStartedSameMap here, since _mapName itself never changes. The transition-generation
+    // counter (bumped by TeleportTo, the single funnel every warp path goes through) is what makes
+    // this distinguishable from a script that merely opens dialogue with no warp at all.
+    [Fact]
+    public async Task SpawningInsideScriptTouchRectangle_WhoseHandlerWarpsWithinTheSameMap_ReportsMapChanged()
+    {
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        using var client = new TcpClient();
+        var connectTask = client.ConnectAsync((IPEndPoint)listener.LocalEndpoint);
+        using var serverClient = await listener.AcceptTcpClientAsync();
+        await connectTask;
+        await using var clientStream = client.GetStream();
+        var connector = new CharServerConnector(new MapConfigStore(new MapConfig(), "unused.conf"));
+
+        var entity = BuildTouchEntity("test-map", 50, 50, radius: 3, out _);
+        // Warps to a DIFFERENT (x,y) on the SAME map name the entity/session already occupy.
+        var registration = new GeneratedScriptRegistration(entity, "OnTouch", static () => new WarpingScript("test-map", 150, 150));
+        var scripts = new NpcScriptRegistryBuilder().AddCustom(registration).Build();
+        var registry = new WorldMapRegistry([], [entity], scripts: scripts);
+        await using var session = new MapClientSession(
+            1, serverClient, connector, iroAuthenticated: true, mapName: "test-map", x: 50, y: 50,
+            worldMapRegistry: registry);
+        var runTask = session.RunAsync(CancellationToken.None);
+
+        await clientStream.WriteAsync(new byte[] { 0x7d, 0x00, 0xaa });
+
+        // A real 0x0091 map transition IS sent, even though the map name never changes.
+        var mapChange = new byte[22];
+        await clientStream.ReadExactlyAsync(mapChange);
+        Assert.Equal((short)0x0091, BinaryPrimitives.ReadInt16LittleEndian(mapChange));
+        Assert.Equal("test-map", session.CurrentMapName);
+        Assert.Equal((ushort)150, session.CurrentX);
+        Assert.Equal((ushort)150, session.CurrentY);
+
+        client.Close();
+        await runTask.WaitAsync(TimeSpan.FromSeconds(5));
+        listener.Stop();
+    }
+
     // Issue 2 root-cause regression (prtf004_a on prt_fild08a): a warp actor entering the player's
     // visibility radius as their route approaches it must be sent to the client, even though the
     // route has a pending warp arrival - actor visibility must never be suppressed by
@@ -197,12 +240,22 @@ public sealed class MapClientSessionWarpTests
         // the player's own click-time cell, on a completely different bearing from the warp - the
         // trigger metadata belongs to the warp; it must not suppress the monster's visibility either.
         var warp = new WarpDefinition("prtf004_a", "test-warp-map", 20, 0, 3, 2, "other-map", 156, 26, true, "test", 1);
-        var registry = new WorldMapRegistry([warp]);
+        // Production (MapServerWorld.Build) shares ONE WorldActorIdAllocator between WorldMapRegistry
+        // and MonsterRegistry so every actor kind draws from one ID namespace - a synthetic fixture
+        // that instead gives each registry its OWN allocator can accidentally assign the warp and the
+        // monster the SAME ActorId (both allocators start at the same base value), which silently
+        // breaks _visibleActorIds' shared dedup set: the second actor with a colliding ID is treated
+        // as "already announced" and never sent. Reproduce the shared-allocator invariant here.
+        var allocator = new WorldActorIdAllocator();
+        var registry = new WorldMapRegistry([warp], [], scripts: null, allocator: allocator);
         var spawn = new MobSpawnDefinition(GeneratedMobs.GPoring, "test-warp-map", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "test", 0));
-        var monsters = new MonsterRegistry([spawn], new WorldActorIdAllocator(), new FixedCellSelector(10, 5), TimeProvider.System);
+        var monsters = new MonsterRegistry([spawn], allocator, new FixedCellSelector(10, 5), TimeProvider.System);
         Assert.Single(monsters.AllInstances);
         Assert.True(monsters.AllInstances[0].IsAlive);
         Assert.Single(monsters.GetVisibleInstances("test-warp-map", 10, 0));
+        var warpActorId = registry.GetVisibleWarpActors("test-warp-map", 20, 0).Single().ActorId;
+        var monsterActorId = monsters.AllInstances[0].ActorId;
+        Assert.NotEqual(warpActorId, monsterActorId);
         await using var session = new MapClientSession(
             1, serverClient, connector, iroAuthenticated: true, mapName: "test-warp-map", x: 10, y: 0,
             worldMapRegistry: registry, monsters: monsters);
@@ -225,6 +278,259 @@ public sealed class MapClientSessionWarpTests
                 sawMonsterActor = true;
         }
         Assert.True(sawMonsterActor);
+
+        client.Close();
+        await runTask.WaitAsync(TimeSpan.FromSeconds(5));
+        listener.Stop();
+    }
+
+    // Priority 2: a warp genuinely OUTSIDE click-time AOI (distance > 14) must become visible
+    // partway through an UNINTERRUPTED walk with no retarget - the gap this PR fixes
+    // (RefreshVisibleWorldActorsAsync previously only ran on the initial click and on an applied
+    // retarget, never on a plain crossed cell). Route: straight line along y=0 from (0,0) to
+    // (30,0); the warp's own trigger rectangle is centered off that line (25,5) with radius 1 so
+    // the route NEVER intersects it (IntersectsWarp stays false throughout) - this is purely an
+    // AOI-visibility scenario, not a route-intersection one. Visibility range is Chebyshev
+    // (WorldVisibilityOptions.DefaultAreaSize=14), so the warp (at distance max(|x-25|,5) from the
+    // player's own (x,0)) enters range only once x>=11.
+    [Fact]
+    public async Task WarpEntersVisibilityDuringAnUninterruptedWalk_WithNoRetarget_IsSentOnceInRange()
+    {
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        using var client = new TcpClient();
+        var connectTask = client.ConnectAsync((IPEndPoint)listener.LocalEndpoint);
+        using var serverClient = await listener.AcceptTcpClientAsync();
+        await connectTask;
+        await using var clientStream = client.GetStream();
+        var connector = new CharServerConnector(new MapConfigStore(new MapConfig(), "unused.conf"));
+        var warp = new WarpDefinition("aoi-warp", "aoi-map", 25, 5, 1, 1, "other-map", 1, 1, true, "test", 1);
+        var registry = new WorldMapRegistry([warp]);
+        var clock = new Athena.Net.MapServer.Tests.Testing.ControllableTimeProvider();
+        await using var session = new MapClientSession(
+            1, serverClient, connector, iroAuthenticated: true, mapName: "aoi-map", x: 0, y: 0,
+            worldMapRegistry: registry, timeProvider: clock);
+        var runTask = session.RunAsync(CancellationToken.None);
+
+        await clientStream.WriteAsync(BuildMovementRequest(30, 0));
+        var movement = new byte[12];
+        await clientStream.ReadExactlyAsync(movement);
+        Assert.Equal((short)0x0087, BinaryPrimitives.ReadInt16LittleEndian(movement));
+        // No warp actor at click time - (0,0) to warp (25,5) is distance 25, well outside range 14.
+
+        // Drive the clock cell-by-cell up to x=10 (still out of range: distance max(15,5)=15) and
+        // confirm no actor packet appears yet - each boundary is synchronized via the registration
+        // generation, exactly matching RetargetAwayFromADoor_MidWalk_...'s own idiom.
+        for (var x = 1; x <= 10; x++)
+        {
+            var generation = clock.RegistrationGeneration;
+            await clock.AdvanceAsync(TimeSpan.FromMilliseconds(150));
+            await clock.WaitForRegistrationAfterAsync(generation).WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        await clientStream.WriteAsync(new byte[] { 0x1c, 0x0b });
+        var pingReply = new byte[2];
+        await clientStream.ReadExactlyAsync(pingReply);
+        Assert.Equal((short)0x0b1d, BinaryPrimitives.ReadInt16LittleEndian(pingReply));
+
+        // Cross the boundary into range (x=11, distance max(14,5)=14 <= 14) - the warp actor must
+        // now appear, with no map-change ever following from this same uninterrupted walk.
+        var generationAtBoundary = clock.RegistrationGeneration;
+        await clock.AdvanceAsync(TimeSpan.FromMilliseconds(150));
+        await clock.WaitForRegistrationAfterAsync(generationAtBoundary).WaitAsync(TimeSpan.FromSeconds(5));
+
+        var actorPacket = await ReadUntilOpcode(clientStream, 0x09ff);
+        Assert.Equal((short)0x09ff, BinaryPrimitives.ReadInt16LittleEndian(actorPacket));
+
+        client.Close();
+        await runTask.WaitAsync(TimeSpan.FromSeconds(5));
+        listener.Stop();
+    }
+
+    // Priority 2: the monster equivalent of the warp test above - a monster genuinely outside
+    // click-time AOI must become visible partway through an uninterrupted walk with no retarget.
+    // Reuses the shared-allocator fixture from Priority 1's own fix.
+    [Fact]
+    public async Task MonsterEntersVisibilityDuringAnUninterruptedWalk_WithNoRetarget_IsSentOnceInRange()
+    {
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        using var client = new TcpClient();
+        var connectTask = client.ConnectAsync((IPEndPoint)listener.LocalEndpoint);
+        using var serverClient = await listener.AcceptTcpClientAsync();
+        await connectTask;
+        await using var clientStream = client.GetStream();
+        var connector = new CharServerConnector(new MapConfigStore(new MapConfig(), "unused.conf"));
+        var allocator = new WorldActorIdAllocator();
+        var registry = new WorldMapRegistry([], [], scripts: null, allocator: allocator);
+        var spawn = new MobSpawnDefinition(GeneratedMobs.GPoring, "aoi-map", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "test", 0));
+        var monsters = new MonsterRegistry([spawn], allocator, new FixedCellSelector(25, 5), TimeProvider.System);
+        var monsterActorId = monsters.AllInstances[0].ActorId;
+        var clock = new Athena.Net.MapServer.Tests.Testing.ControllableTimeProvider();
+        await using var session = new MapClientSession(
+            1, serverClient, connector, iroAuthenticated: true, mapName: "aoi-map", x: 0, y: 0,
+            monsters: monsters, timeProvider: clock);
+        var runTask = session.RunAsync(CancellationToken.None);
+
+        await clientStream.WriteAsync(BuildMovementRequest(30, 0));
+        var movement = new byte[12];
+        await clientStream.ReadExactlyAsync(movement);
+        Assert.Equal((short)0x0087, BinaryPrimitives.ReadInt16LittleEndian(movement));
+
+        for (var x = 1; x <= 10; x++)
+        {
+            var generation = clock.RegistrationGeneration;
+            await clock.AdvanceAsync(TimeSpan.FromMilliseconds(150));
+            await clock.WaitForRegistrationAfterAsync(generation).WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        await clientStream.WriteAsync(new byte[] { 0x1c, 0x0b });
+        var pingReply = new byte[2];
+        await clientStream.ReadExactlyAsync(pingReply);
+        Assert.Equal((short)0x0b1d, BinaryPrimitives.ReadInt16LittleEndian(pingReply));
+
+        var generationAtBoundary = clock.RegistrationGeneration;
+        await clock.AdvanceAsync(TimeSpan.FromMilliseconds(150));
+        await clock.WaitForRegistrationAfterAsync(generationAtBoundary).WaitAsync(TimeSpan.FromSeconds(5));
+
+        var sawMonsterActor = false;
+        for (var i = 0; i < 3 && !sawMonsterActor; i++)
+        {
+            var packet = await ReadDynamicOrFixed(clientStream);
+            var opcode = BinaryPrimitives.ReadInt16LittleEndian(packet);
+            Assert.NotEqual((short)0x0091, opcode);
+            if (opcode == (short)0x09ff && BinaryPrimitives.ReadUInt32LittleEndian(packet.AsSpan(5)) == monsterActorId)
+                sawMonsterActor = true;
+        }
+        Assert.True(sawMonsterActor);
+
+        client.Close();
+        await runTask.WaitAsync(TimeSpan.FromSeconds(5));
+        listener.Stop();
+    }
+
+    // Priority 2, dedup: once an actor has been announced, further movement passes while it remains
+    // in range must never re-announce it (no duplicate 0x09FF for the same ActorId) - proves
+    // RefreshVisibleWorldActorsAsync's per-pass call composes correctly with the existing
+    // _visibleActorIds dedup set rather than fighting it.
+    [Fact]
+    public async Task WarpAlreadyAnnounced_StaysInRangeAcrossFurtherPasses_IsNeverAnnouncedTwice()
+    {
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        using var client = new TcpClient();
+        var connectTask = client.ConnectAsync((IPEndPoint)listener.LocalEndpoint);
+        using var serverClient = await listener.AcceptTcpClientAsync();
+        await connectTask;
+        await using var clientStream = client.GetStream();
+        var connector = new CharServerConnector(new MapConfigStore(new MapConfig(), "unused.conf"));
+        var warp = new WarpDefinition("aoi-warp", "aoi-map", 25, 5, 1, 1, "other-map", 1, 1, true, "test", 1);
+        var registry = new WorldMapRegistry([warp]);
+        var clock = new Athena.Net.MapServer.Tests.Testing.ControllableTimeProvider();
+        // Start already within range (x=15, distance max(10,5)=10<=14) so the warp is announced at
+        // click time itself - the earliest possible announcement - then walk several more cells
+        // while remaining in range throughout.
+        await using var session = new MapClientSession(
+            1, serverClient, connector, iroAuthenticated: true, mapName: "aoi-map", x: 15, y: 0,
+            worldMapRegistry: registry, timeProvider: clock);
+        var runTask = session.RunAsync(CancellationToken.None);
+
+        await clientStream.WriteAsync(BuildMovementRequest(20, 0));
+        var movement = new byte[12];
+        await clientStream.ReadExactlyAsync(movement);
+        Assert.Equal((short)0x0087, BinaryPrimitives.ReadInt16LittleEndian(movement));
+        var firstActor = await ReadUntilOpcode(clientStream, 0x09ff);
+        Assert.Equal((short)0x09ff, BinaryPrimitives.ReadInt16LittleEndian(firstActor));
+
+        // Drive several further movement passes while the warp remains in range - never a second
+        // 0x09FF for it. Each cell boundary is drained via a ping round-trip; only a 0x0091 would be
+        // a hard failure (out of scope here), and any 0x09FF observed at all is itself the failure
+        // this test exists to catch.
+        for (var step = 0; step < 4; step++)
+        {
+            var generation = clock.RegistrationGeneration;
+            await clock.AdvanceAsync(TimeSpan.FromMilliseconds(150));
+            await clock.WaitForRegistrationAfterAsync(generation).WaitAsync(TimeSpan.FromSeconds(5));
+
+            await clientStream.WriteAsync(new byte[] { 0x1c, 0x0b });
+            while (true)
+            {
+                var header = new byte[2];
+                await clientStream.ReadExactlyAsync(header);
+                var opcode = BinaryPrimitives.ReadInt16LittleEndian(header);
+                if (opcode == 0x0b1d) break;
+                Assert.NotEqual(0x09ff, opcode); // No duplicate announcement.
+                var lengthBytes = new byte[2];
+                await clientStream.ReadExactlyAsync(lengthBytes);
+                var length = BinaryPrimitives.ReadUInt16LittleEndian(lengthBytes);
+                await clientStream.ReadExactlyAsync(new byte[length - 4]);
+            }
+        }
+
+        client.Close();
+        await runTask.WaitAsync(TimeSpan.FromSeconds(5));
+        listener.Stop();
+    }
+
+    // Priority 2, no-stale-old-map: once a 0x0091 map transition has actually happened during a
+    // movement pass, no further warp/monster actor packet for the OLD map may follow from that same
+    // pass - proves RefreshVisibleWorldActorsAsync runs BEFORE arrival execution, never after.
+    // Route: walking directly onto a warp's own trigger cell (so IntersectsWarp=true and the warp
+    // fires on arrival), with a SECOND, different warp elsewhere on the OLD map that would otherwise
+    // be newly in range of the arrival cell - it must never be announced once the map has changed.
+    [Fact]
+    public async Task MapTransitionDuringAMovementPass_NeverFollowedByAStaleOldMapActorPacket()
+    {
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        using var client = new TcpClient();
+        var connectTask = client.ConnectAsync((IPEndPoint)listener.LocalEndpoint);
+        using var serverClient = await listener.AcceptTcpClientAsync();
+        await connectTask;
+        await using var clientStream = client.GetStream();
+        var connector = new CharServerConnector(new MapConfigStore(new MapConfig(), "unused.conf"));
+        // The triggering warp sits directly on the walked route at (5,0). A SECOND warp on the same
+        // OLD map, far enough from click-time (0,0) to be out of range but within range of (5,0) -
+        // the arrival cell - must never be announced once SendSameServerWarpAsync has already
+        // switched _mapName to "other-map".
+        var triggerWarp = new WarpDefinition("trigger-warp", "old-map", 5, 0, 0, 0, "other-map", 1, 1, true, "test", 1);
+        var staleWarp = new WarpDefinition("stale-warp", "old-map", 10, 8, 1, 1, "yet-another-map", 1, 1, true, "test", 1);
+        var registry = new WorldMapRegistry([triggerWarp, staleWarp]);
+        await using var session = new MapClientSession(
+            1, serverClient, connector, iroAuthenticated: true, mapName: "old-map", x: 0, y: 0,
+            worldMapRegistry: registry);
+        var runTask = session.RunAsync(CancellationToken.None);
+
+        await clientStream.WriteAsync(BuildMovementRequest(5, 0));
+        var movement = new byte[12];
+        await clientStream.ReadExactlyAsync(movement);
+        Assert.Equal((short)0x0087, BinaryPrimitives.ReadInt16LittleEndian(movement));
+
+        // Drain every packet until (and including) the 0x0091 map-change - any 0x09FF observed
+        // along the way must belong to the triggering warp itself (already-visible at click time is
+        // not the case here; this route never comes within 14 of staleWarp's own (10,8) from (0,0),
+        // distance max(10,8)=10, which IS within range - so staleWarp's own visibility at CLICK TIME
+        // is legitimate and expected; the invariant under test is specifically that no FURTHER actor
+        // packet for the OLD map follows the 0x0091 itself).
+        while (true)
+        {
+            var header = new byte[4];
+            await clientStream.ReadExactlyAsync(header);
+            var opcode = BinaryPrimitives.ReadInt16LittleEndian(header);
+            if (opcode == 0x0091)
+            {
+                await clientStream.ReadExactlyAsync(new byte[18]); // Rest of the fixed 22-byte packet.
+                break;
+            }
+            var length = BinaryPrimitives.ReadUInt16LittleEndian(header.AsSpan(2));
+            await clientStream.ReadExactlyAsync(new byte[length - 4]);
+        }
+        Assert.Equal("other-map", session.CurrentMapName);
+
+        // No further packet may reference the OLD map's stale warp - synchronize with a ping and
+        // confirm nothing but the pong arrives.
+        await clientStream.WriteAsync(new byte[] { 0x1c, 0x0b });
+        var pingReply = new byte[2];
+        await clientStream.ReadExactlyAsync(pingReply);
+        Assert.Equal((short)0x0b1d, BinaryPrimitives.ReadInt16LittleEndian(pingReply));
 
         client.Close();
         await runTask.WaitAsync(TimeSpan.FromSeconds(5));

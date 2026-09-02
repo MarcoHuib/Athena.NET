@@ -122,15 +122,18 @@ public sealed class UnverifiedFallbackMobSpawnCellSelector : IMobSpawnCellSelect
 //   any supported declaration shape + map exists + a candidate is found  -> true (real cell)
 //   any supported declaration shape + map exists + all budgets exhausted -> false (temporary; retry)
 //   requested map missing from the collision provider                    -> throws InvalidOperationException
-//   map dimensions incompatible with the pinned edge margin              -> throws InvalidOperationException
+// A map smaller than the pinned edge margin is NOT a thrown configuration error (pinned rnd_value
+// silently swaps an inverted min/max before drawing, random.hpp:19-29 - see 3C in this project's
+// own change history) - such a map still runs the full candidate search (still subject to
+// edge_valid and CELL_CHKREACH) and reports an ordinary true/false outcome like any other map.
 // There is no longer an "unsupported X/Y/Xs/Ys geometry" outcome: after Phase 0's normalization,
 // every declared shape that can appear in generated data (map-wide, rectangular symmetric or
 // asymmetric, fixed-point) is handled by Phase 1 and/or Phase 2 - there is no residual shape left
 // unimplemented, and this type no longer throws NotSupportedException for any input.
-// A missing map or a map too small for the pinned edge margin are WORLD-DATA/CONFIGURATION errors
-// once collision-backed spawning is active for a world - not the same "no data at all, use the
-// placeholder" situation UnverifiedFallbackMobSpawnCellSelector exists for. That selector is only
-// ever chosen DIRECTLY at world-composition time for an explicitly collision-less/test/dev setup
+// A missing map is a WORLD-DATA/CONFIGURATION error once collision-backed spawning is active for a
+// world - not the same "no data at all, use the placeholder" situation
+// UnverifiedFallbackMobSpawnCellSelector exists for. That selector is only ever chosen DIRECTLY at
+// world-composition time for an explicitly collision-less/test/dev setup
 // (MapServerWorld.Build's own default when no collision provider is configured); it must never be
 // reached as internal recovery from bad/incomplete collision data behind this type. Confusing
 // "this world intentionally has no collision data" with "this world has collision data but it's
@@ -158,6 +161,33 @@ public sealed class RathenaCompatibleMobSpawnCellSelector(
 
     private static int DefaultRandomInclusiveRange(int minInclusive, int maxInclusive) =>
         System.Random.Shared.Next(minInclusive, maxInclusive + 1);
+
+    // rnd_value's own contract (random.hpp:19-29): `if (min > max) std::swap(min, max);` BEFORE
+    // constructing the distribution - an inverted range is silently normalized, never undefined
+    // behavior or a thrown error. Every call site that can possibly receive an inverted bound
+    // (both Phase 1's per-axis ranges - see NextAxisCandidate below - and Phase 2's map-wide range,
+    // which can invert on a map smaller than the pinned edge margin, see 3C) must go through this
+    // helper rather than calling the injected `randomInclusiveRange` delegate directly, so an
+    // injected-RNG test observes the exact same normalized (min,max) contract pinned source does.
+    private int NormalizedRandomInclusiveRange(int min, int max) =>
+        min > max ? randomInclusiveRange(max, min) : randomInclusiveRange(min, max);
+
+    // map_search_freecell's own per-axis candidate selection (map.cpp:1832-1833):
+    //   *x = (rx >= 0) ? rnd_value(bx-rx, bx+rx) : rnd_value(edge, mapdata->xs-edge-1);
+    // Each axis independently chooses between a LOCAL range around the declared center (rx/ry >= 0,
+    // i.e. this axis's Xs/Ys is > 0) and the MAP-WIDE edge-bounded range (rx/ry < 0, i.e. this
+    // axis's Xs/Ys is 0) - an asymmetric declaration (one axis 0, the other > 0) genuinely mixes a
+    // map-wide axis with a locally-bound axis, not two independently-reflected local intervals.
+    private int NextAxisCandidate(int center, int radius, int mapWideLow, int mapWideHigh) =>
+        radius >= 0
+            ? NormalizedRandomInclusiveRange(center - radius, center + radius)
+            : NormalizedRandomInclusiveRange(mapWideLow, mapWideHigh);
+
+    // Real-map-edge re-validation (map.cpp:1844) - applies to EVERY candidate regardless of which
+    // phase or which per-axis range produced it; do not confuse this with MapEdgeSize, which only
+    // bounds the size of the map-wide RANDOM CANDIDATE RANGE itself (map.cpp:1832-1833).
+    private static bool IsWithinEdgeValid(int x, int y, int width, int height) =>
+        x >= EdgeValid && x <= width - EdgeValid && y >= EdgeValid && y <= height - EdgeValid;
 
     public bool TrySelectCell(MobSpawnDefinition spawn, int instanceIndex, out MobPosition position)
     {
@@ -197,11 +227,22 @@ public sealed class RathenaCompatibleMobSpawnCellSelector(
 
             var rx = xs - 1;
             var ry = ys - 1;
+            // Phase 1's own map-wide edge bounds (map.cpp:1832-1833 use `mapdata->xs`/`ys`
+            // directly, i.e. the SAME edge-bounded range Phase 2 computes below) - only ever
+            // consulted for an axis whose radius is negative (this axis's Xs/Ys normalized to 0).
+            var mapWideLow = MapEdgeSize;
+            var mapWideHigh = map.Width - MapEdgeSize - 1;
+            var mapWideLowY = MapEdgeSize;
+            var mapWideHighY = map.Height - MapEdgeSize - 1;
             for (var attempt = 0; attempt < InitialPhaseTries; attempt++)
             {
-                var cx = randomInclusiveRange(x - rx, x + rx);
-                var cy = randomInclusiveRange(y - ry, y + ry);
+                var cx = NextAxisCandidate(x, rx, mapWideLow, mapWideHigh);
+                var cy = NextAxisCandidate(y, ry, mapWideLowY, mapWideHighY);
                 if (cx == x && cy == y) continue; // map_search_freecell skips the already-rolled center (map.cpp:1838).
+                // edge_valid re-validation applies to EVERY candidate, Phase 1's included
+                // (map.cpp:1844 runs unconditionally inside the shared loop pinned source uses for
+                // both phases - see 3B) - not just Phase 2's map-wide candidates.
+                if (!IsWithinEdgeValid(cx, cy, map.Width, map.Height)) continue;
                 if (map.IsTraversalCell(cx, cy))
                 {
                     position = new MobPosition((ushort)cx, (ushort)cy);
@@ -222,34 +263,25 @@ public sealed class RathenaCompatibleMobSpawnCellSelector(
         // Phase 2: map-wide search (map.cpp:1798-1867, rx=ry=-1) - unchanged logic from the
         // prior map-wide-only implementation, now with its own fresh DefaultTries budget (see
         // this type's own doc comment for why this is 50, not the old combined 58).
-        var edgeValid = Math.Min(MapEdgeSize, EdgeValid);
         var low = MapEdgeSize;
         var high = map.Width - MapEdgeSize - 1;
         var lowY = MapEdgeSize;
         var highY = map.Height - MapEdgeSize - 1;
 
-        // A map too small for the pinned edge margin to leave any candidate range at all can never
-        // produce a valid map-wide cell under pinned semantics either (rnd_value with low > high is
-        // itself undefined there) - this is a DATA problem (the map's own real dimensions can never
-        // satisfy this search, no matter how many attempts run), not a transient attempt-exhaustion
-        // outcome, so it throws the same way a missing map does rather than returning a retryable
-        // false (retrying would never succeed - the map's dimensions never change).
-        if (low > high || lowY > highY)
-        {
-            throw new InvalidOperationException(
-                $"Map '{spawn.Map}' ({map.Width}x{map.Height}) is smaller than the pinned map-edge margin " +
-                $"({MapEdgeSize}) allows for a map-wide random spawn - no candidate range exists at all.");
-        }
-
+        // A map smaller than the pinned edge margin makes `low > high` (and/or `lowY > highY`) -
+        // pinned rnd_value does NOT treat this as undefined: it swaps min/max before drawing
+        // (random.hpp:19-29) and the search proceeds exactly as it would for any other range, still
+        // subject to edge_valid re-validation and CELL_CHKREACH below (see 3C). This is therefore a
+        // normal, possibly-successful or possibly-attempt-exhausted search, never a thrown
+        // configuration error - NormalizedRandomInclusiveRange below reproduces the swap.
         for (var attempt = 0; attempt < DefaultTries; attempt++)
         {
-            var mx = randomInclusiveRange(low, high);
-            var my = randomInclusiveRange(lowY, highY);
+            var mx = NormalizedRandomInclusiveRange(low, high);
+            var my = NormalizedRandomInclusiveRange(lowY, highY);
 
             // Real-map-edge re-validation (map.cpp:1844) - a narrower, defensive re-check distinct
             // from the candidate RANGE bound above (edge, not edge_valid).
-            if (mx < edgeValid || mx > map.Width - edgeValid || my < edgeValid || my > map.Height - edgeValid)
-                continue;
+            if (!IsWithinEdgeValid(mx, my, map.Width, map.Height)) continue;
 
             if (map.IsTraversalCell(mx, my))
             {

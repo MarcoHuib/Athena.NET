@@ -67,12 +67,15 @@ public sealed record MapServerWorld(WorldMapRegistry Maps, MonsterRegistry Monst
     // that don't care about ruleset selection (most existing tests) construct
     // `new GameplayRuleServices(new RenewalBasicAttackRules())` directly, the same
     // way they already construct every other dependency this method takes.
-    // `collisionProvider` defaults to EmptyMapCollisionProvider.Instance: no map in this
-    // repository has imported collision data yet (see MapCollisionArtifact/MapCollisionCompiler's
-    // own doc comments - the proprietary source .gat files and any real derived artifact stay
-    // local/gitignored, never committed). Threaded through composition now so a future branch can
-    // supply a real provider without touching this signature's callers again; nothing in the
-    // current gameplay runtime consumes it yet.
+    // `collisionProvider` defaults to EmptyMapCollisionProvider.Instance: the proprietary source
+    // .gat files and any real derived artifact stay local/gitignored, never committed, so a caller
+    // that doesn't explicitly configure one (map_cache_path/map_collision_artifact - see
+    // MapCollisionArtifact/MapCollisionCompiler's own doc comments) gets the collision-less
+    // placeholder. This is no longer "nothing consumes it yet" - a REAL provider (the normal
+    // production startup case, see ai/world-data.md) drives player movement pathing
+    // (RathenaCompatibleMovementPathProvider), monster spawn cell selection
+    // (RathenaCompatibleMobSpawnCellSelector), monster idle movement (MonsterRuntime), and combat
+    // range checks, all through this same `resolvedCollisionProvider` instance below.
     // `customsEnabled` composes Athena.NET's own handwritten Customs/World content (currently
     // just the Athena Test NPC - see ai/map-server.md's "Handwritten custom world content"
     // section) alongside the generated world on the SAME WorldRegistryBuilder instance

@@ -158,6 +158,15 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     private uint _loginId1;
     private string _characterName = string.Empty;
     private string _mapName = string.Empty;
+    // Bumped exactly once per real client-facing map transition (every TeleportTo call - the
+    // single funnel every warp/script-warp path already goes through, see that method's own doc
+    // comment). NOT derived from _mapName equality: a generated OnTouch script can legally warp
+    // within the SAME map name (e.g. prontera(100,100) -> prontera(150,150) via WarpAsync/
+    // mapmove), which still sends a real 0x0091 client-facing transition even though the map name
+    // never changes - see TryFireImmediateSpawnTouchAsync's own doc comment for the live shape
+    // this fixes. Never bumped for a mere authoritative position correction (0x0088 ZC_STOPMOVE,
+    // ReconcileAfterGameplayRejectionAsync) that does not reload the map.
+    private long _mapTransitionGeneration;
     private ushort _x;
     private ushort _y;
     private byte _sex;
@@ -744,6 +753,19 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
             arrival = movement.IsMoving ? null : _pendingArrival; // Only relevant once the walk actually finished.
             mapAtAdvance = _mapName;
             movementDestinationAfterAdvance = movement.IsMoving ? movement.Destination : null;
+
+            // World's own WorldPartitionGrain.AdvanceMovementAsync already removes its
+            // ActiveMovement entry the moment the crossed cell reaches the final path cell - once
+            // the LOCAL route has also genuinely finished (not moving, and no retarget just started
+            // a brand-new route via StartWalk above, which would have left `movement.IsMoving`
+            // true), MapServer's own _worldMovementId is a reference to a route World has already
+            // forgotten. Clearing it here keeps the two sides' lifecycle in sync instead of holding
+            // a stale identity that is merely harmless today (nothing currently re-reads it once
+            // the walk is over) but is not a genuinely completed/cleaned-up handle. A rejected
+            // retarget mid-route (the `return` above, inside ReconcileAfterGameplayRejectionAsync)
+            // is unaffected: that path still needs and uses the OLD _worldMovementId to cancel the
+            // still-active World route, and never reaches this line.
+            if (!movement.IsMoving) _worldMovementId = null;
         }
         finally { _movementGate.Release(); }
 
@@ -760,11 +782,21 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
                 $"[iRO MAP DEBUG] Sending 0x0087 len=12 from=({applied.FromX},{applied.FromY}) to=({applied.Resolved.TargetX},{applied.Resolved.TargetY}) (mid-walk retarget)");
             await WriteAsync(retargetResponse, cancellationToken);
             await StartPresenceMovementAsync(applied.FromX, applied.FromY, applied.Resolved.TargetX, applied.Resolved.TargetY, retargetTick, cancellationToken);
-            // Unconditional: _x/_y already reflect the real, just-committed cell (set above,
-            // before this branch runs) regardless of where the newly-resolved retargeted walk is
-            // ultimately headed - see RefreshVisibleWorldActorsAsync's own doc comment.
-            await RefreshVisibleWorldActorsAsync(cancellationToken);
         }
+
+        // Unconditional, once per successful movement-processing pass (never once per crossed
+        // cell - AdvanceTo can report several cells when the loop wakes late, and re-scanning
+        // WorldMapRegistry/MonsterRegistry once per historical cell would be pure waste for no
+        // observable benefit: the client only needs to learn about actors visible from where the
+        // character NOW authoritatively stands). This is what makes a warp/NPC/monster actor
+        // outside the click-time AOI become visible partway through an ORDINARY uninterrupted
+        // walk with no retarget - previously this refresh only ran on the initial click
+        // (HandleIroMovementAsync's own tail) and on an applied retarget, never on a plain
+        // in-progress or final crossed cell. Must run BEFORE the arrival dispatch below: an
+        // arrival that changes the map (SendSameServerWarpAsync) must never be followed by a
+        // stale refresh of the OLD map, and a player approaching a trigger must see it before it
+        // fires, not after.
+        await RefreshVisibleWorldActorsAsync(cancellationToken);
 
         if (arrival is null) return;
 
@@ -816,6 +848,21 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         CharacterMovementState movement, CancellationToken cancellationToken)
     {
         MapLogger.Info($"[iRO MAP DEBUG] World rejected {context} status={status} map='{_mapName}' movementId={_worldMovementId}");
+        // PresenceMismatch (a different PresenceId owns this character in World) and NotFound
+        // (World has no presence for this player at all) are lifecycle invariant failures, never
+        // ordinary reconciliation cases - even when World also returns a Presence alongside them
+        // (e.g. PresenceMismatch's own current-owner Presence). Reconciling to that Presence would
+        // silently paper over an identity conflict (or invent local authority over a session World
+        // does not recognize) instead of surfacing it loudly, matching this codebase's established
+        // "lifecycle invariant failures throw" convention. Matched by name since this method is
+        // shared across WorldMovementStatus and WorldMovementAdvanceStatus, which both define these
+        // two members with identical meaning.
+        if (status is nameof(WorldMovementStatus.PresenceMismatch) or nameof(WorldMovementStatus.NotFound))
+        {
+            throw new InvalidOperationException(
+                $"World rejected {context} with a lifecycle invariant failure: status={status} map='{_mapName}' " +
+                $"charId={_charId} presenceId={_presenceId} movementId={_worldMovementId}.");
+        }
         if (_worldMovementId is { } staleMovementId && _presenceId is { } presenceId)
         {
             var cancelled = await _distributedWorld!.CancelMovementAsync(new WorldMovementCancellation(staleMovementId, presenceId, _charId, _mapName), cancellationToken);
@@ -1150,6 +1197,12 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         _y = y;
         _movement?.Teleport(map, x, y);
         _worldMovementId = null;
+        // Every call to this method corresponds to a real client-facing map transition/warp
+        // lifecycle (see _mapTransitionGeneration's own doc comment) - bumped here, in the single
+        // funnel every warp/script-warp path (SendSameServerWarpAsync, INpcScriptHost.WarpAsync,
+        // ExecuteScriptWarpAsync) and the initial auth-position-restore path already goes through,
+        // rather than at each of those call sites individually.
+        _mapTransitionGeneration++;
 
         // Invalidate any pending arrival action from the walk being cancelled - otherwise a movement
         // loop iteration already in flight (or a later one, if this teleport did not itself originate
@@ -1260,8 +1313,32 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         var presenceId = _presenceId ?? throw new InvalidOperationException("Authenticated movement has no world presence identity.");
         var result = await _distributedWorld.MovePlayerAsync(new WorldMovementCommand(
             presenceId, _charId, _mapName, fromX, fromY, requestedX, requestedY), cancellationToken);
-        if (result.Status != WorldMovementStatus.Moved || result.Path is not { Count: > 1 } || result.MovementId is not { } movementId)
+        if (result.Status == WorldMovementStatus.Moved && result.Path is { Count: > 1 } && result.MovementId is not null)
+        {
+            // Fall through to the accepted path below.
+        }
+        else if (result.Status == WorldMovementStatus.Moved)
+        {
+            // World said "Moved" but gave a malformed payload (no MovementId, no Path, or a
+            // single-cell Path) - this is a PROTOCOL VIOLATION, not an ordinary gameplay outcome.
+            // Silently downgrading it to MovementGameplayRejected would hide a World/MapServer
+            // contract mismatch behind an innocuous "blocked click" - this codebase's established
+            // convention (see ReconcileAfterGameplayRejectionAsync's own doc comment) is that
+            // lifecycle/protocol invariant failures throw, they are never silently tolerated.
+            throw new InvalidOperationException(
+                $"World returned Moved with a malformed payload: movementId={result.MovementId} " +
+                $"pathCount={result.Path?.Count.ToString() ?? "null"} map='{_mapName}' from=({fromX},{fromY}) " +
+                $"requested=({requestedX},{requestedY}).");
+        }
+        else
+        {
+            // Rejected (genuine gameplay rejection - blocked/unreachable/transfer-in-flight) is the
+            // only status a caller may treat as an ordinary, non-fatal outcome. SourceMismatch,
+            // PresenceMismatch, and NotFound all need semantic handling a plain
+            // MovementGameplayRejected cannot express by itself - callers inspect result.Status.
             return new MovementGameplayRejected(result.Status, result.Presence);
+        }
+        var movementId = result.MovementId!.Value;
         var authoritativePath = result.Path.Select(cell => (cell.X, cell.Y)).ToArray();
         var resolved = ResolveMovementProjection(fromX, fromY, requestedX, requestedY, authoritativePath);
         if (resolved.TriggerIndex < authoritativePath.Length)
@@ -1348,11 +1425,47 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         var resolution = await ResolveWorldMovementTargetAsync(fromX, fromY, request.TargetX, request.TargetY, cancellationToken);
         if (resolution is MovementGameplayRejected rejected)
         {
-            // Pinned unit_walktoxy returns 0 with no state change on a blocked/unreachable click -
-            // no route was ever started here (unlike ProcessDueMovementAsync's mid-walk retarget
-            // rejection), so there is nothing to cancel/reconcile: the character simply doesn't move.
-            MapLogger.Info($"[iRO MAP DEBUG] Movement request rejected status={rejected.Status} map='{_mapName}' from=({fromX},{fromY}) target=({request.TargetX},{request.TargetY})");
-            return;
+            switch (rejected.Status)
+            {
+                case WorldMovementStatus.Rejected:
+                    // Pinned unit_walktoxy returns 0 with no state change on a blocked/unreachable
+                    // click - no route was ever started here (unlike ProcessDueMovementAsync's
+                    // mid-walk retarget rejection), so there is nothing to cancel/reconcile: the
+                    // character simply doesn't move.
+                    MapLogger.Info($"[iRO MAP DEBUG] Movement request rejected status={rejected.Status} map='{_mapName}' from=({fromX},{fromY}) target=({request.TargetX},{request.TargetY})");
+                    return;
+                case WorldMovementStatus.SourceMismatch:
+                    // MapServer's understanding of the player's map/X/Y disagrees with World's
+                    // authoritative Presence - reconcile local state to World's truth and correct
+                    // the client, reusing ProcessDueMovementAsync's own rejection-reconciliation
+                    // shape/spirit. `movementState` is not moving here (this branch only runs for a
+                    // fresh, not-already-moving request), so it is safe to reconcile under the same
+                    // gate ReconcileAfterGameplayRejectionAsync's other call sites already use.
+                    await _movementGate.WaitAsync(cancellationToken);
+                    try { await ReconcileAfterGameplayRejectionAsync("fresh movement", rejected.Status.ToString(), rejected.Presence, movementState, cancellationToken); }
+                    finally { _movementGate.Release(); }
+                    return;
+                case WorldMovementStatus.PresenceMismatch:
+                    // A different PresenceId owns this character in World - a lifecycle invariant
+                    // failure for an authenticated session. Never overwrite _presenceId from a
+                    // movement reply; this must surface loudly, matching this codebase's established
+                    // "lifecycle invariant failures throw" convention (see
+                    // ReconcileAfterGameplayRejectionAsync's own doc comment).
+                    throw new InvalidOperationException(
+                        $"World reported PresenceMismatch for an authenticated movement request: " +
+                        $"map='{_mapName}' charId={_charId} presenceId={_presenceId} from=({fromX},{fromY}) " +
+                        $"target=({request.TargetX},{request.TargetY}).");
+                case WorldMovementStatus.NotFound:
+                    // World has no presence for this player at all - also a lifecycle invariant
+                    // failure for an authenticated, world-visible session; never invent local
+                    // authority to keep the session alive.
+                    throw new InvalidOperationException(
+                        $"World reported NotFound for an authenticated movement request: map='{_mapName}' " +
+                        $"charId={_charId} presenceId={_presenceId} from=({fromX},{fromY}) " +
+                        $"target=({request.TargetX},{request.TargetY}).");
+                default:
+                    throw new InvalidOperationException($"Unhandled WorldMovementStatus '{rejected.Status}' for a fresh movement rejection.");
+            }
         }
         var resolved = ((MovementAccepted)resolution).Target;
         var now = _timeProvider.GetUtcNow();
@@ -3045,10 +3158,18 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
             return ImmediateSpawnTouchOutcome.MapChanged;
         }
         MapLogger.Info($"[iRO MAP DEBUG] Immediate spawn-cell script touch triggered entity='{script!.Entity.Id}' map='{mapBeforeTouch}' at=({_x},{_y})");
+        // Capture the transition generation BEFORE running the script and compare after - a
+        // generated OnTouch script can legally warp within the SAME map name (e.g.
+        // prontera(100,100) -> prontera(150,150)), which still sends a real 0x0091 client-facing
+        // map transition even though _mapName never changes. The generation counter (bumped by
+        // TeleportTo, the single funnel every warp/script-warp path goes through - see
+        // _mapTransitionGeneration's own doc comment) is the authoritative signal; a different map
+        // name always also bumps it, so this check subsumes the old map-name-equality check.
+        var generationBeforeTouch = _mapTransitionGeneration;
         await StartScriptAsync(script.Entity, script.Actor.ActorId, script.Script, "OnTouch", cancellationToken);
-        return string.Equals(_mapName, mapBeforeTouch, StringComparison.OrdinalIgnoreCase)
-            ? ImmediateSpawnTouchOutcome.ScriptStartedSameMap
-            : ImmediateSpawnTouchOutcome.MapChanged;
+        return _mapTransitionGeneration != generationBeforeTouch
+            ? ImmediateSpawnTouchOutcome.MapChanged
+            : ImmediateSpawnTouchOutcome.ScriptStartedSameMap;
     }
 
     private async Task EnterPlayerWorldAsync(CancellationToken cancellationToken)

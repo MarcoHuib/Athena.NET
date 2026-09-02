@@ -373,6 +373,46 @@ public sealed class MapClientSessionMovementRetargetTests
         catch (Exception) { /* expected: the invariant failure may surface here instead of being silently swallowed. */ }
     }
 
+    // Priority 5: once the LOCAL route has genuinely finished (the walk completes with no further
+    // pending retarget), MapServer's own _worldMovementId must be cleared - World's own
+    // WorldPartitionGrain.AdvanceMovementAsync already removed its ActiveMovement entry the moment
+    // the final path cell was reached, so holding onto the old identity past that point is a stale
+    // reference to a route World no longer tracks.
+    [Fact]
+    public async Task OrdinaryRouteCompletion_ClearsWorldMovementId()
+    {
+        var (client, stream, session, run, clock, world) = await SetupDistributedAsync(100, 100);
+        using var _ = client;
+
+        await stream.WriteAsync(BuildMovementRequest(105, 100));
+        await ReadExact(stream, 12);
+        Assert.NotNull(session.WorldMovementId);
+
+        // Single 150ms orthogonal step (see this file's other tests for why ScriptableWorldRuntime
+        // + CharacterMovementState collapse this whole request into one step) - advancing past it
+        // completes the route with no pending retarget. FakeTimeProvider only overrides
+        // GetUtcNow(), not CreateTimer, so RunMovementLoopAsync's own Task.Delay still waits on
+        // REAL wall-clock time regardless of this clock.Advance call (see
+        // MapClientSessionWarpTests' ControllableTimeProvider for the deterministic alternative
+        // used elsewhere) - an ordinary route completion sends no packet to synchronize on
+        // (unlike the sibling rejection tests above, which read a real 0x0088 correction), so poll
+        // briefly for the real background loop to actually process the completed step instead of a
+        // single racy ping immediately after clock.Advance.
+        clock.Advance(TimeSpan.FromMilliseconds(150));
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        while (session.WorldMovementId is not null && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(10);
+        }
+
+        Assert.Equal((ushort)105, session.CurrentX);
+        Assert.Equal((ushort)100, session.CurrentY);
+        Assert.Null(session.WorldMovementId);
+
+        client.Close();
+        await run.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
     private static async Task<byte[]> ReadExact(Stream stream, int length)
     {
         var buffer = new byte[length];

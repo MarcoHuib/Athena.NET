@@ -192,18 +192,41 @@ public sealed class RathenaCompatibleMobSpawnCellSelectorTests
     }
 
     [Fact]
-    public void TrySelectCell_MapTooSmallForEdgeMargin_ThrowsRatherThanFallingBack()
+    public void TrySelectCell_MapSmallerThanEdgeMargin_SwapsInvertedRange_SucceedsOnAValidCandidate()
     {
-        // Side 20 with MapEdgeSize=15 leaves low=15, high=20-15-1=4: low > high, an impossible
-        // range under pinned semantics too - a DATA problem with this specific map, not something
-        // more attempts or a fallback placeholder can paper over.
+        // Side 20 with MapEdgeSize=15 leaves low=15, high=20-15-1=4: an inverted range under a
+        // naive reading, but pinned rnd_value silently swaps min/max before drawing
+        // (random.hpp:19-29) rather than being undefined - this is NOT a thrown configuration
+        // error (see 3C). The injected RNG here always returns its `max` argument; after the
+        // helper swaps (15,4) to (4,15), that resolves to x=y=15, which must still be walkable and
+        // pass edge_valid (15 >= EdgeValid(5) and 15 <= 20-5) for this all-walkable map.
+        var map = MakeAllWalkableMap("tiny_map", 20);
+        var provider = new MapCollisionProvider([map]);
+        var selector = new RathenaCompatibleMobSpawnCellSelector(provider, (_, max) => max);
+
+        var success = selector.TrySelectCell(MapWideSpawn("tiny_map"), 0, out var position);
+
+        Assert.True(success);
+        Assert.Equal((ushort)15, position.X);
+        Assert.Equal((ushort)15, position.Y);
+    }
+
+    [Fact]
+    public void TrySelectCell_MapSmallerThanEdgeMargin_BudgetExhausted_ReturnsFalse_NeverThrows()
+    {
+        // Same inverted-range map as above, but every candidate the fixed RNG can produce fails
+        // edge_valid re-validation (via NormalizedRandomInclusiveRange's swap, (15,4) -> (4,15), so
+        // `min` alone resolves to x=y=4, which is < EdgeValid(5)) - the search must exhaust its
+        // budget and report a genuine retryable `false`, never a thrown configuration error, since
+        // pinned rnd_value never treats an inverted range as invalid input.
         var map = MakeAllWalkableMap("tiny_map", 20);
         var provider = new MapCollisionProvider([map]);
         var selector = new RathenaCompatibleMobSpawnCellSelector(provider, (min, _) => min);
 
-        var exception = Assert.Throws<InvalidOperationException>(
-            () => selector.TrySelectCell(MapWideSpawn("tiny_map"), 0, out _));
-        Assert.Contains("tiny_map", exception.Message);
+        var success = selector.TrySelectCell(MapWideSpawn("tiny_map"), 0, out var position);
+
+        Assert.False(success);
+        Assert.Equal(default, position);
     }
 
     [Fact]
@@ -381,6 +404,74 @@ public sealed class RathenaCompatibleMobSpawnCellSelectorTests
     }
 
     [Fact]
+    public void TrySelectCell_RectangularDeclaration_XAxisLocalYAxisMapWide_UsesMapWideRangeOnlyForY()
+    {
+        // A declaration with Ys=0 but Y>0 is impossible to construct (Phase 0 normalizes Ys=0,Y>0
+        // to Ys=1) - the only way ry<0 survives Phase 0 is Y==0 (with X>0, so the map-wide-both
+        // branch isn't triggered). This exercises map_search_freecell's genuine per-axis mix: X is
+        // locally bound around the declared center (rx=Xs-1>=0), Y is map-wide (ry=Ys-1<0 because
+        // Ys itself is 0 and Y==0 keeps Phase 0 from forcing Ys=1).
+        var map = MakeAllWalkableMap("test_map", 500);
+        var provider = new MapCollisionProvider([map]);
+        var spawn = RectangularSpawn(x: 150, y: 0, xs: 10, ys: 0);
+        // roll: xs*ys=0 -> `xs+ys>=1` guard (10+0=10>=1) still enters Phase 1, but xs*ys=0 makes
+        // the center-roll's own randomInclusiveRange(1,0) call ill-formed under naive translation;
+        // NormalizedRandomInclusiveRange's swap handles this too (swaps to (0,1)) - supply 2 so the
+        // roll never equals 1, i.e. always misses, falling through to the narrow/map-wide mix.
+        var random = SequentialRandom(2 /* roll miss */, 145 /* X: local candidate, in [141,159] */, 250 /* Y: map-wide candidate, in [15, 484] */);
+        var selector = new RathenaCompatibleMobSpawnCellSelector(provider, random);
+
+        var success = selector.TrySelectCell(spawn, 0, out var position);
+
+        Assert.True(success);
+        Assert.Equal((ushort)145, position.X); // Came from the LOCAL [x-rx,x+rx] range.
+        Assert.Equal((ushort)250, position.Y); // Came from the MAP-WIDE [edge,height-edge-1] range, not [y-ry,y+ry].
+    }
+
+    [Fact]
+    public void TrySelectCell_RectangularDeclaration_YAxisLocalXAxisMapWide_UsesMapWideRangeOnlyForX()
+    {
+        // Mirror of the above: X==0 (so rx<0 survives Phase 0, since xs==0 with x==0 does NOT hit
+        // the `xs==0 && x>0` normalization branch), Y>0 with Ys>0 stays locally bound.
+        var map = MakeAllWalkableMap("test_map", 500);
+        var provider = new MapCollisionProvider([map]);
+        var spawn = RectangularSpawn(x: 0, y: 180, xs: 0, ys: 10);
+        var random = SequentialRandom(2 /* roll miss */, 260 /* X: map-wide candidate */, 175 /* Y: local candidate, in [171,189] */);
+        var selector = new RathenaCompatibleMobSpawnCellSelector(provider, random);
+
+        var success = selector.TrySelectCell(spawn, 0, out var position);
+
+        Assert.True(success);
+        Assert.Equal((ushort)260, position.X); // MAP-WIDE range, not [x-rx,x+rx] (rx<0 here).
+        Assert.Equal((ushort)175, position.Y); // LOCAL range around the declared Y center.
+    }
+
+    [Fact]
+    public void TrySelectCell_RectangularDeclaration_Phase1CandidateFailingEdgeValid_IsRejectedAndRetried()
+    {
+        // A rectangular declaration whose center sits close enough to the real map edge that a
+        // raw-walkable Phase 1 candidate can still fail edge_valid (map.cpp:1844 applies to EVERY
+        // candidate, Phase 1's included - see 3B). Center (8,180) on a 500x500 map with Xs=10 (rx=9)
+        // lets the narrow search draw x=2 (walkable, but 2 < EdgeValid=5) before a later, valid
+        // candidate - proving Phase 1 does not accept an edge_valid-failing cell just because it is
+        // walkable and inside the declared rectangle.
+        var map = MakeAllWalkableMap("test_map", 500);
+        var provider = new MapCollisionProvider([map]);
+        var spawn = RectangularSpawn(x: 8, y: 180, xs: 10, ys: 12);
+        var random = SequentialRandom(
+            2 /* roll miss */,
+            2, 180 /* candidate 1: x=2 fails edge_valid (2 < 5) - must be rejected, not accepted */,
+            10, 175 /* candidate 2: valid */);
+        var selector = new RathenaCompatibleMobSpawnCellSelector(provider, random);
+
+        var success = selector.TrySelectCell(spawn, 0, out var position);
+
+        Assert.True(success);
+        Assert.Equal((ushort)10, position.X);
+        Assert.Equal((ushort)175, position.Y);
+    }
+
+    [Fact]
     public void ProductionConstructor_ProducesAWalkableCell()
     {
         // Exercises the real System.Random.Shared-backed constructor (no injected RNG) to prove
@@ -398,13 +489,21 @@ public sealed class RathenaCompatibleMobSpawnCellSelectorTests
     // previously threw NotSupportedException and blocked MapServerHostingScope.MobSpawnMaps
     // from including prt_fild08 at all - must now resolve a real, collision-valid cell using the
     // REAL production collision composition (MapCollisionStartupLoader, not a synthetic fixture).
+    // Deterministic (an injected sequence, not System.Random.Shared - see the sibling
+    // ProductionConstructor_ProducesAWalkableCell test above for the separate non-deterministic
+    // smoke-test path, which retains independent value proving the production constructor is wired
+    // correctly): rolls a center-chance miss (xs*ys=100, supply 2 so `==1` never hits), then the
+    // narrow search's first candidate is offset by 1 cell from the declared center - proving this
+    // exact source declaration resolves to a real, collision-valid cell without relying on luck.
     [Fact]
-    public void TrySelectCell_RealPrtFild08PoringDeclaration_ResolvesRealCollisionValidCell()
+    public void TrySelectCell_RealPrtFild08PoringDeclaration_ResolvesRealCollisionValidCell_Deterministic()
     {
         var mapCachePath = Path.Combine(FindRepositoryRoot(), "legacy/rathena/db/map_cache.dat");
         var provider = MapCollisionStartupLoader.Load([], mapCachePath, RagnarokRuleSet.Renewal);
         Assert.True(provider.TryGetMap("prt_fild08", out var map));
-        var selector = new RathenaCompatibleMobSpawnCellSelector(provider);
+        Assert.True(map.IsTraversalCell(306, 234), "Fixture assumption: (306,234) must be walkable for this deterministic sequence to resolve - adjust the offset if pinned collision data changes.");
+        var random = SequentialRandom(2 /* center-roll miss */, 306 /* X: one cell off-center */, 234 /* Y: one cell off-center */);
+        var selector = new RathenaCompatibleMobSpawnCellSelector(provider, random);
         var poring = new MobSpawnDefinition(MakeMob(), "prt_fild08", 2, 15000, 0,
             new("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/npc/re/mobs/fields/prontera.txt", 97),
             X: 305, Y: 233, Xs: 10, Ys: 10, SpawnName: "Poring");
@@ -412,6 +511,8 @@ public sealed class RathenaCompatibleMobSpawnCellSelectorTests
         var success = selector.TrySelectCell(poring, 0, out var position);
 
         Assert.True(success);
+        Assert.Equal((ushort)306, position.X);
+        Assert.Equal((ushort)234, position.Y);
         Assert.True(map.IsTraversalCell(position.X, position.Y));
     }
 
