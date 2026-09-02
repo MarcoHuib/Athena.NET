@@ -917,10 +917,11 @@ deterministic (canonical relative source path, then source line).
   `MonsterRegistry.ScheduleRespawnIfNeeded` - real respawn timing still uses only the base delay.
 - `DeclaredLevel`/`EffectiveLevelOverride` are preserved losslessly as data but no runtime consumes
   a level override - see "Pinned syntax and modeled fields" above.
-- Fixed/rectangular spawn-area placement (`Xs`/`Ys` > 0) still throws `NotSupportedException` from
-  `RathenaCompatibleMobSpawnCellSelector` for maps with real collision data (see that type's own
-  doc comment) - only map-wide-random (`Xs=Ys=0`) declarations resolve real collision-backed cells
-  today.
+- Fixed/rectangular spawn-area placement (`Xs`/`Ys` > 0) is now implemented by
+  `RathenaCompatibleMobSpawnCellSelector` (pinned `npc_parse_mob` normalization +
+  `mob_spawn`/`map_search_freecell`'s rectangular/fixed-point search, see that type's own doc
+  comment) - map-wide, rectangular, and fixed-point declarations all resolve real collision-backed
+  cells; the type no longer throws `NotSupportedException` for any declared geometry.
 - No new maps were added to `MapServerHostingScope.ServedMaps` by this branch - registry
   completeness does not imply a map is actually hosted.
 - This project resolves only the RENEWAL script-config graph (`RathenaScriptConfigGraph`, rooted at

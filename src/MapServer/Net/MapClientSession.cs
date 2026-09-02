@@ -760,11 +760,10 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
                 $"[iRO MAP DEBUG] Sending 0x0087 len=12 from=({applied.FromX},{applied.FromY}) to=({applied.Resolved.TargetX},{applied.Resolved.TargetY}) (mid-walk retarget)");
             await WriteAsync(retargetResponse, cancellationToken);
             await StartPresenceMovementAsync(applied.FromX, applied.FromY, applied.Resolved.TargetX, applied.Resolved.TargetY, retargetTick, cancellationToken);
-            if (!applied.Resolved.IntersectsWarp && !applied.Resolved.IntersectsScript)
-            {
-                await SendVisibleWarpActorsAsync(cancellationToken);
-                await SendVisibleMonsterActorsAsync(cancellationToken);
-            }
+            // Unconditional: _x/_y already reflect the real, just-committed cell (set above,
+            // before this branch runs) regardless of where the newly-resolved retargeted walk is
+            // ultimately headed - see RefreshVisibleWorldActorsAsync's own doc comment.
+            await RefreshVisibleWorldActorsAsync(cancellationToken);
         }
 
         if (arrival is null) return;
@@ -979,8 +978,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
                     await EnterPlayerWorldAsync(cancellationToken);
                     var touchOutcome = await TryFireImmediateSpawnTouchAsync(cancellationToken);
                     if (touchOutcome == ImmediateSpawnTouchOutcome.MapChanged) break;
-                    await SendVisibleWarpActorsAsync(cancellationToken);
-                    await SendVisibleMonsterActorsAsync(cancellationToken);
+                    await RefreshVisibleWorldActorsAsync(cancellationToken);
                     foreach (var navigation in _worldMapRegistry.GetNavigationAt(_mapName, _x, _y))
                     {
                         MapLogger.Info(
@@ -1395,11 +1393,13 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         {
             MapLogger.Info($"[iRO MAP DEBUG] Movement path intersects script trigger entity='{resolved.Script.Binding.Entity.Id}' map='{_mapName}' at=({resolved.Script.X},{resolved.Script.Y}) (deferred to actual arrival)");
         }
-        else
-        {
-            await SendVisibleWarpActorsAsync(cancellationToken);
-            await SendVisibleMonsterActorsAsync(cancellationToken);
-        }
+
+        // Unconditional: _x/_y are still the player's real, unchanged pre-walk cell here (the
+        // walk hasn't advanced anything yet - StartWalk only sets up CharacterMovementState's
+        // internal path) - a route intersecting a warp/script trigger elsewhere along it must
+        // never suppress the player's OWN current-cell visibility refresh. See
+        // RefreshVisibleWorldActorsAsync's own doc comment for the live regression this fixes.
+        await RefreshVisibleWorldActorsAsync(cancellationToken);
     }
 
     private static long Distance(ushort x1, ushort y1, ushort x2, ushort y2)
@@ -3280,6 +3280,21 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
             SetCurrentPresence(changed);
             await _playerVisibility.UpdateMovementAsync(changed, broadcastMovement: false, cancellationToken);
         }
+    }
+
+    // AOI actor discovery (warp/NPC actors + monsters) is independent of route-trigger projection
+    // (ResolvedMovementTarget.IntersectsWarp/IntersectsScript) - those flags govern how far the
+    // authoritative route may continue and what fires on arrival, never whether nearby world
+    // actors are announced to the client. A player who has just committed a real cell (or whose
+    // fresh click hasn't moved them yet) must always have their surroundings refreshed, regardless
+    // of whether the eventually-intersected trigger is a warp/script. Live regression: a warp
+    // actor (prtf004_a on prt_fild08a) could become gameplay-active (its trigger fires
+    // successfully) before the client ever received its visible-actor spawn packet, because both
+    // call sites below used to skip this refresh whenever the route intersected a trigger.
+    private async Task RefreshVisibleWorldActorsAsync(CancellationToken cancellationToken)
+    {
+        await SendVisibleWarpActorsAsync(cancellationToken);
+        await SendVisibleMonsterActorsAsync(cancellationToken);
     }
 
     private async Task SendVisibleWarpActorsAsync(CancellationToken cancellationToken)

@@ -36,14 +36,19 @@ public static class MapServerHostingScope
         "prontera",
     };
 
-    // Gameplay map hosting and generated monster activation are intentionally separate scopes.
-    // Phase 2A adds the complete source-backed travel corridor, but does not expand monster-runtime
-    // coverage into the newly hosted prt_fild08 family members (some use rectangular spawn geometry
-    // that is outside this phase). Preserve the previously proven populations only.
+    // Gameplay map hosting and generated monster activation are intentionally separate scopes -
+    // this set remains a deliberate, hand-declared scope decision, never derived from ServedMaps
+    // or from collision-data availability. It previously excluded prt_fild08/a/b/c because
+    // RathenaCompatibleMobSpawnCellSelector only implemented pinned rAthena's map-wide spawn
+    // search and threw NotSupportedException for the base map's real rectangular declarations
+    // (e.g. the Poring spawn at legacy/rathena/npc/re/mobs/fields/prontera.txt:97,
+    // X:305,Y:233,Xs:10,Ys:10) - that gap is now closed (see MobSpawnCellSelector.cs's own doc
+    // comment for the full rectangular/fixed-point search this selector now reproduces), so the
+    // complete source-backed prt_fild08 family is included below.
     public static readonly IReadOnlySet<string> MobSpawnMaps = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {
         "int_land", "int_land01", "int_land02", "int_land03", "int_land04",
-        "prt_fild08d",
+        "prt_fild08", "prt_fild08a", "prt_fild08b", "prt_fild08c", "prt_fild08d",
         "prontera",
     };
 

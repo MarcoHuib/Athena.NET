@@ -2,6 +2,7 @@ using System.Buffers.Binary;
 using System.Net;
 using System.Net.Sockets;
 using Athena.Net.MapServer.Config;
+using Athena.Net.MapServer.Generated.GameData.Mobs;
 using Athena.Net.MapServer.Net;
 using Athena.Net.MapServer.World;
 using Athena.Net.MapServer.World.GeneratedScripts;
@@ -133,6 +134,112 @@ public sealed class MapClientSessionWarpTests
         listener.Stop();
     }
 
+    // Issue 2 root-cause regression (prtf004_a on prt_fild08a): a warp actor entering the player's
+    // visibility radius as their route approaches it must be sent to the client, even though the
+    // route has a pending warp arrival - actor visibility must never be suppressed by
+    // ResolvedMovementTarget.IntersectsWarp/IntersectsScript. The warp must become visible BEFORE
+    // the eventual map-change, never merely fire correctly while invisible.
+    [Fact]
+    public async Task WarpEnteringVisibilityWhileRouteIntersectsIt_IsSentBeforeTheMapChange()
+    {
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        using var client = new TcpClient();
+        var connectTask = client.ConnectAsync((IPEndPoint)listener.LocalEndpoint);
+        using var serverClient = await listener.AcceptTcpClientAsync();
+        await connectTask;
+        await using var clientStream = client.GetStream();
+        var connector = new CharServerConnector(new MapConfigStore(new MapConfig(), "unused.conf"));
+        // prtf004_a-shaped fixture, matching the exact live shape: the player's CURRENT cell (10,0)
+        // is already within visibility range (WorldVisibilityOptions.DefaultAreaSize=14) of the
+        // warp at click time, but the click's route intersects the warp - the live bug was
+        // click-time visibility being skipped for exactly this reason (IntersectsWarp==true),
+        // never a "walked gradually into range" scenario.
+        var warp = new WarpDefinition("prtf004_a", "test-warp-map", 20, 0, 3, 2, "other-map", 156, 26, true, "test", 1);
+        var registry = new WorldMapRegistry([warp]);
+        await using var session = new MapClientSession(
+            1, serverClient, connector, iroAuthenticated: true, mapName: "test-warp-map", x: 10, y: 0,
+            worldMapRegistry: registry);
+        var runTask = session.RunAsync(CancellationToken.None);
+
+        await clientStream.WriteAsync(BuildMovementRequest(23, 0));
+
+        // 0x0087 (the movement response) is always first, THEN the warp actor must be sent -
+        // BEFORE the eventual map-change - even though this exact route's first click already
+        // intersects the warp (deferred to actual arrival).
+        var movementResponse = await ReadDynamicOrFixed(clientStream);
+        Assert.Equal((short)0x0087, BinaryPrimitives.ReadInt16LittleEndian(movementResponse));
+
+        var actorOrMapChange = await ReadDynamicOrFixed(clientStream);
+        Assert.NotEqual((short)0x0091, BinaryPrimitives.ReadInt16LittleEndian(actorOrMapChange));
+        Assert.Equal((short)0x09ff, BinaryPrimitives.ReadInt16LittleEndian(actorOrMapChange));
+
+        client.Close();
+        await runTask.WaitAsync(TimeSpan.FromSeconds(5));
+        listener.Stop();
+    }
+
+    // Issue 2: monster visibility must ALSO be independent of route-trigger metadata - a standing
+    // monster within visibility range at click time must be sent even when the click's route
+    // intersects a warp/script trigger elsewhere along it.
+    [Fact]
+    public async Task MonsterEnteringVisibilityWhileRouteAlsoIntersectsAWarp_IsSentBeforeTheMapChange()
+    {
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        using var client = new TcpClient();
+        var connectTask = client.ConnectAsync((IPEndPoint)listener.LocalEndpoint);
+        using var serverClient = await listener.AcceptTcpClientAsync();
+        await connectTask;
+        await using var clientStream = client.GetStream();
+        var connector = new CharServerConnector(new MapConfigStore(new MapConfig(), "unused.conf"));
+        // Same shape as the warp-only test above, PLUS a monster placed within visibility range of
+        // the player's own click-time cell, on a completely different bearing from the warp - the
+        // trigger metadata belongs to the warp; it must not suppress the monster's visibility either.
+        var warp = new WarpDefinition("prtf004_a", "test-warp-map", 20, 0, 3, 2, "other-map", 156, 26, true, "test", 1);
+        var registry = new WorldMapRegistry([warp]);
+        var spawn = new MobSpawnDefinition(GeneratedMobs.GPoring, "test-warp-map", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "test", 0));
+        var monsters = new MonsterRegistry([spawn], new WorldActorIdAllocator(), new FixedCellSelector(10, 5), TimeProvider.System);
+        Assert.Single(monsters.AllInstances);
+        Assert.True(monsters.AllInstances[0].IsAlive);
+        Assert.Single(monsters.GetVisibleInstances("test-warp-map", 10, 0));
+        await using var session = new MapClientSession(
+            1, serverClient, connector, iroAuthenticated: true, mapName: "test-warp-map", x: 10, y: 0,
+            worldMapRegistry: registry, monsters: monsters);
+        var runTask = session.RunAsync(CancellationToken.None);
+
+        await clientStream.WriteAsync(BuildMovementRequest(23, 0));
+
+        var movementResponse = await ReadDynamicOrFixed(clientStream);
+        Assert.Equal((short)0x0087, BinaryPrimitives.ReadInt16LittleEndian(movementResponse));
+
+        // Drain up to 2 further packets (warp actor + monster actor, order not asserted) and
+        // confirm the monster's own standing-entry packet appears among them before any map-change.
+        var sawMonsterActor = false;
+        for (var i = 0; i < 2; i++)
+        {
+            var packet = await ReadDynamicOrFixed(clientStream);
+            var opcode = BinaryPrimitives.ReadInt16LittleEndian(packet);
+            Assert.NotEqual((short)0x0091, opcode);
+            if (opcode == (short)0x09ff && BinaryPrimitives.ReadUInt32LittleEndian(packet.AsSpan(5)) == monsters.AllInstances[0].ActorId)
+                sawMonsterActor = true;
+        }
+        Assert.True(sawMonsterActor);
+
+        client.Close();
+        await runTask.WaitAsync(TimeSpan.FromSeconds(5));
+        listener.Stop();
+    }
+
+    private sealed class FixedCellSelector(ushort x, ushort y) : IMobSpawnCellSelector
+    {
+        public bool TrySelectCell(MobSpawnDefinition spawn, int index, out MobPosition position)
+        {
+            position = new MobPosition(x, y);
+            return true;
+        }
+    }
+
     private static WorldEntityDefinition BuildTouchEntity(string map, ushort x, ushort y, ushort radius, out string actorName)
     {
         actorName = "TouchNpc#test";
@@ -156,10 +263,12 @@ public sealed class MapClientSessionWarpTests
         var header = new byte[4];
         await stream.ReadExactlyAsync(header);
         var opcode = BinaryPrimitives.ReadInt16LittleEndian(header);
-        // 0x0091 (map change) is a fixed 22-byte packet with no embedded length prefix at bytes[2..4].
-        if (opcode == 0x0091)
+        // 0x0091 (map change, 22 bytes) and 0x0087 (movement response, 12 bytes) are both fixed-
+        // size packets with no embedded length prefix at bytes[2..4].
+        if (opcode == 0x0091 || opcode == 0x0087)
         {
-            var rest = new byte[18];
+            var fixedLength = opcode == 0x0091 ? 22 : 12;
+            var rest = new byte[fixedLength - 4];
             await stream.ReadExactlyAsync(rest);
             return [.. header, .. rest];
         }
@@ -167,6 +276,21 @@ public sealed class MapClientSessionWarpTests
         var body = new byte[length - 4];
         await stream.ReadExactlyAsync(body);
         return [.. header, .. body];
+    }
+
+    // Drains and discards packets until one with the given opcode is found (or a bounded number of
+    // packets have been skipped) - used where an actor-visibility refresh (0x09FF, now correctly
+    // unconditional regardless of route-trigger metadata) may legitimately appear ahead of an
+    // expected fixed-shape packet like 0x0087/0x0091, in an order this project's own AOI/dedup
+    // logic does not guarantee is fixed (e.g. zero, one, or more newly-visible actors).
+    private static async Task<byte[]> ReadUntilOpcode(Stream stream, short expectedOpcode, int maxPacketsToSkip = 10)
+    {
+        for (var i = 0; i <= maxPacketsToSkip; i++)
+        {
+            var packet = await ReadDynamicOrFixed(stream);
+            if (BinaryPrimitives.ReadInt16LittleEndian(packet) == expectedOpcode) return packet;
+        }
+        throw new InvalidOperationException($"Expected opcode 0x{expectedOpcode:X4} was not observed within {maxPacketsToSkip} packets.");
     }
 
     private static async Task<byte[]> ReadExact(Stream stream, int length)
@@ -210,9 +334,10 @@ public sealed class MapClientSessionWarpTests
         var movementCoordinates = DecodeMovement(movement.AsSpan(6, 6));
         Assert.Equal(((ushort)22, (ushort)31, (ushort)26, (ushort)30), movementCoordinates);
 
-        var mapChange = new byte[22];
-        await clientStream.ReadExactlyAsync(mapChange);
-        Assert.Equal((short)0x0091, BinaryPrimitives.ReadInt16LittleEndian(mapChange));
+        // A visibility refresh (0x09FF, now correctly unconditional regardless of the pending
+        // warp arrival) may legitimately appear here for any NPC/warp actor near the click-time
+        // cell, before the eventual 0x0091 map-change - drain past it.
+        var mapChange = await ReadUntilOpcode(clientStream, 0x0091);
         Assert.Equal((ushort)51, BinaryPrimitives.ReadUInt16LittleEndian(mapChange.AsSpan(18)));
         Assert.Equal((ushort)30, BinaryPrimitives.ReadUInt16LittleEndian(mapChange.AsSpan(20)));
         Assert.Equal("iz_int03", session.CurrentMapName);
@@ -275,9 +400,9 @@ public sealed class MapClientSessionWarpTests
         await clientStream.ReadExactlyAsync(movement);
         Assert.Equal((short)0x0087, BinaryPrimitives.ReadInt16LittleEndian(movement));
 
-        var mapChange = new byte[22];
-        await clientStream.ReadExactlyAsync(mapChange);
-        Assert.Equal((short)0x0091, BinaryPrimitives.ReadInt16LittleEndian(mapChange));
+        // A visibility refresh (0x09FF) may legitimately appear here now that it is unconditional
+        // - drain past it to the eventual 0x0091 map-change.
+        var mapChange = await ReadUntilOpcode(clientStream, 0x0091);
         Assert.Equal((ushort)156, BinaryPrimitives.ReadUInt16LittleEndian(mapChange.AsSpan(18)));
         Assert.Equal((ushort)34, BinaryPrimitives.ReadUInt16LittleEndian(mapChange.AsSpan(20))); // NEVER 26.
         Assert.Equal("prontera", session.CurrentMapName);
@@ -330,6 +455,22 @@ public sealed class MapClientSessionWarpTests
         var movement = new byte[12];
         await clientStream.ReadExactlyAsync(movement);
         Assert.Equal(((ushort)22, (ushort)31, (ushort)26, (ushort)30), DecodeMovement(movement.AsSpan(6, 6)));
+
+        // A visibility refresh (0x09FF, now correctly unconditional regardless of the pending
+        // warp arrival) may follow the 0x0087 above for any NPC/warp actor near the click-time
+        // cell - synchronize past it with a ping round-trip before proceeding, so it cannot
+        // linger in the stream and desynchronize a later fixed-size read.
+        await clientStream.WriteAsync(new byte[] { 0x1c, 0x0b });
+        while (true)
+        {
+            var header = new byte[2];
+            await clientStream.ReadExactlyAsync(header);
+            if (BinaryPrimitives.ReadInt16LittleEndian(header) == 0x0b1d) break;
+            var lengthBytes = new byte[2];
+            await clientStream.ReadExactlyAsync(lengthBytes);
+            var length = BinaryPrimitives.ReadUInt16LittleEndian(lengthBytes);
+            await clientStream.ReadExactlyAsync(new byte[length - 4]);
+        }
 
         // Retarget mid-walk, before the door cell is reached, toward a destination that never
         // crosses it - almost straight down from the second path cell, away from the door entirely.
