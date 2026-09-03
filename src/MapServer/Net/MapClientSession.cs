@@ -3537,46 +3537,46 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     //     (see this task's own report), not a silent omission.
     public async Task NotifyMonsterMovedAsync(MonsterMovementChange change, CancellationToken cancellationToken)
     {
-        var instance = change.Instance;
-        if (!string.Equals(instance.Map, _mapName, StringComparison.OrdinalIgnoreCase)) return;
+        var actor = change.Instance;
+        var combat = change.Combat;
+        if (!string.Equals(actor.Map, _mapName, StringComparison.OrdinalIgnoreCase)) return;
 
-        var mob = instance.Spawn.Mob;
-        var position = instance.GetPosition();
+        var position = actor.GetPosition();
 
-        if (!_visibleActorIds.IsActorVisible(instance.ActorId))
+        if (!_visibleActorIds.IsActorVisible(actor.ActorId))
         {
-            if (!_visibilityOptions.IsVisible(_mapName, _x, _y, instance.Map, position.X, position.Y)) return;
-            if (!_visibleActorIds.TryMarkVisible(instance.ActorId)) return;
+            if (!_visibilityOptions.IsVisible(_mapName, _x, _y, actor.Map, position.X, position.Y)) return;
+            if (!_visibleActorIds.TryMarkVisible(actor.ActorId)) return;
 
-            if (instance.IsWalking)
+            if (actor.IsWalking)
             {
-                var walkingDiscoveryDestination = instance.MovementDestination;
+                var walkingDiscoveryDestination = actor.MovementDestination;
                 var walkingDiscoveryPacket = IroMonsterActorPackets.BuildWalkEntry(
-                    instance.ActorId,
-                    (ushort)mob.Id,
-                    (ushort)mob.WalkSpeed,
-                    mob.Name,
+                    actor.ActorId,
+                    (ushort)actor.MobId,
+                    (ushort)actor.WalkSpeed,
+                    actor.Name,
                     position.X,
                     position.Y,
                     walkingDiscoveryDestination.X,
                     walkingDiscoveryDestination.Y,
                     moveStartTime: (uint)Environment.TickCount,
-                    currentHp: instance.CurrentHp,
-                    maxHp: mob.MaxHp);
+                    currentHp: combat.CurrentHp,
+                    maxHp: combat.MaxHp);
                 await WriteAsync(walkingDiscoveryPacket, cancellationToken);
                 return;
             }
 
             var standPacket = IroMonsterActorPackets.BuildStandEntry(
-                instance.ActorId,
-                (ushort)mob.Id,
-                (ushort)mob.WalkSpeed,
-                mob.Name,
+                actor.ActorId,
+                (ushort)actor.MobId,
+                (ushort)actor.WalkSpeed,
+                actor.Name,
                 position.X,
                 position.Y,
                 direction: 0,
-                currentHp: instance.CurrentHp,
-                maxHp: mob.MaxHp);
+                currentHp: combat.CurrentHp,
+                maxHp: combat.MaxHp);
             await WriteAsync(standPacket, cancellationToken);
             return;
         }
@@ -3597,27 +3597,27 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
                 // unit_stop_walking call clif_fixpos (unit.cpp:1732-1737) - this is the ONE case
                 // (combat interruption, never an ordinary WalkFinished) where the capture-verified
                 // 0x0088 is sent, at the mob's authoritative CURRENT cell.
-                var fixPosPacket = IroMonsterActorPackets.BuildStopMove(instance.ActorId, position.X, position.Y);
+                var fixPosPacket = IroMonsterActorPackets.BuildStopMove(actor.ActorId, position.X, position.Y);
                 await WriteAsync(fixPosPacket, cancellationToken);
-                MapLogger.Info($"[iRO MAP DEBUG] Sent 0x0088 fixpos mobActorId={instance.ActorId} accountId={_accountId} mobPosition=({position.X},{position.Y})");
+                MapLogger.Info($"[iRO MAP DEBUG] Sent 0x0088 fixpos mobActorId={actor.ActorId} accountId={_accountId} mobPosition=({position.X},{position.Y})");
                 return;
 
             case MonsterMovementChangeKind.WalkStarted:
-                var destination = instance.MovementDestination;
+                var destination = actor.MovementDestination;
                 var walkPacket = IroMonsterActorPackets.BuildWalkEntry(
-                    instance.ActorId,
-                    (ushort)mob.Id,
-                    (ushort)mob.WalkSpeed,
-                    mob.Name,
+                    actor.ActorId,
+                    (ushort)actor.MobId,
+                    (ushort)actor.WalkSpeed,
+                    actor.Name,
                     position.X,
                     position.Y,
                     destination.X,
                     destination.Y,
                     moveStartTime: (uint)Environment.TickCount,
-                    currentHp: instance.CurrentHp,
-                    maxHp: mob.MaxHp);
+                    currentHp: combat.CurrentHp,
+                    maxHp: combat.MaxHp);
                 await WriteAsync(walkPacket, cancellationToken);
-                MapLogger.Info($"[iRO MAP DEBUG] Sent 0x09FD walk-entry mobActorId={instance.ActorId} accountId={_accountId} from=({position.X},{position.Y}) to=({destination.X},{destination.Y})");
+                MapLogger.Info($"[iRO MAP DEBUG] Sent 0x09FD walk-entry mobActorId={actor.ActorId} accountId={_accountId} from=({position.X},{position.Y}) to=({destination.X},{destination.Y})");
                 return;
         }
     }

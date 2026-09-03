@@ -303,7 +303,7 @@ public sealed class MapTcpServer
             {
                 try
                 {
-                    await session.NotifyMonsterMovedAsync(new MonsterMovementChange(instance, MonsterMovementChangeKind.CellCrossed), cancellationToken);
+                    await session.NotifyMonsterMovedAsync(new MonsterMovementChange(instance, MonsterCombatState.FromInstance(instance), MonsterMovementChangeKind.CellCrossed), cancellationToken);
                 }
                 catch (IOException)
                 {

@@ -50,7 +50,10 @@ public readonly record struct MonsterIncarnationId(long Value)
 
 // One runtime monster instance. Mutable current HP/lifecycle/position only
 // live here, never in the immutable generated MobDefinition/MobSpawnDefinition.
-public sealed class MobInstance
+//
+// Implements IMonsterActorView directly - see that interface's own doc comment for why its
+// members are exactly this narrow (position/identity/movement only, no CurrentHp/NextAttackAt).
+public sealed class MobInstance : IMonsterActorView
 {
     private readonly Lock _gate = new();
     private uint _currentHp;
@@ -128,6 +131,12 @@ public sealed class MobInstance
     public uint ActorId { get; }
     public MobSpawnDefinition Spawn { get; }
     public string Map => Spawn.Map;
+
+    // IMonsterActorView's own static-mob-data passthroughs - deliberately reading through
+    // Spawn.Mob rather than duplicating these fields on MobInstance itself, exactly like Map above.
+    int IMonsterActorView.MobId => Spawn.Mob.Id;
+    string IMonsterActorView.Name => Spawn.Mob.Name;
+    int IMonsterActorView.WalkSpeed => Spawn.Mob.WalkSpeed;
 
     // The CURRENT life's incarnation - see MonsterIncarnationId's own doc comment. Locked read for
     // the same reason every other mutable field on this type is (TryRespawn increments this under

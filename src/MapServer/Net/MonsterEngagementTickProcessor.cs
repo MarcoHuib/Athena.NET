@@ -80,7 +80,7 @@ internal sealed class MonsterEngagementTickProcessor(
                 // wire mapping (MapClientSession.NotifyMonsterMovedAsync sends the walk-entry
                 // packet for it) rather than inventing a third packet shape for what is, from the
                 // client's perspective, indistinguishable from any other newly (re)started walk.
-                (movementChanges ??= []).Add(new MonsterMovementChange(mob, MonsterMovementChangeKind.WalkStarted));
+                (movementChanges ??= []).Add(new MonsterMovementChange(mob, MonsterCombatState.FromInstance(mob), MonsterMovementChangeKind.WalkStarted));
                 var reachedCell = mob.GetPosition();
                 // "outcome=" (not "wire="): this call only computes the outcome and returns it in
                 // MonsterEngagementTickResult - it does not itself write anything to any session.
@@ -94,7 +94,7 @@ internal sealed class MonsterEngagementTickProcessor(
             else if (crossed.Count > 0)
             {
                 var kind = mob.IsWalking ? MonsterMovementChangeKind.CellCrossed : MonsterMovementChangeKind.WalkFinished;
-                (movementChanges ??= []).Add(new MonsterMovementChange(mob, kind));
+                (movementChanges ??= []).Add(new MonsterMovementChange(mob, MonsterCombatState.FromInstance(mob), kind));
             }
 
             var snapshot = await TryFindSnapshotAsync(sessions, targetAccountId, cancellationToken);
@@ -117,7 +117,7 @@ internal sealed class MonsterEngagementTickProcessor(
                 case MonsterEngagementDecision.Chase chase:
                     if (ApplyChaseDecision(mob, chase, now))
                     {
-                        (movementChanges ??= []).Add(new MonsterMovementChange(mob, MonsterMovementChangeKind.WalkStarted));
+                        (movementChanges ??= []).Add(new MonsterMovementChange(mob, MonsterCombatState.FromInstance(mob), MonsterMovementChangeKind.WalkStarted));
                         LogDecision(mob, snapshot, decision);
                     }
                     break;
@@ -133,7 +133,7 @@ internal sealed class MonsterEngagementTickProcessor(
                     // that was already in range has nothing to fix-position).
                     if (interrupted)
                     {
-                        (movementChanges ??= []).Add(new MonsterMovementChange(mob, MonsterMovementChangeKind.ChaseInterrupted));
+                        (movementChanges ??= []).Add(new MonsterMovementChange(mob, MonsterCombatState.FromInstance(mob), MonsterMovementChangeKind.ChaseInterrupted));
                         // "outcome=" not "wire=" - see the identical note on the retarget-applied
                         // log above; the actual 0x0088 write happens later, inside
                         // MapClientSession.NotifyMonsterMovedAsync, via MapTcpServer's own fan-out

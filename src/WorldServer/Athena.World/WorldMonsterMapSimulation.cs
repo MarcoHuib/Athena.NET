@@ -383,8 +383,13 @@ internal sealed class WorldMonsterMapSimulation
             // engaged mob's own movement was already reported by step 2 above (this call's own
             // AdvanceMovement branch is a safe no-op for it, per this method's own doc comment, so
             // it never reaches this loop body a second time for the same crossing).
-            if (!_engagementByActorId.ContainsKey(change.Instance.ActorId))
-                Append(WorldMonsterFeedEntryKind.Moved, change.Instance);
+            //
+            // change.Instance is IMonsterActorView (MonsterMovementChange's own narrow projection,
+            // see that type's doc comment) - World's own Append/ToWireInstance need the concrete
+            // MobInstance (engagement state, Spawn.Mob.AttackRange, etc., none of which
+            // IMonsterActorView exposes), so this re-resolves it via TryFind rather than casting.
+            if (!_engagementByActorId.ContainsKey(change.Instance.ActorId) && TryFind(change.Instance.ActorId, out var movedInstance))
+                Append(WorldMonsterFeedEntryKind.Moved, movedInstance);
         }
 
         // A snapshot of keys, not a live enumeration - Unlock below mutates _engagementByActorId,
