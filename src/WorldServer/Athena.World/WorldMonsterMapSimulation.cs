@@ -87,7 +87,6 @@ internal sealed class WorldMonsterMapSimulation
         _spawnFingerprint = null;
         SimulationEpoch = WorldSimulationEpoch.NewEpoch();
         _engagementByActorId.Clear();
-        _incarnationByActorId.Clear();
         _entries.Clear();
         _nextSequence = 1;
     }
@@ -168,7 +167,6 @@ internal sealed class WorldMonsterMapSimulation
         SimulationEpoch = WorldSimulationEpoch.NewEpoch();
         IsLoaded = true;
         _engagementByActorId.Clear();
-        _incarnationByActorId.Clear();
         _entries.Clear();
         _nextSequence = 1;
     }
@@ -204,7 +202,7 @@ internal sealed class WorldMonsterMapSimulation
         var engagementWireState = !instance.IsAlive || engagement?.Target is null ? WorldMonsterEngagementState.Unengaged : engagement.State;
         return new WorldMonsterInstance(
             instance.ActorId,
-            new WorldMonsterIncarnationId(IncarnationOf(instance)),
+            new WorldMonsterIncarnationId(instance.IncarnationId.Value),
             MapId,
             instance.Spawn.Mob.Id,
             position.X, position.Y,
@@ -214,16 +212,6 @@ internal sealed class WorldMonsterMapSimulation
             engagementWireState,
             engagement?.Target);
     }
-
-    // Placeholder incarnation derivation until MobInstance itself is extended with a real
-    // IncarnationId counter (a MapServer-shared file-linked change, out of THIS step's own scope -
-    // Step 2 is grain state/mutation/feed correctness, not a MobInstance signature change every
-    // existing MapServer caller would also need to absorb). Tracked separately here per-ActorId so
-    // respawn-driven increments (see MarkDead/OnRespawnObserved) are still meaningful for THIS
-    // grain's own stale-incarnation rejection tests even before that shared change lands.
-    private readonly Dictionary<uint, long> _incarnationByActorId = [];
-    private long IncarnationOf(MobInstance instance) =>
-        _incarnationByActorId.TryGetValue(instance.ActorId, out var value) ? value : (_incarnationByActorId[instance.ActorId] = WorldMonsterIncarnationId.First.Value);
 
     public bool TryFind(uint actorId, out MobInstance instance)
     {
@@ -239,7 +227,7 @@ internal sealed class WorldMonsterMapSimulation
         string.Equals(MapId, reference.MapId, StringComparison.OrdinalIgnoreCase) &&
         SimulationEpoch.Equals(reference.SimulationEpoch) &&
         instance.ActorId == reference.ActorId &&
-        IncarnationOf(instance) == reference.IncarnationId.Value;
+        instance.IncarnationId.Value == reference.IncarnationId.Value;
 
     public WorldMonsterDeathStatus MarkDead(MobInstance instance)
     {
@@ -260,15 +248,15 @@ internal sealed class WorldMonsterMapSimulation
         return WorldMonsterDeathStatus.MarkedDead;
     }
 
-    // Called once per tick (Step 3, not yet wired here) after MonsterRegistry.ProcessDueRespawns
-    // reports a respawned instance - bumps the tracked incarnation and appends the feed entry a
-    // consumer needs to reset its own local combat-target state (see the plan's own "Respawn for a
-    // new IncarnationId resets local combat state to full HP" rule).
-    public void OnRespawnObserved(MobInstance instance)
-    {
-        _incarnationByActorId[instance.ActorId] = IncarnationOf(instance) + 1;
-        Append(WorldMonsterFeedEntryKind.Respawned, instance);
-    }
+    // Called once per tick after MonsterRegistry.ProcessDueRespawns reports a respawned instance -
+    // appends the feed entry a consumer needs to reset its own local combat-target state (see the
+    // plan's own "Respawn for a new IncarnationId resets local combat state to full HP" rule).
+    // IncarnationId itself is NEVER incremented here - MobInstance.TryRespawn already advanced it,
+    // atomically, as part of the very same Dead->Alive transition MonsterRegistry just observed;
+    // this method only reads the instance's already-current IncarnationId (via Append/ToWireInstance)
+    // and reports it. MobInstance is the single source of truth for incarnation - see
+    // MonsterIncarnationId's own doc comment.
+    public void OnRespawnObserved(MobInstance instance) => Append(WorldMonsterFeedEntryKind.Respawned, instance);
 
     // `targetPresence`/`targetIsWalking` let this compute the CORRECT initial engagement state
     // (Unlock/Chase/InAttackRange) at the exact moment of acquisition via WorldMonsterEngagementRules
@@ -492,7 +480,7 @@ internal sealed class WorldMonsterMapSimulation
 
     private void Append(WorldMonsterFeedEntryKind kind, MobInstance instance)
     {
-        var entry = new WorldMonsterFeedEntry(_nextSequence++, kind, instance.ActorId, new WorldMonsterIncarnationId(IncarnationOf(instance)), ToWireInstance(instance));
+        var entry = new WorldMonsterFeedEntry(_nextSequence++, kind, instance.ActorId, new WorldMonsterIncarnationId(instance.IncarnationId.Value), ToWireInstance(instance));
         _entries.Add(entry);
         // Bounded: this is a development-slice retention window, not an unbounded log - a consumer
         // that falls further behind than this receives ResyncRequired (see BuildPage), never a

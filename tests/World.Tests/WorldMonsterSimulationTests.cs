@@ -689,6 +689,54 @@ public sealed class WorldMonsterSimulationTests : IAsyncLifetime
         Assert.Null(page.Snapshot!.Single().EngagedTarget);
     }
 
+    // IncarnationId is now MobInstance's own real, single-source-of-truth field (see
+    // MonsterIncarnationId's own doc comment) - World's Respawned feed entry/wire projection must
+    // report the SAME value the authoritative MobInstance actually holds after a real respawn, and
+    // a life reference from BEFORE that respawn must be rejected as stale afterward. Uses a short
+    // RespawnDelayMs and the real grain timer/wall clock (Orleans grain timers are not
+    // TimeProvider-injectable) to drive an actual Dead->Alive transition.
+    [Fact]
+    public async Task Respawn_AdvancesIncarnation_FeedEntryAndSnapshotAgree_OldLifeReferenceBecomesStale()
+    {
+        var grain = Partition("world-rest");
+        var mapId = "izlude";
+        var quickRespawnSpawn = Spawn(mapId) with { RespawnDelayMs = 500, RespawnRandomDelayMs = 0 };
+        var load = await grain.LoadMonsterSpawnsAsync(Batch(mapId, [quickRespawnSpawn]));
+        var bootstrap = await grain.PollMonsterFeedAsync(cursor: null, mapId);
+        var actorId = bootstrap.Snapshot!.Single().ActorId;
+        Assert.Equal(WorldMonsterIncarnationId.First, bootstrap.Snapshot![0].IncarnationId);
+
+        var originalLife = new WorldMonsterLifeReference(mapId, load.SimulationEpoch, actorId, WorldMonsterIncarnationId.First);
+        Assert.Equal(WorldMonsterDeathStatus.MarkedDead, (await grain.TryMarkMonsterDeadAsync(originalLife)).Status);
+
+        // Wait for the real grain timer to observe the due respawn (500ms delay, 100ms tick cadence).
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        WorldMonsterInstance? respawned = null;
+        while (DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(200);
+            var page = await grain.PollMonsterFeedAsync(cursor: null, mapId);
+            var instance = page.Snapshot!.Single();
+            if (instance.Lifecycle == WorldMonsterLifecycleState.Alive) { respawned = instance; break; }
+        }
+        Assert.NotNull(respawned);
+        Assert.Equal(WorldMonsterIncarnationId.First.Next(), respawned!.IncarnationId);
+
+        // The Respawned feed entry itself must carry the SAME incarnation as the snapshot.
+        var page2 = await grain.PollMonsterFeedAsync(new WorldMonsterFeedCursor(load.SimulationEpoch, 0), mapId);
+        var respawnedEntry = Assert.Single(page2.Entries!, entry => entry.Kind == WorldMonsterFeedEntryKind.Respawned);
+        Assert.Equal(respawned.IncarnationId, respawnedEntry.IncarnationId);
+        Assert.Equal(respawned.IncarnationId, respawnedEntry.Instance.IncarnationId);
+
+        // A life reference built against the OLD (pre-respawn) incarnation must now be rejected.
+        var staleResult = await grain.TryMarkMonsterDeadAsync(originalLife);
+        Assert.Equal(WorldMonsterDeathStatus.StaleLifeReference, staleResult.Status);
+
+        // The current (new-incarnation) life reference works correctly.
+        var currentLife = originalLife with { IncarnationId = respawned.IncarnationId };
+        Assert.Equal(WorldMonsterDeathStatus.MarkedDead, (await grain.TryMarkMonsterDeadAsync(currentLife)).Status);
+    }
+
     // Correction #3: a bare feed poll against a map whose simulation has never been loaded must
     // report an explicit SpawnInitializationRequired status - never an ordinary empty bootstrap
     // indistinguishable from a genuinely-loaded map with zero monsters.

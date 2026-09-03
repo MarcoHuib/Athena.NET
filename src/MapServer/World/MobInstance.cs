@@ -29,6 +29,25 @@ public readonly record struct MobEngagement(uint? TargetAccountId, MobCombatStat
 // time across a respawn (see MobInstance.GetPosition's own doc comment).
 public readonly record struct MobPosition(ushort X, ushort Y);
 
+// Distinguishes a MobInstance's CURRENT life from a prior one that ended in death - a plain `long`
+// wrapped in its own type so callers cannot accidentally compare it against an unrelated numeric
+// ID (ActorId, AccountId, etc.) by mistake. Pure domain value: lives in the same file/namespace as
+// MobInstance itself (Athena.Net.MapServer.World, file-linked unmodified into Athena.World.Monsters)
+// so BOTH MapServer and World read/compare the identical representation with no dependency in
+// either direction on Athena.World.Contracts' own WorldMonsterIncarnationId wire type - the World
+// grain boundary (WorldMonsterMapSimulation.ToWireInstance) is the ONLY place that ever converts
+// between the two, exactly like every other MobInstance-to-WorldXxx projection.
+//
+// Starts at 1 for a freshly constructed instance (never 0 - avoids colliding with an
+// uninitialized/default(long) sentinel anywhere this value might accidentally flow through).
+// Incremented exactly once per successful Dead->Alive transition (see MobInstance.TryRespawn) -
+// never on death itself, never on merely scheduling or attempting a respawn.
+public readonly record struct MonsterIncarnationId(long Value)
+{
+    public static readonly MonsterIncarnationId First = new(1);
+    public MonsterIncarnationId Next() => new(Value + 1);
+}
+
 // One runtime monster instance. Mutable current HP/lifecycle/position only
 // live here, never in the immutable generated MobDefinition/MobSpawnDefinition.
 public sealed class MobInstance
@@ -38,6 +57,7 @@ public sealed class MobInstance
     private MobLifecycleState _state;
     private long _deadUntilUtcTicks;
     private MobPosition _position;
+    private MonsterIncarnationId _incarnationId = MonsterIncarnationId.First;
     // Idle-walk scheduling/movement state - see TryStartIdleWalk/AdvanceMovement's own doc
     // comments. `_nextIdleWalkAt` mirrors pinned mob_data.next_walktime (mob.hpp) exactly: null
     // means "not yet initialized" (pinned mob_randomwalk's own `INVALID_TIMER` sentinel check,
@@ -108,6 +128,12 @@ public sealed class MobInstance
     public uint ActorId { get; }
     public MobSpawnDefinition Spawn { get; }
     public string Map => Spawn.Map;
+
+    // The CURRENT life's incarnation - see MonsterIncarnationId's own doc comment. Locked read for
+    // the same reason every other mutable field on this type is (TryRespawn increments this under
+    // the identical lock as the rest of its atomic Dead->Alive transition, so a torn read here is
+    // impossible).
+    public MonsterIncarnationId IncarnationId { get { lock (_gate) return _incarnationId; } }
 
     // The single, atomic way to read a monster's current runtime cell: a random-spawn declaration
     // (MobSpawnDefinition X=0,Y=0,Xs=0,Ys=0 - see IMobSpawnCellSelector) picks a FRESH valid cell
@@ -369,6 +395,10 @@ public sealed class MobInstance
             _currentHp = Spawn.Mob.MaxHp;
             _deadUntilUtcTicks = 0;
             _position = position;
+            // The one and only place IncarnationId ever advances - exactly once per successful
+            // Dead->Alive transition (never on death, scheduling, a not-yet-due attempt, or a
+            // failed selectPosition search, all of which return before reaching this line).
+            _incarnationId = _incarnationId.Next();
             // Reset movement state entirely on respawn: any in-flight walk from the PREVIOUS life
             // must never continue to mutate a respawned instance's position (an old scheduled
             // movement event must not move a respawned instance to where the dead instance was
