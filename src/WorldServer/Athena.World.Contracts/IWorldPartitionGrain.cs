@@ -371,14 +371,40 @@ public sealed record WorldMonsterFeedEntry(
     [property: Id(3)] WorldMonsterIncarnationId IncarnationId,
     [property: Id(4)] WorldMonsterInstance Instance);
 
+// Explicit initialization/continuity status - a bare bool (ResyncRequired) cannot express "this
+// map has never been loaded, or was unloaded, and a consumer must call LoadMonsterSpawnsAsync
+// before treating anything returned here as authoritative" without being indistinguishable from
+// "this map IS genuinely loaded, with a real (possibly empty) spawn set, and Snapshot=[] simply
+// means zero monsters were declared" - those are two different situations a consumer must be able
+// to tell apart (see PollMonsterFeedAsync's own doc comment for the exact consumer contract this
+// status exists to satisfy).
+//   Ready: the map is loaded; Snapshot/Entries are authoritative (a bootstrap or incremental page
+//     respectively) exactly as ResyncRequired=false always meant before this status existed.
+//   ResyncRequired: the caller's cursor is stale (wrong epoch or out-of-retention-window) against
+//     a map that IS loaded - the returned Snapshot is a fresh, authoritative bootstrap to resync
+//     from, exactly as ResyncRequired=true always meant before this status existed.
+//   SpawnInitializationRequired: this map's simulation has never been loaded, OR was unloaded by
+//     the touched-window expiry policy and has not been touched since - the caller MUST call
+//     LoadMonsterSpawnsAsync before this map's monster state means anything; Snapshot is an EMPTY
+//     placeholder here, never a real (even if legitimately zero-monster) authoritative snapshot -
+//     never conflate this with a genuinely loaded, zero-monster map.
+public enum WorldMonsterFeedStatus { Ready, ResyncRequired, SpawnInitializationRequired }
+
 [GenerateSerializer]
 public sealed record WorldMonsterFeedPage(
     [property: Id(0)] string MapId,
     [property: Id(1)] WorldSimulationEpoch SimulationEpoch,
-    [property: Id(2)] bool ResyncRequired,
+    [property: Id(2)] WorldMonsterFeedStatus Status,
     [property: Id(3)] IReadOnlyList<WorldMonsterInstance>? Snapshot,
     [property: Id(4)] IReadOnlyList<WorldMonsterFeedEntry>? Entries,
-    [property: Id(5)] long AsOfSequence);
+    [property: Id(5)] long AsOfSequence)
+{
+    // Preserved for callers that only care about the binary "must I fully reconcile client-visible
+    // projection before advancing my cursor" question - both ResyncRequired and
+    // SpawnInitializationRequired demand exactly that (a SpawnInitializationRequired map has
+    // nothing loaded yet, which is itself a "start from scratch" resync case), only Ready does not.
+    public bool ResyncRequired => Status != WorldMonsterFeedStatus.Ready;
+}
 
 public enum WorldMonsterDeathStatus { MarkedDead, AlreadyDead, StaleLifeReference }
 
@@ -391,7 +417,7 @@ public sealed record WorldMonsterAttackedCommand(
     [property: Id(1)] uint AttackerCharacterId,
     [property: Id(2)] Guid AttackerPresenceId);
 
-public enum WorldMonsterAttackedStatus { Acquired, AlreadyCurrentTarget, StaleLifeReference, StaleAttackerPresence, MonsterNotAttackable }
+public enum WorldMonsterAttackedStatus { Acquired, AlreadyCurrentTarget, StaleLifeReference, StaleAttackerPresence, MonsterNotAttackable, AttackerNotEngageable }
 
 [GenerateSerializer]
 public sealed record WorldMonsterAttackedResult([property: Id(0)] WorldMonsterAttackedStatus Status);

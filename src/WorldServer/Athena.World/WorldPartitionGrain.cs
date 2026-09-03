@@ -35,19 +35,45 @@ public sealed class WorldPartitionGrain(IWorldPartitionResolver resolver, IMovem
     private DateTimeOffset? _lastMonsterTickAt;
     private string PartitionId => this.GetPrimaryKeyString();
 
-    // Every call site that represents genuine current activity for a map (spawn load, feed poll,
-    // an engagement mutation) goes through this - it both lazily creates the simulation on first
-    // touch AND records that touch's timestamp, which the tick loop itself later consults to decide
-    // unload-vs-keep-ticking.
+    // Every call site that represents genuine current activity for a map (spawn load, an
+    // engagement mutation) goes through this - it both lazily creates the simulation on first
+    // touch AND records that touch's timestamp, which the tick loop itself later consults to
+    // decide unload-vs-keep-ticking. Touching an UNLOADED simulation would defeat the whole
+    // touched-window policy (a bare poll against a map nobody has actually loaded would then
+    // "reset the clock" forever, never letting it be reaped) - see PollMonsterFeedAsync's own use
+    // of the non-touching FindOrCreateMonsterSimulation lookup for exactly this reason. This method
+    // is therefore reserved for RPCs that only make sense against (and thus only ever succeed
+    // against) an ALREADY-loaded simulation, or that ARE the load itself.
     private WorldMonsterMapSimulation MonsterSimulation(string mapId)
     {
-        var now = timeProvider.GetUtcNow();
-        if (_monsterSimulations.TryGetValue(mapId, out var simulation))
-        {
-            simulation.Touch(now);
-            return simulation;
-        }
-        simulation = new WorldMonsterMapSimulation(mapId, now);
+        var simulation = FindOrCreateMonsterSimulation(mapId);
+        simulation.Touch(timeProvider.GetUtcNow());
+        TouchActivationLifetime();
+        return simulation;
+    }
+
+    // RegisterGrainTimer does NOT by itself keep an otherwise-idle activation alive against
+    // Orleans' ordinary idle-activation collection - a touched map's simulation must still keep
+    // ticking through its full touched window even when no player/session RPC arrives during that
+    // window (the tick loop itself is what would poll/unload it, but the tick loop cannot run once
+    // the activation has already been collected). DelayDeactivation extends the activation's
+    // minimum remaining lifetime from "now" - called on every genuine touch, so it re-extends
+    // itself continuously for as long as the map keeps being touched, and simply stops being
+    // re-extended once touches stop, letting the activation become collectible again after the
+    // touched window (plus one tick's margin, so the final tick that unloads the simulation still
+    // gets to run) has actually elapsed. This deliberately does NOT make the partition permanently
+    // immortal - an activation with nothing touched will age out and be collected normally.
+    private void TouchActivationLifetime() => this.DelayDeactivation(_touchedWindow + MonsterTickInterval);
+
+    // Non-touching lookup - lazily creates the simulation record if this map has never been seen
+    // at all (so BuildPage has something to report SpawnInitializationRequired against), but never
+    // extends LastTouchedUtc merely for looking it up. A caller decides for itself whether the
+    // lookup it just performed should also count as a touch (see PollMonsterFeedAsync's own
+    // "touch only if genuinely loaded" policy).
+    private WorldMonsterMapSimulation FindOrCreateMonsterSimulation(string mapId)
+    {
+        if (_monsterSimulations.TryGetValue(mapId, out var simulation)) return simulation;
+        simulation = new WorldMonsterMapSimulation(mapId, timeProvider.GetUtcNow());
         _monsterSimulations[mapId] = simulation;
         return simulation;
     }
@@ -372,7 +398,19 @@ public sealed class WorldPartitionGrain(IWorldPartitionResolver resolver, IMovem
     public Task<WorldMonsterFeedPage> PollMonsterFeedAsync(WorldMonsterFeedCursor? cursor, string mapId)
     {
         mapId = RequireOwnedMap(mapId);
-        return Task.FromResult(MonsterSimulation(mapId).BuildPage(cursor));
+        // Non-touching lookup: a poll against a map whose simulation is not (yet, or no longer)
+        // loaded must not extend LastTouchedUtc, or an unloaded simulation could never be reaped -
+        // a MapServer that merely polls (without ever successfully loading spawns) would otherwise
+        // pin it "touched" forever. Only a genuinely loaded simulation's touched window is extended
+        // by polling it, since only a loaded simulation is actually doing anything worth keeping alive.
+        var simulation = FindOrCreateMonsterSimulation(mapId);
+        var page = simulation.BuildPage(cursor);
+        if (simulation.IsLoaded)
+        {
+            simulation.Touch(timeProvider.GetUtcNow());
+            TouchActivationLifetime();
+        }
+        return Task.FromResult(page);
     }
 
     public Task<WorldMonsterDeathResult> TryMarkMonsterDeadAsync(WorldMonsterLifeReference reference)
@@ -397,6 +435,14 @@ public sealed class WorldPartitionGrain(IWorldPartitionResolver resolver, IMovem
         // WorldPlayerTargetReference's own doc comment).
         if (!TryFind(command.AttackerCharacterId, out var attackerPresence) || attackerPresence.PresenceId != command.AttackerPresenceId)
             return Task.FromResult(new WorldMonsterAttackedResult(WorldMonsterAttackedStatus.StaleAttackerPresence));
+        // A current PresenceId alone is not enough - a presence that is now dead, or has moved to
+        // another map since the hit that triggered this call, must never acquire (or keep) a
+        // target either. This mirrors the exact validity check WorldMonsterEngagementRules.Evaluate
+        // itself would apply on the very next tick - reject here rather than accept-then-immediately
+        // -Unlock on the next tick (see TryAcquireEngagement's own doc comment for why storing an
+        // EngagedTarget the shared rules would immediately Unlock must never happen).
+        if (!attackerPresence.IsAlive || !string.Equals(attackerPresence.MapId, mapId, StringComparison.OrdinalIgnoreCase))
+            return Task.FromResult(new WorldMonsterAttackedResult(WorldMonsterAttackedStatus.AttackerNotEngageable));
         var target = new WorldPlayerTargetReference(command.AttackerCharacterId, command.AttackerPresenceId);
         return Task.FromResult(new WorldMonsterAttackedResult(
             simulation.TryAcquireEngagement(instance, target, attackerPresence, IsWalking(command.AttackerCharacterId))));

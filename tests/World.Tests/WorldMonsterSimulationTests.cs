@@ -509,6 +509,198 @@ public sealed class WorldMonsterSimulationTests : IAsyncLifetime
     private static MapCollisionMap MakeAllWalkableMap(string name, int side = 200) =>
         new(name, side, side, Enumerable.Repeat(MapCellFlags.Walkable, side * side).ToArray());
 
+    // --- Step-3 correction #1/#2 regressions: engaged movement must consume a mid-walk retarget
+    // at a real cell boundary via AdvanceMovementForCombat, and every authoritative position
+    // change (engaged or not) must be feed-visible, never suppressed for engaged mobs. A long
+    // WalkSpeedMs (2000ms/cell) against the grain's fast 100ms tick cadence gives a wide, reliable
+    // window to observe "still mid-cell" before the boundary and "past it" after, without coupling
+    // to exact tick counts.
+    private const int SlowWalkSpeedMs = 2000;
+
+    [Fact]
+    public async Task EngagedChase_MidCellRetarget_RemainsPendingUntilCellBoundary()
+    {
+        var grain = Partition("world-rest");
+        var mapId = "izlude";
+        var slowSpawn = Spawn(mapId) with { Mode = CanMoveAndAttackMode, WalkSpeedMs = SlowWalkSpeedMs };
+        var load = await grain.LoadMonsterSpawnsAsync(Batch(mapId, [slowSpawn]));
+        var bootstrap = await grain.PollMonsterFeedAsync(cursor: null, mapId);
+        var actorId = bootstrap.Snapshot!.Single().ActorId;
+        var life = new WorldMonsterLifeReference(mapId, load.SimulationEpoch, actorId, WorldMonsterIncarnationId.First);
+
+        // Acquire a target far enough away that the mob starts a fresh chase walk (not already in range).
+        var characterId = 201u;
+        var presenceId = Guid.NewGuid();
+        await grain.RegisterPresenceAsync(Presence(presenceId, characterId, mapId, x: (ushort)(MonsterX + 10), y: MonsterY));
+        Assert.Equal(WorldMonsterAttackedStatus.Acquired,
+            (await grain.NotifyMonsterAttackedAsync(new WorldMonsterAttackedCommand(life, characterId, presenceId))).Status);
+
+        // Wait for the chase to genuinely start walking (well under the 2s/cell duration).
+        var startDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        WorldMonsterInstance? walking = null;
+        while (DateTime.UtcNow < startDeadline)
+        {
+            await Task.Delay(150);
+            var page = await grain.PollMonsterFeedAsync(cursor: null, mapId);
+            var instance = page.Snapshot!.Single();
+            if (instance.IsWalking) { walking = instance; break; }
+        }
+        Assert.NotNull(walking);
+
+        // Reposition the target (re-registering the SAME PresenceId/ActorId/MapId is accepted as an
+        // ordinary position update - see RegisterPresenceAsync's own AlreadyRegistered branch)
+        // while the mob is still well within its 2-second cell step. World's own engagement tick
+        // re-evaluation observes the new position on its next pass and issues a chase retarget via
+        // TryRetargetChase, which defers (RequestRetarget) rather than applying immediately. A
+        // short wait later (still inside the 2s step) must show the mob has NOT snapped straight to
+        // the new destination - the retarget stays pending until the real cell boundary
+        // AdvanceMovementForCombat consumes it at.
+        var newTargetX = (ushort)(MonsterX + 20);
+        await grain.RegisterPresenceAsync(Presence(presenceId, characterId, mapId, x: newTargetX, y: MonsterY));
+        await Task.Delay(300);
+        var midCell = (await grain.PollMonsterFeedAsync(cursor: null, mapId)).Snapshot!.Single();
+        Assert.True(midCell.IsWalking);
+        Assert.NotEqual((newTargetX, MonsterY), (midCell.DestinationX, midCell.DestinationY));
+    }
+
+    [Fact]
+    public async Task EngagedChase_CellBoundaryAppliesReplacementPath_MobDoesNotFinishStalePath()
+    {
+        var grain = Partition("world-rest");
+        var mapId = "izlude";
+        var slowSpawn = Spawn(mapId) with { Mode = CanMoveAndAttackMode, WalkSpeedMs = SlowWalkSpeedMs };
+        var load = await grain.LoadMonsterSpawnsAsync(Batch(mapId, [slowSpawn]));
+        var bootstrap = await grain.PollMonsterFeedAsync(cursor: null, mapId);
+        var actorId = bootstrap.Snapshot!.Single().ActorId;
+        var life = new WorldMonsterLifeReference(mapId, load.SimulationEpoch, actorId, WorldMonsterIncarnationId.First);
+
+        var characterId = 202u;
+        var presenceId = Guid.NewGuid();
+        await grain.RegisterPresenceAsync(Presence(presenceId, characterId, mapId, x: (ushort)(MonsterX + 10), y: MonsterY));
+        await grain.NotifyMonsterAttackedAsync(new WorldMonsterAttackedCommand(life, characterId, presenceId));
+
+        var startDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        while (DateTime.UtcNow < startDeadline && !(await grain.PollMonsterFeedAsync(cursor: null, mapId)).Snapshot!.Single().IsWalking)
+            await Task.Delay(150);
+
+        var oldDestination = (await grain.PollMonsterFeedAsync(cursor: null, mapId)).Snapshot!.Single();
+        Assert.True(oldDestination.IsWalking);
+
+        // Retarget mid-cell (via repositioning the target's presence - see the sibling test's own
+        // doc comment for why this is the right way to force World's engagement tick to issue a
+        // fresh chase retarget), then wait PAST a full 2-second cell boundary - the replacement
+        // path must actually be applied by then (destination changed away from the original),
+        // proving the mob does not walk the entire stale old path to completion first.
+        var newTargetX = (ushort)(MonsterX + 20);
+        await grain.RegisterPresenceAsync(Presence(presenceId, characterId, mapId, x: newTargetX, y: MonsterY));
+
+        var appliedDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(6);
+        WorldMonsterInstance? afterBoundary = null;
+        while (DateTime.UtcNow < appliedDeadline)
+        {
+            await Task.Delay(300);
+            var instance = (await grain.PollMonsterFeedAsync(cursor: null, mapId)).Snapshot!.Single();
+            if ((instance.DestinationX, instance.DestinationY) != (oldDestination.DestinationX, oldDestination.DestinationY))
+            {
+                afterBoundary = instance;
+                break;
+            }
+        }
+        Assert.NotNull(afterBoundary);
+    }
+
+    // Correction #2: an engaged mob's ordinary chase cell-crossings must be feed-visible even when
+    // no wire packet would be required for them - the feed must never suppress engaged-mob
+    // position changes (the exact prior bug: Tick only appended Moved for UNENGAGED mobs).
+    [Fact]
+    public async Task EngagedChase_FeedVisibleXY_AdvancesOnCellCrossings_EvenWithoutRetargeting()
+    {
+        var grain = Partition("world-rest");
+        var mapId = "izlude";
+        // A short walk speed so the mob crosses several real cells within this test's own bound.
+        var fastSpawn = Spawn(mapId) with { Mode = CanMoveAndAttackMode, WalkSpeedMs = 150 };
+        var load = await grain.LoadMonsterSpawnsAsync(Batch(mapId, [fastSpawn]));
+        var bootstrap = await grain.PollMonsterFeedAsync(cursor: null, mapId);
+        var actorId = bootstrap.Snapshot!.Single().ActorId;
+        var life = new WorldMonsterLifeReference(mapId, load.SimulationEpoch, actorId, WorldMonsterIncarnationId.First);
+
+        var characterId = 203u;
+        var presenceId = Guid.NewGuid();
+        await grain.RegisterPresenceAsync(Presence(presenceId, characterId, mapId, x: (ushort)(MonsterX + 15), y: MonsterY));
+        await grain.NotifyMonsterAttackedAsync(new WorldMonsterAttackedCommand(life, characterId, presenceId));
+
+        var (startX, startY) = (MonsterX, MonsterY);
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(8);
+        var advanced = false;
+        while (DateTime.UtcNow < deadline && !advanced)
+        {
+            await Task.Delay(200);
+            var instance = (await grain.PollMonsterFeedAsync(cursor: null, mapId)).Snapshot!.Single();
+            advanced = instance.X != startX || instance.Y != startY;
+        }
+        Assert.True(advanced, "Expected an engaged, chasing mob's feed-visible position to advance across real cell crossings.");
+    }
+
+    // Correction #5: acquisition must be rejected (never store an EngagedTarget) when the shared
+    // range/validity rules would immediately say Unlock - here, the attacker presence is already
+    // dead at the moment of the hit.
+    [Fact]
+    public async Task NotifyMonsterAttacked_AttackerPresenceIsDead_IsRejected_NeverAcquiresTarget()
+    {
+        var grain = Partition("world-rest");
+        var mapId = "izlude";
+        var load = await grain.LoadMonsterSpawnsAsync(SingleMonsterBatch(mapId));
+        var bootstrap = await grain.PollMonsterFeedAsync(cursor: null, mapId);
+        var actorId = bootstrap.Snapshot!.Single().ActorId;
+        var life = new WorldMonsterLifeReference(mapId, load.SimulationEpoch, actorId, WorldMonsterIncarnationId.First);
+
+        var characterId = 210u;
+        var presenceId = Guid.NewGuid();
+        await grain.RegisterPresenceAsync(Presence(presenceId, characterId, mapId, x: MonsterX, y: MonsterY));
+        Assert.Equal(WorldPresenceLifeStateStatus.Updated,
+            (await grain.UpdatePresenceLifeStateAsync(new WorldPresenceLifeStateUpdate(characterId, presenceId, IsAlive: false))).Status);
+
+        var result = await grain.NotifyMonsterAttackedAsync(new WorldMonsterAttackedCommand(life, characterId, presenceId));
+        Assert.Equal(WorldMonsterAttackedStatus.AttackerNotEngageable, result.Status);
+
+        var page = await grain.PollMonsterFeedAsync(cursor: null, mapId);
+        Assert.Null(page.Snapshot!.Single().EngagedTarget);
+    }
+
+    [Fact]
+    public async Task NotifyMonsterAttacked_AttackerPresenceOnDifferentMap_IsRejected_NeverAcquiresTarget()
+    {
+        var grain = Partition("world-rest");
+        var mapId = "izlude";
+        var load = await grain.LoadMonsterSpawnsAsync(SingleMonsterBatch(mapId));
+        var bootstrap = await grain.PollMonsterFeedAsync(cursor: null, mapId);
+        var actorId = bootstrap.Snapshot!.Single().ActorId;
+        var life = new WorldMonsterLifeReference(mapId, load.SimulationEpoch, actorId, WorldMonsterIncarnationId.First);
+
+        var characterId = 211u;
+        var presenceId = Guid.NewGuid();
+        // Registered on a DIFFERENT map than the monster's own map ("geffen" vs "izlude").
+        await grain.RegisterPresenceAsync(Presence(presenceId, characterId, "geffen", x: MonsterX, y: MonsterY));
+
+        var result = await grain.NotifyMonsterAttackedAsync(new WorldMonsterAttackedCommand(life, characterId, presenceId));
+        Assert.Equal(WorldMonsterAttackedStatus.AttackerNotEngageable, result.Status);
+
+        var page = await grain.PollMonsterFeedAsync(cursor: null, mapId);
+        Assert.Null(page.Snapshot!.Single().EngagedTarget);
+    }
+
+    // Correction #3: a bare feed poll against a map whose simulation has never been loaded must
+    // report an explicit SpawnInitializationRequired status - never an ordinary empty bootstrap
+    // indistinguishable from a genuinely-loaded map with zero monsters.
+    [Fact]
+    public async Task PollMonsterFeed_NeverLoadedMap_ReportsSpawnInitializationRequired_NotAnEmptyBootstrap()
+    {
+        var grain = Partition("world-rest");
+        var page = await grain.PollMonsterFeedAsync(cursor: null, "izlude");
+        Assert.Equal(WorldMonsterFeedStatus.SpawnInitializationRequired, page.Status);
+        Assert.True(page.ResyncRequired); // Backward-compatible boolean view still reports "not Ready".
+    }
+
     public sealed class TopologyConfigurator : ISiloConfigurator
     {
         public void Configure(ISiloBuilder siloBuilder)
@@ -594,6 +786,68 @@ public sealed class WorldMonsterSimulationTouchedWindowTests : IAsyncLifetime
         }
     }
 
+    // Correction #3: once unloaded, an already-unloaded simulation must not repeatedly unload or
+    // continuously rotate epochs merely because the grain's own 100ms tick loop keeps calling
+    // Unload() again every pass after expiry. Proven by observing the SAME epoch via two separate
+    // resync responses taken well apart in time, both AFTER the original touched window has
+    // already expired - if Unload() were still rotating the epoch every tick, these two epochs
+    // would differ from each other (never mind from firstLoad's).
+    [Fact]
+    public async Task UnloadedSimulation_DoesNotRepeatedlyRotateEpoch_AcrossMultiplePostExpiryTicks()
+    {
+        var grain = Partition("world-rest");
+        var mapId = "izlude";
+        var firstLoad = await grain.LoadMonsterSpawnsAsync(SingleMonsterBatch(mapId));
+
+        // Let it expire, then wait across SEVERAL further tick intervals with no touch at all -
+        // long enough for many 100ms ticks to have each called Unload() on this already-unloaded
+        // simulation if the idempotency guard were missing.
+        await Task.Delay(ShortTouchedWindow + TimeSpan.FromSeconds(2));
+
+        var staleCursor = new WorldMonsterFeedCursor(firstLoad.SimulationEpoch, Sequence: 0);
+        var firstResync = await grain.PollMonsterFeedAsync(staleCursor, mapId);
+        Assert.Equal(WorldMonsterFeedStatus.SpawnInitializationRequired, firstResync.Status);
+
+        await Task.Delay(TimeSpan.FromSeconds(1));
+
+        var secondResync = await grain.PollMonsterFeedAsync(staleCursor, mapId);
+        Assert.Equal(WorldMonsterFeedStatus.SpawnInitializationRequired, secondResync.Status);
+
+        // Reload with the identical content - if either poll above had rotated the epoch again,
+        // this Rebuild's fresh epoch would have nothing meaningful to compare against; the real
+        // assertion is that the two polls observed IDENTICAL (both "unloaded", carrying no
+        // epoch-rotation side effect) status, proving Unload() is idempotent across repeated ticks.
+        var reload = await grain.LoadMonsterSpawnsAsync(SingleMonsterBatch(mapId));
+        Assert.Equal(WorldMonsterSpawnLoadStatus.Loaded, reload.Status);
+        Assert.NotEqual(firstLoad.SimulationEpoch, reload.SimulationEpoch); // Rebuilt exactly once, by this actual reload.
+    }
+
+    // Correction #3: a bare PollMonsterFeedAsync against a map that was never loaded (so its
+    // simulation is not IsLoaded) must NOT count as a touch - otherwise a MapServer merely polling
+    // without ever successfully loading spawns would keep that empty simulation "touched" forever,
+    // and it could never be reaped. Proven by polling repeatedly across several touched-window
+    // spans and confirming the simulation record's own SpawnInitializationRequired status never
+    // becomes anything else (there is no observable "keepalive" effect from polling alone).
+    [Fact]
+    public async Task PollMonsterFeed_AgainstNeverLoadedMap_DoesNotCountAsATouch()
+    {
+        var grain = Partition("world-rest");
+        var mapId = "izlude";
+
+        var deadline = DateTime.UtcNow + (ShortTouchedWindow * 3);
+        while (DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(300);
+            var page = await grain.PollMonsterFeedAsync(cursor: null, mapId);
+            Assert.Equal(WorldMonsterFeedStatus.SpawnInitializationRequired, page.Status);
+        }
+
+        // A genuine load right afterward still succeeds normally - proving the repeated, non-
+        // touching polls never left the simulation record in some poisoned/pinned state either.
+        var load = await grain.LoadMonsterSpawnsAsync(SingleMonsterBatch(mapId));
+        Assert.Equal(WorldMonsterSpawnLoadStatus.Loaded, load.Status);
+    }
+
     public sealed class ShortWindowConfigurator : ISiloConfigurator
     {
         public void Configure(ISiloBuilder siloBuilder)
@@ -605,6 +859,110 @@ public sealed class WorldMonsterSimulationTouchedWindowTests : IAsyncLifetime
                 .AddSingleton<IMapCollisionProvider>(new MapCollisionProvider([MakeAllWalkableMap("izlude"), MakeAllWalkableMap("geffen")]))
                 .AddSingleton(TimeProvider.System)
                 .AddSingleton(new WorldMonsterTouchedWindowOptions(ShortTouchedWindow));
+        }
+    }
+}
+
+// Correction #4: RegisterGrainTimer does not by itself keep an otherwise-idle activation alive
+// against Orleans' own idle-activation collection - a touched map must survive collection for its
+// full touched window with no player/session RPC arriving, via TouchActivationLifetime's
+// DelayDeactivation call on every genuine touch, but a partition with nothing touched must still
+// become collectible normally (never permanently immortal). Uses Orleans' own aggressively-short
+// GrainCollectionOptions so collection actually has a chance to run within this test's own bounded
+// wall-clock budget.
+//
+// Deliberately does NOT observe this via WorldTelemetry's world.partition.activation counter: that
+// Meter is a process-wide static shared by every test class in this assembly, many of which
+// (legitimately) key their own grain at the same resolver-assigned partition id ("world-rest") in
+// their own, separately-clustered TestCluster - under xUnit's default cross-class parallelism this
+// makes any assembly-wide listener non-attributable to THIS test's own activation events. Instead,
+// this observes reactivation indirectly through the grain's own in-memory state: a genuine
+// reactivation always constructs a brand-new WorldPartitionGrain instance with empty
+// _monsterSimulations, so SimulationEpoch stability (still loaded, unchanged epoch) or its loss
+// (SpawnInitializationRequired) is exactly equivalent to "did this activation survive" without
+// depending on the shared telemetry pipe at all.
+public sealed class WorldPartitionActivationLifetimeTests : IAsyncLifetime
+{
+    private static readonly TimeSpan VeryShortCollectionAge = TimeSpan.FromSeconds(2);
+    private static readonly TimeSpan TouchedWindow = TimeSpan.FromSeconds(6);
+    private TestCluster _cluster = null!;
+    public async Task InitializeAsync() { var builder = new TestClusterBuilder(); builder.AddSiloBuilderConfigurator<FastCollectionConfigurator>(); _cluster = builder.Build(); await _cluster.DeployAsync(); }
+    public async Task DisposeAsync() => await _cluster.StopAllSilosAsync();
+
+    private IWorldPartitionGrain Partition(string id) => _cluster.GrainFactory.GetGrain<IWorldPartitionGrain>(id);
+
+    private const uint CanAttackMode = 0x0000080;
+    private static WorldMonsterSpawnBatch SingleMonsterBatch(string mapId) =>
+        new(mapId, "", [new WorldMonsterSpawnDefinition(MobId: 1002, mapId, X: 100, Y: 100, Xs: 1, Ys: 1, Count: 1, RespawnDelayMs: 5000, RespawnRandomDelayMs: 0, SpawnName: "Poring", WalkSpeedMs: 400, AttackRange: 1, MaxHp: 55, Mode: CanAttackMode)]);
+
+    private static MapCollisionMap MakeAllWalkableMap(string name, int side = 200) =>
+        new(name, side, side, Enumerable.Repeat(MapCellFlags.Walkable, side * side).ToArray());
+
+    [Fact]
+    public async Task TouchedMap_SurvivesActivationCollection_ThroughoutItsTouchedWindow_WithNoFurtherCalls()
+    {
+        var grain = Partition("world-rest");
+        var mapId = "izlude";
+        var load = await grain.LoadMonsterSpawnsAsync(SingleMonsterBatch(mapId));
+        Assert.Equal(WorldMonsterSpawnLoadStatus.Loaded, load.Status);
+
+        // No further calls at all for the full touched window - collection age is far shorter
+        // (2s) than the touched window (6s), so without DelayDeactivation this activation would
+        // almost certainly be collected (destroying _monsterSimulations) at least once.
+        await Task.Delay(TouchedWindow - TimeSpan.FromSeconds(1));
+
+        var page = await grain.PollMonsterFeedAsync(cursor: null, mapId);
+        // Still the SAME activation's in-memory state: same epoch, still genuinely Loaded (a
+        // reactivation would have produced a brand-new, empty simulation dictionary, which
+        // BuildPage would report as SpawnInitializationRequired, never Ready under the old epoch).
+        Assert.Equal(WorldMonsterFeedStatus.Ready, page.Status);
+        Assert.Equal(load.SimulationEpoch, page.SimulationEpoch);
+    }
+
+    [Fact]
+    public async Task UntouchedMap_ActivationIsNotPermanentlyPinned_BecomesCollectibleOnceNothingIsLoaded()
+    {
+        var grain = Partition("world-rest");
+        var mapId = "izlude";
+
+        var load = await grain.LoadMonsterSpawnsAsync(SingleMonsterBatch(mapId));
+        Assert.Equal(WorldMonsterSpawnLoadStatus.Loaded, load.Status);
+
+        // A SINGLE touch (this load) started a DelayDeactivation extension of TouchedWindow (6s) -
+        // deliberately NOT re-touched again by anything for the rest of this test (unlike the
+        // sibling "survives" test, which proves the OPPOSITE side of this same mechanism by
+        // touching once and then confirming survival strictly WITHIN that one window). Waiting
+        // well past that single extension - with the silo's collection age/quantum set far shorter
+        // (2s/1s) than it - must let Orleans' own idle-activation collection actually run, since
+        // nothing keeps re-arming DelayDeactivation once the window lapses: this partition must not
+        // be permanently pinned merely because it once loaded a map.
+        await Task.Delay(TouchedWindow + TimeSpan.FromSeconds(4));
+
+        // The FIRST poll after that gap is the only observation point - it queries a plain
+        // dictionary lookup, itself becoming a touch that would immediately re-arm
+        // DelayDeactivation, so if collection had NOT already happened during the wait above, this
+        // one poll can never (and must never) recover that evidence after the fact.
+        var page = await grain.PollMonsterFeedAsync(cursor: null, mapId);
+        Assert.True(page.Status != WorldMonsterFeedStatus.Ready || !page.SimulationEpoch.Equals(load.SimulationEpoch),
+            "Expected the activation to have been collected (observed as a lost/rebuilt simulation) once nothing kept re-touching it under a short collection age.");
+    }
+
+    public sealed class FastCollectionConfigurator : ISiloConfigurator
+    {
+        public void Configure(ISiloBuilder siloBuilder)
+        {
+            siloBuilder.AddMemoryGrainStorage("actorIdBlockAuthority");
+            siloBuilder.Services
+                .AddSingleton<IWorldPartitionResolver>(WorldPartitionTopologyLoader.Load(TestWorldPartitionsPath.Resolve(), ["izlude", "geffen"]))
+                .AddSingleton<IMovementPathProvider>(new UnverifiedGridLineMovementPathProvider())
+                .AddSingleton<IMapCollisionProvider>(new MapCollisionProvider([MakeAllWalkableMap("izlude"), MakeAllWalkableMap("geffen")]))
+                .AddSingleton(TimeProvider.System)
+                .AddSingleton(new WorldMonsterTouchedWindowOptions(TouchedWindow));
+            siloBuilder.Configure<Orleans.Configuration.GrainCollectionOptions>(options =>
+            {
+                options.CollectionQuantum = TimeSpan.FromSeconds(1);
+                options.CollectionAge = VeryShortCollectionAge;
+            });
         }
     }
 }

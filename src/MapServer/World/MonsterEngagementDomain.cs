@@ -55,12 +55,6 @@ public abstract record MonsterEngagementDecision
 // that already justifies the existing player-side bonus, just evaluated for the other party.
 public static class MonsterEngagementDomain
 {
-    // Pinned check_distance_bl's own Chebyshev metric (battle.cpp, used by battle_check_range for
-    // any non-PC attacker per that function's own `else` branch - see battle_check_range's doc
-    // trace this project's report cites) - NOT the circular check_distance_client_bl used only for
-    // BL_PC attackers/skills.
-    private static int ChebyshevDistance(int dx, int dy) => Math.Max(Math.Abs(dx), Math.Abs(dy));
-
     // Deliberately NOT modeled in this slice (disclosed, not silently approximated - matching this
     // project's other basic-attack calculators' own convention): pinned's mob_chase_refresh grace
     // window before dropping a briefly-out-of-map-sync target, db->range3/ChaseRange-based give-up
@@ -73,15 +67,15 @@ public static class MonsterEngagementDomain
     // task's own item 7 unlock-condition list.
     public static MonsterEngagementDecision Evaluate(MobInstance mob, PlayerCombatSnapshot? target, DateTimeOffset now)
     {
-        if (target is not { } snapshot || !snapshot.IsAlive || !string.Equals(snapshot.Map, mob.Map, StringComparison.OrdinalIgnoreCase))
+        if (target is not { } snapshot || !MonsterTargetRangeRules.IsTargetValid(mob.Map, snapshot.Map, snapshot.IsAlive))
             return new MonsterEngagementDecision.Unlock();
 
         var position = mob.GetPosition();
-        var dx = snapshot.X - position.X;
-        var dy = snapshot.Y - position.Y;
-        var effectiveRange = mob.Spawn.Mob.AttackRange + (snapshot.IsWalking ? 1 : 0);
+        var inRange = MonsterTargetRangeRules.IsTargetInRange(
+            mob.Map, position.X, position.Y, mob.Spawn.Mob.AttackRange,
+            snapshot.Map, snapshot.IsAlive, snapshot.X, snapshot.Y, snapshot.IsWalking);
 
-        if (ChebyshevDistance(dx, dy) <= effectiveRange)
+        if (inRange)
         {
             var nextAttack = mob.NextAttackAt;
             return nextAttack is null || now >= nextAttack ? new MonsterEngagementDecision.Attack() : new MonsterEngagementDecision.Wait();
