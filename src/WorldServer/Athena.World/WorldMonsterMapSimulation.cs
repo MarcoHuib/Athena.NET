@@ -362,8 +362,11 @@ internal sealed class WorldMonsterMapSimulation
                 // The replacement path's own first leg is exactly the "movement changed, tell
                 // observers" event a fresh chase-start already produces - mirrors
                 // MonsterEngagementTickProcessor's own identical WalkStarted-shaped report for this
-                // exact case (see that type's own ProcessAsync comment).
-                Append(WorldMonsterFeedEntryKind.ChaseStarted, instance);
+                // exact case (see that type's own ProcessAsync comment). MovementKind=WalkStarted:
+                // a pending combat retarget applied at a real cell boundary IS a fresh walk from the
+                // Ragexe projection's own perspective (a new 0x09FD-shaped walk-entry is warranted),
+                // exactly like MonsterMovementChangeKind.WalkStarted on the MapServer side.
+                Append(WorldMonsterFeedEntryKind.ChaseStarted, instance, WorldMonsterMovementKind.WalkStarted);
             }
             else if (crossed.Count > 0)
             {
@@ -372,8 +375,11 @@ internal sealed class WorldMonsterMapSimulation
                 // require no Ragexe wire packet from a consumer for an already-visible actor (see
                 // WorldMonsterFeedEntryKind.Moved's own doc comment for the CellCrossed/WalkFinished
                 // "projection update, no fabricated packet" contract this satisfies for engaged
-                // mobs too, not only idle ones).
-                Append(WorldMonsterFeedEntryKind.Moved, instance);
+                // mobs too, not only idle ones). MovementKind distinguishes an ordinary continuation
+                // (CellCrossed, still walking) from the walk naturally ending this same crossing
+                // (WalkFinished) - exactly mirroring MonsterRuntime.ProcessTick's own identical
+                // IsWalking-after-AdvanceMovement check on the MapServer side.
+                Append(WorldMonsterFeedEntryKind.Moved, instance, instance.IsWalking ? WorldMonsterMovementKind.CellCrossed : WorldMonsterMovementKind.WalkFinished);
             }
         }
 
@@ -388,8 +394,13 @@ internal sealed class WorldMonsterMapSimulation
             // see that type's doc comment) - World's own Append/ToWireInstance need the concrete
             // MobInstance (engagement state, Spawn.Mob.AttackRange, etc., none of which
             // IMonsterActorView exposes), so this re-resolves it via TryFind rather than casting.
+            //
+            // change.Kind (MonsterMovementChangeKind, MapServer's own idle-walk scheduler output)
+            // maps 1:1 onto WorldMonsterMovementKind - both enums exist for exactly the same
+            // Ragexe-projection distinction (see either type's own doc comment), so this is a
+            // direct correspondence, never a re-derivation from IsWalking.
             if (!_engagementByActorId.ContainsKey(change.Instance.ActorId) && TryFind(change.Instance.ActorId, out var movedInstance))
-                Append(WorldMonsterFeedEntryKind.Moved, movedInstance);
+                Append(WorldMonsterFeedEntryKind.Moved, movedInstance, ToWorldMovementKind(change.Kind));
         }
 
         // A snapshot of keys, not a live enumeration - Unlock below mutates _engagementByActorId,
@@ -417,8 +428,12 @@ internal sealed class WorldMonsterMapSimulation
                 case WorldMonsterEngagementDecision.Chase chase:
                     var previousState = state.State;
                     state.State = WorldMonsterEngagementState.Chasing;
+                    // A fresh Chase decision that actually starts (or re-asserts) a walk is always
+                    // WalkStarted-shaped from the Ragexe projection's own perspective - a mid-walk
+                    // retarget, by contrast, is deferred and reported by step 2 above instead (see
+                    // ApplyChaseDecision's own doc comment for why this call never double-reports it).
                     if (ApplyChaseDecision(instance, chase, now) || previousState != WorldMonsterEngagementState.Chasing)
-                        Append(WorldMonsterFeedEntryKind.ChaseStarted, instance);
+                        Append(WorldMonsterFeedEntryKind.ChaseStarted, instance, WorldMonsterMovementKind.WalkStarted);
                     break;
 
                 case WorldMonsterEngagementDecision.InAttackRange:
@@ -434,10 +449,13 @@ internal sealed class WorldMonsterMapSimulation
                         // STOP-CHASE half of that transition is simulation-owned and must happen
                         // here so the mob's authoritative position/IsWalking freezes correctly.
                         instance.StopChase();
-                        Append(WorldMonsterFeedEntryKind.ChaseInterrupted, instance);
+                        Append(WorldMonsterFeedEntryKind.ChaseInterrupted, instance, WorldMonsterMovementKind.ChaseInterrupted);
                     }
                     else if (!wasInAttackRangeAlready)
                     {
+                        // No movement transition occurred here (the mob was already stationary and
+                        // in range) - MovementKind stays null, matching WorldMonsterFeedEntry's own
+                        // "null when no movement transition accompanies this entry" contract.
                         Append(WorldMonsterFeedEntryKind.InAttackRange, instance);
                     }
                     break;
@@ -483,9 +501,22 @@ internal sealed class WorldMonsterMapSimulation
     private IMovementPathProvider? _movementPathProvider;
     private IMapCollisionProvider? _collisionProvider;
 
-    private void Append(WorldMonsterFeedEntryKind kind, MobInstance instance)
+    // Direct 1:1 correspondence with MapServer's own MonsterMovementChangeKind (idle-walk scheduler
+    // output) - both enums exist for the identical Ragexe-projection distinction (see either type's
+    // own doc comment), so this is a mapping, never a re-derivation from IsWalking or any other
+    // inferred signal.
+    private static WorldMonsterMovementKind ToWorldMovementKind(MonsterMovementChangeKind kind) => kind switch
     {
-        var entry = new WorldMonsterFeedEntry(_nextSequence++, kind, instance.ActorId, new WorldMonsterIncarnationId(instance.IncarnationId.Value), ToWireInstance(instance));
+        MonsterMovementChangeKind.WalkStarted => WorldMonsterMovementKind.WalkStarted,
+        MonsterMovementChangeKind.CellCrossed => WorldMonsterMovementKind.CellCrossed,
+        MonsterMovementChangeKind.WalkFinished => WorldMonsterMovementKind.WalkFinished,
+        MonsterMovementChangeKind.ChaseInterrupted => WorldMonsterMovementKind.ChaseInterrupted,
+        _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, null),
+    };
+
+    private void Append(WorldMonsterFeedEntryKind kind, MobInstance instance, WorldMonsterMovementKind? movementKind = null)
+    {
+        var entry = new WorldMonsterFeedEntry(_nextSequence++, kind, instance.ActorId, new WorldMonsterIncarnationId(instance.IncarnationId.Value), ToWireInstance(instance), movementKind);
         _entries.Add(entry);
         // Bounded: this is a development-slice retention window, not an unbounded log - a consumer
         // that falls further behind than this receives ResyncRequired (see BuildPage), never a

@@ -22,15 +22,19 @@ public enum MonsterMovementChangeKind { WalkStarted, CellCrossed, WalkFinished, 
 
 // `Instance` is IMonsterActorView (position/identity/movement only, per that interface's own doc
 // comment) - NOT MobInstance directly, so a consumer's own signature makes clear it depends only
-// on actor/simulation-shaped data. `Combat` is the explicit, separately-read MonsterCombatState
-// snapshot (CurrentHp/MaxHp/NextAttackAt) a packet-building consumer needs alongside it - carried
-// as its own visible field rather than recovered via a cast back to MobInstance or a lookup
-// callback, so the dependency on MapServer-local combat data is as mechanically obvious at this
-// struct's own call sites as the position dependency on Instance already is. Every producer
-// (MonsterRuntime.ProcessTick below, MonsterEngagementTickProcessor, MapTcpServer's respawn
-// fan-out) already has the source MobInstance in scope and builds Combat via
-// MonsterCombatState.FromInstance at construction time.
-public readonly record struct MonsterMovementChange(IMonsterActorView Instance, MonsterCombatState Combat, MonsterMovementChangeKind Kind);
+// on actor/simulation-shaped data.
+//
+// Deliberately carries NO MonsterCombatState of its own (a prior revision of this type did, and
+// that was a real correctness bug: a MonsterMovementChange is often queued/fanned-out across
+// several sessions before MapClientSession.NotifyMonsterMovedAsync actually builds a packet from
+// it, and HP captured at CHANGE-CREATION time can already be stale by PROJECTION time - e.g. a
+// player's hit lands, correctly publishing fresh HP via 0x0977, while a movement change created
+// moments earlier still carries the OLD pre-hit HP and would overwrite the client's already-correct
+// HP knowledge with stale data, or even re-trigger the full-HP -1/-1 sentinel after the monster was
+// just damaged). Combat state must be read FRESH, immediately before each individual projection
+// call - see NotifyMonsterMovedAsync's own `combat` parameter and doc comment for where that fresh
+// read now happens instead.
+public readonly record struct MonsterMovementChange(IMonsterActorView Instance, MonsterMovementChangeKind Kind);
 
 // World-owned mob AI/movement scheduler - the "one scheduler/tick loop" this project's runtime
 // architecture requires instead of one Timer/Task per monster (matching MonsterRegistry.
@@ -113,7 +117,7 @@ public sealed class MonsterRuntime(MonsterRegistry monsters, IMapCollisionProvid
 
             if (ProcessIdleMovement(instance, now))
             {
-                changed.Add(new MonsterMovementChange(instance, MonsterCombatState.FromInstance(instance), MonsterMovementChangeKind.WalkStarted));
+                changed.Add(new MonsterMovementChange(instance, MonsterMovementChangeKind.WalkStarted));
                 continue; // A just-started walk already reflects its first cell; no need to also AdvanceMovement this same tick.
             }
 
@@ -126,7 +130,7 @@ public sealed class MonsterRuntime(MonsterRegistry monsters, IMapCollisionProvid
             // (CellCrossed - pinned unit_walktoxy_timer's ordinary sendMove=false continuation) from
             // "the walk's last cell was just crossed, ending it this same tick" (WalkFinished).
             var kind = instance.IsWalking ? MonsterMovementChangeKind.CellCrossed : MonsterMovementChangeKind.WalkFinished;
-            changed.Add(new MonsterMovementChange(instance, MonsterCombatState.FromInstance(instance), kind));
+            changed.Add(new MonsterMovementChange(instance, kind));
         }
 
         return changed;

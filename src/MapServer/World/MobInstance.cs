@@ -163,6 +163,20 @@ public sealed class MobInstance : IMonsterActorView
     public MobLifecycleState State { get { lock (_gate) return _state; } }
     public bool IsAlive => State == MobLifecycleState.Alive;
 
+    // The ONE atomic way to read every MapServer-local combat field together - IncarnationId,
+    // CurrentHp, and NextAttackAt are all read under the SAME lock acquisition, so no concurrent
+    // respawn/lifecycle transition can ever be observed as a torn mix (e.g. the OLD IncarnationId
+    // paired with the NEW life's already-reset full HP and cleared NextAttackAt, or vice versa -
+    // TryRespawn resets _currentHp/_nextAttackAt and bumps _incarnationId together under its own
+    // lock, so any caller reading these three fields via separate property getters could observe
+    // an in-between state that never corresponds to any single life). MonsterCombatState.FromInstance
+    // is the only production caller - see that method's own doc comment for why this exists as a
+    // dedicated method rather than three independent property reads.
+    public MonsterCombatState CaptureCombatState()
+    {
+        lock (_gate) return new MonsterCombatState(ActorId, _incarnationId, _currentHp, Spawn.Mob.MaxHp, _nextAttackAt);
+    }
+
     // One atomic read of target/state together - see MobEngagement's own doc comment for why this
     // must be a single snapshot rather than two separate property reads.
     public MobEngagement Engagement { get { lock (_gate) return new MobEngagement(_targetAccountId, _combatState); } }
@@ -322,6 +336,15 @@ public sealed class MobInstance : IMonsterActorView
         lock (_gate) { _movement.Stop(); }
     }
 
+    // SUPERSEDED on the migrated live MapServer combat path (Step 5) - MonsterCombatStateStore is
+    // now the sole owner of CurrentHp for MonsterCombatCoordinator/MonsterEngagementTickProcessor
+    // and every production call site they depend on; those callers no longer call ApplyDamage.
+    // This method is retained ONLY for its own existing focused unit tests (MobInstanceTests.cs)
+    // and any not-yet-migrated caller - it must not be (re)introduced as a second mutable HP
+    // authority on the migrated path. See MonsterCombatStateStore.ApplyDamage for the current
+    // production implementation, which calls MarkDeadIfNeeded (not this method) for the lifecycle
+    // transition while holding its own per-key critical section.
+    //
     // Applies damage and reports whether THIS call caused the Alive->Dead
     // transition (never true twice for the same death - the state check and
     // the mutation happen under one lock, so two concurrent lethal hits
@@ -346,6 +369,36 @@ public sealed class MobInstance : IMonsterActorView
                 _nextAttackAt = null;
             }
             return (before, after, killed);
+        }
+    }
+
+    // The narrow, HP-free lifecycle transition MonsterCombatStateStore.ApplyDamage calls (while
+    // still holding ITS OWN per-(MapId,ActorId,IncarnationId) critical section) once it has
+    // determined - using its own separately-owned CurrentHp - that this hit brought HP from >0 to
+    // exactly 0. Deliberately does NOT touch CurrentHp/NextAttackAt at all (those are the store's
+    // own fields on the migrated path); it only performs the Alive->Dead transition and the
+    // engagement-clearing side effect that legitimately belongs to it (pinned mob_dead's own
+    // unlock-on-death, mob.cpp:3863 - identical to ApplyDamage's own long-standing behavior above,
+    // just without also owning the HP math that decided to call this).
+    //
+    // Returns true only the FIRST time this transitions Alive->Dead (never true twice for the same
+    // death, matching ApplyDamage's own exactly-once guarantee) - a caller that already observed
+    // Dead (e.g. a second concurrent lethal hit serialized behind the store's own lock, which by
+    // then already applied the first hit's lethal transition) gets false and changes nothing.
+    //
+    // Must NOT call back into MonsterCombatStateStore (or any other component's lock) while holding
+    // `_gate` - this method's own critical section only ever touches MobInstance's own fields, so
+    // no lock-order inversion is possible between this method and the store's own outer lock.
+    public bool MarkDeadIfNeeded()
+    {
+        lock (_gate)
+        {
+            if (_state != MobLifecycleState.Alive) return false;
+            _state = MobLifecycleState.Dead;
+            _targetAccountId = null;
+            _combatState = MobCombatState.Idle;
+            _nextAttackAt = null;
+            return true;
         }
     }
 

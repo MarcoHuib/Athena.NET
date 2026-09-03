@@ -19,7 +19,10 @@ public sealed record MonsterCombatState(uint ActorId, MonsterIncarnationId Incar
     // The ONE bridge point from MobInstance's own combat fields into this explicit local type -
     // every other consumer takes a MonsterCombatState value, never a MobInstance, so this factory
     // (not a cast, not a callback) is the single visible seam where "the current combat source
-    // happens to be MobInstance" lives during this preparatory step.
-    public static MonsterCombatState FromInstance(MobInstance instance) =>
-        new(instance.ActorId, instance.IncarnationId, instance.CurrentHp, instance.Spawn.Mob.MaxHp, instance.NextAttackAt);
+    // happens to be MobInstance" lives during this preparatory step. Delegates to
+    // MobInstance.CaptureCombatState() rather than reading ActorId/IncarnationId/CurrentHp/
+    // NextAttackAt as separate property getters - each of those takes its OWN lock acquisition on
+    // MobInstance, so reading them independently could observe a torn mix spanning a concurrent
+    // respawn (old IncarnationId with new-life HP, etc.) - see CaptureCombatState's own doc comment.
+    public static MonsterCombatState FromInstance(MobInstance instance) => instance.CaptureCombatState();
 }

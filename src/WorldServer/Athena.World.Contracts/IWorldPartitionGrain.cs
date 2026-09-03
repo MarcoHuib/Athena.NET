@@ -341,14 +341,35 @@ public readonly record struct WorldMonsterFeedCursor(
     [property: Id(0)] WorldSimulationEpoch SimulationEpoch,
     [property: Id(1)] long Sequence);
 
-// `Moved` covers ordinary (non-engagement) idle-walk movement - a walk starting, an intermediate
-// cell being crossed, or a walk finishing for a mob with no current target. Every OTHER kind here
-// already carries its own movement implication where relevant (e.g. ChaseStarted's own Instance
-// snapshot reflects the mob now walking toward its target) - Moved exists specifically so a
-// consumer projecting ordinary wandering movement (a mob with no target at all) has a feed entry
-// to react to; it is never emitted for a mob that currently has an engaged target (that mob's
-// movement is always reported via the engagement-shaped kinds instead, never both).
+// `Moved` covers ordinary movement position updates - a walk starting, an intermediate cell being
+// crossed, or a walk finishing. Every OTHER kind here already carries its own movement implication
+// where relevant (e.g. ChaseStarted's own Instance snapshot reflects the mob now walking toward its
+// target) - Moved exists specifically so a consumer projecting ordinary movement (idle wandering
+// OR an already-engaged mob's ordinary chase cell-crossings) has a feed entry to react to.
+//
+// CORRECTED: `Moved` is NOT exclusive to unengaged mobs - an already-engaged mob's ordinary chase
+// cell-crossings (no fresh retarget applied this tick) are ALSO reported via Moved, never
+// suppressed, so a consumer's position mirror stays current even while a chase continues without
+// producing any of the engagement-shaped kinds this tick (see WorldMonsterMapSimulation.Tick's own
+// doc comment for the exact tick-ordering this guarantees). A prior revision of this doc comment
+// claimed Moved was emitted only for a mob with no current target - that was inaccurate as of the
+// tick restructuring that fixed the "engaged mob's feed goes stale mid-chase" bug and has been
+// corrected here.
 public enum WorldMonsterFeedEntryKind { Moved, EngagementAcquired, ChaseStarted, ChaseInterrupted, TargetUnlocked, InAttackRange, Died, Respawned }
+
+// The Ragexe wire-projection-relevant distinction WorldMonsterFeedEntryKind alone cannot express:
+// whether a movement transition is a FRESH walk beginning (a real 0x09FD walk-entry packet is
+// warranted), an ORDINARY mid-walk cell crossing (projection-only, pinned unit_walktoxy_nextcell's
+// own sendMove=false continuation - no repeated walk-entry packet), a walk reaching its natural end
+// (projection-only, no fabricated stop/fixpos packet), or a COMBAT interruption of an in-flight walk
+// (pinned USW_FIXPOS - the one case that warrants the 0x0088 ZC_STOPMOVE packet). This mirrors
+// MonsterMovementChangeKind's own doc comment on the MapServer side exactly - same four cases, same
+// wire-projection consequences - so a future MapServer feed consumer can reuse the identical
+// decision table its own local MonsterRuntime/MonsterEngagementTickProcessor already use, rather
+// than trying to re-derive "is this a fresh walk or an ordinary continuation" from
+// WorldMonsterInstance.IsWalking alone (which cannot distinguish those two cases: both leave
+// IsWalking=true).
+public enum WorldMonsterMovementKind { WalkStarted, CellCrossed, WalkFinished, ChaseInterrupted }
 
 // A PURE STATE TRANSITION - never an executable command. In particular, InAttackRange means
 // "the authoritative monster is now engaged and in range," nothing more; it never means "attack
@@ -363,13 +384,18 @@ public enum WorldMonsterFeedEntryKind { Moved, EngagementAcquired, ChaseStarted,
 // immediately before mutating player HP. Target identity, when relevant to Kind, is read from
 // Instance.EngagedTarget - deliberately no separate TargetCharacterId field here, to avoid two
 // competing notions of "who is the target" between this entry and the Instance it already embeds.
+// `MovementKind` is null when this entry carries no movement transition at all (e.g. Died,
+// Respawned, TargetUnlocked with no accompanying position change, EngagementAcquired for a mob
+// already in range at the moment of acquisition) - a consumer must only apply MovementKind's own
+// wire-projection rule (see WorldMonsterMovementKind's own doc comment) when it is present.
 [GenerateSerializer]
 public sealed record WorldMonsterFeedEntry(
     [property: Id(0)] long Sequence,
     [property: Id(1)] WorldMonsterFeedEntryKind Kind,
     [property: Id(2)] uint ActorId,
     [property: Id(3)] WorldMonsterIncarnationId IncarnationId,
-    [property: Id(4)] WorldMonsterInstance Instance);
+    [property: Id(4)] WorldMonsterInstance Instance,
+    [property: Id(5)] WorldMonsterMovementKind? MovementKind = null);
 
 // Explicit initialization/continuity status - a bare bool (ResyncRequired) cannot express "this
 // map has never been loaded, or was unloaded, and a consumer must call LoadMonsterSpawnsAsync

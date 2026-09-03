@@ -142,16 +142,23 @@ public sealed class MapClientSessionMobEngagementTests
     // MonsterEngagementTickResult - the production orchestration/domain/damage logic itself stays
     // entirely inside MonsterEngagementTickProcessor/MonsterEngagementDomain/
     // MobBasicAttackCalculator, never duplicated here.
-    private static async Task FanOutAsync(MonsterEngagementTickResult result, IEnumerable<MapClientSession> sessions)
+    private static async Task FanOutAsync(MonsterRegistry registry, MonsterEngagementTickResult result, IEnumerable<MapClientSession> sessions)
     {
         foreach (var session in sessions)
         {
-            foreach (var change in result.MovementChanges) await session.NotifyMonsterMovedAsync(change, CancellationToken.None);
+            foreach (var change in result.MovementChanges)
+            {
+                // Fresh combat-state read immediately before this projection call, mirroring
+                // MapTcpServer.ProcessOneMonsterTickAsync's own fan-out - never the state captured
+                // back when `change` was created (see MonsterMovementChange's own doc comment).
+                if (registry.TryGetInstance(change.Instance.ActorId, change.Instance.Map, out var freshInstance))
+                    await session.NotifyMonsterMovedAsync(change, MonsterCombatState.FromInstance(freshInstance), CancellationToken.None);
+            }
             foreach (var action in result.AttackActions) await session.NotifyMonsterAttackOutcomeAsync(action, CancellationToken.None);
         }
     }
 
-    private sealed record TestWorld(MonsterRegistry Registry, MonsterCombatCoordinator Combat, MonsterEngagementTickProcessor Processor, MobInstance Poring, IMapCollisionProvider Collision, IMovementPathProvider PathProvider);
+    private sealed record TestWorld(MonsterRegistry Registry, MonsterCombatCoordinator Combat, MonsterEngagementTickProcessor Processor, MobInstance Poring, IMapCollisionProvider Collision, IMovementPathProvider PathProvider, MonsterCombatStateStore CombatState);
 
     // A real, fully-walkable MapCollisionMap-backed provider (not EmptyMapCollisionProvider, whose
     // own TryGetMap always returns false) - the Chase decision's fresh-walk fallback
@@ -164,12 +171,15 @@ public sealed class MapClientSessionMobEngagementTests
         var spawnDefinition = new MobSpawnDefinition(GeneratedMobs.GPoring, map, 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "test", 0));
         var registry = new MonsterRegistry([spawnDefinition], allocator.Allocate, new FixedCellSelector(monsterX, monsterY), TimeProvider.System);
         var questDrops = new QuestDropResolver(GeneratedQuestDrops.All);
-        var combat = new MonsterCombatCoordinator(registry, questDrops, new RenewalBasicAttackRules());
+        var poring = registry.AllInstances[0];
+        var combatState = new MonsterCombatStateStore();
+        combatState.Register(poring.Map, poring);
+        var combat = new MonsterCombatCoordinator(registry, questDrops, new RenewalBasicAttackRules(), combatState);
         var collisionMap = new MapCollisionMap(map, 100, 100, Enumerable.Repeat(MapCellFlags.Walkable, 100 * 100).ToArray());
         IMapCollisionProvider collision = new MapCollisionProvider([collisionMap]);
         IMovementPathProvider pathProvider = new RathenaCompatibleMovementPathProvider(collision);
-        var processor = new MonsterEngagementTickProcessor(registry, collision, pathProvider, timeProvider ?? TimeProvider.System);
-        return new TestWorld(registry, combat, processor, registry.AllInstances[0], collision, pathProvider);
+        var processor = new MonsterEngagementTickProcessor(registry, collision, pathProvider, timeProvider ?? TimeProvider.System, combatState);
+        return new TestWorld(registry, combat, processor, poring, collision, pathProvider, combatState);
     }
 
     // Steps 1-9: passive Poring is attacked (acquires target), player is out of range, the
@@ -184,7 +194,7 @@ public sealed class MapClientSessionMobEngagementTests
         var player = await ConnectSessionAsync(world.Registry, world.Combat, AccountId, CharId, 75, 51, "int_land03", null, visibleMonsterCount: 1);
         using var _dispose = player.Client;
 
-        world.Combat.Attack(world.Poring, AccountId, new(9, 9, 9, 9, 9, 9, 0, 0), 1, null, _ => CharacterQuestStatus.Absent);
+        world.Combat.Attack(world.Poring, world.Poring.Map, AccountId, new(9, 9, 9, 9, 9, 9, 0, 0), 1, null, _ => CharacterQuestStatus.Absent);
         Assert.True(world.Poring.HasActiveTarget); // Attack itself acquires the target (real production path).
 
         var before = world.Poring.GetPosition();
@@ -195,7 +205,7 @@ public sealed class MapClientSessionMobEngagementTests
         Assert.Single(result.MovementChanges);
         Assert.Equal(MonsterMovementChangeKind.WalkStarted, result.MovementChanges[0].Kind);
 
-        await FanOutAsync(result, [player.Session]);
+        await FanOutAsync(world.Registry, result, [player.Session]);
         var walkPacket = await ReadExact(player.Stream, 4);
         var length = BinaryPrimitives.ReadUInt16LittleEndian(walkPacket.AsSpan(2));
         await ReadExact(player.Stream, length - 4); // Drain the rest of the dynamic walk-entry packet.
@@ -334,14 +344,16 @@ public sealed class MapClientSessionMobEngagementTests
         // unaffected by which Attack value the mob_db row happens to carry.
         var strongMobDefinition = world.Poring.Spawn.Mob with { Attack = 1000, AttackDelay = 2000 };
         var strongRegistry = new MonsterRegistry([world.Poring.Spawn with { Mob = strongMobDefinition }], new WorldActorIdAllocator().Allocate, new FixedCellSelector(76, 51), TimeProvider.System);
-        var strongProcessor = new MonsterEngagementTickProcessor(strongRegistry, world.Collision, world.PathProvider, clock);
         var strongMob = strongRegistry.AllInstances[0];
+        var strongCombatState = new MonsterCombatStateStore();
+        strongCombatState.Register(strongMob.Map, strongMob);
+        var strongProcessor = new MonsterEngagementTickProcessor(strongRegistry, world.Collision, world.PathProvider, clock, strongCombatState);
         strongMob.TryAcquireTarget(AccountId, mode: MobMode.None);
 
         var firstResult = await strongProcessor.ProcessAsync([player.Session], CancellationToken.None);
         Assert.Equal(MobCombatState.Berserk, strongMob.Engagement.State);
         Assert.Single(firstResult.AttackActions);
-        await FanOutAsync(firstResult, [player.Session]);
+        await FanOutAsync(world.Registry, firstResult, [player.Session]);
 
         var damagePacket = await ReadExact(player.Stream, PacketConstants.ZcNotifyAct3Length);
         Assert.Equal((short)PacketConstants.ZcNotifyAct3, BinaryPrimitives.ReadInt16LittleEndian(damagePacket));
@@ -373,7 +385,7 @@ public sealed class MapClientSessionMobEngagementTests
         await clock.AdvanceAsync(TimeSpan.FromMilliseconds(2001));
         var secondResult = await strongProcessor.ProcessAsync([player.Session], CancellationToken.None);
         Assert.Single(secondResult.AttackActions);
-        await FanOutAsync(secondResult, [player.Session]);
+        await FanOutAsync(world.Registry, secondResult, [player.Session]);
 
         var secondDamagePacket = await ReadExact(player.Stream, PacketConstants.ZcNotifyAct3Length);
         Assert.Equal((short)PacketConstants.ZcNotifyAct3, BinaryPrimitives.ReadInt16LittleEndian(secondDamagePacket));
@@ -440,7 +452,7 @@ public sealed class MapClientSessionMobEngagementTests
         using var _dispose = player.Client;
         world.Poring.TryAcquireTarget(AccountId, mode: MobMode.None);
 
-        var processor = new MonsterEngagementTickProcessor(world.Registry, world.Collision, world.PathProvider, clock, async () =>
+        var processor = new MonsterEngagementTickProcessor(world.Registry, world.Collision, world.PathProvider, clock, world.CombatState, async () =>
         {
             // A real client movement request to a cell far enough away to leave AttackRange=1
             // once the single resulting step completes.
@@ -491,7 +503,7 @@ public sealed class MapClientSessionMobEngagementTests
         var result = await world.Processor.ProcessAsync([target.Session, bystander.Session], CancellationToken.None);
 
         Assert.Contains(result.MovementChanges, c => c.Kind == MonsterMovementChangeKind.ChaseInterrupted);
-        await FanOutAsync(result, [target.Session, bystander.Session]);
+        await FanOutAsync(world.Registry, result, [target.Session, bystander.Session]);
 
         // Both sessions must receive the 0x0088 fixpos - drain each stream's own next dynamic
         // packet header and confirm the opcode, since the exact packet ordering relative to the
@@ -535,7 +547,7 @@ public sealed class MapClientSessionMobEngagementTests
         Assert.Equal(0u, outcome.Damage);
         Assert.False(outcome.HpChanged);
 
-        await FanOutAsync(result, [player.Session]);
+        await FanOutAsync(world.Registry, result, [player.Session]);
 
         // The action packet is still sent (damage=0, matching pinned clif_damage's own
         // unconditional call) - but NOTHING else follows it; confirm the wire goes quiet with a
@@ -639,12 +651,14 @@ public sealed class MapClientSessionMobEngagementTests
 
         var strongMobSpawn = world.Poring.Spawn with { Mob = world.Poring.Spawn.Mob with { Attack = 1000 } };
         var strongRegistry = new MonsterRegistry([strongMobSpawn], new WorldActorIdAllocator().Allocate, new FixedCellSelector(76, 51), TimeProvider.System);
-        var strongProcessor = new MonsterEngagementTickProcessor(strongRegistry, world.Collision, world.PathProvider, TimeProvider.System);
         var strongMob = strongRegistry.AllInstances[0];
+        var strongCombatState = new MonsterCombatStateStore();
+        strongCombatState.Register(strongMob.Map, strongMob);
+        var strongProcessor = new MonsterEngagementTickProcessor(strongRegistry, world.Collision, world.PathProvider, TimeProvider.System, strongCombatState);
         strongMob.TryAcquireTarget(AccountId, mode: MobMode.None);
 
         var result = await strongProcessor.ProcessAsync([target.Session, bystander.Session], CancellationToken.None);
-        await FanOutAsync(result, [target.Session, bystander.Session]);
+        await FanOutAsync(world.Registry, result, [target.Session, bystander.Session]);
 
         // Both sessions see the AREA-visible action packet - bystander's own visibility already
         // covers this mob (both connected within its 14-cell discovery range).
@@ -685,12 +699,15 @@ public sealed class MapClientSessionMobEngagementTests
         var spawnB = new MobSpawnDefinition(mobDefinition, "int_land03", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "test", 1));
         var registry = new MonsterRegistry([spawnA, spawnB], allocator.Allocate, new FixedCellSelector(76, 51), TimeProvider.System);
         var questDrops = new QuestDropResolver(GeneratedQuestDrops.All);
-        var combat = new MonsterCombatCoordinator(registry, questDrops, new RenewalBasicAttackRules());
-        var collisionMap = new MapCollisionMap("int_land03", 100, 100, Enumerable.Repeat(MapCellFlags.Walkable, 100 * 100).ToArray());
-        IMapCollisionProvider collision = new MapCollisionProvider([collisionMap]);
-        var processor = new MonsterEngagementTickProcessor(registry, collision, new RathenaCompatibleMovementPathProvider(collision), TimeProvider.System);
         var mobA = registry.AllInstances[0];
         var mobB = registry.AllInstances[1];
+        var combatState = new MonsterCombatStateStore();
+        combatState.Register(mobA.Map, mobA);
+        combatState.Register(mobB.Map, mobB);
+        var combat = new MonsterCombatCoordinator(registry, questDrops, new RenewalBasicAttackRules(), combatState);
+        var collisionMap = new MapCollisionMap("int_land03", 100, 100, Enumerable.Repeat(MapCellFlags.Walkable, 100 * 100).ToArray());
+        IMapCollisionProvider collision = new MapCollisionProvider([collisionMap]);
+        var processor = new MonsterEngagementTickProcessor(registry, collision, new RathenaCompatibleMovementPathProvider(collision), TimeProvider.System, combatState);
 
         // A large starting HP pool (not this class' usual 40) so BOTH hits land against a live
         // target and are individually observable - the point of this test is proving serialized
@@ -705,7 +722,7 @@ public sealed class MapClientSessionMobEngagementTests
 
         var result = await processor.ProcessAsync([player.Session], CancellationToken.None);
         Assert.Equal(2, result.AttackActions.Count);
-        await FanOutAsync(result, [player.Session]);
+        await FanOutAsync(registry, result, [player.Session]);
 
         var firstDamagePacket = await ReadExact(player.Stream, PacketConstants.ZcNotifyAct3Length);
         // Wire order per outcome is action-then-HP (see MonsterAttackActionOutcome's own doc
@@ -747,7 +764,7 @@ public sealed class MapClientSessionMobEngagementTests
         Assert.Equal((ushort)90, beforeAttack.X); // Still on the first cell - the in-flight step has not completed yet.
 
         // Attack lands while still mid-cell - acquires the target without disturbing the in-flight step.
-        world.Combat.Attack(world.Poring, AccountId, new(9, 9, 9, 9, 9, 9, 0, 0), 1, null, _ => CharacterQuestStatus.Absent);
+        world.Combat.Attack(world.Poring, world.Poring.Map, AccountId, new(9, 9, 9, 9, 9, 9, 0, 0), 1, null, _ => CharacterQuestStatus.Absent);
         Assert.True(world.Poring.HasActiveTarget);
         Assert.True(world.Poring.IsWalking, "The in-flight cell must not be interrupted merely by acquiring a target.");
         Assert.Equal(beforeAttack, world.Poring.GetPosition()); // No teleport - still exactly where it was.

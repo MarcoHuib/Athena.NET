@@ -18,26 +18,31 @@ namespace Athena.Net.MapServer.World;
 // fall back to WorldMapRegistry.Tutorial once this exists; that static
 // singleton remains only for existing tests/legacy standalone callers that
 // don't combine world data with a monster runtime.
-public sealed record MapServerWorld(WorldMapRegistry Maps, MonsterRegistry Monsters, MonsterCombatCoordinator Combat, IMapCollisionProvider Collision, MonsterSpatialInspector SpatialInspector, IMovementPathProvider MovementPathProvider, MonsterRuntime MonsterRuntime, PlayerPresenceRegistry Players, PlayerVisibilityCoordinator PlayerVisibility, WorldVisibilityOptions Visibility, GameplayRateOptions? Rates = null)
+public sealed record MapServerWorld(WorldMapRegistry Maps, MonsterRegistry Monsters, MonsterCombatCoordinator Combat, IMapCollisionProvider Collision, MonsterSpatialInspector SpatialInspector, IMovementPathProvider MovementPathProvider, MonsterRuntime MonsterRuntime, PlayerPresenceRegistry Players, PlayerVisibilityCoordinator PlayerVisibility, WorldVisibilityOptions Visibility, MonsterCombatStateStore CombatState, GameplayRateOptions? Rates = null)
 {
     // Compatibility constructor for focused monster/world tests that compose the record directly.
     // It still creates one coherent player-world bundle; it never leaves the new live components null.
     public MapServerWorld(WorldMapRegistry maps, MonsterRegistry monsters, MonsterCombatCoordinator combat,
         IMapCollisionProvider collision, MonsterSpatialInspector spatialInspector,
         IMovementPathProvider movementPathProvider, MonsterRuntime monsterRuntime,
+        MonsterCombatStateStore combatState,
         GameplayRateOptions? rates = null)
-        : this(maps, monsters, combat, collision, spatialInspector, movementPathProvider, monsterRuntime, CreatePlayerWorld(), rates)
+        : this(maps, monsters, combat, collision, spatialInspector, movementPathProvider, monsterRuntime, combatState, CreatePlayerWorld(), rates)
     {
     }
 
     private MapServerWorld(WorldMapRegistry maps, MonsterRegistry monsters, MonsterCombatCoordinator combat,
         IMapCollisionProvider collision, MonsterSpatialInspector spatialInspector,
         IMovementPathProvider movementPathProvider, MonsterRuntime monsterRuntime,
+        MonsterCombatStateStore combatState,
         (PlayerPresenceRegistry Players, PlayerVisibilityCoordinator Coordinator, WorldVisibilityOptions Options) playerWorld,
         GameplayRateOptions? rates)
         : this(maps, monsters, combat, collision, spatialInspector, movementPathProvider, monsterRuntime,
-            playerWorld.Players, playerWorld.Coordinator, playerWorld.Options, rates)
+            playerWorld.Players, playerWorld.Coordinator, playerWorld.Options, combatState, rates)
     {
+        // Positional order matches the primary record constructor exactly: Maps, Monsters, Combat,
+        // Collision, SpatialInspector, MovementPathProvider, MonsterRuntime, Players,
+        // PlayerVisibility, Visibility, CombatState, Rates.
     }
 
     private static (PlayerPresenceRegistry Players, PlayerVisibilityCoordinator Coordinator, WorldVisibilityOptions Options) CreatePlayerWorld()
@@ -135,7 +140,8 @@ public sealed record MapServerWorld(WorldMapRegistry Maps, MonsterRegistry Monst
             cellSelector ?? defaultCellSelector,
             timeProvider ?? TimeProvider.System);
         var questDrops = new QuestDropResolver(GeneratedQuestDrops.All);
-        var combat = new MonsterCombatCoordinator(monsters, questDrops, gameplayRules.BasicAttackRules);
+        var combatState = new MonsterCombatStateStore();
+        var combat = new MonsterCombatCoordinator(monsters, questDrops, gameplayRules.BasicAttackRules, combatState);
         var spatialInspector = new MonsterSpatialInspector(monsters, resolvedCollisionProvider);
         // Same either/or composition rule as the mob spawn cell selector above (see that field's
         // own doc comment): EmptyMapCollisionProvider.Instance keeps the collision-less placeholder
@@ -150,7 +156,13 @@ public sealed record MapServerWorld(WorldMapRegistry Maps, MonsterRegistry Monst
         var visibility = WorldVisibilityOptions.Default;
         var players = new PlayerPresenceRegistry(visibility);
         var playerVisibility = new PlayerVisibilityCoordinator(players, visibility);
-        return new MapServerWorld(maps, monsters, combat, resolvedCollisionProvider, spatialInspector, movementPathProvider, monsterRuntime, players, playerVisibility, visibility, rates ?? new GameplayRateOptions());
+        // Register every constructed instance's OWN map into the combat-state store at composition
+        // time - the store's TEMPORARY key shape (see MonsterCombatKey's own doc comment) is
+        // (MapId, ActorId, IncarnationId); `instance.Map` (derived from the spawn declaration that
+        // produced it) is the correct per-instance key component here, never a single fixed map for
+        // the whole registry (one MonsterRegistry legitimately spans every map this process serves).
+        foreach (var instance in monsters.AllInstances) combatState.Register(instance.Map, instance);
+        return new MapServerWorld(maps, monsters, combat, resolvedCollisionProvider, spatialInspector, movementPathProvider, monsterRuntime, players, playerVisibility, visibility, combatState, rates ?? new GameplayRateOptions());
     }
 
     // Production fail-closed guard: called explicitly by MapServerApp.RunAsync (the live

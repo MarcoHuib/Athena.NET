@@ -56,6 +56,13 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     // Null alongside _monsters on the test-facing default path; both are populated together
     // by the production MapServerWorld-based constructor.
     private readonly MonsterCombatCoordinator? _combat;
+    // The authoritative CurrentHp/NextAttackAt owner on the migrated combat path (see
+    // MonsterCombatStateStore's own doc comment) - null alongside _monsters/_combat on the
+    // test-facing default path, populated together with them by the production
+    // MapServerWorld-based constructor. Read here for monster-actor discovery packets
+    // (SendVisibleMonsterActorsAsync), which must report the SAME HP the store's own
+    // ApplyDamage-owned value currently holds, never MobInstance's own superseded CurrentHp field.
+    private readonly MonsterCombatStateStore? _combatState;
     // Diagnostic-only for now (0x0368 actor-info click/hover logging) - see LogMonsterCellDiagnostics.
     // This actorId-correlated diagnostic is the ONE remaining live spatial diagnostic; the old bulk
     // per-spawn [MONSTER CELL] log (MobSpawnCellSelector, ~200 lines at startup) was removed once
@@ -227,7 +234,8 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     public MapClientSession(int sessionId, TcpClient client, CharServerConnector charConnector, MapServerWorld world, IWorldRuntime worldRuntime)
         : this(sessionId, client, charConnector, world.Maps, monsters: world.Monsters, combat: world.Combat, spatialInspector: world.SpatialInspector,
                movementPathProvider: world.MovementPathProvider, monsterRuntime: world.MonsterRuntime, collisionProvider: world.Collision, rates: world.Rates,
-               players: world.Players, playerVisibility: world.PlayerVisibility, visibilityOptions: world.Visibility, distributedWorld: worldRuntime)
+               players: world.Players, playerVisibility: world.PlayerVisibility, visibilityOptions: world.Visibility, distributedWorld: worldRuntime,
+               combatState: world.CombatState)
     {
     }
 
@@ -253,7 +261,8 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         PlayerPresenceRegistry? players = null,
         PlayerVisibilityCoordinator? playerVisibility = null,
         WorldVisibilityOptions? visibilityOptions = null,
-        IWorldRuntime? distributedWorld = null)
+        IWorldRuntime? distributedWorld = null,
+        MonsterCombatStateStore? combatState = null)
     {
         SessionId = sessionId;
         _client = client;
@@ -268,6 +277,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         _worldMapRegistry = worldMapRegistry;
         _monsters = monsters;
         _combat = combat;
+        _combatState = combatState;
         _spatialInspector = spatialInspector;
         _monsterRuntime = monsterRuntime;
         _timeProvider = timeProvider ?? TimeProvider.System;
@@ -313,7 +323,8 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         PlayerPresenceRegistry? players = null,
         PlayerVisibilityCoordinator? playerVisibility = null,
         WorldVisibilityOptions? visibilityOptions = null,
-        IWorldRuntime? distributedWorld = null)
+        IWorldRuntime? distributedWorld = null,
+        MonsterCombatStateStore? combatState = null)
         : this(
             sessionId,
             client,
@@ -344,7 +355,8 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
             players,
             playerVisibility,
             visibilityOptions,
-            distributedWorld)
+            distributedWorld,
+            combatState)
     {
         _iroAuthRequested = iroAuthenticated;
         _authRequested = iroAuthenticated;
@@ -1826,6 +1838,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         var effectiveStats = _statusEffects.Recalculate(_gameplayState.State);
         var outcome = await _combat.AttackAsync(
             target,
+            _mapName,
             _accountId,
             effectiveStats,
             _gameplayState.State.BaseLevel,
@@ -3473,6 +3486,13 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
 
             var mob = instance.Spawn.Mob;
             var position = instance.GetPosition(); // One atomic snapshot - never torn between axes.
+            // Read CurrentHp from MonsterCombatStateStore (the actual owner on the migrated combat
+            // path - see that type's own doc comment), never instance.CurrentHp, which is
+            // superseded. `_combatState` is null only on the test-facing default path alongside
+            // `_monsters`/`_combat` (see this session's own field doc comments); a genuinely
+            // unregistered/stale-incarnation lookup falls back to reporting 0, matching how a
+            // fresh MobInstance with no combat-state entry has no other authoritative HP to show.
+            var currentHp = _combatState is not null && _combatState.TryGet(instance.Map, instance, out var visibleCombat) ? visibleCombat.CurrentHp : 0u;
             var packet = IroMonsterActorPackets.BuildStandEntry(
                 instance.ActorId,
                 (ushort)mob.Id,
@@ -3481,10 +3501,10 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
                 position.X,
                 position.Y,
                 direction: 0,
-                currentHp: instance.CurrentHp,
+                currentHp: currentHp,
                 maxHp: mob.MaxHp);
             MapLogger.Info(
-                $"[iRO MAP DEBUG] Sending monster actor id={instance.ActorId} name='{mob.Name}' class={mob.Id} map='{instance.Map}' x={position.X} y={position.Y} hp={instance.CurrentHp}/{mob.MaxHp}");
+                $"[iRO MAP DEBUG] Sending monster actor id={instance.ActorId} name='{mob.Name}' class={mob.Id} map='{instance.Map}' x={position.X} y={position.Y} hp={currentHp}/{mob.MaxHp}");
             await WriteAsync(packet, cancellationToken);
         }
     }
@@ -3535,10 +3555,27 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     //     implemented in this slice; a monster that walks out of a stationary player's visibility
     //     range will incorrectly continue to appear to that client. This is a known, documented gap
     //     (see this task's own report), not a silent omission.
-    public async Task NotifyMonsterMovedAsync(MonsterMovementChange change, CancellationToken cancellationToken)
+    // `combat` is supplied by the caller (MapTcpServer's fan-out loop) as a FRESH MonsterCombatState
+    // read immediately before THIS call - never the state captured back when `change` itself was
+    // created. A MonsterMovementChange is often produced once per tick and then fanned out across
+    // several sessions/packet builds; HP captured at change-creation time can already be stale by
+    // the time an individual session's packet is actually built (e.g. a player's hit landed and
+    // correctly published fresh HP via 0x0977 in between) - projecting that stale captured HP here
+    // could regress the client's already-correct HP knowledge, or even re-show the full-HP -1/-1
+    // sentinel for a monster that was just damaged. See MonsterMovementChange's own doc comment for
+    // the full incident this replaced.
+    //
+    // Validated against `change.Instance` before any packet is built: a caller that accidentally
+    // supplies combat state for a DIFFERENT actor or a DIFFERENT life (stale IncarnationId spanning
+    // a respawn) must never have its mismatched data projected onto this actor - that is an
+    // invariant violation in the caller, not a recoverable case, so this throws rather than
+    // silently projecting mixed-life data.
+    public async Task NotifyMonsterMovedAsync(MonsterMovementChange change, MonsterCombatState combat, CancellationToken cancellationToken)
     {
         var actor = change.Instance;
-        var combat = change.Combat;
+        if (combat.ActorId != actor.ActorId || !combat.IncarnationId.Equals(actor.IncarnationId))
+            throw new InvalidOperationException(
+                $"MonsterCombatState (ActorId={combat.ActorId}, IncarnationId={combat.IncarnationId.Value}) does not match the projected actor (ActorId={actor.ActorId}, IncarnationId={actor.IncarnationId.Value}) - refusing to project mixed-life actor/combat data.");
         if (!string.Equals(actor.Map, _mapName, StringComparison.OrdinalIgnoreCase)) return;
 
         var position = actor.GetPosition();

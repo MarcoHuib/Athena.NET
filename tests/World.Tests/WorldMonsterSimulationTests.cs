@@ -641,6 +641,212 @@ public sealed class WorldMonsterSimulationTests : IAsyncLifetime
         Assert.True(advanced, "Expected an engaged, chasing mob's feed-visible position to advance across real cell crossings.");
     }
 
+    // --- World feed movement semantics (WorldMonsterMovementKind) - proves the feed carries the
+    // exact Ragexe-projection-relevant movement classification a future MapServer consumer needs,
+    // rather than requiring that consumer to (incorrectly) re-derive it from IsWalking alone. ---
+
+    [Fact]
+    public async Task IdleWalkBegins_FeedEntry_Kind_Moved_MovementKind_WalkStarted()
+    {
+        var grain = Partition("world-rest");
+        var mapId = "izlude";
+        var movableSpawn = Spawn(mapId) with { Mode = CanMoveAndAttackMode };
+        var load = await grain.LoadMonsterSpawnsAsync(Batch(mapId, [movableSpawn]));
+        var bootstrap = await grain.PollMonsterFeedAsync(cursor: null, mapId);
+
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(15);
+        WorldMonsterFeedEntry? walkStarted = null;
+        var cursor = new WorldMonsterFeedCursor(load.SimulationEpoch, bootstrap.AsOfSequence);
+        while (DateTime.UtcNow < deadline && walkStarted is null)
+        {
+            await Task.Delay(200);
+            var page = await grain.PollMonsterFeedAsync(cursor, mapId);
+            if (page.Entries is { Count: > 0 })
+            {
+                cursor = new WorldMonsterFeedCursor(load.SimulationEpoch, page.AsOfSequence);
+                walkStarted = page.Entries.FirstOrDefault(e => e.MovementKind == WorldMonsterMovementKind.WalkStarted);
+            }
+        }
+        Assert.NotNull(walkStarted);
+        Assert.Equal(WorldMonsterFeedEntryKind.Moved, walkStarted!.Kind);
+        Assert.Equal(WorldMonsterMovementKind.WalkStarted, walkStarted.MovementKind);
+    }
+
+    [Fact]
+    public async Task IdleOrEngagedOrdinaryCellCrossing_FeedEntry_Kind_Moved_MovementKind_CellCrossed()
+    {
+        var grain = Partition("world-rest");
+        var mapId = "izlude";
+        var movableSpawn = Spawn(mapId) with { Mode = CanMoveAndAttackMode };
+        var load = await grain.LoadMonsterSpawnsAsync(Batch(mapId, [movableSpawn]));
+        var bootstrap = await grain.PollMonsterFeedAsync(cursor: null, mapId);
+
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(20);
+        WorldMonsterFeedEntry? cellCrossed = null;
+        var cursor = new WorldMonsterFeedCursor(load.SimulationEpoch, bootstrap.AsOfSequence);
+        while (DateTime.UtcNow < deadline && cellCrossed is null)
+        {
+            await Task.Delay(200);
+            var page = await grain.PollMonsterFeedAsync(cursor, mapId);
+            if (page.Entries is { Count: > 0 })
+            {
+                cursor = new WorldMonsterFeedCursor(load.SimulationEpoch, page.AsOfSequence);
+                cellCrossed = page.Entries.FirstOrDefault(e => e.MovementKind == WorldMonsterMovementKind.CellCrossed);
+            }
+        }
+        Assert.NotNull(cellCrossed);
+        Assert.Equal(WorldMonsterFeedEntryKind.Moved, cellCrossed!.Kind);
+    }
+
+    [Fact]
+    public async Task OrdinaryWalkCompletes_FeedEntry_Kind_Moved_MovementKind_WalkFinished()
+    {
+        var grain = Partition("world-rest");
+        var mapId = "izlude";
+        var movableSpawn = Spawn(mapId) with { Mode = CanMoveAndAttackMode };
+        var load = await grain.LoadMonsterSpawnsAsync(Batch(mapId, [movableSpawn]));
+        var bootstrap = await grain.PollMonsterFeedAsync(cursor: null, mapId);
+
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(30);
+        WorldMonsterFeedEntry? walkFinished = null;
+        var cursor = new WorldMonsterFeedCursor(load.SimulationEpoch, bootstrap.AsOfSequence);
+        while (DateTime.UtcNow < deadline && walkFinished is null)
+        {
+            await Task.Delay(200);
+            var page = await grain.PollMonsterFeedAsync(cursor, mapId);
+            if (page.Entries is { Count: > 0 })
+            {
+                cursor = new WorldMonsterFeedCursor(load.SimulationEpoch, page.AsOfSequence);
+                walkFinished = page.Entries.FirstOrDefault(e => e.MovementKind == WorldMonsterMovementKind.WalkFinished);
+            }
+        }
+        Assert.NotNull(walkFinished);
+        Assert.Equal(WorldMonsterFeedEntryKind.Moved, walkFinished!.Kind);
+    }
+
+    [Fact]
+    public async Task FreshChaseStarts_FeedEntry_Kind_ChaseStarted_MovementKind_WalkStarted()
+    {
+        var grain = Partition("world-rest");
+        var mapId = "izlude";
+        var load = await grain.LoadMonsterSpawnsAsync(SingleMonsterBatch(mapId));
+        var bootstrap = await grain.PollMonsterFeedAsync(cursor: null, mapId);
+        var actorId = bootstrap.Snapshot!.Single().ActorId;
+        var life = new WorldMonsterLifeReference(mapId, load.SimulationEpoch, actorId, WorldMonsterIncarnationId.First);
+
+        // Attacker far enough away that acquisition results in a genuine Chase (not InAttackRange).
+        var characterId = 220u;
+        var presenceId = Guid.NewGuid();
+        await grain.RegisterPresenceAsync(Presence(presenceId, characterId, mapId, x: (ushort)(MonsterX + 10), y: MonsterY));
+        var acquired = await grain.NotifyMonsterAttackedAsync(new WorldMonsterAttackedCommand(life, characterId, presenceId));
+        Assert.Equal(WorldMonsterAttackedStatus.Acquired, acquired.Status);
+
+        // TryAcquireEngagement's own EngagementAcquired entry carries no movement transition yet
+        // (the walk itself is only actually started by the NEXT tick's engagement re-evaluation,
+        // via ApplyChaseDecision) - the required "fresh chase starts" example is exercised by that
+        // FOLLOW-UP ChaseStarted entry the real grain timer produces shortly after acquisition.
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        WorldMonsterFeedEntry? chaseStarted = null;
+        var cursor = new WorldMonsterFeedCursor(load.SimulationEpoch, bootstrap.AsOfSequence);
+        while (DateTime.UtcNow < deadline && chaseStarted is null)
+        {
+            await Task.Delay(150);
+            var page = await grain.PollMonsterFeedAsync(cursor, mapId);
+            if (page.Entries is { Count: > 0 })
+            {
+                cursor = new WorldMonsterFeedCursor(load.SimulationEpoch, page.AsOfSequence);
+                chaseStarted = page.Entries.FirstOrDefault(e => e.Kind == WorldMonsterFeedEntryKind.ChaseStarted);
+            }
+        }
+        Assert.NotNull(chaseStarted);
+        Assert.Equal(WorldMonsterMovementKind.WalkStarted, chaseStarted!.MovementKind);
+    }
+
+    [Fact]
+    public async Task PendingCombatRetargetAppliedAtCellBoundary_FeedEntry_Kind_ChaseStarted_MovementKind_WalkStarted()
+    {
+        var grain = Partition("world-rest");
+        var mapId = "izlude";
+        var slowSpawn = Spawn(mapId) with { Mode = CanMoveAndAttackMode, WalkSpeedMs = SlowWalkSpeedMs };
+        var load = await grain.LoadMonsterSpawnsAsync(Batch(mapId, [slowSpawn]));
+        var bootstrap = await grain.PollMonsterFeedAsync(cursor: null, mapId);
+        var actorId = bootstrap.Snapshot!.Single().ActorId;
+        var life = new WorldMonsterLifeReference(mapId, load.SimulationEpoch, actorId, WorldMonsterIncarnationId.First);
+
+        var characterId = 221u;
+        var presenceId = Guid.NewGuid();
+        await grain.RegisterPresenceAsync(Presence(presenceId, characterId, mapId, x: (ushort)(MonsterX + 10), y: MonsterY));
+        await grain.NotifyMonsterAttackedAsync(new WorldMonsterAttackedCommand(life, characterId, presenceId));
+
+        var startDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        while (DateTime.UtcNow < startDeadline && !(await grain.PollMonsterFeedAsync(cursor: null, mapId)).Snapshot!.Single().IsWalking)
+            await Task.Delay(150);
+
+        var cursorAfterAcquire = new WorldMonsterFeedCursor(load.SimulationEpoch, (await grain.PollMonsterFeedAsync(cursor: null, mapId)).AsOfSequence);
+        // Retarget mid-cell by repositioning the target (see the sibling correction-#1 tests' own
+        // doc comments for why this is the correct way to force a fresh chase retarget).
+        var newTargetX = (ushort)(MonsterX + 20);
+        await grain.RegisterPresenceAsync(Presence(presenceId, characterId, mapId, x: newTargetX, y: MonsterY));
+
+        var appliedDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(6);
+        WorldMonsterFeedEntry? retargetApplied = null;
+        while (DateTime.UtcNow < appliedDeadline && retargetApplied is null)
+        {
+            await Task.Delay(300);
+            var page = await grain.PollMonsterFeedAsync(cursorAfterAcquire, mapId);
+            if (page.Entries is { Count: > 0 })
+            {
+                cursorAfterAcquire = new WorldMonsterFeedCursor(load.SimulationEpoch, page.AsOfSequence);
+                retargetApplied = page.Entries.FirstOrDefault(e =>
+                    e.Kind == WorldMonsterFeedEntryKind.ChaseStarted && e.Instance.DestinationX == newTargetX);
+            }
+        }
+        Assert.NotNull(retargetApplied);
+        Assert.Equal(WorldMonsterMovementKind.WalkStarted, retargetApplied!.MovementKind);
+    }
+
+    [Fact]
+    public async Task ChaseStopsBecauseTargetEnteredRange_FeedEntry_Kind_ChaseInterrupted_MovementKind_ChaseInterrupted()
+    {
+        var grain = Partition("world-rest");
+        var mapId = "izlude";
+        var slowSpawn = Spawn(mapId) with { Mode = CanMoveAndAttackMode, WalkSpeedMs = SlowWalkSpeedMs };
+        var load = await grain.LoadMonsterSpawnsAsync(Batch(mapId, [slowSpawn]));
+        var bootstrap = await grain.PollMonsterFeedAsync(cursor: null, mapId);
+        var actorId = bootstrap.Snapshot!.Single().ActorId;
+        var life = new WorldMonsterLifeReference(mapId, load.SimulationEpoch, actorId, WorldMonsterIncarnationId.First);
+
+        var characterId = 222u;
+        var presenceId = Guid.NewGuid();
+        // Start the attacker out of range so a real chase begins.
+        await grain.RegisterPresenceAsync(Presence(presenceId, characterId, mapId, x: (ushort)(MonsterX + 10), y: MonsterY));
+        await grain.NotifyMonsterAttackedAsync(new WorldMonsterAttackedCommand(life, characterId, presenceId));
+
+        var startDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        while (DateTime.UtcNow < startDeadline && !(await grain.PollMonsterFeedAsync(cursor: null, mapId)).Snapshot!.Single().IsWalking)
+            await Task.Delay(150);
+
+        var cursorAfterAcquire = new WorldMonsterFeedCursor(load.SimulationEpoch, (await grain.PollMonsterFeedAsync(cursor: null, mapId)).AsOfSequence);
+        // Move the target INTO attack range (AttackRange=1, adjacent cell) while the mob is still
+        // walking - the next tick's engagement re-evaluation must interrupt the chase.
+        await grain.RegisterPresenceAsync(Presence(presenceId, characterId, mapId, x: (ushort)(MonsterX + 1), y: MonsterY));
+
+        var interruptedDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(6);
+        WorldMonsterFeedEntry? chaseInterrupted = null;
+        while (DateTime.UtcNow < interruptedDeadline && chaseInterrupted is null)
+        {
+            await Task.Delay(200);
+            var page = await grain.PollMonsterFeedAsync(cursorAfterAcquire, mapId);
+            if (page.Entries is { Count: > 0 })
+            {
+                cursorAfterAcquire = new WorldMonsterFeedCursor(load.SimulationEpoch, page.AsOfSequence);
+                chaseInterrupted = page.Entries.FirstOrDefault(e => e.Kind == WorldMonsterFeedEntryKind.ChaseInterrupted);
+            }
+        }
+        Assert.NotNull(chaseInterrupted);
+        Assert.Equal(WorldMonsterMovementKind.ChaseInterrupted, chaseInterrupted!.MovementKind);
+    }
+
     // Correction #5: acquisition must be rejected (never store an EngagedTarget) when the shared
     // range/validity rules would immediately say Unlock - here, the attacker presence is already
     // dead at the moment of the hit.

@@ -37,6 +37,14 @@ public sealed class MapClientSessionMonsterCombatTests
     private const uint CharId = 9;
     private const uint Quest21008 = 21008;
     private RecordingGameplayStatePersistence? _lastGameplayPersistence;
+    private MonsterCombatStateStore? _lastCombatState;
+
+    // Reads the CURRENT HP from the SAME MonsterCombatStateStore instance the given test's combat
+    // was constructed with - the store (not MobInstance's own now-superseded CurrentHp field) is
+    // the sole authoritative HP owner on the migrated combat path (see MonsterCombatStateStore's
+    // own doc comment), so this is the correct oracle for this file's damage assertions.
+    private static uint CurrentHpOf(MonsterCombatStateStore combatState, MobInstance target) =>
+        combatState.TryGet(target.Map, target, out var state) ? state.CurrentHp : 0u;
 
     private sealed class RecordingQuestPersistence(uint questId, CharacterQuestStatus initialState) : ICharacterQuestPersistence
     {
@@ -181,8 +189,11 @@ public sealed class MapClientSessionMonsterCombatTests
         var spawnDefinition = new MobSpawnDefinition(mobDefinition ?? GeneratedMobs.GPoring, "int_land03", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "test", 0));
         var registry = new MonsterRegistry([spawnDefinition], allocator.Allocate, new FixedCellSelector(75, 51), TimeProvider.System);
         var questDrops = new QuestDropResolver(Generated.GameData.Quests.GeneratedQuestDrops.All);
-        var combat = new MonsterCombatCoordinator(registry, questDrops, new RenewalBasicAttackRules(rollWeaponAtk));
         var target = registry.AllInstances[0];
+        var combatState = new MonsterCombatStateStore();
+        combatState.Register(target.Map, target);
+        _lastCombatState = combatState;
+        var combat = new MonsterCombatCoordinator(registry, questDrops, new RenewalBasicAttackRules(rollWeaponAtk), combatState);
 
         var questPersistence = new RecordingQuestPersistence(Quest21008, questState);
         var gameplayPersistence = new RecordingGameplayStatePersistence(gameplayState ?? StrongNovice());
@@ -194,7 +205,7 @@ public sealed class MapClientSessionMonsterCombatTests
             questPersistence: questPersistence, gameplayStatePersistence: gameplayPersistence,
             accountId: AccountId, charId: CharId, monsters: registry, combat: combat,
             inventoryPersistence: inventoryPersistence, inventoryListPersistence: inventoryListPersistence,
-            timeProvider: timeProvider, rates: rates);
+            timeProvider: timeProvider, rates: rates, combatState: combatState);
         var run = session.RunAsync(CancellationToken.None);
         await session.CompleteIroAuthenticationAsync(new(AccountId, CharId, 1, 2, 0, 0, false, "int_land03", 75, 51, 0, 0, 0));
 
@@ -263,7 +274,7 @@ public sealed class MapClientSessionMonsterCombatTests
             // (never a stale/pre-damage value), plus the correct actor ID and unchanged MaxHp.
             Assert.Equal(actorId, BinaryPrimitives.ReadUInt32LittleEndian(hpInfoPacket.AsSpan(2)));
             Assert.Equal(hpAfter, BinaryPrimitives.ReadUInt32LittleEndian(hpInfoPacket.AsSpan(6)));
-            Assert.Equal(target.CurrentHp, BinaryPrimitives.ReadUInt32LittleEndian(hpInfoPacket.AsSpan(6)));
+            Assert.Equal(CurrentHpOf(_lastCombatState!, target), BinaryPrimitives.ReadUInt32LittleEndian(hpInfoPacket.AsSpan(6)));
             Assert.Equal(target.Spawn.Mob.MaxHp, BinaryPrimitives.ReadUInt32LittleEndian(hpInfoPacket.AsSpan(10)));
 
             if (!target.IsAlive)
@@ -648,7 +659,7 @@ public sealed class MapClientSessionMonsterCombatTests
         var next = await ReadExact(stream, 2);
         Assert.Equal((short)PacketConstants.ZcPingLive, BinaryPrimitives.ReadInt16LittleEndian(next));
 
-        Assert.Equal(target.Spawn.Mob.MaxHp, target.CurrentHp); // Monster HP must be completely untouched.
+        Assert.Equal(target.Spawn.Mob.MaxHp, CurrentHpOf(_lastCombatState!, target)); // Monster HP must be completely untouched.
         Assert.True(target.IsAlive);
 
         client.Close();
@@ -983,9 +994,12 @@ public sealed class MapClientSessionMonsterCombatTests
         var spawnB = new MobSpawnDefinition(GeneratedMobs.GPoring, "int_land03", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "test", 0));
         var registry = new MonsterRegistry([spawnA, spawnB], allocator.Allocate, new SequentialCellSelector((75, 51), (80, 55)), TimeProvider.System);
         var questDrops = new QuestDropResolver(Generated.GameData.Quests.GeneratedQuestDrops.All);
-        var combat = new MonsterCombatCoordinator(registry, questDrops, new RenewalBasicAttackRules(MinWeaponAtkRoll));
         var targetA = registry.AllInstances[0];
         var targetB = registry.AllInstances[1];
+        var combatState = new MonsterCombatStateStore();
+        combatState.Register(targetA.Map, targetA);
+        combatState.Register(targetB.Map, targetB);
+        var combat = new MonsterCombatCoordinator(registry, questDrops, new RenewalBasicAttackRules(MinWeaponAtkRoll), combatState);
 
         var questPersistence = new RecordingQuestPersistence(Quest21008, CharacterQuestStatus.Absent);
         var gameplayPersistence = new RecordingGameplayStatePersistence(WeakFreshNovice());
@@ -996,7 +1010,7 @@ public sealed class MapClientSessionMonsterCombatTests
             questPersistence: questPersistence, gameplayStatePersistence: gameplayPersistence,
             accountId: AccountId, charId: CharId, monsters: registry, combat: combat,
             inventoryPersistence: inventoryPersistence, inventoryListPersistence: inventoryListPersistence,
-            timeProvider: clock);
+            timeProvider: clock, combatState: combatState);
         var run = session.RunAsync(CancellationToken.None);
         await session.CompleteIroAuthenticationAsync(new(AccountId, CharId, 1, 2, 0, 0, false, "int_land03", 75, 51, 0, 0, 0));
         await ReadExact(stream, 4 + 6 + 6 + 13);
@@ -1032,10 +1046,10 @@ public sealed class MapClientSessionMonsterCombatTests
         Assert.Equal(targetB.ActorId, BinaryPrimitives.ReadUInt32LittleEndian(secondHit.AsSpan(6)));
 
         // Advancing time again must continue hitting B, never A again.
-        var targetAHpAfterItsOnlyHit = targetA.CurrentHp;
+        var targetAHpAfterItsOnlyHit = CurrentHpOf(combatState, targetA);
         var thirdHit = await WaitForNextDamagePacketAsync(stream, clock, WeakNoviceKnifeDelayMs);
         Assert.Equal(targetB.ActorId, BinaryPrimitives.ReadUInt32LittleEndian(thirdHit.AsSpan(6)));
-        Assert.Equal(targetAHpAfterItsOnlyHit, targetA.CurrentHp); // A took exactly its one hit, never a second.
+        Assert.Equal(targetAHpAfterItsOnlyHit, CurrentHpOf(combatState, targetA)); // A took exactly its one hit, never a second.
 
         client.Close();
         await run.WaitAsync(TimeSpan.FromSeconds(5));

@@ -20,15 +20,20 @@ public readonly record struct MonsterAttackOutcome(
 
 // Coordinates one authoritative attack -> damage -> (exactly-once) death ->
 // quest-drop -> respawn-scheduling transition against a target MobInstance.
-// This is the single place death is resolved: callers never mutate
-// MobInstance HP directly, so "two simultaneous lethal attacks -> one death,
-// one quest-drop award" is enforced by MobInstance.ApplyDamage's own lock,
-// not by caller discipline.
+//
+// Damage is applied through MonsterCombatStateStore.ApplyDamage (Step 5) - NOT
+// MobInstance.ApplyDamage, which is superseded on this migrated path (see that method's own doc
+// comment). The store's own per-key critical section is what now enforces "two simultaneous
+// lethal attacks -> one death, one quest-drop award", exactly like MobInstance.ApplyDamage's lock
+// used to before HP ownership moved - see MonsterCombatStateStore.ApplyDamage's own doc comment
+// for the exact sequencing. This coordinator stays entirely Orleans/World-contract-free: it takes
+// `mapId` as a plain string (the same key component every other combat-state lookup already uses),
+// never a grain reference or any World type.
 //
 // Depends only on IBasicAttackRules - this class never knows or asks which gameplay
 // ruleset (Renewal/PreRenewal) is active. The concrete implementation is selected
 // once at MapServer startup by GameplayRulesFactory and threaded in here.
-public sealed class MonsterCombatCoordinator(MonsterRegistry monsters, QuestDropResolver questDrops, IBasicAttackRules basicAttackRules)
+public sealed class MonsterCombatCoordinator(MonsterRegistry monsters, QuestDropResolver questDrops, IBasicAttackRules basicAttackRules, MonsterCombatStateStore combatState)
 {
     // `attackerQuestStatus`: a synchronous, already-resolved per-quest-ID lookup (see
     // QuestDropResolver's doc comment) - the caller must obtain each relevant quest's status from
@@ -43,16 +48,24 @@ public sealed class MonsterCombatCoordinator(MonsterRegistry monsters, QuestDrop
     // calculation without any coordinator-side caching to invalidate.
     public MonsterAttackOutcome Attack(
         MobInstance target,
+        string mapId,
         uint attackerAccountId,
         EffectiveCharacterStats attacker,
         ushort attackerBaseLevel,
         WeaponItemDefinition? equippedWeapon,
         Func<uint, CharacterQuestStatus> attackerQuestStatus)
     {
-        if (!target.IsAlive) return new(false, target.CurrentHp, target.CurrentHp, false, false, false, []);
+        if (!target.IsAlive)
+        {
+            var idleHp = combatState.TryGet(mapId, target, out var idleEntry) ? idleEntry.CurrentHp : 0u;
+            return new(false, idleHp, idleHp, false, false, false, []);
+        }
 
         var result = basicAttackRules.Calculate(new BasicAttackContext(attacker, attackerBaseLevel, equippedWeapon, target.Spawn.Mob));
-        var (hpBefore, hpAfter, killed) = target.ApplyDamage(result.Damage);
+        var damageResult = combatState.ApplyDamage(mapId, target, target.IncarnationId, result.Damage);
+        if (damageResult.Status != MonsterCombatDamageStatus.Applied)
+            return new(false, damageResult.HpBefore, damageResult.HpAfter, false, false, false, []);
+        var (hpBefore, hpAfter, killed) = (damageResult.HpBefore, damageResult.HpAfter, damageResult.KilledByThisHit);
 
         // Pinned mob_ai_sub_hard's own target-acquisition gate ("if (md->attacked_id &&
         // mode&MD_CANATTACK)", mob.cpp:1937): a mob without MD_CANATTACK never promotes an
@@ -98,21 +111,30 @@ public sealed class MonsterCombatCoordinator(MonsterRegistry monsters, QuestDrop
     // pattern for a three-hit kill) is pure waste. This overload defers `resolveQuestStates` (an
     // async ICharacterQuestPersistence-backed resolver, e.g. one GetQuestStateAsync call per
     // distinct QuestId) until AFTER ApplyDamage has already determined `killed` atomically -
-    // MobInstance.ApplyDamage's own lock still enforces "two simultaneous lethal hits -> one death,
-    // one quest-drop award" exactly as before; this method only decides WHETHER to await the
-    // resolver at all, never races the death determination itself.
+    // MonsterCombatStateStore.ApplyDamage's own per-key lock still enforces "two simultaneous
+    // lethal hits -> one death, one quest-drop award" exactly as before (see that method's own doc
+    // comment); this method only decides WHETHER to await the resolver at all, never races the
+    // death determination itself.
     public async Task<MonsterAttackOutcome> AttackAsync(
         MobInstance target,
+        string mapId,
         uint attackerAccountId,
         EffectiveCharacterStats attacker,
         ushort attackerBaseLevel,
         WeaponItemDefinition? equippedWeapon,
         Func<Task<Func<uint, CharacterQuestStatus>>> resolveQuestStates)
     {
-        if (!target.IsAlive) return new(false, target.CurrentHp, target.CurrentHp, false, false, false, []);
+        if (!target.IsAlive)
+        {
+            var idleHp = combatState.TryGet(mapId, target, out var idleEntry) ? idleEntry.CurrentHp : 0u;
+            return new(false, idleHp, idleHp, false, false, false, []);
+        }
 
         var result = basicAttackRules.Calculate(new BasicAttackContext(attacker, attackerBaseLevel, equippedWeapon, target.Spawn.Mob));
-        var (hpBefore, hpAfter, killed) = target.ApplyDamage(result.Damage);
+        var damageResult = combatState.ApplyDamage(mapId, target, target.IncarnationId, result.Damage);
+        if (damageResult.Status != MonsterCombatDamageStatus.Applied)
+            return new(false, damageResult.HpBefore, damageResult.HpAfter, false, false, false, []);
+        var (hpBefore, hpAfter, killed) = (damageResult.HpBefore, damageResult.HpAfter, damageResult.KilledByThisHit);
 
         var mode = target.Spawn.Mob.Mode;
         var engagementAcquired = !killed && mode.HasFlag(MobMode.CanAttack) && TryAcquireEngagement(target, attackerAccountId, mode);

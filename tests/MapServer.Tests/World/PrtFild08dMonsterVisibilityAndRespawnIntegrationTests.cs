@@ -95,8 +95,10 @@ public sealed class PrtFild08dMonsterVisibilityAndRespawnIntegrationTests
         var clock = new FakeTimeProvider();
         var allocator = new WorldActorIdAllocator();
         var registry = new MonsterRegistry([spawn with { Count = 1 }], allocator.Allocate, new FixedCellSelector(500, 500), clock);
-        var combat = new MonsterCombatCoordinator(registry, new QuestDropResolver(Generated.GameData.Quests.GeneratedQuestDrops.All), new RenewalBasicAttackRules());
         var target = registry.AllInstances[0];
+        var combatState = new MonsterCombatStateStore();
+        combatState.Register(target.Map, target);
+        var combat = new MonsterCombatCoordinator(registry, new QuestDropResolver(Generated.GameData.Quests.GeneratedQuestDrops.All), new RenewalBasicAttackRules(), combatState);
         Assert.Equal("prt_fild08d", target.Map);
         Assert.Equal(GeneratedMobs.Poring.Id, target.Spawn.Mob.Id);
         Assert.NotEqual(2401, target.Spawn.Mob.Id); // Real ordinary Poring (1002), never the tutorial G_PORING (2401).
@@ -116,7 +118,7 @@ public sealed class PrtFild08dMonsterVisibilityAndRespawnIntegrationTests
             "prt_fild08d", 500, 500, WorldMapRegistry.Tutorial,
             questPersistence: new NoOpQuestPersistence(), gameplayStatePersistence: new FixedGameplayStatePersistence(StrongNovice()),
             accountId: AccountId, charId: CharId, monsters: registry, combat: combat,
-            inventoryPersistence: new NoOpInventoryPersistence());
+            inventoryPersistence: new NoOpInventoryPersistence(), combatState: combatState);
         var run = session.RunAsync(CancellationToken.None);
         await session.CompleteIroAuthenticationAsync(new(AccountId, CharId, 1, 2, 0, 0, false, "prt_fild08d", 500, 500, 0, 0, 0));
 
@@ -158,7 +160,7 @@ public sealed class PrtFild08dMonsterVisibilityAndRespawnIntegrationTests
             var hpInfoPacket = await ReadExact(stream, PacketConstants.ZcHpInfoLength);
             Assert.Equal((short)PacketConstants.ZcHpInfo, BinaryPrimitives.ReadInt16LittleEndian(hpInfoPacket));
             Assert.Equal(actorId, BinaryPrimitives.ReadUInt32LittleEndian(hpInfoPacket.AsSpan(2)));
-            Assert.Equal(target.CurrentHp, BinaryPrimitives.ReadUInt32LittleEndian(hpInfoPacket.AsSpan(6)));
+            Assert.Equal(combatState.TryGet(target.Map, target, out var visibleState) ? visibleState.CurrentHp : 0u, BinaryPrimitives.ReadUInt32LittleEndian(hpInfoPacket.AsSpan(6)));
 
             if (!target.IsAlive)
             {
@@ -193,8 +195,13 @@ public sealed class PrtFild08dMonsterVisibilityAndRespawnIntegrationTests
         var respawned = registry.ProcessDueRespawns();
         Assert.Single(respawned);
         Assert.Same(target, respawned[0]);
+        // Mirrors MapTcpServer's own production respawn fan-out, which re-registers each respawned
+        // instance's combat-state entry (fresh full HP) into the SAME store - MonsterRegistry itself
+        // has no knowledge of MonsterCombatStateStore, so a caller driving ProcessDueRespawns
+        // directly (as this test does) must do the same re-registration production code does.
+        foreach (var instance in respawned) combatState.Register(instance.Map, instance);
         Assert.True(target.IsAlive);
-        Assert.Equal(target.Spawn.Mob.MaxHp, target.CurrentHp);
+        Assert.Equal(target.Spawn.Mob.MaxHp, combatState.TryGet(target.Map, target, out var respawnedState) ? respawnedState.CurrentHp : 0u);
 
         client.Close();
         await run.WaitAsync(TimeSpan.FromSeconds(5));

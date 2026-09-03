@@ -161,7 +161,7 @@ public sealed class MapClientSessionMonsterMovementTests
 
         Assert.True(target.TryStartIdleWalk([(75, 51), (76, 51)], orthogonalStepMs: 400, now: DateTimeOffset.UnixEpoch, jitterMs: () => 0));
 
-        await session.NotifyMonsterMovedAsync(new MonsterMovementChange(target, MonsterCombatState.FromInstance(target), MonsterMovementChangeKind.WalkStarted), CancellationToken.None);
+        await session.NotifyMonsterMovedAsync(new MonsterMovementChange(target, MonsterMovementChangeKind.WalkStarted), MonsterCombatState.FromInstance(target), CancellationToken.None);
 
         var walkPacket = await ReadDynamic(stream);
         Assert.Equal((short)0x09fd, BinaryPrimitives.ReadInt16LittleEndian(walkPacket));
@@ -184,7 +184,7 @@ public sealed class MapClientSessionMonsterMovementTests
 
         Assert.True(target.TryStartIdleWalk([(75, 51), (76, 51)], orthogonalStepMs: 400, now: DateTimeOffset.UnixEpoch, jitterMs: () => 0));
 
-        await session.NotifyMonsterMovedAsync(new MonsterMovementChange(target, MonsterCombatState.FromInstance(target), MonsterMovementChangeKind.CellCrossed), CancellationToken.None);
+        await session.NotifyMonsterMovedAsync(new MonsterMovementChange(target, MonsterMovementChangeKind.CellCrossed), MonsterCombatState.FromInstance(target), CancellationToken.None);
 
         await AssertNothingArrivesAsync(stream);
 
@@ -208,7 +208,7 @@ public sealed class MapClientSessionMonsterMovementTests
         target.AdvanceMovement(DateTimeOffset.UnixEpoch.AddMilliseconds(400));
         Assert.False(target.IsWalking);
 
-        await session.NotifyMonsterMovedAsync(new MonsterMovementChange(target, MonsterCombatState.FromInstance(target), MonsterMovementChangeKind.WalkFinished), CancellationToken.None);
+        await session.NotifyMonsterMovedAsync(new MonsterMovementChange(target, MonsterMovementChangeKind.WalkFinished), MonsterCombatState.FromInstance(target), CancellationToken.None);
 
         await AssertNothingArrivesAsync(stream);
 
@@ -256,7 +256,7 @@ public sealed class MapClientSessionMonsterMovementTests
         var combat = MonsterCombatState.FromInstance(target);
         Assert.Equal(55u, combat.CurrentHp);
         Assert.Equal(55u, combat.MaxHp);
-        await session.NotifyMonsterMovedAsync(new MonsterMovementChange(target, combat, MonsterMovementChangeKind.WalkStarted), CancellationToken.None);
+        await session.NotifyMonsterMovedAsync(new MonsterMovementChange(target, MonsterMovementChangeKind.WalkStarted), combat, CancellationToken.None);
 
         var walkPacket = await ReadDynamic(stream);
         Assert.Equal((short)0x09fd, BinaryPrimitives.ReadInt16LittleEndian(walkPacket));
@@ -283,7 +283,7 @@ public sealed class MapClientSessionMonsterMovementTests
         var combat = MonsterCombatState.FromInstance(target);
         Assert.Equal(18u, combat.CurrentHp);
         Assert.Equal(55u, combat.MaxHp);
-        await session.NotifyMonsterMovedAsync(new MonsterMovementChange(target, combat, MonsterMovementChangeKind.WalkStarted), CancellationToken.None);
+        await session.NotifyMonsterMovedAsync(new MonsterMovementChange(target, MonsterMovementChangeKind.WalkStarted), combat, CancellationToken.None);
 
         var walkPacket = await ReadDynamic(stream);
         Assert.Equal(55, BinaryPrimitives.ReadInt32LittleEndian(walkPacket.AsSpan(79)));
@@ -304,7 +304,7 @@ public sealed class MapClientSessionMonsterMovementTests
         using var _ = client;
         target.ApplyDamage(40); // 55 -> 15 current HP.
 
-        await session.NotifyMonsterMovedAsync(new MonsterMovementChange(target, MonsterCombatState.FromInstance(target), MonsterMovementChangeKind.CellCrossed), CancellationToken.None);
+        await session.NotifyMonsterMovedAsync(new MonsterMovementChange(target, MonsterMovementChangeKind.CellCrossed), MonsterCombatState.FromInstance(target), CancellationToken.None);
 
         var standPacket = await ReadDynamic(stream);
         Assert.Equal((short)0x09ff, BinaryPrimitives.ReadInt16LittleEndian(standPacket));
@@ -358,13 +358,13 @@ public sealed class MapClientSessionMonsterMovementTests
                 if (change.Kind == MonsterMovementChangeKind.WalkStarted)
                 {
                     walkStartedCount++;
-                    await session.NotifyMonsterMovedAsync(change, CancellationToken.None);
+                    await session.NotifyMonsterMovedAsync(change, MonsterCombatState.FromInstance(target), CancellationToken.None);
                     var walkPacket = await ReadDynamic(stream);
                     Assert.Equal((short)0x09fd, BinaryPrimitives.ReadInt16LittleEndian(walkPacket));
                 }
                 else
                 {
-                    await session.NotifyMonsterMovedAsync(change, CancellationToken.None);
+                    await session.NotifyMonsterMovedAsync(change, MonsterCombatState.FromInstance(target), CancellationToken.None);
                 }
             }
         }
@@ -381,7 +381,7 @@ public sealed class MapClientSessionMonsterMovementTests
                 // observing the first one's own completion - not expected here, and would also
                 // desynchronize the dynamic-packet read count above.
                 Assert.NotEqual(MonsterMovementChangeKind.WalkStarted, change.Kind);
-                await session.NotifyMonsterMovedAsync(change, CancellationToken.None);
+                await session.NotifyMonsterMovedAsync(change, MonsterCombatState.FromInstance(target), CancellationToken.None);
             }
         }
         Assert.False(target.IsWalking);
@@ -403,7 +403,7 @@ public sealed class MapClientSessionMonsterMovementTests
         var (client, stream, session, run, target) = await SetupAsync();
         using var _ = client;
 
-        await session.NotifyMonsterMovedAsync(new MonsterMovementChange(target, MonsterCombatState.FromInstance(target), MonsterMovementChangeKind.CellCrossed), CancellationToken.None);
+        await session.NotifyMonsterMovedAsync(new MonsterMovementChange(target, MonsterMovementChangeKind.CellCrossed), MonsterCombatState.FromInstance(target), CancellationToken.None);
 
         var standPacket = await ReadDynamic(stream);
         Assert.Equal((short)0x09ff, BinaryPrimitives.ReadInt16LittleEndian(standPacket));
@@ -412,7 +412,7 @@ public sealed class MapClientSessionMonsterMovementTests
 
         // A second notification for the SAME still-visible instance must not resend a duplicate
         // discovery packet - only the first crossing into visibility does.
-        await session.NotifyMonsterMovedAsync(new MonsterMovementChange(target, MonsterCombatState.FromInstance(target), MonsterMovementChangeKind.CellCrossed), CancellationToken.None);
+        await session.NotifyMonsterMovedAsync(new MonsterMovementChange(target, MonsterMovementChangeKind.CellCrossed), MonsterCombatState.FromInstance(target), CancellationToken.None);
         await AssertNothingArrivesAsync(stream);
 
         client.Close();
@@ -431,7 +431,7 @@ public sealed class MapClientSessionMonsterMovementTests
 
         Assert.True(target.TryStartIdleWalk([(75, 51), (76, 51)], orthogonalStepMs: 400, now: DateTimeOffset.UnixEpoch, jitterMs: () => 0));
 
-        await session.NotifyMonsterMovedAsync(new MonsterMovementChange(target, MonsterCombatState.FromInstance(target), MonsterMovementChangeKind.WalkStarted), CancellationToken.None);
+        await session.NotifyMonsterMovedAsync(new MonsterMovementChange(target, MonsterMovementChangeKind.WalkStarted), MonsterCombatState.FromInstance(target), CancellationToken.None);
 
         var discoveryPacket = await ReadDynamic(stream);
         Assert.Equal((short)0x09fd, BinaryPrimitives.ReadInt16LittleEndian(discoveryPacket));
@@ -455,7 +455,7 @@ public sealed class MapClientSessionMonsterMovementTests
         var (client, stream, session, run, _) = await SetupAsync(sharedTarget: farTarget, sharedRegistry: registry);
         using var _2 = client;
 
-        await session.NotifyMonsterMovedAsync(new MonsterMovementChange(farTarget, MonsterCombatState.FromInstance(farTarget), MonsterMovementChangeKind.CellCrossed), CancellationToken.None);
+        await session.NotifyMonsterMovedAsync(new MonsterMovementChange(farTarget, MonsterMovementChangeKind.CellCrossed), MonsterCombatState.FromInstance(farTarget), CancellationToken.None);
 
         await AssertNothingArrivesAsync(stream);
 
@@ -490,8 +490,10 @@ public sealed class MapClientSessionMonsterMovementTests
         var spawn = new MobSpawnDefinition(GeneratedMobs.GPoring, "int_land03", 1, RespawnDelay: 5000, RespawnRandomDelay: 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "test", 0));
         var registry = new MonsterRegistry([spawn], allocator.Allocate, new FixedCellSelector(75, 51), clock);
         var questDrops = new QuestDropResolver(GeneratedQuestDrops.All);
-        var combat = new MonsterCombatCoordinator(registry, questDrops, new RenewalBasicAttackRules());
         var target = registry.AllInstances[0];
+        var combatState = new MonsterCombatStateStore();
+        combatState.Register(target.Map, target);
+        var combat = new MonsterCombatCoordinator(registry, questDrops, new RenewalBasicAttackRules(), combatState);
 
         var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
@@ -507,7 +509,7 @@ public sealed class MapClientSessionMonsterMovementTests
             1, serverClient, new CharServerConnector(new MapConfigStore(new MapConfig(), "unused.conf")), true,
             "int_land03", 75, 51, WorldMapRegistry.Tutorial,
             gameplayStatePersistence: new FixedGameplayStatePersistence(StrongNovice()),
-            accountId: AccountId, charId: CharId, monsters: registry, combat: combat, timeProvider: clock);
+            accountId: AccountId, charId: CharId, monsters: registry, combat: combat, timeProvider: clock, combatState: combatState);
         var run = session.RunAsync(CancellationToken.None);
         await session.CompleteIroAuthenticationAsync(new(AccountId, CharId, 1, 2, 0, 0, false, "int_land03", 75, 51, 0, 0, 0));
         await ReadExact(stream, 4 + 6 + 6 + 13);
@@ -540,7 +542,7 @@ public sealed class MapClientSessionMonsterMovementTests
         Assert.False(target.IsWalking); // Proves discovery isn't riding along on an idle walk.
 
         foreach (var instance in respawned)
-            await session.NotifyMonsterMovedAsync(new MonsterMovementChange(instance, MonsterCombatState.FromInstance(instance), MonsterMovementChangeKind.CellCrossed), CancellationToken.None);
+            await session.NotifyMonsterMovedAsync(new MonsterMovementChange(instance, MonsterMovementChangeKind.CellCrossed), MonsterCombatState.FromInstance(instance), CancellationToken.None);
 
         var standPacket = await ReadDynamic(stream);
         Assert.Equal((short)0x09ff, BinaryPrimitives.ReadInt16LittleEndian(standPacket));
@@ -562,7 +564,7 @@ public sealed class MapClientSessionMonsterMovementTests
         var (client, stream, session, run, _) = await SetupAsync(sharedTarget: otherMapTarget, sharedRegistry: registry);
         using var _2 = client;
 
-        await session.NotifyMonsterMovedAsync(new MonsterMovementChange(otherMapTarget, MonsterCombatState.FromInstance(otherMapTarget), MonsterMovementChangeKind.CellCrossed), CancellationToken.None);
+        await session.NotifyMonsterMovedAsync(new MonsterMovementChange(otherMapTarget, MonsterMovementChangeKind.CellCrossed), MonsterCombatState.FromInstance(otherMapTarget), CancellationToken.None);
 
         await AssertNothingArrivesAsync(stream);
 
@@ -635,7 +637,7 @@ public sealed class MapClientSessionMonsterMovementTests
         {
             foreach (var instance in instances)
             {
-                try { await session.NotifyMonsterMovedAsync(new MonsterMovementChange(instance, MonsterCombatState.FromInstance(instance), MonsterMovementChangeKind.CellCrossed), CancellationToken.None); }
+                try { await session.NotifyMonsterMovedAsync(new MonsterMovementChange(instance, MonsterMovementChangeKind.CellCrossed), MonsterCombatState.FromInstance(instance), CancellationToken.None); }
                 catch (IOException) { }
                 catch (ObjectDisposedException) { }
             }

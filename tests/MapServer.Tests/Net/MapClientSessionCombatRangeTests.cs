@@ -126,7 +126,7 @@ public sealed class MapClientSessionCombatRangeTests
         return damage;
     }
 
-    private async Task<(TcpClient Client, NetworkStream Stream, MapClientSession Session, Task RunTask, MobInstance Target, MonsterRegistry Registry)> SetupAsync(
+    private async Task<(TcpClient Client, NetworkStream Stream, MapClientSession Session, Task RunTask, MobInstance Target, MonsterRegistry Registry, MonsterCombatStateStore CombatState)> SetupAsync(
         ushort playerX, ushort playerY, ushort monsterX, ushort monsterY,
         IMapCollisionProvider? collisionProvider = null, TimeProvider? timeProvider = null, Func<int, int, int>? rollWeaponAtk = null,
         CharacterGameplayState? gameplayState = null)
@@ -144,8 +144,10 @@ public sealed class MapClientSessionCombatRangeTests
         var spawnDefinition = new MobSpawnDefinition(GeneratedMobs.GPoring, "int_land03", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "test", 0));
         var registry = new MonsterRegistry([spawnDefinition], allocator.Allocate, new FixedCellSelector(monsterX, monsterY), timeProvider ?? TimeProvider.System);
         var questDrops = new QuestDropResolver(GeneratedQuestDrops.All);
-        var combat = new MonsterCombatCoordinator(registry, questDrops, new RenewalBasicAttackRules(rollWeaponAtk));
         var target = registry.AllInstances[0];
+        var combatState = new MonsterCombatStateStore();
+        combatState.Register(target.Map, target);
+        var combat = new MonsterCombatCoordinator(registry, questDrops, new RenewalBasicAttackRules(rollWeaponAtk), combatState);
 
         var gameplayPersistence = new RecordingGameplayStatePersistence(gameplayState ?? StrongNovice());
         var inventoryListPersistence = new FixedInventoryListPersistence(KnifeEquipped());
@@ -157,7 +159,7 @@ public sealed class MapClientSessionCombatRangeTests
             gameplayStatePersistence: gameplayPersistence,
             accountId: AccountId, charId: CharId, monsters: registry, combat: combat,
             inventoryPersistence: inventoryPersistence, inventoryListPersistence: inventoryListPersistence,
-            timeProvider: timeProvider, collisionProvider: collisionProvider);
+            timeProvider: timeProvider, collisionProvider: collisionProvider, combatState: combatState);
         var run = session.RunAsync(CancellationToken.None);
         await session.CompleteIroAuthenticationAsync(new(AccountId, CharId, 1, 2, 0, 0, false, "int_land03", playerX, playerY, 0, 0, 0));
 
@@ -182,8 +184,15 @@ public sealed class MapClientSessionCombatRangeTests
             actualTarget = target;
         }
 
-        return (client, stream, session, run, actualTarget ?? target, registry);
+        return (client, stream, session, run, actualTarget ?? target, registry, combatState);
     }
+
+    // Reads the CURRENT HP from the SAME MonsterCombatStateStore instance this session's combat
+    // was constructed with - the store (not MobInstance's own now-superseded CurrentHp field) is
+    // the sole authoritative HP owner on the migrated combat path (see MonsterCombatStateStore's
+    // own doc comment), so this is the correct oracle for this file's damage assertions.
+    private static uint CurrentHpOf(MonsterCombatStateStore combatState, MobInstance target) =>
+        combatState.TryGet(target.Map, target, out var state) ? state.CurrentHp : 0u;
 
     // Live evidence reproduced: player far from a Range=1 Knife-equipped G_PORING must never take
     // damage on the very first 0x0437, and must instead receive the pinned 0x0139
@@ -193,7 +202,7 @@ public sealed class MapClientSessionCombatRangeTests
     {
         // (81,64) and (72,78) from the live bug report - well outside any melee range, but still
         // within the 14-cell visibility range so the monster spawn broadcast still fires.
-        var (client, stream, session, run, target, _) = await SetupAsync(playerX: 81, playerY: 64, monsterX: 72, monsterY: 78);
+        var (client, stream, session, run, target, _, combatState) = await SetupAsync(playerX: 81, playerY: 64, monsterX: 72, monsterY: 78);
         using var _disposeClient = client;
 
         await stream.WriteAsync(AttackPacket(target.ActorId));
@@ -207,7 +216,7 @@ public sealed class MapClientSessionCombatRangeTests
         Assert.Equal((ushort)64, BinaryPrimitives.ReadUInt16LittleEndian(failurePacket.AsSpan(12)));
         Assert.Equal((ushort)1, BinaryPrimitives.ReadUInt16LittleEndian(failurePacket.AsSpan(14))); // Knife Range=1.
 
-        Assert.Equal(55u, target.CurrentHp);
+        Assert.Equal(55u, CurrentHpOf(combatState, target));
         Assert.True(target.IsAlive);
 
         client.Close();
@@ -219,7 +228,7 @@ public sealed class MapClientSessionCombatRangeTests
     {
         // Pinned distance_client: sqrt(1^2+0^2)-0.1 = 0.9 -> floor 0 <= range(1). Orthogonally
         // adjacent (dx=1,dy=0) is therefore in range for a Range=1 weapon.
-        var (client, stream, session, run, target, _) = await SetupAsync(playerX: 75, playerY: 51, monsterX: 76, monsterY: 51, rollWeaponAtk: (min, _) => min);
+        var (client, stream, session, run, target, _, combatState) = await SetupAsync(playerX: 75, playerY: 51, monsterX: 76, monsterY: 51, rollWeaponAtk: (min, _) => min);
         using var _disposeClient = client;
 
         await stream.WriteAsync(AttackPacket(target.ActorId));
@@ -228,7 +237,7 @@ public sealed class MapClientSessionCombatRangeTests
         Assert.Equal((short)PacketConstants.ZcNotifyAct3, BinaryPrimitives.ReadInt16LittleEndian(damagePacket));
         var damage = BinaryPrimitives.ReadUInt32LittleEndian(damagePacket.AsSpan(22));
         Assert.True(damage > 0);
-        Assert.True(target.CurrentHp < 55u);
+        Assert.True(CurrentHpOf(combatState, target) < 55u);
 
         client.Close();
         await run.WaitAsync(TimeSpan.FromSeconds(5));
@@ -241,14 +250,14 @@ public sealed class MapClientSessionCombatRangeTests
         // beyond the accepted pinned client-distance for a Range=1 weapon. (dx=2 gives
         // distance_client=1, which EQUALS range 1 and is therefore still in range - see
         // Attack_TargetExactlyInAcceptedPinnedClientDistance_AttackWorks's own sibling case.)
-        var (client, stream, session, run, target, _) = await SetupAsync(playerX: 75, playerY: 51, monsterX: 78, monsterY: 51);
+        var (client, stream, session, run, target, _, combatState) = await SetupAsync(playerX: 75, playerY: 51, monsterX: 78, monsterY: 51);
         using var _disposeClient = client;
 
         await stream.WriteAsync(AttackPacket(target.ActorId));
 
         var failurePacket = await ReadExact(stream, PacketConstants.ZcAttackFailureForDistanceLength);
         Assert.Equal((short)PacketConstants.ZcAttackFailureForDistance, BinaryPrimitives.ReadInt16LittleEndian(failurePacket));
-        Assert.Equal(55u, target.CurrentHp);
+        Assert.Equal(55u, CurrentHpOf(combatState, target));
 
         client.Close();
         await run.WaitAsync(TimeSpan.FromSeconds(5));
@@ -261,14 +270,14 @@ public sealed class MapClientSessionCombatRangeTests
     public async Task Attack_MovingTargetLeavesRangeBetweenRepeatedHits_LaterHitDoesNotOccurRemotely()
     {
         var clock = new ControllableTimeProvider();
-        var (client, stream, session, run, target, registry) = await SetupAsync(
+        var (client, stream, session, run, target, registry, combatState) = await SetupAsync(
             playerX: 75, playerY: 51, monsterX: 76, monsterY: 51, timeProvider: clock, rollWeaponAtk: (min, _) => min, gameplayState: WeakFreshNovice());
         using var _disposeClient = client;
 
         await stream.WriteAsync(AttackPacket(target.ActorId));
         var firstHit = await ReadDamageThenHpInfo(stream);
         Assert.Equal((short)PacketConstants.ZcNotifyAct3, BinaryPrimitives.ReadInt16LittleEndian(firstHit));
-        var hpAfterFirstHit = target.CurrentHp;
+        var hpAfterFirstHit = CurrentHpOf(combatState, target);
         Assert.True(hpAfterFirstHit < 55u, "First in-range hit must deal damage.");
         Assert.True(target.IsAlive, "WeakFreshNovice's min-roll Knife hit must not one-shot G_PORING for this test to observe a second scheduled hit.");
 
@@ -297,7 +306,7 @@ public sealed class MapClientSessionCombatRangeTests
         var reply = await ReadExact(stream, 2);
         Assert.Equal((short)PacketConstants.ZcPingLive, BinaryPrimitives.ReadInt16LittleEndian(reply));
 
-        Assert.Equal(hpAfterFirstHit, target.CurrentHp); // Unchanged since the first hit.
+        Assert.Equal(hpAfterFirstHit, CurrentHpOf(combatState, target)); // Unchanged since the first hit.
         Assert.True(target.IsAlive);
 
         client.Close();
@@ -310,7 +319,7 @@ public sealed class MapClientSessionCombatRangeTests
     [Fact]
     public async Task Attack_TargetInRange_DiesNormally_VanishPacketSent()
     {
-        var (client, stream, session, run, target, _) = await SetupAsync(playerX: 75, playerY: 51, monsterX: 76, monsterY: 51);
+        var (client, stream, session, run, target, _, combatState) = await SetupAsync(playerX: 75, playerY: 51, monsterX: 76, monsterY: 51);
         using var _disposeClient = client;
 
         uint hpAfter = 55;
@@ -342,14 +351,14 @@ public sealed class MapClientSessionCombatRangeTests
     [Fact]
     public async Task Attack_TargetAtVisibilityRangeBoundary_NeverTreatedAsAttackRange()
     {
-        var (client, stream, session, run, target, _) = await SetupAsync(playerX: 75, playerY: 51, monsterX: 89, monsterY: 51);
+        var (client, stream, session, run, target, _, combatState) = await SetupAsync(playerX: 75, playerY: 51, monsterX: 89, monsterY: 51);
         using var _disposeClient = client;
 
         await stream.WriteAsync(AttackPacket(target.ActorId));
 
         var failurePacket = await ReadExact(stream, PacketConstants.ZcAttackFailureForDistanceLength);
         Assert.Equal((short)PacketConstants.ZcAttackFailureForDistance, BinaryPrimitives.ReadInt16LittleEndian(failurePacket));
-        Assert.Equal(55u, target.CurrentHp);
+        Assert.Equal(55u, CurrentHpOf(combatState, target));
 
         client.Close();
         await run.WaitAsync(TimeSpan.FromSeconds(5));

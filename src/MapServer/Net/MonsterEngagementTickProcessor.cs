@@ -39,6 +39,7 @@ namespace Athena.Net.MapServer.Net;
 // test-only mutation method to MapClientSession itself.
 internal sealed class MonsterEngagementTickProcessor(
     MonsterRegistry monsters, IMapCollisionProvider collisionProvider, IMovementPathProvider movementPathProvider, TimeProvider timeProvider,
+    MonsterCombatStateStore combatState,
     Func<Task>? beforeFinalAttackRevalidation = null)
 {
     private readonly Func<Task> _beforeFinalAttackRevalidation = beforeFinalAttackRevalidation ?? (() => Task.CompletedTask);
@@ -80,7 +81,7 @@ internal sealed class MonsterEngagementTickProcessor(
                 // wire mapping (MapClientSession.NotifyMonsterMovedAsync sends the walk-entry
                 // packet for it) rather than inventing a third packet shape for what is, from the
                 // client's perspective, indistinguishable from any other newly (re)started walk.
-                (movementChanges ??= []).Add(new MonsterMovementChange(mob, MonsterCombatState.FromInstance(mob), MonsterMovementChangeKind.WalkStarted));
+                (movementChanges ??= []).Add(new MonsterMovementChange(mob, MonsterMovementChangeKind.WalkStarted));
                 var reachedCell = mob.GetPosition();
                 // "outcome=" (not "wire="): this call only computes the outcome and returns it in
                 // MonsterEngagementTickResult - it does not itself write anything to any session.
@@ -94,11 +95,12 @@ internal sealed class MonsterEngagementTickProcessor(
             else if (crossed.Count > 0)
             {
                 var kind = mob.IsWalking ? MonsterMovementChangeKind.CellCrossed : MonsterMovementChangeKind.WalkFinished;
-                (movementChanges ??= []).Add(new MonsterMovementChange(mob, MonsterCombatState.FromInstance(mob), kind));
+                (movementChanges ??= []).Add(new MonsterMovementChange(mob, kind));
             }
 
             var snapshot = await TryFindSnapshotAsync(sessions, targetAccountId, cancellationToken);
-            var decision = MonsterEngagementDomain.Evaluate(mob, snapshot, now);
+            var nextAttackAt = combatState.TryGet(mob.Map, mob, out var combatEntry) ? combatEntry.NextAttackAt : null;
+            var decision = MonsterEngagementDomain.Evaluate(mob, snapshot, now, nextAttackAt);
             // Chase is logged separately, below, only when it actually causes a real effect
             // (fresh walk start or a genuinely new retarget) - Evaluate legitimately re-derives an
             // IDENTICAL Chase(target's current cell) decision every single 100ms tick while a
@@ -117,7 +119,7 @@ internal sealed class MonsterEngagementTickProcessor(
                 case MonsterEngagementDecision.Chase chase:
                     if (ApplyChaseDecision(mob, chase, now))
                     {
-                        (movementChanges ??= []).Add(new MonsterMovementChange(mob, MonsterCombatState.FromInstance(mob), MonsterMovementChangeKind.WalkStarted));
+                        (movementChanges ??= []).Add(new MonsterMovementChange(mob, MonsterMovementChangeKind.WalkStarted));
                         LogDecision(mob, snapshot, decision);
                     }
                     break;
@@ -133,7 +135,7 @@ internal sealed class MonsterEngagementTickProcessor(
                     // that was already in range has nothing to fix-position).
                     if (interrupted)
                     {
-                        (movementChanges ??= []).Add(new MonsterMovementChange(mob, MonsterCombatState.FromInstance(mob), MonsterMovementChangeKind.ChaseInterrupted));
+                        (movementChanges ??= []).Add(new MonsterMovementChange(mob, MonsterMovementChangeKind.ChaseInterrupted));
                         // "outcome=" not "wire=" - see the identical note on the retarget-applied
                         // log above; the actual 0x0088 write happens later, inside
                         // MapClientSession.NotifyMonsterMovedAsync, via MapTcpServer's own fan-out
@@ -149,7 +151,8 @@ internal sealed class MonsterEngagementTickProcessor(
                         // SP_HP) write happens later, inside
                         // MapClientSession.NotifyMonsterAttackOutcomeAsync, via MapTcpServer's own
                         // fan-out over this method's returned MonsterEngagementTickResult.
-                        MapLogger.Info($"[iRO MAP DEBUG] Mob attack accepted mobActorId={mob.ActorId} targetAccountId={targetAccountId} damage={outcome.Damage} isMiss={outcome.IsMiss} hpChanged={outcome.HpChanged} nextAttackAt={mob.NextAttackAt:O} outcome=AttackAccepted");
+                        var loggedNextAttackAt = combatState.TryGet(mob.Map, mob, out var loggedCombatEntry) ? loggedCombatEntry.NextAttackAt : null;
+                        MapLogger.Info($"[iRO MAP DEBUG] Mob attack accepted mobActorId={mob.ActorId} targetAccountId={targetAccountId} damage={outcome.Damage} isMiss={outcome.IsMiss} hpChanged={outcome.HpChanged} nextAttackAt={loggedNextAttackAt:O} outcome=AttackAccepted");
                     }
                     else
                     {
@@ -271,7 +274,8 @@ internal sealed class MonsterEngagementTickProcessor(
 
         await _beforeFinalAttackRevalidation();
         var freshSnapshot = await TrySnapshotAsync(targetSession, cancellationToken);
-        var reEvaluated = MonsterEngagementDomain.Evaluate(mob, freshSnapshot, now);
+        var nextAttackAtForRevalidation = combatState.TryGet(mob.Map, mob, out var combatEntryForRevalidation) ? combatEntryForRevalidation.NextAttackAt : null;
+        var reEvaluated = MonsterEngagementDomain.Evaluate(mob, freshSnapshot, now, nextAttackAtForRevalidation);
         if (reEvaluated is not MonsterEngagementDecision.Attack)
         {
             // The target moved/died/disconnected between the tick's own Evaluate and this
@@ -287,7 +291,10 @@ internal sealed class MonsterEngagementTickProcessor(
 
         var combatSnapshot = freshSnapshot!.Value; // Attack was re-confirmed, so freshSnapshot is necessarily non-null/alive/same-map.
         var result = MobBasicAttackCalculator.Calculate(mob.Spawn.Mob, combatSnapshot);
-        mob.ScheduleNextAttack(now.AddMilliseconds(mob.Spawn.Mob.AttackDelay));
+        // MonsterCombatStateStore.ScheduleNextAttack, NOT mob.ScheduleNextAttack - NextAttackAt is
+        // superseded on MobInstance for the migrated combat path (see that method's own doc
+        // comment); the store is the only place this cadence value is written or read from here on.
+        combatState.ScheduleNextAttack(mob.Map, mob.ActorId, mob.IncarnationId, now.AddMilliseconds(mob.Spawn.Mob.AttackDelay));
 
         (uint HpAfter, bool HpChanged)? applied;
         try

@@ -37,7 +37,7 @@ public sealed class MapTcpServer
         _worldRuntime = worldRuntime;
         var config = _configStore.Current;
         _listener = new TcpListener(config.BindIp, config.MapPort);
-        _engagementProcessor = new MonsterEngagementTickProcessor(_world.Monsters, _world.Collision, _world.MovementPathProvider, timeProvider ?? TimeProvider.System);
+        _engagementProcessor = new MonsterEngagementTickProcessor(_world.Monsters, _world.Collision, _world.MovementPathProvider, timeProvider ?? TimeProvider.System, _world.CombatState);
     }
 
     // Focused tests which exercise the existing process-local simulation do not start an Orleans
@@ -252,6 +252,14 @@ public sealed class MapTcpServer
         // instance is not walking - a fresh respawn's idle-walk timer has not fired yet - so this
         // always resolves to a plain 0x09FF stand entry, never a spurious 0x09FD).
         var respawned = _world.Monsters.ProcessDueRespawns();
+        // A respawn is a NEW incarnation (MobInstance.TryRespawn already bumped IncarnationId) -
+        // the combat-state store's key includes IncarnationId, so the OLD incarnation's entry is
+        // simply never looked up again (never explicitly deleted - see MonsterCombatStateStore's
+        // own doc comment on why this store never speculatively creates entries); this Register call
+        // is what actually gives the new incarnation its own fresh full-HP/no-cadence entry, exactly
+        // mirroring the same fresh-registration this map's monsters received at initial construction
+        // (MapServerWorld.Build's own foreach).
+        foreach (var instance in respawned) _world.CombatState.Register(instance.Map, instance);
         var changed = _world.MonsterRuntime.ProcessTick();
         var engagementResult = await _engagementProcessor.ProcessAsync(sessions, cancellationToken);
 
@@ -271,7 +279,17 @@ public sealed class MapTcpServer
             {
                 try
                 {
-                    await session.NotifyMonsterMovedAsync(change, cancellationToken);
+                    // Fresh combat state read HERE, immediately before this individual projection
+                    // call - never the state captured back when `change` was created (see
+                    // MonsterMovementChange's own doc comment for why that would be stale by now).
+                    // Read from MonsterCombatStateStore (the actual HP/cadence owner on the
+                    // migrated path - see that type's own doc comment), never
+                    // MonsterCombatState.FromInstance/MobInstance.CaptureCombatState, which are
+                    // superseded. A concurrent death/despawn/stale-incarnation is the only way
+                    // TryGet can miss - skip this session's projection for that change rather than
+                    // projecting mismatched data.
+                    if (_world.CombatState.TryGet(change.Instance.Map, change.Instance.ActorId, change.Instance.IncarnationId, out var freshCombat))
+                        await session.NotifyMonsterMovedAsync(change, freshCombat, cancellationToken);
                 }
                 catch (IOException)
                 {
@@ -287,7 +305,8 @@ public sealed class MapTcpServer
             {
                 try
                 {
-                    await session.NotifyMonsterMovedAsync(change, cancellationToken);
+                    if (_world.CombatState.TryGet(change.Instance.Map, change.Instance.ActorId, change.Instance.IncarnationId, out var freshCombat))
+                        await session.NotifyMonsterMovedAsync(change, freshCombat, cancellationToken);
                 }
                 catch (IOException)
                 {
@@ -303,7 +322,12 @@ public sealed class MapTcpServer
             {
                 try
                 {
-                    await session.NotifyMonsterMovedAsync(new MonsterMovementChange(instance, MonsterCombatState.FromInstance(instance), MonsterMovementChangeKind.CellCrossed), cancellationToken);
+                    // `instance` here is the live respawned MobInstance itself (not a queued
+                    // change) - it was already (re-)registered into the store above (see this
+                    // method's own respawn-registration comment), so this read already reflects
+                    // its just-completed respawn (full HP, cleared NextAttackAt).
+                    if (_world.CombatState.TryGet(instance.Map, instance, out var respawnCombat))
+                        await session.NotifyMonsterMovedAsync(new MonsterMovementChange(instance, MonsterMovementChangeKind.CellCrossed), respawnCombat, cancellationToken);
                 }
                 catch (IOException)
                 {

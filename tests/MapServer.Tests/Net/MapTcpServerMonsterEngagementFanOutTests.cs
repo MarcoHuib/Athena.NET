@@ -92,7 +92,7 @@ public sealed class MapTcpServerMonsterEngagementFanOutTests
 
     private sealed record TestSession(TcpClient Client, NetworkStream Stream, MapClientSession Session, Task RunTask);
 
-    private sealed record TestWorld(MapTcpServer Server, MonsterRegistry Registry, MonsterCombatCoordinator Combat, MobInstance Poring, IMapCollisionProvider Collision, IMovementPathProvider PathProvider, MonsterSpatialInspector SpatialInspector, MonsterRuntime MonsterRuntime, WorldMapRegistry Maps, CharServerConnector CharConnector);
+    private sealed record TestWorld(MapTcpServer Server, MonsterRegistry Registry, MonsterCombatCoordinator Combat, MobInstance Poring, IMapCollisionProvider Collision, IMovementPathProvider PathProvider, MonsterSpatialInspector SpatialInspector, MonsterRuntime MonsterRuntime, WorldMapRegistry Maps, CharServerConnector CharConnector, MonsterCombatStateStore CombatState);
 
     // A real, fully-walkable, self-contained world (one G_PORING spawn) with a real MapTcpServer
     // built directly on top of it - same component shapes MapServerWorld.Build composes in
@@ -103,20 +103,23 @@ public sealed class MapTcpServerMonsterEngagementFanOutTests
         var spawnDefinition = new MobSpawnDefinition(GeneratedMobs.GPoring, Map, 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "test", 0));
         var registry = new MonsterRegistry([spawnDefinition], allocator.Allocate, new FixedCellSelector(monsterX, monsterY), timeProvider);
         var questDrops = new QuestDropResolver(GeneratedQuestDrops.All);
-        var combat = new MonsterCombatCoordinator(registry, questDrops, new RenewalBasicAttackRules());
+        var poring = registry.AllInstances[0];
+        var combatState = new MonsterCombatStateStore();
+        combatState.Register(poring.Map, poring);
+        var combat = new MonsterCombatCoordinator(registry, questDrops, new RenewalBasicAttackRules(), combatState);
         var collisionMap = new MapCollisionMap(Map, 100, 100, Enumerable.Repeat(MapCellFlags.Walkable, 100 * 100).ToArray());
         IMapCollisionProvider collision = new MapCollisionProvider([collisionMap]);
         IMovementPathProvider pathProvider = new RathenaCompatibleMovementPathProvider(collision);
         var spatialInspector = new MonsterSpatialInspector(registry, collision);
         var monsterRuntime = new MonsterRuntime(registry, collision, pathProvider, timeProvider);
         var maps = WorldMapRegistry.Tutorial;
-        var world = new MapServerWorld(maps, registry, combat, collision, spatialInspector, pathProvider, monsterRuntime);
+        var world = new MapServerWorld(maps, registry, combat, collision, spatialInspector, pathProvider, monsterRuntime, combatState);
 
         var charConnector = new CharServerConnector(new MapConfigStore(new MapConfig(), "unused.conf"));
         var configStore = new MapConfigStore(new MapConfig { MapPort = 0 }, "unused.conf");
         var server = new MapTcpServer(configStore, charConnector, world, timeProvider);
 
-        return new TestWorld(server, registry, combat, registry.AllInstances[0], collision, pathProvider, spatialInspector, monsterRuntime, maps, charConnector);
+        return new TestWorld(server, registry, combat, poring, collision, pathProvider, spatialInspector, monsterRuntime, maps, charConnector, combatState);
     }
 
     private async Task<TestSession> ConnectSessionAsync(
@@ -139,7 +142,7 @@ public sealed class MapTcpServerMonsterEngagementFanOutTests
             gameplayStatePersistence: gameplayPersistence,
             accountId: accountId, charId: charId, monsters: world.Registry, combat: world.Combat,
             timeProvider: timeProvider, collisionProvider: world.Collision, movementPathProvider: world.PathProvider,
-            spatialInspector: world.SpatialInspector, monsterRuntime: world.MonsterRuntime);
+            spatialInspector: world.SpatialInspector, monsterRuntime: world.MonsterRuntime, combatState: world.CombatState);
         var run = session.RunAsync(CancellationToken.None);
         await session.CompleteIroAuthenticationAsync(new(accountId, charId, 1, 2, 0, 0, false, Map, x, y, 0, 0, 0));
 
@@ -167,7 +170,7 @@ public sealed class MapTcpServerMonsterEngagementFanOutTests
         // Real production combat path acquires the target - the mob is now engaged but has not
         // moved or attacked yet, so MonsterRuntime's own idle-walk AI is suppressed
         // (HasActiveTarget guard) and nothing has respawned.
-        var attackOutcome = world.Combat.Attack(world.Poring, AccountId, new(9, 9, 9, 9, 9, 9, 0, 0), 1, null, _ => CharacterQuestStatus.Absent);
+        var attackOutcome = world.Combat.Attack(world.Poring, world.Poring.Map, AccountId, new(9, 9, 9, 9, 9, 9, 0, 0), 1, null, _ => CharacterQuestStatus.Absent);
         Assert.True(attackOutcome.Accepted);
         Assert.True(world.Poring.HasActiveTarget);
 
@@ -209,7 +212,9 @@ public sealed class MapTcpServerMonsterEngagementFanOutTests
         var strongMobSpawn = world.Poring.Spawn with { Mob = world.Poring.Spawn.Mob with { Attack = 1000, AttackDelay = 2000 } };
         var strongRegistry = new MonsterRegistry([strongMobSpawn], new WorldActorIdAllocator().Allocate, new FixedCellSelector(76, 51), clock);
         var strongPoring = strongRegistry.AllInstances[0];
-        var strongWorld = world with { Registry = strongRegistry, Poring = strongPoring };
+        var strongCombatState = new MonsterCombatStateStore();
+        strongCombatState.Register(strongPoring.Map, strongPoring);
+        var strongWorld = world with { Registry = strongRegistry, Poring = strongPoring, CombatState = strongCombatState };
         var strongServer = MakeServerFor(strongWorld, clock);
         strongWorld = strongWorld with { Server = strongServer };
 
@@ -235,7 +240,7 @@ public sealed class MapTcpServerMonsterEngagementFanOutTests
 
     private static MapTcpServer MakeServerFor(TestWorld world, TimeProvider timeProvider)
     {
-        var mapServerWorld = new MapServerWorld(world.Maps, world.Registry, world.Combat, world.Collision, world.SpatialInspector, world.PathProvider, world.MonsterRuntime);
+        var mapServerWorld = new MapServerWorld(world.Maps, world.Registry, world.Combat, world.Collision, world.SpatialInspector, world.PathProvider, world.MonsterRuntime, world.CombatState);
         var configStore = new MapConfigStore(new MapConfig { MapPort = 0 }, "unused.conf");
         return new MapTcpServer(configStore, world.CharConnector, mapServerWorld, timeProvider);
     }
