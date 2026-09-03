@@ -187,13 +187,13 @@ public static class MapServerApp
         // ActorIdBlockAuthorityGrain monster partitions use, rather than owning a
         // hardcoded/config-declared numeric range - see LeasedBlockActorIdAllocator's own doc
         // comment. "npc-warp" is diagnostic-only (WorldTelemetry tagging), never a range key.
-        // WorldActorIdAllocator itself stays a plain local-counter allocator (its existing
-        // constructor/Allocate contract, unchanged) - only WHERE its seed comes from changes: a
-        // leased block's start instead of a hardcoded 110,000,000 base. One block comfortably
-        // covers this process's entire NPC/warp actor population for the process lifetime (this
-        // domain has no respawn-driven growth the way monster IDs do), so no re-lease-on-exhaustion
-        // handling is needed here the way LeasedBlockActorIdAllocator provides for callers that DO
-        // need it (Athena.World's own per-partition monster allocation).
+        // WorldActorIdAllocator now enforces the leased block's own EndExclusive boundary (see its
+        // own doc comment) - it throws rather than silently allocating past what was actually
+        // granted, which is what makes the global non-overlap guarantee real instead of aspirational.
+        // One block comfortably covers this process's entire NPC/warp actor population for the
+        // process lifetime (this domain has no respawn-driven growth the way monster IDs do), so no
+        // re-lease-on-exhaustion handling is needed here the way LeasedBlockActorIdAllocator
+        // provides for callers that DO need it (Athena.World's own per-partition monster allocation).
         //
         var npcWarpActorIdBlock =
             await clusterClient
@@ -201,7 +201,7 @@ public static class MapServerApp
                 .LeaseBlockAsync("npc-warp", NpcWarpActorIdBlockSize);
 
         var npcWarpActorIdAllocator =
-            new WorldActorIdAllocator(npcWarpActorIdBlock.StartInclusive - 1L);
+            new WorldActorIdAllocator(npcWarpActorIdBlock.StartInclusive - 1L, (long)npcWarpActorIdBlock.EndExclusive);
 
         //
         // Compose the local MapServer world.

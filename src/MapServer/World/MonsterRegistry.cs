@@ -9,16 +9,24 @@ namespace Athena.Net.MapServer.World;
 // as a lazily-initialized static property.
 //
 // `allocateActorId` must draw from the SAME actor-ID namespace as whatever else shares this
-// composed world's identity space (NPC/warp actors in MapServer's own WorldActorIdAllocator; the
-// grain's own per-partition PartitionWorldActorIdAllocator in Athena.World.Monsters). Deliberately
+// composed world's identity space (NPC/warp actors in MapServer's own WorldActorIdAllocator; a
+// future per-partition allocator in Athena.World.Monsters, backed by
+// Athena.Net.World.Contracts.LeasedBlockActorIdAllocator leasing blocks from the global
+// ActorIdBlockAuthorityGrain - see that type's own doc comment for the leasing design). Deliberately
 // a bare `Func<uint>` delegate rather than a concrete allocator type or a new single-method
 // interface: this is the exact pattern IMobSpawnCellSelector.TrySelectCell and
 // MonsterRegistry.ProcessDueRespawns' own `selectPosition` callback already use elsewhere in this
 // class, and it is what lets this same MonsterRegistry class - file-linked unchanged into
-// Athena.World.Monsters (see that project's own README/csproj) - be constructed with either
-// WorldActorIdAllocator.Allocate (MapServer's own composition) or
-// PartitionWorldActorIdAllocator.Allocate (the grain's composition) without MonsterRegistry itself
-// referencing either concrete type or Athena.World.Contracts at all.
+// Athena.World.Monsters (see that project's own csproj) - be constructed with either
+// WorldActorIdAllocator.Allocate (MapServer's own composition) or a synchronous local allocator
+// built over an already-leased block (the grain's composition, once wired) without MonsterRegistry
+// itself referencing either concrete type or Athena.World.Contracts at all. Note: allocation
+// happens ONLY during construction, for the initial spawn batch - an existing MobInstance retains
+// its ActorId for its entire lifetime, including across death/respawn (ProcessDueRespawns never
+// allocates a new ID; a respawned instance is the SAME MobInstance object, same ActorId, matching
+// pinned rAthena's own respawn-reuses-the-slot semantics). A future PR adding genuinely dynamic
+// monster creation after construction (not yet part of this PR) would need to acquire additional
+// leased capacity explicitly at that point, outside this constructor's own synchronous contract.
 public sealed class MonsterRegistry
 {
     private readonly TimeProvider _timeProvider;

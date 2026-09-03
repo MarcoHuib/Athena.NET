@@ -75,7 +75,13 @@ clock, and movement response ordering remains before a resulting map-change pack
 
 ## Deferred work
 
-The configured non-overlapping `WorldPartitionActorRanges` are reserved for Phase 2B, when NPC and
-monster runtime begins moving into partitions. Phase 2A does not allocate player IDs during transfer
-and does not migrate monsters, NPC execution, combat, drops, status effects, or persistence into
-Orleans.
+Global actor-ID allocation for Phase 2B's monster/NPC runtime is a lease-based block allocator
+(`IActorIdBlockAuthorityGrain`, `Athena.Net.World.Contracts.LeasedBlockActorIdAllocator`) - a single
+well-known Orleans grain leases non-overlapping `[start, end)` blocks to any requesting authority
+(a partition, MapServer's own NPC/warp allocator, or a future authority), with each requester
+allocating locally from its leased block. This deliberately replaced an earlier, since-abandoned
+design that would have hardcoded a fixed numeric range per partition directly in
+`conf/world_partitions.json` - that approach didn't scale as the number of partitions/maps/authorities
+grows, so `conf/world_partitions.json` remains pure map-ownership topology with no actor-ID concept
+at all. Phase 2A does not allocate player IDs during transfer and does not migrate monsters, NPC
+execution, combat, drops, status effects, or persistence into Orleans.

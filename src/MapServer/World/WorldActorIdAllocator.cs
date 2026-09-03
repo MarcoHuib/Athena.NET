@@ -1,32 +1,50 @@
 namespace Athena.Net.MapServer.World;
 
-// NPC/warp actor-ID allocator. Now seeded from `conf/world_partitions.json`'s reserved
-// `npcWarpActorIdRange` (see WorldPartitionTopologyDocument.NpcWarpActorIdRange), NOT a hardcoded
-// 110,000,000 base - since Phase 2B monster authority moved into per-partition World ranges
-// carved out of that SAME 110,000,000+ actor-ID domain (conf/world_partitions.json's per-partition
-// actorIdRange entries), this allocator's own range must be reserved and validated alongside those
-// (WorldPartitionActorRanges.ValidateAll) rather than independently starting at the domain's own
-// base, which would silently overlap a monster partition's range. The default constructor's
-// 109,999,999 base is kept ONLY for existing tests/callers that construct a world without loading
-// real topology config (e.g. WorldMapRegistry.Tutorial-style fixtures) - MapServerApp.RunAsync's
-// real production composition always uses the seeded-range constructor.
+// NPC/warp actor-ID allocator. Production (MapServerApp.RunAsync) seeds this from a block leased
+// from the global Athena.World.Contracts.IActorIdBlockAuthorityGrain (see
+// Athena.Net.World.Contracts.LeasedBlockActorIdAllocator's own doc comment for the leasing design)
+// rather than a hardcoded 110,000,000 base - the leased block's own [StartInclusive, EndExclusive)
+// bounds are what this allocator enforces below, so it can never allocate past what it was actually
+// granted and collide with a block leased to a different authority (a monster partition, a future
+// world-actor authority, etc.). The default constructor's unbounded 109,999,999-seeded behavior is
+// kept ONLY for existing tests/callers that construct a world without leasing a real block (e.g.
+// WorldMapRegistry.Tutorial-style fixtures, which have no cluster to lease from).
 public sealed class WorldActorIdAllocator
 {
+    private readonly long _endExclusive;
     private long _lastId;
 
-    public WorldActorIdAllocator() : this(109_999_999) { }
+    // Unbounded (up to uint.MaxValue) - matches this type's original historical behavior, for
+    // callers with no real leased block to enforce.
+    public WorldActorIdAllocator() : this(109_999_999, (long)uint.MaxValue + 1) { }
 
     // `seedExclusive`: the first Allocate() call returns seedExclusive + 1 - matches this type's
     // own historical convention (the default constructor's 109,999,999 base produces a first
-    // allocation of 110,000,000, rAthena's START_NPC_NUM).
-    public WorldActorIdAllocator(long seedExclusive) => _lastId = seedExclusive;
+    // allocation of 110,000,000, rAthena's START_NPC_NUM). Unbounded (no upper enforcement) - use
+    // the (seedExclusive, endExclusive) overload when a real leased block's boundary must be
+    // enforced.
+    public WorldActorIdAllocator(long seedExclusive) : this(seedExclusive, (long)uint.MaxValue + 1) { }
+
+    // `endExclusive` is the leased block's own EndExclusive (Athena.Net.World.Contracts.ActorIdBlock)
+    // - Allocate() throws once it would return a value >= endExclusive, rather than silently
+    // continuing to hand out IDs past what was actually granted. This is the enforcement mechanism
+    // that makes the "leased block never gets crossed" guarantee real rather than a comment.
+    public WorldActorIdAllocator(long seedExclusive, long endExclusive)
+    {
+        _lastId = seedExclusive;
+        _endExclusive = endExclusive;
+    }
 
     public uint Allocate()
     {
         var value = Interlocked.Increment(ref _lastId);
-        if (value > uint.MaxValue)
+        if (value >= _endExclusive)
         {
-            throw new InvalidOperationException("The world actor ID domain is exhausted.");
+            // Roll back: a failed allocation must not permanently burn a slot from the (possibly
+            // still-bounded-differently) counter - a caller catching this and retrying via a fresh
+            // allocator/lease must see the exact same next candidate this call itself rejected.
+            Interlocked.Decrement(ref _lastId);
+            throw new InvalidOperationException("The leased actor-ID block is exhausted.");
         }
 
         return (uint)value;

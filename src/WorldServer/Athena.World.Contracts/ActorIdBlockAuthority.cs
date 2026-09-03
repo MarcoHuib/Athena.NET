@@ -7,10 +7,20 @@ using Orleans;
 // wholesale to one requester by IActorIdBlockAuthorityGrain; the requester
 // then allocates individual IDs from within it locally, with no further
 // round-trip per actor.
+//
+// `EndExclusive` is a `ulong`, not `uint`: the domain's real exclusive upper bound is
+// `uint.MaxValue + 1` (a block whose last ID is exactly uint.MaxValue must still express an
+// exclusive end one past it), which does not fit in a uint. Every ID actually IN a block (i.e.
+// every value in [StartInclusive, EndExclusive)) always fits in uint by construction - see
+// ActorIdBlockAuthorityGrain.LeaseBlockAsync's own doc comment for the exact reservation that
+// guarantees this without wrapping arithmetic anywhere.
 [GenerateSerializer]
 public readonly record struct ActorIdBlock(
     [property: Id(0)] uint StartInclusive,
-    [property: Id(1)] uint EndExclusive);
+    [property: Id(1)] ulong EndExclusive)
+{
+    public bool Contains(long value) => value >= StartInclusive && value < (long)EndExclusive;
+}
 
 // The single source of truth for the ENTIRE global client-visible actor-ID namespace shared by
 // every monster partition, MapServer's own NPC/warp actor domain, and any future world-actor
@@ -23,8 +33,20 @@ public readonly record struct ActorIdBlock(
 // allocator draw from the exact same sequential domain, no type-specific carve-out).
 //
 // IGrainWithIntegerKey, always addressed at the SAME well-known key (see
-// ActorIdBlockAuthorityGrain.WellKnownKey) so every caller in the cluster resolves to one single
-// grain instance - the uniqueness guarantee below depends on there being exactly one.
+// ActorIdBlockAuthorityGrainKey.WellKnownKey) so every caller in the cluster resolves to one
+// single grain instance - the uniqueness guarantee below depends on there being exactly one.
+//
+// Grain-activation lifetime: an Orleans grain activation can be deactivated (idle collection,
+// rebalancing, etc.) and later reactivated within the SAME running silo process. A naive
+// in-memory-only field would reset _nextBlockStart back to the domain base on reactivation and
+// could then re-issue already-leased blocks to a caller that still holds them. The real
+// implementation (ActorIdBlockAuthorityGrain in Athena.World) therefore persists its cursor via
+// Orleans' memory grain-storage provider (IPersistentState, AddMemoryGrainStorage) - this survives
+// ordinary activation deactivation/reactivation for the lifetime of the running silo PROCESS, but
+// is explicitly NOT durable across a full silo/process restart (it is memory-backed, not disk- or
+// database-backed) - see the grain implementation's own doc comment for the full invariant and its
+// stated limitation. A future PR wanting restart-safe/HA allocation would swap the storage provider
+// (e.g. to a real database-backed one) without changing this interface at all.
 public interface IActorIdBlockAuthorityGrain : IGrainWithIntegerKey
 {
     // `requesterId` is carried only for diagnostics/telemetry (which authority leased which
@@ -44,7 +66,7 @@ public static class ActorIdBlockAuthorityGrainKey
 }
 
 // Leases actor-ID blocks from IActorIdBlockAuthorityGrain and allocates individual IDs from the
-// currently-held block locally (Interlocked, lock-free, matching this project's existing
+// currently-held block locally (lock-free in the common case, matching this project's existing
 // allocator style) - a round-trip to the authority grain happens only once per `blockSize`
 // allocations, never once per actor. Deliberately depends on a plain
 // Func<uint,CancellationToken,Task<ActorIdBlock>> delegate rather than IClusterClient/IGrainFactory
@@ -54,6 +76,23 @@ public static class ActorIdBlockAuthorityGrainKey
 // composition root (closing over the same call through its own IClusterClient) - matching this
 // codebase's existing "keep Orleans behind an adapter boundary" convention (IWorldRuntime/
 // OrleansWorldRuntime).
+//
+// Concurrency design: state is one immutable LeaseState snapshot (block + a local cursor),
+// replaced atomically via Interlocked.CompareExchange - NEVER a bare shared counter incremented
+// unconditionally on every attempt (an earlier draft of this type did that, and it is wrong: a
+// caller whose candidate fell outside the current block would still have already consumed a slot
+// from whatever block eventually became current, and every retry burned another slot even while
+// merely re-checking bounds, causing far more block leases than allocations under contention at a
+// block boundary). Instead: a caller reads the CURRENT state, tries to atomically claim the next
+// slot FROM THAT EXACT STATE OBJECT (CompareExchange on the state field, swapping in a state whose
+// cursor is one higher, only if no other caller already advanced past it) - if that succeeds and
+// the claimed value is still within the block, allocation is done in one step, no lease and no
+// gate. If the block is exhausted (or was never leased), the caller takes the lease gate, leases a
+// fresh block ONLY IF the state still `ReferenceEquals` the exact object this caller observed as
+// exhausted (another caller may have already installed a fresh state while this one waited for the
+// gate - in which case this caller does nothing but retry against that fresh state instead of
+// leasing redundantly), then loops back to try claiming a slot again from whatever state is now
+// current.
 public sealed class LeasedBlockActorIdAllocator
 {
     // Large enough that a single map's worth of monster spawns (a few hundred, per
@@ -63,59 +102,84 @@ public sealed class LeasedBlockActorIdAllocator
     // changing this type's contract.
     public const uint DefaultBlockSize = 10_000;
 
+    // Immutable snapshot of "the block currently being allocated from, and how far into it we've
+    // gotten" - a NEW instance is installed (via Interlocked.CompareExchange on _state) every time
+    // a fresh block is leased; an individual allocation attempt only ever mutates its OWN
+    // snapshot's local Cursor field via CompareExchange, never a field shared across snapshots.
+    private sealed class LeaseState(ActorIdBlock block)
+    {
+        public readonly ActorIdBlock Block = block;
+        // One less than Block.StartInclusive: the first successful claim increments this to
+        // exactly Block.StartInclusive, matching every other allocator in this codebase's
+        // "AddInt64 stores the NEWLY allocated value" convention.
+        public long Cursor = (long)block.StartInclusive - 1;
+    }
+
+    // The empty/never-leased sentinel state: Block.EndExclusive is 0, so EVERY candidate value
+    // (Cursor+1, always >= 0) is immediately recognized as out-of-block by TryClaim, driving the
+    // very first AllocateAsync call straight into the lease path with no special-cased "not yet
+    // leased" branch anywhere else in this type.
+    private static readonly LeaseState Empty = new(default);
+
     private readonly Func<uint, CancellationToken, Task<ActorIdBlock>> _leaseBlock;
     private readonly uint _blockSize;
     private readonly SemaphoreSlim _leaseGate = new(1, 1);
-    private ActorIdBlock _currentBlock;
-    private long _next;
+    private LeaseState _state = Empty;
 
     public LeasedBlockActorIdAllocator(Func<uint, CancellationToken, Task<ActorIdBlock>> leaseBlock, uint blockSize = DefaultBlockSize)
     {
         _leaseBlock = leaseBlock;
         _blockSize = blockSize;
-        // _next starts past any real block's end, so the very first AllocateAsync call always
-        // takes the "block exhausted, lease a fresh one" path below rather than needing a special
-        // "not yet leased" sentinel state.
-        _next = long.MaxValue;
     }
 
     public async Task<uint> AllocateAsync(CancellationToken cancellationToken = default)
     {
         while (true)
         {
-            var candidate = Interlocked.Increment(ref _next);
-            // Re-read the block snapshot the SAME candidate was validated against - a concurrent
-            // re-lease (below) can move both _currentBlock and _next between this candidate's
-            // increment and its bounds check, so both sides of the comparison must be captured
-            // together, never the block re-read a second time after possibly changing underneath.
-            var block = _currentBlock;
-            if (candidate >= block.StartInclusive && candidate < block.EndExclusive) return (uint)candidate;
+            var state = Volatile.Read(ref _state);
+            if (TryClaim(state, out var claimed)) return claimed;
 
-            // Candidate fell outside the current block - either it was never leased yet, it's
-            // exhausted, or (for a caller that lost a concurrent race) it was computed against a
-            // block another caller has already replaced. Every one of these cases is handled by
-            // the SAME retry: take the gate, lease a fresh block if nobody already did, then loop
-            // back and draw a BRAND NEW candidate against the now-current block - a caller must
-            // never reuse a candidate computed against a stale block, since that value may already
-            // have been (or be about to be) handed out by another caller against the new block.
+            // `state`'s block is exhausted (or the sentinel). Only the caller that actually
+            // installs a replacement leases a fresh block; every other concurrent caller
+            // recognizes (via the ReferenceEquals check below) that _state already moved on and
+            // simply retries against whatever is current now - never leasing redundantly.
             await _leaseGate.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {
-                // Re-check under the gate against the LATEST block: another caller may have
-                // already leased a fresh one covering this candidate while this call was waiting,
-                // in which case there is nothing to do and the loop's next iteration succeeds
-                // immediately without a redundant lease.
-                if (candidate < _currentBlock.StartInclusive || candidate >= _currentBlock.EndExclusive)
+                if (ReferenceEquals(Volatile.Read(ref _state), state))
                 {
                     var leased = await _leaseBlock(_blockSize, cancellationToken).ConfigureAwait(false);
-                    _currentBlock = leased;
-                    _next = leased.StartInclusive - 1L;
+                    Volatile.Write(ref _state, new LeaseState(leased));
                 }
             }
             finally
             {
                 _leaseGate.Release();
             }
+        }
+    }
+
+    // Attempts to claim exactly one slot from `state` (never any other/newer state). Returns false
+    // - claiming nothing, mutating nothing else - if `state`'s block cannot satisfy this claim,
+    // either because it's exhausted or another concurrent caller's CompareExchange already won the
+    // race for the specific slot this call would have claimed (in which case the caller loops and
+    // tries again from the CURRENT _state, which may already be this same state with room left, or
+    // may by then be a newer one).
+    private static bool TryClaim(LeaseState state, out uint claimed)
+    {
+        while (true)
+        {
+            var current = Volatile.Read(ref state.Cursor);
+            var candidate = current + 1;
+            if (!state.Block.Contains(candidate)) { claimed = default; return false; }
+            if (Interlocked.CompareExchange(ref state.Cursor, candidate, current) == current)
+            {
+                claimed = (uint)candidate;
+                return true;
+            }
+            // Another caller claimed `candidate` (or something past it) first - retry the CAS
+            // against this SAME state/block; do not fall through to leasing merely because of a
+            // lost CAS race, only because the block itself is genuinely exhausted.
         }
     }
 }
