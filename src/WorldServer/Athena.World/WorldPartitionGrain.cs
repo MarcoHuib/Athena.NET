@@ -7,7 +7,7 @@ using Athena.Net.World.Runtime;
 
 namespace Athena.Net.World;
 
-public sealed class WorldPartitionGrain(IWorldPartitionResolver resolver, IMovementPathProvider movementPathProvider, TimeProvider timeProvider) : Grain, IWorldPartitionGrain
+public sealed class WorldPartitionGrain(IWorldPartitionResolver resolver, IMovementPathProvider movementPathProvider, TimeProvider timeProvider, IMapCollisionProvider collisionProvider, WorldMonsterTouchedWindowOptions? touchedWindowOptions = null) : Grain, IWorldPartitionGrain
 {
     private readonly Dictionary<string, MapRuntime> _maps = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<uint, string> _mapByCharacter = [];
@@ -18,19 +18,101 @@ public sealed class WorldPartitionGrain(IWorldPartitionResolver resolver, IMovem
     // created lazily on first touch (LoadMonsterSpawnsAsync or an implicit PollMonsterFeedAsync
     // bootstrap) - never pre-created for every map the resolver could theoretically route here,
     // matching this project's existing "never pre-materialize state for a map nobody has touched"
-    // convention (see MonsterSimulation's own lazy-Map(mapId) pattern used for player presence
-    // below). No Timer/reminder exists yet (Step 3) - this step is state/mutation/feed correctness
-    // only, per the plan's own sequencing.
+    // convention (see Map(mapId)'s own identical lazy pattern used for player presence below).
+    //
+    // Active/touched-map policy (see this project's own "Inactive-map semantics" design): a map's
+    // simulation keeps ticking for as long as it is "touched" (a spawn load, a feed poll, or an
+    // engagement mutation - anything that represents genuine current activity) within
+    // TouchedWindow of the grain's own tick loop's current time. A simulation that falls outside
+    // that window is UNLOADED entirely (never merely paused - see WorldMonsterMapSimulation.Unload's
+    // own doc comment for why), and the next touch after that rebuilds it fresh under a new
+    // SimulationEpoch. This is what makes the policy immune to the giant-catch-up-tick failure mode
+    // by construction: there is no elapsed-time state left to feed a stale gap into once a map has
+    // been unloaded.
+    private readonly TimeSpan _touchedWindow = touchedWindowOptions?.Window ?? TimeSpan.FromMinutes(5);
     private readonly Dictionary<string, WorldMonsterMapSimulation> _monsterSimulations = new(StringComparer.OrdinalIgnoreCase);
+    private Orleans.Runtime.IGrainTimer? _monsterTickTimer;
+    private DateTimeOffset? _lastMonsterTickAt;
     private string PartitionId => this.GetPrimaryKeyString();
-    private WorldMonsterMapSimulation MonsterSimulation(string mapId) =>
-        _monsterSimulations.TryGetValue(mapId, out var simulation) ? simulation : _monsterSimulations[mapId] = new WorldMonsterMapSimulation(mapId);
+
+    // Every call site that represents genuine current activity for a map (spawn load, feed poll,
+    // an engagement mutation) goes through this - it both lazily creates the simulation on first
+    // touch AND records that touch's timestamp, which the tick loop itself later consults to decide
+    // unload-vs-keep-ticking.
+    private WorldMonsterMapSimulation MonsterSimulation(string mapId)
+    {
+        var now = timeProvider.GetUtcNow();
+        if (_monsterSimulations.TryGetValue(mapId, out var simulation))
+        {
+            simulation.Touch(now);
+            return simulation;
+        }
+        simulation = new WorldMonsterMapSimulation(mapId, now);
+        _monsterSimulations[mapId] = simulation;
+        return simulation;
+    }
 
     public override Task OnActivateAsync(CancellationToken cancellationToken)
     {
         WorldTelemetry.PartitionActivations.Add(1, new KeyValuePair<string, object?>("world.partition.id", PartitionId));
+        // A grain TIMER (per the approved feed guarantees: "grain timer, not reminder") - fires only
+        // while this activation is alive; an idle-collected/reactivated grain simply starts a fresh
+        // timer on its next activation, which is exactly consistent with this same activation-loss
+        // event already meaning every map's simulation state is gone too (see the plan's own World
+        // activation-lifecycle statement - no new durable persistence is introduced here).
+        _monsterTickTimer = this.RegisterGrainTimer(MonsterTickAsync, MonsterTickInterval, MonsterTickInterval);
         return base.OnActivateAsync(cancellationToken);
     }
+
+    // Matches MapServer's own pre-existing 100ms cadence (MapTcpServer.MonsterTickInterval) - not
+    // independently chosen. The accepted movement-jump investigation finding is carried forward as
+    // telemetry here (see WorldTelemetry.MonsterTick* metrics below), never as speculative
+    // mitigation - see the plan's own "Movement-jump finding" design decision for why.
+    private static readonly TimeSpan MonsterTickInterval = TimeSpan.FromMilliseconds(100);
+
+    private Task MonsterTickAsync()
+    {
+        var tickStartedAt = timeProvider.GetTimestamp();
+        var now = timeProvider.GetUtcNow();
+        if (_lastMonsterTickAt is { } previous)
+        {
+            var elapsedSinceLast = (now - previous).TotalMilliseconds;
+            WorldTelemetry.MonsterTickElapsedSinceLast.Record(elapsedSinceLast, new KeyValuePair<string, object?>("world.partition.id", PartitionId));
+            // "Late" means this tick's own real elapsed gap materially exceeded the configured
+            // cadence - the exact, honestly-measured condition the movement-jump investigation
+            // identified as the mechanism behind the observed client-visible snap; recorded so it
+            // is finally OBSERVABLE, never silently invisible the way the old MapServer tick loop
+            // left it (that loop never measured its own elapsed time at all).
+            if (elapsedSinceLast > MonsterTickInterval.TotalMilliseconds * 1.5)
+                WorldTelemetry.MonsterTickLate.Add(1, new KeyValuePair<string, object?>("world.partition.id", PartitionId));
+        }
+        _lastMonsterTickAt = now;
+
+        // Active/touched-map policy: unload any simulation whose last touch has fallen outside the
+        // window BEFORE ticking anything - an unloaded map is never ticked the same pass it was
+        // unloaded in, and a just-unloaded map's next touch (a fresh LoadMonsterSpawnsAsync/
+        // PollMonsterFeedAsync call) is what rebuilds it, not this timer.
+        List<string>? expired = null;
+        foreach (var (mapId, simulation) in _monsterSimulations)
+        {
+            if (now - simulation.LastTouchedUtc > _touchedWindow) (expired ??= []).Add(mapId);
+        }
+        if (expired is not null)
+        {
+            foreach (var mapId in expired) _monsterSimulations[mapId].Unload();
+        }
+
+        foreach (var simulation in _monsterSimulations.Values)
+        {
+            if (simulation.Registry is null) continue; // Never loaded, or just unloaded above - nothing to tick.
+            simulation.Tick(now, ResolvePresenceForEngagement, IsWalking);
+        }
+
+        WorldTelemetry.MonsterTickProcessingDuration.Record(timeProvider.GetElapsedTime(tickStartedAt).TotalMilliseconds, new KeyValuePair<string, object?>("world.partition.id", PartitionId));
+        return Task.CompletedTask;
+    }
+
+    private WorldPlayerPresence? ResolvePresenceForEngagement(uint characterId) => TryFind(characterId, out var presence) ? presence : null;
 
     public Task<WorldPresenceRegistration> RegisterPresenceAsync(WorldPlayerPresence presence)
     {
@@ -217,18 +299,29 @@ public sealed class WorldPartitionGrain(IWorldPartitionResolver resolver, IMovem
     // MapServer-local). No timer yet (Step 3) - these members are reachable only via direct calls
     // for this step.
 
-    // Leases exactly the actor IDs a batch needs, synchronously, BEFORE constructing
-    // MonsterRegistry (whose constructor requires a synchronous `Func<uint>` - see
-    // WorldMonsterMapSimulation.Rebuild's own doc comment for why leasing cannot happen lazily
-    // inside it). Reuses the SAME global IActorIdBlockAuthorityGrain every other actor-ID consumer
-    // in this cluster leases from (ActorIdBlockAuthorityGrainKey.WellKnownKey) - monster ActorIds
-    // and MapServer's own NPC/warp ActorIds share one domain, per that grain's own doc comment.
+    // Leases EXACTLY the actor IDs a batch needs, in ONE call to the global
+    // IActorIdBlockAuthorityGrain (ActorIdBlockAuthorityGrainKey.WellKnownKey - the same one every
+    // other actor-ID consumer in this cluster leases from) - deliberately NOT
+    // LeasedBlockActorIdAllocator's own default 10,000-ID block size. That allocator re-leases a
+    // fresh (default-sized) block internally whenever its current one is exhausted, which is the
+    // right behavior for a long-lived, many-small-allocations consumer (MapServer's own NPC/warp
+    // ActorId allocator) but wrong here: this map's simulation is rebuilt wholesale on every
+    // load/inactive-map-rebuild (Step 3), and a fresh LeasedBlockActorIdAllocator built fresh each
+    // time would silently discard whatever fraction of a 10,000 block a small spawn set didn't
+    // consume, every single rebuild - a real, compounding ID-domain leak once Step 3's unload/
+    // rebuild policy starts recreating simulations regularly. A map's own required count is known
+    // exactly (sum of every spawn's Count) before MonsterRegistry needs anything, so this leases
+    // that exact size directly against IActorIdBlockAuthorityGrain.LeaseBlockAsync - never through
+    // LeasedBlockActorIdAllocator's own re-lease-on-exhaustion machinery - and hands out the leased
+    // range from a simple synchronous local cursor.
     public async Task<WorldMonsterSpawnLoadResult> LoadMonsterSpawnsAsync(WorldMonsterSpawnBatch batch)
     {
         var mapId = RequireOwnedMap(batch.MapId);
         var simulation = MonsterSimulation(mapId);
         if (!simulation.AllSpawnsBelongToThisMap(batch.Spawns))
             return new WorldMonsterSpawnLoadResult(WorldMonsterSpawnLoadStatus.SpawnMapMismatch, simulation.SimulationEpoch);
+        if (batch.Spawns.Any(spawn => spawn.Count < 0))
+            throw new ArgumentException($"World monster spawn batch for map '{mapId}' contains a spawn with a negative Count.", nameof(batch));
 
         // World computes its OWN canonical fingerprint from the actual batch content - the
         // caller-supplied Fingerprint is never trusted as proof of identity (see
@@ -247,14 +340,32 @@ public sealed class WorldPartitionGrain(IWorldPartitionResolver resolver, IMovem
             return new WorldMonsterSpawnLoadResult(WorldMonsterSpawnLoadStatus.ContentMismatch, simulation.SimulationEpoch);
         }
 
-        var actorIdCount = simulation.PendingActorIdCount(batch.Spawns);
-        var actorIds = new Queue<uint>(actorIdCount);
-        var allocator = new LeasedBlockActorIdAllocator(async (blockSize, cancellationToken) =>
-            await GrainFactory.GetGrain<IActorIdBlockAuthorityGrain>(ActorIdBlockAuthorityGrainKey.WellKnownKey)
-                .LeaseBlockAsync($"world-monster-simulation:{PartitionId}:{mapId}", blockSize));
-        for (var i = 0; i < actorIdCount; i++) actorIds.Enqueue(await allocator.AllocateAsync());
+        // checked{} surfaces an OverflowException rather than silently wrapping if a batch's total
+        // instance count (implausible in practice, but not structurally impossible given
+        // per-spawn Count is caller-supplied) would overflow the uint domain this leases from.
+        var requiredCount = checked((uint)simulation.PendingActorIdCount(batch.Spawns));
+        Func<uint> allocateActorId;
+        if (requiredCount == 0)
+        {
+            // A zero-monster batch (every spawn's Count is 0, or Spawns is empty) must never lease
+            // a block at all - there is nothing to allocate an ActorId for.
+            allocateActorId = static () => throw new InvalidOperationException("No monster instances require an ActorId for this batch - allocateActorId should never be invoked.");
+        }
+        else
+        {
+            var leasedBlock = await GrainFactory.GetGrain<IActorIdBlockAuthorityGrain>(ActorIdBlockAuthorityGrainKey.WellKnownKey)
+                .LeaseBlockAsync($"world-monster-simulation:{PartitionId}:{mapId}", requiredCount);
+            var cursor = (ulong)leasedBlock.StartInclusive - 1;
+            allocateActorId = () =>
+            {
+                cursor++;
+                if (cursor >= leasedBlock.EndExclusive)
+                    throw new InvalidOperationException($"World monster spawn batch for map '{mapId}' leased exactly {requiredCount} ActorId(s) but MonsterRegistry attempted to allocate more than that - PendingActorIdCount disagreed with MonsterRegistry's own per-spawn expansion.");
+                return (uint)cursor;
+            };
+        }
 
-        simulation.Rebuild(batch.Spawns, computedFingerprint, () => actorIds.Dequeue(), timeProvider);
+        simulation.Rebuild(batch.Spawns, computedFingerprint, allocateActorId, timeProvider, collisionProvider, movementPathProvider);
         return new WorldMonsterSpawnLoadResult(WorldMonsterSpawnLoadStatus.Loaded, simulation.SimulationEpoch);
     }
 
@@ -287,8 +398,15 @@ public sealed class WorldPartitionGrain(IWorldPartitionResolver resolver, IMovem
         if (!TryFind(command.AttackerCharacterId, out var attackerPresence) || attackerPresence.PresenceId != command.AttackerPresenceId)
             return Task.FromResult(new WorldMonsterAttackedResult(WorldMonsterAttackedStatus.StaleAttackerPresence));
         var target = new WorldPlayerTargetReference(command.AttackerCharacterId, command.AttackerPresenceId);
-        return Task.FromResult(new WorldMonsterAttackedResult(simulation.TryAcquireEngagement(instance, target)));
+        return Task.FromResult(new WorldMonsterAttackedResult(
+            simulation.TryAcquireEngagement(instance, target, attackerPresence, IsWalking(command.AttackerCharacterId))));
     }
+
+    // Whether the grain's own authoritative movement state currently has this character mid-walk -
+    // an active entry in _movements IS exactly that condition, matching how AdvanceMovementAsync/
+    // CancelMovementAsync already treat _movements membership as the single source of truth for
+    // "is this character currently walking" elsewhere in this same grain.
+    private bool IsWalking(uint characterId) => _movements.ContainsKey(characterId);
 
     public Task<WorldMonsterAttackWindowResult> ValidateMonsterAttackWindowAsync(WorldMonsterAttackWindowQuery query)
     {
@@ -297,14 +415,23 @@ public sealed class WorldPartitionGrain(IWorldPartitionResolver resolver, IMovem
         var simulation = MonsterSimulation(mapId);
         if (!simulation.SimulationEpoch.Equals(reference.SimulationEpoch) || !simulation.TryFind(reference.ActorId, out var instance) || !simulation.MatchesLife(instance, reference))
             return Task.FromResult(new WorldMonsterAttackWindowResult(WorldMonsterAttackWindowStatus.StaleLifeReference));
-        if (!TryFind(query.TargetCharacterId, out var targetPresence) || targetPresence.PresenceId != query.TargetPresenceId)
+        // TargetNotFound (the character has no presence registered at all under this partition)
+        // and StaleTargetPresence (the character IS registered, just under a DIFFERENT PresenceId
+        // than the one this query presents) are kept as separate, distinct diagnostics - collapsing
+        // them would hide which of two genuinely different failure modes actually occurred.
+        if (!TryFind(query.TargetCharacterId, out var targetPresence))
+            return Task.FromResult(new WorldMonsterAttackWindowResult(WorldMonsterAttackWindowStatus.TargetNotFound));
+        if (targetPresence.PresenceId != query.TargetPresenceId)
             return Task.FromResult(new WorldMonsterAttackWindowResult(WorldMonsterAttackWindowStatus.StaleTargetPresence));
         if (!targetPresence.IsAlive)
             return Task.FromResult(new WorldMonsterAttackWindowResult(WorldMonsterAttackWindowStatus.TargetDead));
         var currentTarget = simulation.CurrentTarget(instance.ActorId);
         if (currentTarget is null || currentTarget.CharacterId != query.TargetCharacterId || currentTarget.PresenceId != query.TargetPresenceId)
             return Task.FromResult(new WorldMonsterAttackWindowResult(WorldMonsterAttackWindowStatus.NotCurrentTarget));
-        var range = WorldMonsterEngagementRules.Evaluate(instance, targetPresence, timeProvider.GetUtcNow());
+        // The SAME target-walking semantics NotifyMonsterAttackedAsync/Step 3's own engagement tick
+        // use - the walking-target +1 range bonus (WorldMonsterEngagementRules' own pinned trace)
+        // must not silently default to false here just because this is a different call site.
+        var range = WorldMonsterEngagementRules.Evaluate(instance, targetPresence, IsWalking(query.TargetCharacterId));
         return Task.FromResult(new WorldMonsterAttackWindowResult(
             range is WorldMonsterEngagementDecision.InAttackRange ? WorldMonsterAttackWindowStatus.Valid : WorldMonsterAttackWindowStatus.OutOfRange));
     }

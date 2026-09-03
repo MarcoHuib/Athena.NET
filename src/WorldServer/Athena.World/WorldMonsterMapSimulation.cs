@@ -1,7 +1,15 @@
 using Athena.Net.MapServer.World;
 using Athena.Net.World.Contracts;
+using Athena.Net.World.Runtime;
 
 namespace Athena.Net.World;
+
+// Composition-time override for WorldPartitionGrain's active/touched-map policy window (default 5
+// minutes when not supplied/registered in DI) - exists purely so tests can inject a much shorter
+// window and observe the real unload-on-expiry/rebuild-on-touch behavior deterministically within
+// a bounded real-wall-clock wait, without the production default ever needing to change. Never
+// resolved by anything other than WorldPartitionGrain's own constructor.
+public sealed record WorldMonsterTouchedWindowOptions(TimeSpan Window);
 
 // One map's worth of Phase 2B monster SIMULATION state, owned entirely by WorldPartitionGrain -
 // never its own grain (see IWorldPartitionGrain.cs's own doc comment for the approved
@@ -26,11 +34,48 @@ internal sealed class WorldMonsterMapSimulation
     public string MapId { get; }
     public WorldSimulationEpoch SimulationEpoch { get; private set; }
     public MonsterRegistry? Registry { get; private set; }
+    // Constructed once per Rebuild (not per-tick) - MonsterRuntime itself holds no state beyond its
+    // injected dependencies (all per-instance idle-walk/movement timing lives on MobInstance, via
+    // Registry), so one instance safely serves every tick until the next Rebuild/Unload.
+    private MonsterRuntime? _runtime;
 
-    public WorldMonsterMapSimulation(string mapId)
+    // Touched-window active-map policy (see this project's own "Inactive-map semantics" design):
+    // updated by the grain on every call that represents genuine activity for this map (spawn
+    // load, feed poll, attack/engagement mutation) - the grain's own tick loop consults this to
+    // decide whether this map's simulation is still within its touched window, or has expired and
+    // must be unloaded outright (never merely paused - see this type's own Unload doc comment for
+    // why "stop ticking, later resume the same absolute deadlines" is explicitly rejected).
+    public DateTimeOffset LastTouchedUtc { get; private set; }
+    public void Touch(DateTimeOffset now) => LastTouchedUtc = now;
+
+    public WorldMonsterMapSimulation(string mapId, DateTimeOffset now)
     {
         MapId = mapId;
         SimulationEpoch = WorldSimulationEpoch.NewEpoch();
+        LastTouchedUtc = now;
+    }
+
+    // Discards ALL simulation state for this map outright - Registry, engagement, feed history,
+    // incarnation tracking - rather than merely pausing a timer. This is the chosen policy
+    // (over suspend-and-rebase) specifically because it cannot produce a giant wall-clock-gap
+    // catch-up tick: there is nothing left to feed a stale elapsed-time delta into. The NEXT touch
+    // (a fresh LoadMonsterSpawnsAsync call) rebuilds from static spawn definitions under a brand
+    // new SimulationEpoch and requires a full bootstrap from any consumer - see Rebuild's own doc
+    // comment for why a fresh epoch is exactly what already makes an old consumer's cursor
+    // correctly stale. MapId/LastTouchedUtc themselves are NOT reset - Unload is something that
+    // happens TO an existing simulation instance, the map identity persists across it.
+    public void Unload()
+    {
+        Registry = null;
+        _runtime = null;
+        _movementPathProvider = null;
+        _collisionProvider = null;
+        _spawnFingerprint = null;
+        SimulationEpoch = WorldSimulationEpoch.NewEpoch();
+        _engagementByActorId.Clear();
+        _incarnationByActorId.Clear();
+        _entries.Clear();
+        _nextSequence = 1;
     }
 
     // A monster's engagement target needs BOTH CharacterId and PresenceId (see
@@ -41,9 +86,17 @@ internal sealed class WorldMonsterMapSimulation
     // uint-keyed engagement state - MobInstance.TryAcquireTarget is still called with CharacterId
     // as that uint key, so the two layers never disagree about WHICH character is targeted, only
     // this layer additionally remembers WHICH presence of that character it was.
+    //
+    // `State` is stored EXPLICITLY, never inferred from MobInstance.IsWalking - a monster can have
+    // a target, be currently stationary, and still be out of range (chase path not started yet,
+    // pathfinding not yet progressed) - IsWalking alone cannot distinguish that from genuinely
+    // being in range. Whoever changes Target also computes and stores the correct State via
+    // WorldMonsterEngagementRules at that exact moment (see TryAcquireEngagement) - Step 3 owns
+    // continuously refreshing this State as the authoritative tick re-evaluates range/chase.
     private sealed class EngagementState
     {
         public WorldPlayerTargetReference? Target;
+        public WorldMonsterEngagementState State = WorldMonsterEngagementState.Unengaged;
     }
 
     // Deterministic, order-independent canonical fingerprint over a batch's actual spawn content -
@@ -79,13 +132,28 @@ internal sealed class WorldMonsterMapSimulation
     // constructor requires it) - the caller pre-leases exactly spawns.Sum(s => s.Count) actor IDs
     // via LeasedBlockActorIdAllocator BEFORE calling this, since leasing itself is async and cannot
     // happen lazily inside MonsterRegistry's synchronous construction.
-    public void Rebuild(IReadOnlyList<WorldMonsterSpawnDefinition> spawns, string fingerprint, Func<uint> allocateActorId, TimeProvider timeProvider)
+    //
+    // `collisionProvider` drives the REAL, source-backed RathenaCompatibleMobSpawnCellSelector -
+    // the same pinned spawn-cell search MapServer's own production runtime uses (see
+    // MobSpawnCellSelector.cs's own doc comment for the full trace). UnverifiedFallbackMobSpawnCellSelector
+    // (no walkability/map-bounds checking at all) is deliberately NEVER used here: this is
+    // production World authority, not a collision-less test/dev composition - a test that wants
+    // deterministic behavior supplies a real (even if minimal/synthetic) IMapCollisionProvider
+    // instead of asking this type to silently degrade its own selection quality. A map with no
+    // collision data loaded is a hard configuration error - RathenaCompatibleMobSpawnCellSelector
+    // itself already throws InvalidOperationException for that (never a silent fallback), which is
+    // exactly the behavior this method wants to preserve unmodified.
+    public void Rebuild(IReadOnlyList<WorldMonsterSpawnDefinition> spawns, string fingerprint, Func<uint> allocateActorId, TimeProvider timeProvider, IMapCollisionProvider collisionProvider, IMovementPathProvider movementPathProvider)
     {
         var mobSpawnDefinitions = spawns.SelectMany(ExpandToMobSpawnDefinitions).ToArray();
-        Registry = new MonsterRegistry(mobSpawnDefinitions, allocateActorId, new UnverifiedFallbackMobSpawnCellSelector(), timeProvider);
+        Registry = new MonsterRegistry(mobSpawnDefinitions, allocateActorId, new RathenaCompatibleMobSpawnCellSelector(collisionProvider), timeProvider);
+        _runtime = new MonsterRuntime(Registry, collisionProvider, movementPathProvider, timeProvider);
+        _movementPathProvider = movementPathProvider;
+        _collisionProvider = collisionProvider;
         _spawnFingerprint = fingerprint;
         SimulationEpoch = WorldSimulationEpoch.NewEpoch();
         _engagementByActorId.Clear();
+        _incarnationByActorId.Clear();
         _entries.Clear();
         _nextSequence = 1;
     }
@@ -114,9 +182,11 @@ internal sealed class WorldMonsterMapSimulation
     {
         var position = instance.GetPosition();
         var engagement = _engagementByActorId.TryGetValue(instance.ActorId, out var state) ? state : null;
-        var engagementWireState = !instance.IsAlive || engagement?.Target is null
-            ? WorldMonsterEngagementState.Unengaged
-            : instance.IsWalking ? WorldMonsterEngagementState.Chasing : WorldMonsterEngagementState.InAttackRange;
+        // The EXPLICITLY stored State, never re-inferred from IsWalking - see EngagementState's
+        // own doc comment for why that inference is invalid (a target-holding, stationary,
+        // not-yet-in-range mob is a real, reachable state this must not misreport as either
+        // Chasing or InAttackRange).
+        var engagementWireState = !instance.IsAlive || engagement?.Target is null ? WorldMonsterEngagementState.Unengaged : engagement.State;
         return new WorldMonsterInstance(
             instance.ActorId,
             new WorldMonsterIncarnationId(IncarnationOf(instance)),
@@ -185,7 +255,16 @@ internal sealed class WorldMonsterMapSimulation
         Append(WorldMonsterFeedEntryKind.Respawned, instance);
     }
 
-    public WorldMonsterAttackedStatus TryAcquireEngagement(MobInstance instance, WorldPlayerTargetReference attacker)
+    // `targetPresence`/`targetIsWalking` let this compute the CORRECT initial engagement state
+    // (Unlock/Chase/InAttackRange) at the exact moment of acquisition via WorldMonsterEngagementRules
+    // - never assumed, never left at a stale/default value. Step 3's own tick is what continuously
+    // refreshes this afterward as the mob actually moves; this is only the one-time snapshot valid
+    // at acquisition. If the authoritative evaluation itself says Unlock (e.g. the target is
+    // already out of the grain's own map/alive bookkeeping by the time this runs), the acquisition
+    // still succeeds at the MobInstance/target-identity level - Unlock here just means "no chase
+    // needed yet", not a rejection of the attack itself, matching pinned mob_ai_sub_hard's own
+    // separation between "can this attacker become my target" and "am I already engaged with it".
+    public WorldMonsterAttackedStatus TryAcquireEngagement(MobInstance instance, WorldPlayerTargetReference attacker, WorldPlayerPresence targetPresence, bool targetIsWalking)
     {
         if (!instance.IsAlive) return WorldMonsterAttackedStatus.MonsterNotAttackable;
         var mode = instance.Spawn.Mob.Mode;
@@ -195,7 +274,20 @@ internal sealed class WorldMonsterMapSimulation
         if (!instance.TryAcquireTarget(attacker.CharacterId, mode)) return WorldMonsterAttackedStatus.MonsterNotAttackable;
         var wasUnengaged = state.Target is null;
         state.Target = attacker;
-        if (!alreadyCurrent) Append(wasUnengaged ? WorldMonsterFeedEntryKind.EngagementAcquired : WorldMonsterFeedEntryKind.ChaseStarted, instance);
+        state.State = WorldMonsterEngagementRules.Evaluate(instance, targetPresence, targetIsWalking) switch
+        {
+            WorldMonsterEngagementDecision.InAttackRange => WorldMonsterEngagementState.InAttackRange,
+            WorldMonsterEngagementDecision.Chase => WorldMonsterEngagementState.Chasing,
+            _ => WorldMonsterEngagementState.Unengaged,
+        };
+        if (!alreadyCurrent)
+        {
+            // An EngagementAcquired entry may correctly report Chasing or InAttackRange depending
+            // on the authoritative range decision just computed above - it must never claim
+            // InAttackRange merely because the mob has not started walking yet (the exact
+            // regression this method's own signature change fixes).
+            Append(wasUnengaged ? WorldMonsterFeedEntryKind.EngagementAcquired : WorldMonsterFeedEntryKind.ChaseStarted, instance);
+        }
         return alreadyCurrent ? WorldMonsterAttackedStatus.AlreadyCurrentTarget : WorldMonsterAttackedStatus.Acquired;
     }
 
@@ -209,6 +301,131 @@ internal sealed class WorldMonsterMapSimulation
             Append(WorldMonsterFeedEntryKind.TargetUnlocked, instance);
         }
     }
+
+    private static long RandomJitterMs() => System.Random.Shared.Next(0, 1000);
+
+    // ONE World-owned tick for this map: ordinary idle-walk/movement advancement for every mob
+    // (via MonsterRuntime.ProcessTick - the SAME call MapServer's own production tick loop already
+    // makes for every mob regardless of engagement, since ProcessIdleMovement's own HasActiveTarget
+    // guard already prevents idle-walk from starting on an engaged mob, while its AdvanceMovement
+    // fallback correctly continues whatever walk is already in flight - idle or chase alike; see
+    // MapTcpServer.ProcessOneMonsterTickAsync's own established pattern, mirrored here exactly
+    // rather than inventing a different ordering), THEN due respawns, THEN the source-backed
+    // target-validity/range re-evaluation (WorldMonsterEngagementRules, NOT the full original
+    // MonsterEngagementDomain.Evaluate - cadence/Attack/Wait stay MapServer-local) for every
+    // CURRENTLY engaged mob. `resolvePresence`/`isWalking` are grain-owned lookups (player presence
+    // registration and _movements membership) passed in as delegates so this type never needs its
+    // own reference to the grain's player-tracking state.
+    public void Tick(DateTimeOffset now, Func<uint, WorldPlayerPresence?> resolvePresence, Func<uint, bool> isWalking)
+    {
+        if (Registry is null || _runtime is null) return;
+
+        foreach (var respawned in Registry.ProcessDueRespawns())
+        {
+            OnRespawnObserved(respawned);
+        }
+
+        foreach (var change in _runtime.ProcessTick())
+        {
+            // Only reported as ordinary Moved when the mob has NO current engagement - an engaged
+            // mob's movement is always reported via the engagement-shaped kinds below instead (see
+            // WorldMonsterFeedEntryKind.Moved's own doc comment for why these are mutually
+            // exclusive, never both, for the same instance in the same tick).
+            if (!_engagementByActorId.ContainsKey(change.Instance.ActorId))
+                Append(WorldMonsterFeedEntryKind.Moved, change.Instance);
+        }
+
+        // A snapshot of keys, not a live enumeration - Unlock below mutates _engagementByActorId,
+        // which would otherwise invalidate an in-progress Dictionary enumeration over it.
+        foreach (var actorId in _engagementByActorId.Keys.ToArray())
+        {
+            if (!TryFind(actorId, out var instance) || !instance.IsAlive) continue;
+            var state = _engagementByActorId[actorId];
+            if (state.Target is not { } target) continue;
+
+            var targetPresence = resolvePresence(target.CharacterId);
+            // A resolved presence whose CURRENT PresenceId no longer matches this engagement's own
+            // stored target reference is exactly a stale-reconnect situation (see
+            // WorldPlayerTargetReference's own doc comment) - treated identically to "target gone"
+            // for this authoritative re-evaluation, never silently re-attributed to the new presence.
+            var validTargetPresence = targetPresence is { } presence && presence.PresenceId == target.PresenceId ? presence : null;
+            var decision = WorldMonsterEngagementRules.Evaluate(instance, validTargetPresence, isWalking(target.CharacterId));
+
+            switch (decision)
+            {
+                case WorldMonsterEngagementDecision.Unlock:
+                    Unlock(instance, now, RandomJitterMs);
+                    break;
+
+                case WorldMonsterEngagementDecision.Chase chase:
+                    var previousState = state.State;
+                    state.State = WorldMonsterEngagementState.Chasing;
+                    if (ApplyChaseDecision(instance, chase, now) || previousState != WorldMonsterEngagementState.Chasing)
+                        Append(WorldMonsterFeedEntryKind.ChaseStarted, instance);
+                    break;
+
+                case WorldMonsterEngagementDecision.InAttackRange:
+                    var wasChasing = instance.IsWalking;
+                    var wasInAttackRangeAlready = state.State == WorldMonsterEngagementState.InAttackRange;
+                    state.State = WorldMonsterEngagementState.InAttackRange;
+                    if (wasChasing)
+                    {
+                        // A walking mob reaching attack range is a genuine chase interruption
+                        // (pinned USW_FIXPOS) - MapServer's own local attack executor still owns
+                        // cadence/Attack itself (this World-side tick never calls EnterAttackState/
+                        // ScheduleNextAttack - that remains entirely MapServer-local), but the
+                        // STOP-CHASE half of that transition is simulation-owned and must happen
+                        // here so the mob's authoritative position/IsWalking freezes correctly.
+                        instance.StopChase();
+                        Append(WorldMonsterFeedEntryKind.ChaseInterrupted, instance);
+                    }
+                    else if (!wasInAttackRangeAlready)
+                    {
+                        Append(WorldMonsterFeedEntryKind.InAttackRange, instance);
+                    }
+                    break;
+            }
+        }
+    }
+
+    // Pinned mob_ai_sub_hard's own out-of-range branch (mob.cpp:2213's unit_walktobl) - mirrors
+    // MonsterEngagementTickProcessor.ApplyChaseDecision's own MapServer-side logic exactly (see
+    // that method's own doc comment for the full pinned trace), narrowed to exclude anything
+    // Attack/cadence-related, which stays MapServer-local. Returns true only when a FRESH walk was
+    // started here - a mid-walk retarget is instead consumed by MonsterRuntime.ProcessTick's own
+    // AdvanceMovement call (via the ordinary in-flight-walk continuation path), so this method must
+    // not double-report it.
+    private bool ApplyChaseDecision(MobInstance instance, WorldMonsterEngagementDecision.Chase chase, DateTimeOffset now)
+    {
+        if (instance.IsWalking)
+        {
+            var alreadyTargeting = instance.PendingChaseDestination is { } pending
+                ? pending.X == chase.DestinationX && pending.Y == chase.DestinationY
+                : instance.MovementDestination.X == chase.DestinationX && instance.MovementDestination.Y == chase.DestinationY;
+            if (alreadyTargeting) return false;
+        }
+
+        if (instance.TryRetargetChase(chase.DestinationX, chase.DestinationY))
+        {
+            instance.EnterChaseState();
+            return false; // Deferred to the next cell boundary - ProcessTick's own AdvanceMovement reports it when applied.
+        }
+
+        if (Registry is null || _movementPathProvider is null || _collisionProvider is null) return false;
+        if (!_collisionProvider.TryGetMap(instance.Map, out _)) return false;
+        var position = instance.GetPosition();
+        var path = _movementPathProvider.ComputePath(instance.Map, position.X, position.Y, chase.DestinationX, chase.DestinationY);
+        if (path.Count < 2) return false;
+        if (!instance.TryStartChase(path, instance.Spawn.Mob.WalkSpeed, now)) return false;
+        instance.EnterChaseState();
+        return true;
+    }
+
+    // Stored at Rebuild time alongside _runtime - ApplyChaseDecision needs direct path computation
+    // (not merely what MonsterRuntime's own idle-walk scheduling already does internally), matching
+    // MonsterEngagementTickProcessor's own identical need in MapServer.
+    private IMovementPathProvider? _movementPathProvider;
+    private IMapCollisionProvider? _collisionProvider;
 
     private void Append(WorldMonsterFeedEntryKind kind, MobInstance instance)
     {

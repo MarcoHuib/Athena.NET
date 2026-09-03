@@ -341,7 +341,14 @@ public readonly record struct WorldMonsterFeedCursor(
     [property: Id(0)] WorldSimulationEpoch SimulationEpoch,
     [property: Id(1)] long Sequence);
 
-public enum WorldMonsterFeedEntryKind { EngagementAcquired, ChaseStarted, ChaseInterrupted, TargetUnlocked, InAttackRange, Died, Respawned }
+// `Moved` covers ordinary (non-engagement) idle-walk movement - a walk starting, an intermediate
+// cell being crossed, or a walk finishing for a mob with no current target. Every OTHER kind here
+// already carries its own movement implication where relevant (e.g. ChaseStarted's own Instance
+// snapshot reflects the mob now walking toward its target) - Moved exists specifically so a
+// consumer projecting ordinary wandering movement (a mob with no target at all) has a feed entry
+// to react to; it is never emitted for a mob that currently has an engaged target (that mob's
+// movement is always reported via the engagement-shaped kinds instead, never both).
+public enum WorldMonsterFeedEntryKind { Moved, EngagementAcquired, ChaseStarted, ChaseInterrupted, TargetUnlocked, InAttackRange, Died, Respawned }
 
 // A PURE STATE TRANSITION - never an executable command. In particular, InAttackRange means
 // "the authoritative monster is now engaged and in range," nothing more; it never means "attack

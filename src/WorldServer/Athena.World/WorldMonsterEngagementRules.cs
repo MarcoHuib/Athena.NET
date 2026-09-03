@@ -26,8 +26,11 @@ public static class WorldMonsterEngagementRules
 
     // `targetIsWalking` is supplied by the caller (WorldPartitionGrain, which tracks active
     // movements itself via its own _movements dictionary) rather than derived here, so this type
-    // has no dependency on the grain's own presence/movement bookkeeping shape.
-    public static WorldMonsterEngagementDecision Evaluate(MobInstance mob, WorldPlayerPresence? target, DateTimeOffset now, bool targetIsWalking = false)
+    // has no dependency on the grain's own presence/movement bookkeeping shape. No DateTimeOffset
+    // parameter: cadence (NextAttackAt/Attack/Wait) was already excluded from this decision
+    // entirely (see this type's own doc comment) and nothing else here is time-dependent, so a
+    // `now` parameter would be genuinely unused - removed rather than kept as dead API surface.
+    public static WorldMonsterEngagementDecision Evaluate(MobInstance mob, WorldPlayerPresence? target, bool targetIsWalking = false)
     {
         if (target is not { } presence || !presence.IsAlive || !string.Equals(presence.MapId, mob.Map, StringComparison.OrdinalIgnoreCase))
             return new WorldMonsterEngagementDecision.Unlock();
