@@ -14,6 +14,13 @@ namespace Athena.Net.MapServer.Startup;
 
 public static class MapServerApp
 {
+    // MapServer's NPC/warp actor population is bounded by generated world content and does not
+    // grow via respawn the way monster IDs do (MonsterRegistry's own per-partition
+    // LeasedBlockActorIdAllocator re-leases on exhaustion; this process leases exactly once at
+    // startup). 1,000,000 is comfortably larger than any current or realistically foreseeable
+    // generated NPC/warp actor count for one MapServer process.
+    private const uint NpcWarpActorIdBlockSize = 1_000_000;
+
     public static async Task<int> RunAsync(string[] args)
     {
         var options = StartupOptions.Parse(args);
@@ -120,48 +127,21 @@ public static class MapServerApp
                 : "disabled")}");
 
         //
-        // Load world-partition topology and its reserved actor-ID ranges FIRST: the NPC/warp
-        // WorldActorIdAllocator composed into MapServerWorld.Build below must be seeded from
-        // the SAME config document that defines each monster partition's own actorIdRange, so
-        // the entire global 110,000,000+ actor-ID namespace is validated together (one config
-        // source of truth, never two independently-maintained range tables that could overlap
-        // without either one knowing - see WorldActorIdAllocator's own doc comment).
+        // World-partition topology is pure map-ownership policy - it carries no actor-ID concept
+        // at all (see WorldPartitionTopology.cs's own doc comment). Global actor-ID uniqueness is
+        // guaranteed separately, by leasing non-overlapping blocks from the single
+        // ActorIdBlockAuthorityGrain once the Orleans client is available below - see
+        // LeasedBlockActorIdAllocator's own doc comment for why partition topology and actor-ID
+        // capacity planning are deliberately independent.
         //
         var partitionTopologyPath =
             Environment.GetEnvironmentVariable("ATHENA_WORLD_PARTITIONS_PATH") ??
             Path.Combine("conf", "world_partitions.json");
 
-        var partitionTopologyDocument =
-            WorldPartitionTopologyLoader.LoadDocument(
-                partitionTopologyPath);
-
-        WorldPartitionActorRanges.ValidateAll(
-            partitionTopologyDocument);
-
         var partitionResolver =
-            new WorldPartitionResolver(
-                partitionTopologyDocument.Partitions,
+            WorldPartitionTopologyLoader.Load(
+                partitionTopologyPath,
                 MapServerHostingScope.ServedMaps);
-
-        var npcWarpActorIdAllocator =
-            partitionTopologyDocument.NpcWarpActorIdRange is { } npcWarpRange
-                ? new WorldActorIdAllocator(npcWarpRange.StartInclusive - 1L)
-                : new WorldActorIdAllocator();
-
-        //
-        // Compose the local MapServer world.
-        //
-        // The served-map set is an explicit deployment/runtime scope
-        // and is not inferred from the warp graph or collision data.
-        //
-        var world = MapServerWorld.Build(
-            gameplayRules,
-            collisionProvider: collisionProvider,
-            rates: mergedConfig.GameplayRates,
-            customsEnabled: mergedConfig.CustomsEnabled,
-            servedMaps: MapServerHostingScope.ServedMaps,
-            mobSpawnMaps: MapServerHostingScope.MobSpawnMaps,
-            actorIdAllocator: npcWarpActorIdAllocator);
 
         //
         // Orleans client host
@@ -193,11 +173,50 @@ public static class MapServerApp
 
         await orleansHost.StartAsync(cts.Token);
 
+        var clusterClient =
+            orleansHost.Services
+                .GetRequiredService<IClusterClient>();
+
         var worldRuntime =
             new OrleansWorldRuntime(
-                orleansHost.Services
-                    .GetRequiredService<IClusterClient>(),
+                clusterClient,
                 partitionResolver);
+
+        //
+        // MapServer's own NPC/warp actor-ID domain now leases a block from the same global
+        // ActorIdBlockAuthorityGrain monster partitions use, rather than owning a
+        // hardcoded/config-declared numeric range - see LeasedBlockActorIdAllocator's own doc
+        // comment. "npc-warp" is diagnostic-only (WorldTelemetry tagging), never a range key.
+        // WorldActorIdAllocator itself stays a plain local-counter allocator (its existing
+        // constructor/Allocate contract, unchanged) - only WHERE its seed comes from changes: a
+        // leased block's start instead of a hardcoded 110,000,000 base. One block comfortably
+        // covers this process's entire NPC/warp actor population for the process lifetime (this
+        // domain has no respawn-driven growth the way monster IDs do), so no re-lease-on-exhaustion
+        // handling is needed here the way LeasedBlockActorIdAllocator provides for callers that DO
+        // need it (Athena.World's own per-partition monster allocation).
+        //
+        var npcWarpActorIdBlock =
+            await clusterClient
+                .GetGrain<IActorIdBlockAuthorityGrain>(ActorIdBlockAuthorityGrainKey.WellKnownKey)
+                .LeaseBlockAsync("npc-warp", NpcWarpActorIdBlockSize);
+
+        var npcWarpActorIdAllocator =
+            new WorldActorIdAllocator(npcWarpActorIdBlock.StartInclusive - 1L);
+
+        //
+        // Compose the local MapServer world.
+        //
+        // The served-map set is an explicit deployment/runtime scope
+        // and is not inferred from the warp graph or collision data.
+        //
+        var world = MapServerWorld.Build(
+            gameplayRules,
+            collisionProvider: collisionProvider,
+            rates: mergedConfig.GameplayRates,
+            customsEnabled: mergedConfig.CustomsEnabled,
+            servedMaps: MapServerHostingScope.ServedMaps,
+            mobSpawnMaps: MapServerHostingScope.MobSpawnMaps,
+            actorIdAllocator: npcWarpActorIdAllocator);
 
         var connector =
             new CharServerConnector(configStore);

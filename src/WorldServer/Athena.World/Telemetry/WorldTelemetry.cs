@@ -14,6 +14,7 @@ public static class WorldTelemetry
     public static readonly Histogram<double> PartitionCommandDuration = Meter.CreateHistogram<double>("world.partition.command.duration", "ms");
     public static readonly Histogram<double> PartitionTransferDuration = Meter.CreateHistogram<double>("world.partition.transfer.duration", "ms");
     public static readonly Counter<long> PartitionTransferFailures = Meter.CreateCounter<long>("world.partition.transfer.failures");
+    public static readonly Counter<long> ActorIdBlockLeases = Meter.CreateCounter<long>("world.actorid.block.leases");
 
     public static IServiceCollection AddWorldTelemetry(this IServiceCollection services)
     {

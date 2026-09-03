@@ -107,9 +107,9 @@ public sealed record MapServerWorld(WorldMapRegistry Maps, MonsterRegistry Monst
     // `actorIdAllocator` defaults to null, which means "construct the default 110,000,000-based
     // WorldActorIdAllocator here" - every existing caller/test that doesn't pass one keeps
     // behaving exactly as before. Production (MapServerApp.RunAsync) passes an explicit allocator
-    // seeded from conf/world_partitions.json's reserved npcWarpActorIdRange (see
-    // WorldActorIdAllocator's own doc comment) so the NPC/warp domain this parameter feeds into
-    // WorldMapRegistry never overlaps a monster partition's own actor-ID range.
+    // seeded from a block leased from the global ActorIdBlockAuthorityGrain (see
+    // LeasedBlockActorIdAllocator's own doc comment) so the NPC/warp domain this parameter feeds
+    // into WorldMapRegistry never overlaps a monster partition's own leased actor-ID blocks.
     public static MapServerWorld Build(GameplayRuleServices gameplayRules, IMobSpawnCellSelector? cellSelector = null, TimeProvider? timeProvider = null, IMapCollisionProvider? collisionProvider = null, GameplayRateOptions? rates = null, bool customsEnabled = false, IReadOnlySet<string>? servedMaps = null, IEnumerable<WarpDefinition>? warpDefinitions = null, IReadOnlySet<string>? mobSpawnMaps = null, WorldActorIdAllocator? actorIdAllocator = null)
     {
         var resolvedCollisionProvider = collisionProvider ?? EmptyMapCollisionProvider.Instance;

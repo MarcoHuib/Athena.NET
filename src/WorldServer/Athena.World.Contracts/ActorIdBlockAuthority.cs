@@ -84,20 +84,32 @@ public sealed class LeasedBlockActorIdAllocator
         while (true)
         {
             var candidate = Interlocked.Increment(ref _next);
-            if (candidate < _currentBlock.EndExclusive) return (uint)candidate;
+            // Re-read the block snapshot the SAME candidate was validated against - a concurrent
+            // re-lease (below) can move both _currentBlock and _next between this candidate's
+            // increment and its bounds check, so both sides of the comparison must be captured
+            // together, never the block re-read a second time after possibly changing underneath.
+            var block = _currentBlock;
+            if (candidate >= block.StartInclusive && candidate < block.EndExclusive) return (uint)candidate;
 
-            // Current block exhausted (or never leased). Only one caller actually leases a fresh
-            // block; concurrent callers that lose the race simply retry their own allocation
-            // against the block the winner just installed.
+            // Candidate fell outside the current block - either it was never leased yet, it's
+            // exhausted, or (for a caller that lost a concurrent race) it was computed against a
+            // block another caller has already replaced. Every one of these cases is handled by
+            // the SAME retry: take the gate, lease a fresh block if nobody already did, then loop
+            // back and draw a BRAND NEW candidate against the now-current block - a caller must
+            // never reuse a candidate computed against a stale block, since that value may already
+            // have been (or be about to be) handed out by another caller against the new block.
             await _leaseGate.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {
-                // Re-check under the gate: another caller may have already leased a fresh block
-                // while this one was waiting.
-                if (candidate >= _currentBlock.EndExclusive)
+                // Re-check under the gate against the LATEST block: another caller may have
+                // already leased a fresh one covering this candidate while this call was waiting,
+                // in which case there is nothing to do and the loop's next iteration succeeds
+                // immediately without a redundant lease.
+                if (candidate < _currentBlock.StartInclusive || candidate >= _currentBlock.EndExclusive)
                 {
-                    _currentBlock = await _leaseBlock(_blockSize, cancellationToken).ConfigureAwait(false);
-                    _next = _currentBlock.StartInclusive - 1L;
+                    var leased = await _leaseBlock(_blockSize, cancellationToken).ConfigureAwait(false);
+                    _currentBlock = leased;
+                    _next = leased.StartInclusive - 1L;
                 }
             }
             finally
