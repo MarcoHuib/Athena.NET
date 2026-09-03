@@ -152,6 +152,14 @@ public sealed class PrtFild08dMonsterVisibilityAndRespawnIntegrationTests
             Assert.Equal(actorId, BinaryPrimitives.ReadUInt32LittleEndian(damagePacket.AsSpan(6)));
             Assert.True(BinaryPrimitives.ReadUInt32LittleEndian(damagePacket.AsSpan(22)) > 0, "Expected the strong test attacker to deal nonzero damage.");
 
+            // ZC_HP_INFO (0x0977) always follows the damage packet for an already-visible target -
+            // see PacketConstants.ZcHpInfo's own doc comment - including on the killing blow itself
+            // (pinned status_damage decrements HP to 0 BEFORE mob_damage sends this packet).
+            var hpInfoPacket = await ReadExact(stream, PacketConstants.ZcHpInfoLength);
+            Assert.Equal((short)PacketConstants.ZcHpInfo, BinaryPrimitives.ReadInt16LittleEndian(hpInfoPacket));
+            Assert.Equal(actorId, BinaryPrimitives.ReadUInt32LittleEndian(hpInfoPacket.AsSpan(2)));
+            Assert.Equal(target.CurrentHp, BinaryPrimitives.ReadUInt32LittleEndian(hpInfoPacket.AsSpan(6)));
+
             if (!target.IsAlive)
             {
                 while (true)

@@ -115,6 +115,17 @@ public sealed class MapClientSessionCombatRangeTests
         return [.. header, .. await ReadExact(stream, length - 4)];
     }
 
+    // Every hit against a monster the attacking session can already see (true for every test in
+    // this file - SetupAsync always spawns the target within visibility range) is immediately
+    // followed by ZC_HP_INFO (0x0977) - see PacketConstants.ZcHpInfo's own doc comment.
+    private static async Task<byte[]> ReadDamageThenHpInfo(Stream stream)
+    {
+        var damage = await ReadExact(stream, PacketConstants.ZcNotifyAct3Length);
+        var hpInfo = await ReadExact(stream, PacketConstants.ZcHpInfoLength);
+        Assert.Equal((short)PacketConstants.ZcHpInfo, BinaryPrimitives.ReadInt16LittleEndian(hpInfo));
+        return damage;
+    }
+
     private async Task<(TcpClient Client, NetworkStream Stream, MapClientSession Session, Task RunTask, MobInstance Target, MonsterRegistry Registry)> SetupAsync(
         ushort playerX, ushort playerY, ushort monsterX, ushort monsterY,
         IMapCollisionProvider? collisionProvider = null, TimeProvider? timeProvider = null, Func<int, int, int>? rollWeaponAtk = null,
@@ -213,7 +224,7 @@ public sealed class MapClientSessionCombatRangeTests
 
         await stream.WriteAsync(AttackPacket(target.ActorId));
 
-        var damagePacket = await ReadExact(stream, PacketConstants.ZcNotifyAct3Length);
+        var damagePacket = await ReadDamageThenHpInfo(stream);
         Assert.Equal((short)PacketConstants.ZcNotifyAct3, BinaryPrimitives.ReadInt16LittleEndian(damagePacket));
         var damage = BinaryPrimitives.ReadUInt32LittleEndian(damagePacket.AsSpan(22));
         Assert.True(damage > 0);
@@ -255,7 +266,7 @@ public sealed class MapClientSessionCombatRangeTests
         using var _disposeClient = client;
 
         await stream.WriteAsync(AttackPacket(target.ActorId));
-        var firstHit = await ReadExact(stream, PacketConstants.ZcNotifyAct3Length);
+        var firstHit = await ReadDamageThenHpInfo(stream);
         Assert.Equal((short)PacketConstants.ZcNotifyAct3, BinaryPrimitives.ReadInt16LittleEndian(firstHit));
         var hpAfterFirstHit = target.CurrentHp;
         Assert.True(hpAfterFirstHit < 55u, "First in-range hit must deal damage.");
@@ -306,7 +317,7 @@ public sealed class MapClientSessionCombatRangeTests
         for (var i = 0; i < 20 && target.IsAlive; i++)
         {
             await stream.WriteAsync(AttackPacket(target.ActorId));
-            var damagePacket = await ReadExact(stream, PacketConstants.ZcNotifyAct3Length);
+            var damagePacket = await ReadDamageThenHpInfo(stream);
             Assert.Equal((short)PacketConstants.ZcNotifyAct3, BinaryPrimitives.ReadInt16LittleEndian(damagePacket));
             var damage = BinaryPrimitives.ReadUInt32LittleEndian(damagePacket.AsSpan(22));
             hpAfter = hpAfter > damage ? hpAfter - damage : 0;

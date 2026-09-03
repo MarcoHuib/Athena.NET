@@ -424,6 +424,11 @@ public sealed class MapClientSessionMonsterMovementTests
 
         var damagePacket = await ReadExact(stream, PacketConstants.ZcNotifyAct3Length);
         Assert.Equal((short)PacketConstants.ZcNotifyAct3, BinaryPrimitives.ReadInt16LittleEndian(damagePacket));
+        // ZC_HP_INFO (0x0977) follows the killing blow itself (with hp=0) before the vanish
+        // packet - see PacketConstants.ZcHpInfo's own doc comment for the pinned ordering trace.
+        var hpInfoPacket = await ReadExact(stream, PacketConstants.ZcHpInfoLength);
+        Assert.Equal((short)PacketConstants.ZcHpInfo, BinaryPrimitives.ReadInt16LittleEndian(hpInfoPacket));
+        Assert.Equal(0u, BinaryPrimitives.ReadUInt32LittleEndian(hpInfoPacket.AsSpan(6)));
         var vanishPacket = await ReadExact(stream, PacketConstants.ZcNotifyVanishLength);
         Assert.Equal((short)PacketConstants.ZcNotifyVanish, BinaryPrimitives.ReadInt16LittleEndian(vanishPacket));
         Assert.False(target.IsAlive);

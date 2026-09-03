@@ -200,6 +200,19 @@ public sealed class WorldPartitionGrain(IWorldPartitionResolver resolver, IMovem
         return Task.FromResult(new WorldMapSnapshot(PartitionId, mapId, players));
     }
 
+    // Phase 2B monster-simulation contract members: signatures only for this step (per the plan's
+    // own "contracts only" first step - see IWorldPartitionGrain.cs's own doc comment for the full
+    // scope boundary). Real implementation (per-map MonsterRegistry/MobInstance state, epoch/
+    // fingerprint/feed logic, the extracted range/validity decision, attacker-presence-checked
+    // mutations) lands in the next step; these stubs exist only so the interface change compiles
+    // across the whole solution without prematurely committing to any of that logic here.
+    public Task<WorldMonsterSpawnLoadResult> LoadMonsterSpawnsAsync(WorldMonsterSpawnBatch batch) => throw new NotImplementedException("Phase 2B monster spawn loading lands in the next implementation step.");
+    public Task<WorldMonsterFeedPage> PollMonsterFeedAsync(WorldMonsterFeedCursor? cursor, string mapId) => throw new NotImplementedException("Phase 2B monster feed polling lands in the next implementation step.");
+    public Task<WorldMonsterDeathResult> TryMarkMonsterDeadAsync(WorldMonsterLifeReference reference) => throw new NotImplementedException("Phase 2B monster death lifecycle lands in the next implementation step.");
+    public Task<WorldMonsterAttackedResult> NotifyMonsterAttackedAsync(WorldMonsterAttackedCommand command) => throw new NotImplementedException("Phase 2B monster engagement acquisition lands in the next implementation step.");
+    public Task<WorldMonsterAttackWindowResult> ValidateMonsterAttackWindowAsync(WorldMonsterAttackWindowQuery query) => throw new NotImplementedException("Phase 2B monster attack-window validation lands in the next implementation step.");
+    public Task<WorldPresenceLifeStateResult> UpdatePresenceLifeStateAsync(WorldPresenceLifeStateUpdate update) => throw new NotImplementedException("Phase 2B presence life-state updates land in the next implementation step.");
+
     private string RequireOwnedMap(string mapId)
     {
         var normalized = WorldMapId.Normalize(mapId); var owner = resolver.ResolvePartition(normalized);

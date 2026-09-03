@@ -1888,6 +1888,26 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
             actionType: 0);
         await WriteAsync(damagePacket, cancellationToken);
 
+        // ZC_HP_INFO (0x0977) immediately follows the damage packet, matching pinned
+        // status_damage -> mob_damage's own ordering (status.cpp:1629-1657): HP is already
+        // decremented and mob_damage (which unconditionally sends the HP bar, gated only on
+        // battle_config.monster_hp_bars_info/MF_HIDEMOBHPBAR, both left at their pinned defaults
+        // here - no such config exists in this codebase yet) runs BEFORE the death check/vanish
+        // packet - see PacketConstants.ZcHpInfo's own doc comment for the exact trace. This is why
+        // the killing blow's own HP-info packet correctly shows hp=0, sent BEFORE the vanish
+        // packet below, never after. Visibility is scoped to exactly this session, mirroring
+        // pinned mob_damage's own dmglog+AREA_SIZE loop: the attacking session is definitionally
+        // in range (it just landed a hit) and already has the target marked visible via the
+        // existing _visibleActorIds set (the same discovery mechanism SendVisibleMonsterActorsAsync
+        // uses) - IsActorVisible is a pure query here, this call must never itself mark the actor
+        // visible (that would be wrong for an attacker who somehow has no discovery packet yet,
+        // which should not happen in the supported single-attacker-session combat path today).
+        if (_visibleActorIds.IsActorVisible(expected.TargetActorId))
+        {
+            var hpInfoPacket = IroMonsterCombatPackets.BuildHpInfo(expected.TargetActorId, outcome.HpAfter, target.Spawn.Mob.MaxHp);
+            await WriteAsync(hpInfoPacket, cancellationToken);
+        }
+
         if (outcome.KilledByThisHit)
         {
             // Pinned mob_dead awards generated monster EXP before clearing the dead unit.

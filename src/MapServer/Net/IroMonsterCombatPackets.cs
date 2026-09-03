@@ -28,6 +28,22 @@ internal static class IroMonsterCombatPackets
         return packet;
     }
 
+    // ZC_HP_INFO (0x0977), PINNED-SOURCE-BACKED, NOT capture-verified - see
+    // PacketConstants.ZcHpInfo's own doc comment for the exact clif_monster_hp_bar
+    // (clif.cpp:19958-19969) trace and PACKETVER applicability. Pure representation of an
+    // already-authoritative post-damage (or post-heal) HP snapshot - callers pass the monster's
+    // REAL current/max HP at the moment this is sent, never a recomputed or cached value.
+    // Fixed 14 bytes: id.L hp.L maxHp.L.
+    internal static byte[] BuildHpInfo(uint actorId, uint currentHp, uint maxHp)
+    {
+        var packet = new byte[PacketConstants.ZcHpInfoLength];
+        BinaryPrimitives.WriteInt16LittleEndian(packet, PacketConstants.ZcHpInfo);
+        BinaryPrimitives.WriteUInt32LittleEndian(packet.AsSpan(2), actorId);
+        BinaryPrimitives.WriteUInt32LittleEndian(packet.AsSpan(6), currentHp);
+        BinaryPrimitives.WriteUInt32LittleEndian(packet.AsSpan(10), maxHp);
+        return packet;
+    }
+
     // ZC_NOTIFY_VANISH (0x0080), verified capture frame 694, exact 7-byte match:
     // id.L type.B (clif.cpp:945). type=1 is explicitly "died" per pinned source comment.
     internal static byte[] BuildNotifyVanish(uint actorId, byte reason)
