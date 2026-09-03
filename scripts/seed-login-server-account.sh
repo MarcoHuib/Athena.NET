@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
 SECRETS_PATH="${1:-solutionfiles/secrets/secret.json}"
 LOGIN_USER_ARG="${2:-}"
 LOGIN_PASS_ARG="${3:-}"
@@ -151,16 +154,13 @@ normalize_sql_server() {
 }
 
 DOCKER_NETWORK=""
-SQL_EDGE_CONTAINER=""
+SQL_CONTAINER=""
 
 if [[ "$SQL_SERVER" == localhost* || "$SQL_SERVER" == 127.0.0.1* || "$SQL_SERVER" == tcp:localhost* || "$SQL_SERVER" == tcp:127.0.0.1* ]]; then
-  if SQL_EDGE_CONTAINER="$(docker ps --filter 'ancestor=mcr.microsoft.com/azure-sql-edge:latest' --format '{{.Names}}' | head -n1)"; then
-    if [ -n "$SQL_EDGE_CONTAINER" ]; then
-      DOCKER_NETWORK="container:$SQL_EDGE_CONTAINER"
-      SQL_SERVER="localhost,1433"
-    else
-      SQL_SERVER="$(normalize_sql_server "$SQL_SERVER")"
-    fi
+  SQL_CONTAINER="$(docker compose --project-directory "$REPO_ROOT" -f "$REPO_ROOT/docker-compose.yml" ps -q sql 2>/dev/null || true)"
+  if [ -n "$SQL_CONTAINER" ]; then
+    DOCKER_NETWORK="container:$SQL_CONTAINER"
+    SQL_SERVER="localhost,1433"
   else
     SQL_SERVER="$(normalize_sql_server "$SQL_SERVER")"
   fi
