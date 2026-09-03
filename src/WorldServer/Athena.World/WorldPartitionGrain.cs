@@ -1,3 +1,4 @@
+using Athena.Net.MapServer.World;
 using Athena.Net.World.Contracts;
 using Athena.Net.World.Telemetry;
 using Orleans;
@@ -6,14 +7,24 @@ using Athena.Net.World.Runtime;
 
 namespace Athena.Net.World;
 
-public sealed class WorldPartitionGrain(IWorldPartitionResolver resolver, IMovementPathProvider movementPathProvider) : Grain, IWorldPartitionGrain
+public sealed class WorldPartitionGrain(IWorldPartitionResolver resolver, IMovementPathProvider movementPathProvider, TimeProvider timeProvider) : Grain, IWorldPartitionGrain
 {
     private readonly Dictionary<string, MapRuntime> _maps = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<uint, string> _mapByCharacter = [];
     private readonly Dictionary<Guid, TransferRecord> _outgoing = [];
     private readonly Dictionary<Guid, IncomingRecord> _incoming = [];
     private readonly Dictionary<uint, ActiveMovement> _movements = [];
+    // Phase 2B monster simulation: one WorldMonsterMapSimulation per map this partition owns,
+    // created lazily on first touch (LoadMonsterSpawnsAsync or an implicit PollMonsterFeedAsync
+    // bootstrap) - never pre-created for every map the resolver could theoretically route here,
+    // matching this project's existing "never pre-materialize state for a map nobody has touched"
+    // convention (see MonsterSimulation's own lazy-Map(mapId) pattern used for player presence
+    // below). No Timer/reminder exists yet (Step 3) - this step is state/mutation/feed correctness
+    // only, per the plan's own sequencing.
+    private readonly Dictionary<string, WorldMonsterMapSimulation> _monsterSimulations = new(StringComparer.OrdinalIgnoreCase);
     private string PartitionId => this.GetPrimaryKeyString();
+    private WorldMonsterMapSimulation MonsterSimulation(string mapId) =>
+        _monsterSimulations.TryGetValue(mapId, out var simulation) ? simulation : _monsterSimulations[mapId] = new WorldMonsterMapSimulation(mapId);
 
     public override Task OnActivateAsync(CancellationToken cancellationToken)
     {
@@ -200,18 +211,111 @@ public sealed class WorldPartitionGrain(IWorldPartitionResolver resolver, IMovem
         return Task.FromResult(new WorldMapSnapshot(PartitionId, mapId, players));
     }
 
-    // Phase 2B monster-simulation contract members: signatures only for this step (per the plan's
-    // own "contracts only" first step - see IWorldPartitionGrain.cs's own doc comment for the full
-    // scope boundary). Real implementation (per-map MonsterRegistry/MobInstance state, epoch/
-    // fingerprint/feed logic, the extracted range/validity decision, attacker-presence-checked
-    // mutations) lands in the next step; these stubs exist only so the interface change compiles
-    // across the whole solution without prematurely committing to any of that logic here.
-    public Task<WorldMonsterSpawnLoadResult> LoadMonsterSpawnsAsync(WorldMonsterSpawnBatch batch) => throw new NotImplementedException("Phase 2B monster spawn loading lands in the next implementation step.");
-    public Task<WorldMonsterFeedPage> PollMonsterFeedAsync(WorldMonsterFeedCursor? cursor, string mapId) => throw new NotImplementedException("Phase 2B monster feed polling lands in the next implementation step.");
-    public Task<WorldMonsterDeathResult> TryMarkMonsterDeadAsync(WorldMonsterLifeReference reference) => throw new NotImplementedException("Phase 2B monster death lifecycle lands in the next implementation step.");
-    public Task<WorldMonsterAttackedResult> NotifyMonsterAttackedAsync(WorldMonsterAttackedCommand command) => throw new NotImplementedException("Phase 2B monster engagement acquisition lands in the next implementation step.");
-    public Task<WorldMonsterAttackWindowResult> ValidateMonsterAttackWindowAsync(WorldMonsterAttackWindowQuery query) => throw new NotImplementedException("Phase 2B monster attack-window validation lands in the next implementation step.");
-    public Task<WorldPresenceLifeStateResult> UpdatePresenceLifeStateAsync(WorldPresenceLifeStateUpdate update) => throw new NotImplementedException("Phase 2B presence life-state updates land in the next implementation step.");
+    // Phase 2B monster-simulation contract members. See WorldMonsterMapSimulation's own doc
+    // comment for the per-map state this delegates to, and IWorldPartitionGrain.cs's own doc
+    // comment for the full scope boundary (simulation authority only - damage/quest/HP stay
+    // MapServer-local). No timer yet (Step 3) - these members are reachable only via direct calls
+    // for this step.
+
+    // Leases exactly the actor IDs a batch needs, synchronously, BEFORE constructing
+    // MonsterRegistry (whose constructor requires a synchronous `Func<uint>` - see
+    // WorldMonsterMapSimulation.Rebuild's own doc comment for why leasing cannot happen lazily
+    // inside it). Reuses the SAME global IActorIdBlockAuthorityGrain every other actor-ID consumer
+    // in this cluster leases from (ActorIdBlockAuthorityGrainKey.WellKnownKey) - monster ActorIds
+    // and MapServer's own NPC/warp ActorIds share one domain, per that grain's own doc comment.
+    public async Task<WorldMonsterSpawnLoadResult> LoadMonsterSpawnsAsync(WorldMonsterSpawnBatch batch)
+    {
+        var mapId = RequireOwnedMap(batch.MapId);
+        var simulation = MonsterSimulation(mapId);
+        if (!simulation.AllSpawnsBelongToThisMap(batch.Spawns))
+            return new WorldMonsterSpawnLoadResult(WorldMonsterSpawnLoadStatus.SpawnMapMismatch, simulation.SimulationEpoch);
+
+        // World computes its OWN canonical fingerprint from the actual batch content - the
+        // caller-supplied Fingerprint is never trusted as proof of identity (see
+        // WorldMonsterSpawnBatch's own doc comment). A caller whose own claimed fingerprint
+        // disagrees with what World independently computes gets a distinct rejection from an
+        // ordinary "content genuinely changed" reload, since that specifically indicates a caller
+        // bug (its own hashing disagrees with its own payload), not a legitimate new spawn set.
+        var computedFingerprint = WorldMonsterMapSimulation.ComputeContentFingerprint(batch.Spawns);
+        if (!string.IsNullOrEmpty(batch.Fingerprint) && !string.Equals(batch.Fingerprint, computedFingerprint, StringComparison.Ordinal))
+            return new WorldMonsterSpawnLoadResult(WorldMonsterSpawnLoadStatus.CallerFingerprintMismatch, simulation.SimulationEpoch);
+
+        if (simulation.CurrentFingerprint is { } existingFingerprint)
+        {
+            if (string.Equals(existingFingerprint, computedFingerprint, StringComparison.Ordinal))
+                return new WorldMonsterSpawnLoadResult(WorldMonsterSpawnLoadStatus.AlreadyLoaded, simulation.SimulationEpoch);
+            return new WorldMonsterSpawnLoadResult(WorldMonsterSpawnLoadStatus.ContentMismatch, simulation.SimulationEpoch);
+        }
+
+        var actorIdCount = simulation.PendingActorIdCount(batch.Spawns);
+        var actorIds = new Queue<uint>(actorIdCount);
+        var allocator = new LeasedBlockActorIdAllocator(async (blockSize, cancellationToken) =>
+            await GrainFactory.GetGrain<IActorIdBlockAuthorityGrain>(ActorIdBlockAuthorityGrainKey.WellKnownKey)
+                .LeaseBlockAsync($"world-monster-simulation:{PartitionId}:{mapId}", blockSize));
+        for (var i = 0; i < actorIdCount; i++) actorIds.Enqueue(await allocator.AllocateAsync());
+
+        simulation.Rebuild(batch.Spawns, computedFingerprint, () => actorIds.Dequeue(), timeProvider);
+        return new WorldMonsterSpawnLoadResult(WorldMonsterSpawnLoadStatus.Loaded, simulation.SimulationEpoch);
+    }
+
+    public Task<WorldMonsterFeedPage> PollMonsterFeedAsync(WorldMonsterFeedCursor? cursor, string mapId)
+    {
+        mapId = RequireOwnedMap(mapId);
+        return Task.FromResult(MonsterSimulation(mapId).BuildPage(cursor));
+    }
+
+    public Task<WorldMonsterDeathResult> TryMarkMonsterDeadAsync(WorldMonsterLifeReference reference)
+    {
+        var mapId = RequireOwnedMap(reference.MapId);
+        var simulation = MonsterSimulation(mapId);
+        if (!simulation.SimulationEpoch.Equals(reference.SimulationEpoch) || !simulation.TryFind(reference.ActorId, out var instance) || !simulation.MatchesLife(instance, reference))
+            return Task.FromResult(new WorldMonsterDeathResult(WorldMonsterDeathStatus.StaleLifeReference));
+        return Task.FromResult(new WorldMonsterDeathResult(simulation.MarkDead(instance)));
+    }
+
+    public Task<WorldMonsterAttackedResult> NotifyMonsterAttackedAsync(WorldMonsterAttackedCommand command)
+    {
+        var reference = command.Life;
+        var mapId = RequireOwnedMap(reference.MapId);
+        var simulation = MonsterSimulation(mapId);
+        if (!simulation.SimulationEpoch.Equals(reference.SimulationEpoch) || !simulation.TryFind(reference.ActorId, out var instance) || !simulation.MatchesLife(instance, reference))
+            return Task.FromResult(new WorldMonsterAttackedResult(WorldMonsterAttackedStatus.StaleLifeReference));
+        // The attacker's presence must still be the grain's own CURRENT registration for that
+        // CharacterId - a stale presence (e.g. from before a disconnect/reconnect) must never
+        // acquire a target, exactly like a stale epoch/incarnation must not (see
+        // WorldPlayerTargetReference's own doc comment).
+        if (!TryFind(command.AttackerCharacterId, out var attackerPresence) || attackerPresence.PresenceId != command.AttackerPresenceId)
+            return Task.FromResult(new WorldMonsterAttackedResult(WorldMonsterAttackedStatus.StaleAttackerPresence));
+        var target = new WorldPlayerTargetReference(command.AttackerCharacterId, command.AttackerPresenceId);
+        return Task.FromResult(new WorldMonsterAttackedResult(simulation.TryAcquireEngagement(instance, target)));
+    }
+
+    public Task<WorldMonsterAttackWindowResult> ValidateMonsterAttackWindowAsync(WorldMonsterAttackWindowQuery query)
+    {
+        var reference = query.Life;
+        var mapId = RequireOwnedMap(reference.MapId);
+        var simulation = MonsterSimulation(mapId);
+        if (!simulation.SimulationEpoch.Equals(reference.SimulationEpoch) || !simulation.TryFind(reference.ActorId, out var instance) || !simulation.MatchesLife(instance, reference))
+            return Task.FromResult(new WorldMonsterAttackWindowResult(WorldMonsterAttackWindowStatus.StaleLifeReference));
+        if (!TryFind(query.TargetCharacterId, out var targetPresence) || targetPresence.PresenceId != query.TargetPresenceId)
+            return Task.FromResult(new WorldMonsterAttackWindowResult(WorldMonsterAttackWindowStatus.StaleTargetPresence));
+        if (!targetPresence.IsAlive)
+            return Task.FromResult(new WorldMonsterAttackWindowResult(WorldMonsterAttackWindowStatus.TargetDead));
+        var currentTarget = simulation.CurrentTarget(instance.ActorId);
+        if (currentTarget is null || currentTarget.CharacterId != query.TargetCharacterId || currentTarget.PresenceId != query.TargetPresenceId)
+            return Task.FromResult(new WorldMonsterAttackWindowResult(WorldMonsterAttackWindowStatus.NotCurrentTarget));
+        var range = WorldMonsterEngagementRules.Evaluate(instance, targetPresence, timeProvider.GetUtcNow());
+        return Task.FromResult(new WorldMonsterAttackWindowResult(
+            range is WorldMonsterEngagementDecision.InAttackRange ? WorldMonsterAttackWindowStatus.Valid : WorldMonsterAttackWindowStatus.OutOfRange));
+    }
+
+    public Task<WorldPresenceLifeStateResult> UpdatePresenceLifeStateAsync(WorldPresenceLifeStateUpdate update)
+    {
+        if (!TryFind(update.CharacterId, out var current)) return Task.FromResult(new WorldPresenceLifeStateResult(WorldPresenceLifeStateStatus.NotFound));
+        if (current.PresenceId != update.PresenceId) return Task.FromResult(new WorldPresenceLifeStateResult(WorldPresenceLifeStateStatus.StalePresence));
+        Map(current.MapId).Players[current.CharacterId] = current with { IsAlive = update.IsAlive };
+        return Task.FromResult(new WorldPresenceLifeStateResult(WorldPresenceLifeStateStatus.Updated));
+    }
 
     private string RequireOwnedMap(string mapId)
     {

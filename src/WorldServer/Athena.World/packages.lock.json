@@ -694,6 +694,12 @@
           "Microsoft.Orleans.Sdk": "[10.3.0, )"
         }
       },
+      "athena.world.monsters": {
+        "type": "Project",
+        "dependencies": {
+          "Athena.World.Runtime": "[1.0.0, )"
+        }
+      },
       "athena.world.runtime": {
         "type": "Project"
       }

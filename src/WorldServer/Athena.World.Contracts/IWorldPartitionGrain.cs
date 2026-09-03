@@ -230,6 +230,19 @@ public sealed record WorldMonsterLifeReference(
 
 public enum WorldMonsterLifecycleState { Alive, Dead }
 
+// A monster's target identity is (CharacterId, PresenceId) TOGETHER, never CharacterId alone - a
+// character can disconnect and reconnect with the same CharacterId but a genuinely different
+// PresenceId, and a monster must not silently keep (or transfer) an existing engagement onto that
+// replacement presence merely because the CharacterId number still matches. Every World-side
+// engagement evaluation resolves this exact pair against the grain's CURRENT presence
+// registration for CharacterId; if the currently-registered presence's PresenceId no longer
+// matches PresenceId here, the authoritative result is Unlock (see WorldMonsterEngagementState's
+// own doc comment) - never a silent reattribution to the new presence.
+[GenerateSerializer]
+public sealed record WorldPlayerTargetReference(
+    [property: Id(0)] uint CharacterId,
+    [property: Id(1)] Guid PresenceId);
+
 // World's own copy of MonsterEngagementDomain's target-validity/range decision, narrowed to
 // exclude attack cadence entirely (NextAttackAt/Attack/Wait stay MapServer-local - see
 // WorldMonsterEngagementState's own doc comment). Unlock/Chase/InAttackRange mirror the pinned
@@ -245,6 +258,12 @@ public enum WorldMonsterEngagementState { Unengaged, Chasing, InAttackRange }
 // distinct from this type so the authority boundary between "World-projected" and
 // "MapServer-combat-local" state is mechanically obvious at every call site, never merely a
 // convention a reviewer has to remember.
+//
+// Deliberately has NO per-instance sequence field: the feed protocol already has
+// WorldMonsterFeedEntry.Sequence (one incremental transition's own position) and
+// WorldMonsterFeedPage.AsOfSequence (the atomic snapshot/cursor boundary for the WHOLE page) -
+// either of those, not a third notion living inside each individual monster instance, is always
+// the authoritative sequence position for any snapshot/entry this type appears in.
 [GenerateSerializer]
 public sealed record WorldMonsterInstance(
     [property: Id(0)] uint ActorId,
@@ -258,15 +277,20 @@ public sealed record WorldMonsterInstance(
     [property: Id(8)] ushort DestinationX,
     [property: Id(9)] ushort DestinationY,
     [property: Id(10)] WorldMonsterEngagementState Engagement,
-    [property: Id(11)] uint? EngagedTargetCharacterId,
-    [property: Id(12)] long SequenceAsOf);
+    [property: Id(11)] WorldPlayerTargetReference? EngagedTarget);
 
 // A serializable PROJECTION of a spawn declaration - not MobSpawnDefinition/MobDefinition
 // themselves, which live in MapServer's/Athena.World.Monsters' file-linked source and reference
-// types (e.g. WorldSourceInfo) with no reason to cross the Orleans wire. MobId is enough for the
-// grain to reconstruct a full MobSpawnDefinition against its own compiled-in MobDefinition-by-id
-// lookup (the same generated mob-stat data GeneratedMobSpawnRegistry already compiles from) -
-// static per-mob stats are not duplicated over the wire per spawn declaration.
+// types (e.g. WorldSourceInfo) with no reason to cross the Orleans wire. Carries exactly the
+// per-mob stat fields World's own movement/engagement logic actually reads (confirmed by
+// inspection of MonsterRuntime/MobInstance/MonsterEngagementDomain: WalkSpeed, AttackRange, Mode,
+// MaxHp - nothing else from the much larger MobDefinition is ever consulted by simulation/
+// engagement code, only by damage calculation, which stays MapServer-local) - World does not need,
+// and does not have, the full generated mob-stat database (GeneratedMobs/GeneratedMobSpawnRegistry
+// live under src/MapServer/Generated/, not file-linked into Athena.World.Monsters; see the plan's
+// own spawn-initialization feasibility-check finding for why linking that generated tree wholesale
+// is out of scope for this phase). The caller (MapServer, which DOES have that data) projects only
+// these fields per spawn declaration.
 [GenerateSerializer]
 public sealed record WorldMonsterSpawnDefinition(
     [property: Id(0)] int MobId,
@@ -278,20 +302,27 @@ public sealed record WorldMonsterSpawnDefinition(
     [property: Id(6)] int Count,
     [property: Id(7)] int RespawnDelayMs,
     [property: Id(8)] int RespawnRandomDelayMs,
-    [property: Id(9)] string SpawnName);
+    [property: Id(9)] string SpawnName,
+    [property: Id(10)] int WalkSpeedMs,
+    [property: Id(11)] int AttackRange,
+    [property: Id(12)] uint MaxHp,
+    [property: Id(13)] uint Mode);
 
-// `Fingerprint` is a deterministic hash of the full Spawns content, computed by the CALLER (see
-// LoadMonsterSpawnsAsync's own doc comment for why the grain never silently no-ops on conflicting
-// content: it must be able to tell "identical reload" from "different authoritative content"
-// without re-deriving the hash itself from a list order that could legitimately vary between two
-// otherwise-identical calls).
+// `Fingerprint` is a caller-supplied convenience value ONLY (logging/diagnostics, and a cheap
+// pre-check) - it is NEVER trusted as proof two payloads are identical. The grain independently
+// computes its OWN canonical fingerprint from the batch's actual spawn content (a deterministic,
+// order-independent hash over every spawn's normalized fields) and compares that self-computed
+// value against whatever it already has stored for the map; a caller-provided value that
+// disagrees with what the grain itself computes is its own distinct rejection
+// (WorldMonsterSpawnLoadStatus.CallerFingerprintMismatch), separate from an ordinary
+// content-changed reload rejection - see LoadMonsterSpawnsAsync's own doc comment.
 [GenerateSerializer]
 public sealed record WorldMonsterSpawnBatch(
     [property: Id(0)] string MapId,
     [property: Id(1)] string Fingerprint,
     [property: Id(2)] IReadOnlyList<WorldMonsterSpawnDefinition> Spawns);
 
-public enum WorldMonsterSpawnLoadStatus { Loaded, AlreadyLoaded, FingerprintMismatch }
+public enum WorldMonsterSpawnLoadStatus { Loaded, AlreadyLoaded, ContentMismatch, CallerFingerprintMismatch, SpawnMapMismatch }
 
 [GenerateSerializer]
 public sealed record WorldMonsterSpawnLoadResult(
@@ -322,15 +353,16 @@ public enum WorldMonsterFeedEntryKind { EngagementAcquired, ChaseStarted, ChaseI
 // entries arrive, and its own separately-scheduled local attack cadence (NextAttackAt) decides
 // WHEN to actually attack while that mirror says InAttackRange - see
 // ValidateMonsterAttackWindowAsync for the read-only recheck a consumer performs at that moment,
-// immediately before mutating player HP.
+// immediately before mutating player HP. Target identity, when relevant to Kind, is read from
+// Instance.EngagedTarget - deliberately no separate TargetCharacterId field here, to avoid two
+// competing notions of "who is the target" between this entry and the Instance it already embeds.
 [GenerateSerializer]
 public sealed record WorldMonsterFeedEntry(
     [property: Id(0)] long Sequence,
     [property: Id(1)] WorldMonsterFeedEntryKind Kind,
     [property: Id(2)] uint ActorId,
     [property: Id(3)] WorldMonsterIncarnationId IncarnationId,
-    [property: Id(4)] WorldMonsterInstance Instance,
-    [property: Id(5)] uint? TargetCharacterId);
+    [property: Id(4)] WorldMonsterInstance Instance);
 
 [GenerateSerializer]
 public sealed record WorldMonsterFeedPage(

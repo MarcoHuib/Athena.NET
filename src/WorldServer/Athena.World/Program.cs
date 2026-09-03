@@ -26,5 +26,9 @@ Console.WriteLine($"World collision maps loaded: {collisionRuntime.MapCount}");
 builder.Services.AddSingleton<IWorldPartitionResolver>(resolver);
 builder.Services.AddSingleton<IMapCollisionProvider>(collisionRuntime.Collision);
 builder.Services.AddSingleton<IMovementPathProvider>(collisionRuntime.Movement);
+// Phase 2B monster simulation (MonsterRegistry/MobInstance, file-linked into Athena.World.Monsters
+// - see WorldMonsterMapSimulation's own doc comment) needs a TimeProvider exactly like MapServer's
+// own equivalent composition root already supplies one.
+builder.Services.AddSingleton(TimeProvider.System);
 
 await builder.Build().RunAsync();
