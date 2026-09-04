@@ -1698,7 +1698,26 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
                     try { await sleep; } catch (OperationCanceledException) { continue; }
                 }
 
-                await PerformDueRepeatAttackAsync(active, cancellationToken);
+                try
+                {
+                    await PerformDueRepeatAttackAsync(active, cancellationToken);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    throw; // Genuine shutdown - let the outer catch below handle it.
+                }
+                catch (Exception ex) when (IsTransientWorldRpcFailure(ex, cancellationToken))
+                {
+                    // Item 2 of the Step 6 final correctness pass: PerformDueRepeatAttackAsync's own
+                    // try/catch around each individual World RPC call already handles the expected
+                    // transient-failure cases without ever letting an exception escape to here - this
+                    // is a defense-in-depth backstop for anything unexpected that still does (e.g. a
+                    // future call site added without its own try/catch), so a single transient
+                    // failure can never permanently fault this session's whole attack-loop task. The
+                    // loop survives and re-evaluates on its own next wake, exactly like an ordinary
+                    // scheduled attempt.
+                    MapLogger.Warning($"[iRO MAP DEBUG] Unexpected transient exception in the repeat-attack loop - the loop will continue: {ex}");
+                }
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -1876,13 +1895,26 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
             // authoritative target/engagement state, so a World-rejected hit must leave no invisible
             // local HP damage behind (item 2's own core fix). This command is idempotent
             // (re-acquiring an already-current target is a harmless no-op, AlreadyCurrentTarget), so
-            // ordinary at-least-once delivery is safe; a transport/RPC failure here propagates
-            // (fail closed) rather than proceeding as though World accepted a mutation that may
-            // never have landed - the NEXT feed poll/resync naturally reconciles whatever World's
-            // actual state turned out to be. combatState is untouched at this point - there is
-            // nothing to roll back on rejection/failure.
-            var attackedResult = await _distributedWorld.NotifyMonsterAttackedAsync(
-                new WorldMonsterAttackedCommand(life, CharacterId, attackerPresenceId), cancellationToken);
+            // ordinary at-least-once delivery is safe. combatState is untouched at this point - there
+            // is nothing to roll back on rejection/failure.
+            //
+            // Item 2 of the Step 6 final correctness pass: a TRANSIENT transport/RPC failure calling
+            // this RPC must NOT fault RunRepeatAttackLoopAsync's own background task (killing the
+            // scheduler for every future attack this session ever makes) - it is caught here, logged,
+            // and this attempt is abandoned with the schedule re-armed for a normal later attempt
+            // (never a tight retry loop). Local HP remains completely untouched either way.
+            WorldMonsterAttackedResult attackedResult;
+            try
+            {
+                attackedResult = await _distributedWorld.NotifyMonsterAttackedAsync(
+                    new WorldMonsterAttackedCommand(life, CharacterId, attackerPresenceId), cancellationToken);
+            }
+            catch (Exception ex) when (IsTransientWorldRpcFailure(ex, cancellationToken))
+            {
+                MapLogger.Warning($"[iRO MAP DEBUG] Transient NotifyMonsterAttackedAsync failure mobActorId={target.ActorId} targetCharacterId={CharacterId} - no local HP mutation, retrying on the ordinary attack cadence: {ex.Message}");
+                await RearmAfterTransientFailureAsync(expected, effectiveStats, equippedWeapon, cancellationToken);
+                return;
+            }
             MapLogger.Info($"[iRO MAP DEBUG] Mob engagement NotifyMonsterAttackedAsync mobActorId={target.ActorId} targetCharacterId={CharacterId} result={attackedResult.Status}");
 
             if (attackedResult.Status is not (WorldMonsterAttackedStatus.Acquired or WorldMonsterAttackedStatus.AlreadyCurrentTarget))
@@ -1904,21 +1936,74 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
             }
         }
 
-        // Commit the candidate now - either World just confirmed engagement above, or this hit
-        // never needed that confirmation (lethal, or a passive mob). TryCommitDamage's own CAS check
-        // (against candidate.ExpectedCurrentHp) rejects a commit if a same-process concurrent hit
-        // already changed CurrentHp while the confirmation RPC above was in flight - Accepted=false
-        // in that case, exactly like StaleLife/AlreadyDead; this repeat-attack loop simply tries
-        // again on its own next scheduled attempt rather than retrying inline.
+        // Item 1 of the Step 6 final correctness pass: for a candidate that WOULD be lethal, World's
+        // death confirmation must be obtained BEFORE any local combat-state mutation happens at all -
+        // not merely before the wire/reward projection (the earlier "commit locally, then confirm"
+        // shape left a real gap: if TryMarkMonsterDeadAsync never reached World, local HP was already
+        // 0 while World still considered the life Alive, and a same-life resync/feed poll
+        // deliberately PRESERVES local combat HP - so the monster could remain World-Alive but
+        // permanently MapServer-dead forever). The REQUIRED shape is: CalculateAttack (already done,
+        // read-only, above) -> TryMarkMonsterDeadAsync -> ONLY MarkedDead -> CommitConfirmedDeath
+        // (atomically finalizes local HP=0 using whatever HP is ACTUALLY present at that moment,
+        // never the earlier candidate's own pre-image - see CommitConfirmedDeath's own doc comment
+        // for why a further valid local hit landing during the RPC's flight is still correctly
+        // folded in) -> quest/drop resolution -> wire projection.
         if (candidate.WouldBeLethal)
         {
+            // Item 2 of the Step 6 final correctness pass: a TRANSIENT transport/RPC failure here
+            // must NOT fault RunRepeatAttackLoopAsync's own background task - caught, logged, and
+            // this attempt is abandoned with the schedule re-armed for a normal later attempt. Local
+            // HP is STILL completely untouched at this point (no combat-state mutation has happened
+            // yet for a lethal candidate - see this block's own doc comment above), so there is
+            // nothing to roll back. If the request actually reached World but the response was lost,
+            // World's own Died feed will make the monster authoritative Dead before this later retry
+            // even runs (TryGetLife's own Lifecycle check at the top of this method would then clear
+            // the repeat-attack target normally) - this is intentionally fail-closed and may
+            // conservatively lose THIS attacker's own reward in that ambiguous case; no
+            // operation-id/exactly-once protocol is introduced here.
+            WorldMonsterDeathResult deathResult;
+            try
+            {
+                deathResult = await _distributedWorld.TryMarkMonsterDeadAsync(life, cancellationToken);
+            }
+            catch (Exception ex) when (IsTransientWorldRpcFailure(ex, cancellationToken))
+            {
+                MapLogger.Warning($"[iRO MAP DEBUG] Transient TryMarkMonsterDeadAsync failure mobActorId={expected.TargetActorId} - no local HP mutation, no lethal wire/reward projection, retrying on the ordinary attack cadence: {ex.Message}");
+                await RearmAfterTransientFailureAsync(expected, effectiveStats, equippedWeapon, cancellationToken);
+                return;
+            }
+            if (deathResult.Status != WorldMonsterDeathStatus.MarkedDead)
+            {
+                // StaleLifeReference (a resync/incarnation change raced this attack) or AlreadyDead
+                // (treated conservatively - there is no operation-identity mechanism in this project
+                // proving a given AlreadyDead result is merely replaying OUR OWN earlier confirmed
+                // death rather than racing a different attacker's kill, and inventing one is
+                // explicitly out of scope for this pass): local combat state was NEVER mutated for
+                // this attempt, so there is nothing to roll back - no EXP/quest drops, no 0x08C8/
+                // 0x0977/death-vanish. Only StaleLifeReference proves the monster life itself is
+                // stale; discard that life's combat-state key so a later stale read can never
+                // resurface it (AlreadyDead does NOT warrant discarding a key that may still be
+                // legitimately current for a different attacker's own already-confirmed kill).
+                MapLogger.Warning($"[iRO MAP DEBUG] TryMarkMonsterDeadAsync did not confirm a fresh death ({deathResult.Status}) mobActorId={expected.TargetActorId} - no local HP mutation, no damage/HP/death wire projection, no quest/EXP.");
+                if (deathResult.Status == WorldMonsterDeathStatus.StaleLifeReference)
+                    _combatState.Remove(MonsterCombatKey.From(life));
+                ClearRepeatAttackIfCurrent(expected);
+                return;
+            }
+
             // Section 15: quest-state CharServer roundtrips are only genuinely needed when THIS hit
             // kills the target (QuestDropResolver.ResolveDrops is only ever reached on death).
             Task<Func<uint, CharacterQuestStatus>> ResolveQuestStatesAsync() => ResolveActiveQuestStatesAsync(cancellationToken);
-            outcome = await _combat.CommitAttackAsync(candidate, life, target, ResolveQuestStatesAsync);
+            outcome = await _combat.CommitConfirmedDeath(candidate, life, target, ResolveQuestStatesAsync);
         }
         else
         {
+            // Commit the candidate now - either World just confirmed engagement above, or this hit
+            // never needed that confirmation (a passive mob). TryCommitDamage's own CAS check
+            // (against candidate.ExpectedCurrentHp) rejects a commit if a same-process concurrent
+            // hit already changed CurrentHp while the confirmation RPC above was in flight -
+            // Accepted=false in that case, exactly like StaleLife/AlreadyDead; this repeat-attack
+            // loop simply tries again on its own next scheduled attempt rather than retrying inline.
             outcome = _combat.CommitAttack(candidate, life, target, _ => CharacterQuestStatus.Absent);
         }
         if (!outcome.Accepted) { ClearRepeatAttackIfCurrent(expected); return; }
@@ -1952,39 +2037,6 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         var damageDealt = outcome.HpBefore - outcome.HpAfter;
         MapLogger.Info(
             $"[iRO MAP DEBUG] Attack accepted attackerAccountId={_accountId} targetActorId={expected.TargetActorId} damage={damageDealt} hpBefore={outcome.HpBefore} hpAfter={outcome.HpAfter} killed={outcome.KilledByThisHit} range={effectiveRangeForRangeCheck} clientDistance={ClientDistance.DistanceClient(dxForRangeCheck, dyForRangeCheck)}");
-
-        // Item 1 of the Step 6 correctness-hardening pass: the REQUIRED lethal ordering is
-        // "calculate/apply local lethal transition -> TryMarkMonsterDeadAsync -> authoritative
-        // success confirmation -> 0x08C8 damage -> 0x0977 hp=0 -> EXP/quest-drop persistence and
-        // notifications -> 0x0080 reason=died". World's death confirmation must be OBTAINED BEFORE
-        // any successful lethal wire/reward effect is sent - a StaleLifeReference (or a transport
-        // failure calling this RPC) must produce NONE of those effects: no 0x08C8, no 0x0977 hp=0,
-        // no EXP/quest-drop award, no death vanish. AlreadyDead is treated conservatively as NOT
-        // proving THIS call owns a fresh death reward/projection either - there is no existing
-        // operation-identity mechanism in this project proving a given AlreadyDead result is merely
-        // replaying OUR OWN earlier confirmed death rather than racing a different attacker's kill,
-        // and inventing one is explicitly out of scope for this pass - so only MarkedDead proceeds.
-        // Transport failure (IOException/OperationCanceledException from the RPC call itself) is NOT
-        // caught here - it propagates, and this method's own caller/RunRepeatAttackLoopAsync already
-        // tolerates that at the loop level; no successful lethal projection is sent either way, and
-        // the next feed poll/resync resolves authoritative World state.
-        if (outcome.KilledByThisHit)
-        {
-            var deathResult = await _distributedWorld.TryMarkMonsterDeadAsync(life, cancellationToken);
-            if (deathResult.Status != WorldMonsterDeathStatus.MarkedDead)
-            {
-                // StaleLifeReference (a resync/incarnation change raced this attack) or AlreadyDead
-                // (treated conservatively - see this block's own doc comment above): do NOT award
-                // EXP/quest drops, do NOT send 0x08C8/0x0977/death-vanish, and discard the
-                // now-meaningless local combat-state entry so a later stale read can never resurface
-                // it. The next feed poll/resync naturally reconciles this map's projection to
-                // whatever World's actual current state is.
-                MapLogger.Warning($"[iRO MAP DEBUG] TryMarkMonsterDeadAsync did not confirm a fresh death ({deathResult.Status}) mobActorId={expected.TargetActorId} - no damage/HP/death wire projection, no quest/EXP.");
-                _combatState.Remove(MonsterCombatKey.From(life));
-                ClearRepeatAttackIfCurrent(expected);
-                return;
-            }
-        }
 
         // dstSpeed is the TARGET's own dmotion (clif_damage's ddelay) - for a mob target that is
         // MobDefinition.DamageMotion directly (see that field's own doc comment for the pinned
@@ -2109,6 +2161,43 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         try
         {
             if (ReferenceEquals(_repeatAttack, expected)) _repeatAttack = null;
+        }
+        finally { _attackGate.Release(); }
+    }
+
+    // Item 2 of the Step 6 final correctness pass: classifies an exception caught around
+    // NotifyMonsterAttackedAsync/TryMarkMonsterDeadAsync as a transient World/transport failure
+    // (log-and-retry-later) versus a genuine cancellation (real shutdown, must propagate) or a
+    // deterministic invariant/programming failure (must NOT be blanket-swallowed - mirrors
+    // MapTcpServer's own IsDeterministicInvariantFailure classification: KeyNotFoundException is the
+    // concrete example this project already treats as "would reproduce identically on retry, not a
+    // legitimate target for a resilience catch"). OperationCanceledException is only transient when
+    // this session's OWN cancellationToken did NOT request it (e.g. an internal Orleans call timeout
+    // surfaces as OperationCanceledException too) - a genuine session-shutdown cancellation must
+    // still propagate immediately, never be treated as "retry later".
+    private static bool IsTransientWorldRpcFailure(Exception ex, CancellationToken sessionCancellation) =>
+        ex switch
+        {
+            KeyNotFoundException => false,
+            OperationCanceledException => !sessionCancellation.IsCancellationRequested,
+            _ => true,
+        };
+
+    // Abandons the CURRENT attack attempt after a transient World RPC failure without leaving the
+    // repeat-attack scheduler permanently dead: local HP/repeat-attack TARGET are both left
+    // completely untouched (this is NOT ClearRepeatAttackIfCurrent - the session should keep trying
+    // to attack the SAME target), only NextAttackAt is pushed out by the ordinary attack-delay
+    // cadence (never an immediate/tight retry) so RunRepeatAttackLoopAsync's own sleep-until-
+    // NextAttackAt shape naturally re-attempts this exact hit later, exactly like an ordinary
+    // successful non-lethal hit's own reschedule - just without any of the reward/wire/HP side
+    // effects a genuine hit would have produced.
+    private async Task RearmAfterTransientFailureAsync(RepeatAttackState expected, EffectiveCharacterStats effectiveStats, WeaponItemDefinition? equippedWeapon, CancellationToken cancellationToken)
+    {
+        var delayMs = AttackDelayCalculator.AttackDelayMs(effectiveStats, equippedWeapon?.WeaponType);
+        await _attackGate.WaitAsync(cancellationToken);
+        try
+        {
+            if (ReferenceEquals(_repeatAttack, expected)) expected.NextAttackAt = _timeProvider.GetUtcNow().AddMilliseconds(delayMs);
         }
         finally { _attackGate.Release(); }
     }

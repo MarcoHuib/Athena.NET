@@ -454,4 +454,109 @@ public sealed class MonsterCombatStateStoreTests
             Assert.True(appliedCount >= 1, "At least one of the concurrent attempts must have succeeded.");
         }
     }
+
+    // ===== Item 1 of the Step 6 final correctness pass: CommitConfirmedDeath is the ONLY way a
+    // lethal hit may transition local HP to 0, and it must ONLY ever be called AFTER the caller
+    // already holds World's own MarkedDead confirmation for the EXACT life. =====
+
+    [Fact]
+    public void CommitConfirmedDeath_ExactLife_TransitionsToZero_ReportsKilledByThisHit()
+    {
+        var store = new MonsterCombatStateStore();
+        var epoch = Epoch();
+        var key = Key("int_land01", epoch, 1, First);
+        store.Register("int_land01", epoch, 1, First, maxHp: 55);
+
+        var result = store.CommitConfirmedDeath(key, damage: 55);
+
+        Assert.Equal(MonsterCombatDamageStatus.Applied, result.Status);
+        Assert.Equal(55u, result.HpBefore);
+        Assert.Equal(0u, result.HpAfter);
+        Assert.True(result.KilledByThisHit);
+        Assert.True(store.TryGet(key, out var state));
+        Assert.Equal(0u, state.CurrentHp);
+    }
+
+    [Fact]
+    public void CommitConfirmedDeath_StaleLife_ReportsStaleLife_NeverCreatesAMissingLife()
+    {
+        var store = new MonsterCombatStateStore();
+        var epoch = Epoch();
+        store.Register("int_land01", epoch, 1, First, maxHp: 55);
+        var staleKey = Key("int_land01", epoch, 1, First.Next());
+
+        var result = store.CommitConfirmedDeath(staleKey, damage: 55);
+
+        Assert.Equal(MonsterCombatDamageStatus.StaleLife, result.Status);
+        Assert.False(store.TryGet(staleKey, out _)); // Never speculatively created.
+        Assert.True(store.TryGet(Key("int_land01", epoch, 1, First), out var unchanged));
+        Assert.Equal(55u, unchanged.CurrentHp); // The current life's own entry is untouched.
+    }
+
+    [Fact]
+    public void CommitConfirmedDeath_AlreadyDead_ReportsAlreadyDead_NoMutation()
+    {
+        var store = new MonsterCombatStateStore();
+        var epoch = Epoch();
+        var key = Key("int_land01", epoch, 1, First);
+        store.Register("int_land01", epoch, 1, First, maxHp: 1);
+        store.CommitConfirmedDeath(key, damage: 1);
+
+        var second = store.CommitConfirmedDeath(key, damage: 1);
+
+        Assert.Equal(MonsterCombatDamageStatus.AlreadyDead, second.Status);
+        Assert.False(second.KilledByThisHit);
+        Assert.True(store.TryGet(key, out var state));
+        Assert.Equal(0u, state.CurrentHp);
+    }
+
+    // The core race this operation exists to handle correctly: a candidate calculated lethal at
+    // HP=N (the pre-image observed BEFORE the TryMarkMonsterDeadAsync RPC was sent) remains lethal
+    // if a DIFFERENT valid local hit further lowers HP while that RPC is in flight - CommitConfirmedDeath
+    // must use the ACTUAL HP present when it runs, never the earlier candidate's own stale pre-image,
+    // for the final clamped HpBefore/HpAfter/damage outcome.
+    [Fact]
+    public void CommitConfirmedDeath_AnotherValidHitLoweredHpWhileConfirmationWasInFlight_UsesActualCurrentHpAtCommitTime()
+    {
+        var store = new MonsterCombatStateStore();
+        var epoch = Epoch();
+        var key = Key("int_land01", epoch, 1, First);
+        store.Register("int_land01", epoch, 1, First, maxHp: 100);
+        // Attacker A calculates a candidate lethal hit for damage=100 while CurrentHp was 100 (both
+        // observed via the store's own Peek at that earlier moment - simulated here by simply NOT
+        // yet committing). Meanwhile attacker B's own hit lands FIRST, lowering HP to 40 (still
+        // alive) - representing "another valid local hit landed while A's own TryMarkMonsterDeadAsync
+        // RPC was in flight".
+        store.ApplyDamage(key, damage: 60); // B's hit: 100 -> 40, not lethal.
+        Assert.True(store.TryGet(key, out var afterB));
+        Assert.Equal(40u, afterB.CurrentHp);
+
+        // A's own confirmed-death commit now runs, using its ORIGINAL damage=100 (calculated against
+        // the stale HP=100 pre-image) - CommitConfirmedDeath must clamp against the ACTUAL current
+        // HP (40), not silently underflow or ignore B's own already-applied damage.
+        var result = store.CommitConfirmedDeath(key, damage: 100);
+
+        Assert.Equal(MonsterCombatDamageStatus.Applied, result.Status);
+        Assert.Equal(40u, result.HpBefore); // The ACTUAL HP present at commit time, not A's stale 100.
+        Assert.Equal(0u, result.HpAfter);
+        Assert.True(result.KilledByThisHit);
+        Assert.True(store.TryGet(key, out var final));
+        Assert.Equal(0u, final.CurrentHp);
+    }
+
+    [Fact]
+    public void CommitConfirmedDeath_NeverAwaits_PurelySynchronous()
+    {
+        // Compile-time/contract proof: CommitConfirmedDeath's own signature is synchronous (no Task
+        // return, no async keyword) - this test exists to document/pin that contract explicitly
+        // rather than relying solely on reading the method signature.
+        var store = new MonsterCombatStateStore();
+        var epoch = Epoch();
+        var key = Key("int_land01", epoch, 1, First);
+        store.Register("int_land01", epoch, 1, First, maxHp: 10);
+
+        MonsterCombatDamageResult result = store.CommitConfirmedDeath(key, damage: 10); // Would not compile as a synchronous assignment if this returned a Task.
+
+        Assert.Equal(MonsterCombatDamageStatus.Applied, result.Status);
+    }
 }

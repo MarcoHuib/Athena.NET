@@ -155,6 +155,45 @@ public sealed class MapTcpServerMonsterTickHardeningTests
         await healthySession.DisposeAsync();
     }
 
+    // Item 3 of the Step 6 final correctness pass: a PERMANENT spawn-load mismatch
+    // (ContentMismatch/CallerFingerprintMismatch/SpawnMapMismatch) must mark that map permanently
+    // failed via the existing _permanentlyFailedMaps mechanism - InitializeMapSpawnsAsync's own
+    // earlier behavior (log-and-return with no state recorded) would otherwise re-enter
+    // LoadMonsterSpawnsAsync on every subsequent 100ms tick forever for the exact same mismatch.
+    [Fact]
+    public async Task PermanentSpawnMismatch_LoadMonsterSpawnsInvokedOnce_MapRemainsFailed_OtherMapStillProcessesNormally()
+    {
+        var world = MakeWorld();
+        var healthyMapPollCalls = 0;
+        var scripted = new ScriptedWorldRuntime
+        {
+            OnLoadMonsterSpawns = _ => new WorldMonsterSpawnLoadResult(WorldMonsterSpawnLoadStatus.ContentMismatch, WorldSimulationEpoch.NewEpoch()),
+            OnPollMonsterFeed = mapId =>
+            {
+                if (string.Equals(mapId, "izlude", StringComparison.OrdinalIgnoreCase)) healthyMapPollCalls++;
+            },
+        };
+        scripted.SpawnInitializationRequiredMaps.Add("broken");
+        var server = new MapTcpServer(ConfigStore(), new CharServerConnector(ConfigStore()), world, scripted);
+
+        var (brokenSession, brokenClient) = await MakeWorldVisibleSessionAsync(world, scripted, mapId: "broken", characterId: 201);
+        var (healthySession, healthyClient) = await MakeWorldVisibleSessionAsync(world, scripted, mapId: "izlude", characterId: 202);
+        using var _b = brokenClient;
+        using var _h = healthyClient;
+
+        // Several ticks: the first calls LoadMonsterSpawnsAsync (ContentMismatch, map now
+        // permanently failed); every SUBSEQUENT tick must skip "broken" entirely (never call
+        // LoadMonsterSpawnsAsync again), while "izlude" keeps being polled normally throughout.
+        for (var i = 0; i < 5; i++)
+            await server.ProcessOneMonsterTickAsync([brokenSession, healthySession], CancellationToken.None);
+
+        Assert.Equal(1, scripted.LoadMonsterSpawnsCallCount); // Never retried after the first permanent mismatch.
+        Assert.Equal(5, healthyMapPollCalls); // The healthy map was polled every one of the 5 ticks.
+
+        await brokenSession.DisposeAsync();
+        await healthySession.DisposeAsync();
+    }
+
     // Item 9: MonsterAttackCadenceExecutor's own LOCAL session-selection step must require BOTH
     // CharacterId AND PresenceId to match World's own WorldPlayerTargetReference before ever
     // reaching World's ValidateMonsterAttackWindowAsync recheck - a reconnect race (old session
@@ -318,10 +357,19 @@ public sealed class MapTcpServerMonsterTickHardeningTests
         // combat-state a test seeded from the first bootstrap.
         public WorldSimulationEpoch? FixedEpoch { get; set; }
         public IReadOnlyList<WorldMonsterInstance>? FixedSnapshot { get; set; }
+        // Item 3 of the Step 6 final correctness pass: map ids (OrdinalIgnoreCase) that should always
+        // report SpawnInitializationRequired instead of the ordinary bootstrap/no-op-incremental
+        // shape above - drives InitializeMapSpawnsAsync's own call, needed to exercise a permanent
+        // spawn-mismatch status without a real spawn-content/fingerprint mismatch.
+        public HashSet<string> SpawnInitializationRequiredMaps { get; } = new(StringComparer.OrdinalIgnoreCase);
+        public Func<WorldMonsterSpawnBatch, WorldMonsterSpawnLoadResult>? OnLoadMonsterSpawns { get; set; }
+        public int LoadMonsterSpawnsCallCount { get; private set; }
 
         public Task<WorldMonsterFeedPage> PollMonsterFeedAsync(WorldMonsterFeedCursor? cursor, string mapId, CancellationToken cancellationToken)
         {
             OnPollMonsterFeed?.Invoke(mapId);
+            if (SpawnInitializationRequiredMaps.Contains(mapId))
+                return Task.FromResult(new WorldMonsterFeedPage(mapId, WorldSimulationEpoch.NewEpoch(), WorldMonsterFeedStatus.SpawnInitializationRequired, Snapshot: null, Entries: null, AsOfSequence: 0));
             var epoch = FixedEpoch ?? cursor?.SimulationEpoch ?? WorldSimulationEpoch.NewEpoch();
             if (cursor is null && FixedSnapshot is not null)
                 return Task.FromResult(new WorldMonsterFeedPage(mapId, epoch, WorldMonsterFeedStatus.Ready, FixedSnapshot, Entries: null, AsOfSequence: 1));
@@ -329,6 +377,13 @@ public sealed class MapTcpServerMonsterTickHardeningTests
             // later poll, which would otherwise ApplySnapshot-reset (and wipe) whatever the first
             // bootstrap (or the test itself) already seeded into the projection/combat-state store.
             return Task.FromResult(new WorldMonsterFeedPage(mapId, epoch, WorldMonsterFeedStatus.Ready, Snapshot: null, Entries: [], AsOfSequence: (cursor?.Sequence ?? 0) + 1));
+        }
+
+        public Task<WorldMonsterSpawnLoadResult> LoadMonsterSpawnsAsync(WorldMonsterSpawnBatch batch, CancellationToken cancellationToken)
+        {
+            LoadMonsterSpawnsCallCount++;
+            var result = OnLoadMonsterSpawns?.Invoke(batch) ?? new WorldMonsterSpawnLoadResult(WorldMonsterSpawnLoadStatus.Loaded, WorldSimulationEpoch.NewEpoch());
+            return Task.FromResult(result);
         }
 
         public Task<WorldMonsterAttackWindowResult> ValidateMonsterAttackWindowAsync(WorldMonsterAttackWindowQuery query, CancellationToken cancellationToken) =>
@@ -339,8 +394,6 @@ public sealed class MapTcpServerMonsterTickHardeningTests
         public Task<WorldPresenceUnregistration> UnregisterPresenceAsync(string mapId, uint characterId, Guid presenceId, CancellationToken cancellationToken) =>
             Task.FromResult(new WorldPresenceUnregistration("test-partition", mapId, WorldPresenceUnregistrationStatus.Removed, 0));
 
-        public Task<WorldMonsterSpawnLoadResult> LoadMonsterSpawnsAsync(WorldMonsterSpawnBatch batch, CancellationToken cancellationToken) =>
-            throw new NotSupportedException("ScriptedWorldRuntime does not script LoadMonsterSpawnsAsync for these tests.");
         public Task<WorldMonsterDeathResult> TryMarkMonsterDeadAsync(WorldMonsterLifeReference reference, CancellationToken cancellationToken) =>
             throw new NotSupportedException("ScriptedWorldRuntime does not script TryMarkMonsterDeadAsync for these tests.");
         public Task<WorldMonsterAttackedResult> NotifyMonsterAttackedAsync(WorldMonsterAttackedCommand command, CancellationToken cancellationToken) =>

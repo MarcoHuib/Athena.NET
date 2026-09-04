@@ -159,6 +159,36 @@ public sealed class MonsterCombatStateStore
         }
     }
 
+    // Item 1 of the Step 6 final correctness pass: the ONLY way a lethal hit may transition local
+    // HP to 0 is AFTER World's TryMarkMonsterDeadAsync has already returned MarkedDead - never
+    // before. This is the narrow, synchronous, lock-scoped operation that performs that transition
+    // once the caller already holds a confirmed death: it re-reads whatever CurrentHp is ACTUALLY
+    // present at the moment it runs (never the earlier candidate's own pre-image), so a further
+    // valid local hit that landed on this SAME life while the TryMarkMonsterDeadAsync RPC was in
+    // flight (this Phase 2B model only ever LOWERS HP during that race, never raises it) is
+    // correctly folded into the final clamped HpBefore/HpAfter/damage outcome - a hit calculated
+    // lethal at HP=N remains lethal against whatever HP<=N is actually present when this runs.
+    // Requires the EXACT life key (StaleLife if unregistered/reaped/superseded); AlreadyDead if
+    // CurrentHp is already 0 (a second confirmed-death commit for the same life, or a race with
+    // another attacker's own already-applied lethal hit) - in either non-Applied case, nothing is
+    // mutated and the caller must award no reward/wire projection. Never awaits, never creates a
+    // missing life (mirrors ApplyDamage/TryCommitDamage's own "never speculatively upsert" rule).
+    public MonsterCombatDamageResult CommitConfirmedDeath(MonsterCombatKey key, uint damage)
+    {
+        lock (_gate)
+        {
+            if (!_byKey.TryGetValue(key, out var entry))
+                return MonsterCombatDamageResult.StaleLife;
+            if (entry.CurrentHp == 0)
+                return new MonsterCombatDamageResult(MonsterCombatDamageStatus.AlreadyDead, 0, 0, KilledByThisHit: false);
+
+            var before = entry.CurrentHp;
+            var after = damage >= before ? 0u : before - damage;
+            _byKey[key] = entry with { CurrentHp = after };
+            return new MonsterCombatDamageResult(MonsterCombatDamageStatus.Applied, before, after, KilledByThisHit: after == 0);
+        }
+    }
+
     // Cadence mutation, same per-key ownership model as ApplyDamage - the ONLY place NextAttackAt
     // is written on the live combat path. A stale/unregistered key is a silent no-op (a missed
     // schedule has no double-application risk, only a slightly-early next evaluation, which the

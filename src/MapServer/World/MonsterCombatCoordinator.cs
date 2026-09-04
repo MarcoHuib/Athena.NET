@@ -118,6 +118,28 @@ public sealed class MonsterCombatCoordinator(QuestDropResolver questDrops, IBasi
         return new(true, damageResult.HpBefore, damageResult.HpAfter, candidate.IsMiss, killed, engagementAcquired, drops);
     }
 
+    // Item 1 of the Step 6 final correctness pass: finalizes a lethal hit ONLY after the caller
+    // already holds World's own MarkedDead confirmation (TryMarkMonsterDeadAsync) for this EXACT
+    // life - never before. Uses MonsterCombatStateStore.CommitConfirmedDeath (never
+    // TryCommitDamage/ApplyDamage) so the actual HP present at commit time is used for the final
+    // clamped damage/HpBefore/HpAfter outcome, correctly folding in any further valid local hit that
+    // landed on this same life while the TryMarkMonsterDeadAsync RPC was in flight. Quest-drop
+    // resolution only runs when the store confirms THIS call performed the HP>0->0 transition
+    // (Applied with KilledByThisHit) - AlreadyDead/StaleLife return Accepted=false with no reward,
+    // exactly like every other rejected-commit shape in this coordinator.
+    public async Task<MonsterAttackOutcome> CommitConfirmedDeath(MonsterAttackCandidate candidate, WorldMonsterLifeReference life, WorldMonsterActorView target, Func<Task<Func<uint, CharacterQuestStatus>>> resolveQuestStates)
+    {
+        if (!candidate.Attackable) return new(false, 0, 0, false, false, false, []);
+        var key = MonsterCombatKey.From(life);
+        var damageResult = combatState.CommitConfirmedDeath(key, candidate.Damage);
+        if (damageResult.Status != MonsterCombatDamageStatus.Applied || !damageResult.KilledByThisHit)
+            return new(false, damageResult.HpBefore, damageResult.HpAfter, false, false, false, []);
+
+        var attackerQuestStatus = await resolveQuestStates();
+        var drops = questDrops.ResolveDrops(attackerQuestStatus, target.MobId);
+        return new(true, damageResult.HpBefore, damageResult.HpAfter, candidate.IsMiss, KilledByThisHit: true, EngagementAcquired: false, drops);
+    }
+
     // `target`: the World-projected actor view (position/static mob data) for the monster being
     // attacked - NOT its live position authority (there is none locally), purely a read of
     // already-current World-projected data the damage formula needs (target.StaticMob).

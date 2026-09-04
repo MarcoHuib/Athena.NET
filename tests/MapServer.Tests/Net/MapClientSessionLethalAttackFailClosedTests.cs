@@ -10,16 +10,17 @@ using Athena.Net.World.Contracts;
 
 namespace Athena.Net.MapServer.Tests.Net;
 
-// Step 6 hardening, item 1: the REQUIRED lethal ordering is "calculate/apply local lethal
-// transition -> TryMarkMonsterDeadAsync -> authoritative success confirmation -> 0x08C8 damage ->
-// 0x0977 hp=0 -> EXP/quest-drop persistence and notifications -> 0x0080 reason=died". A
-// StaleLifeReference (or any non-MarkedDead) result from TryMarkMonsterDeadAsync must produce NONE
-// of those successful lethal wire/reward effects - no 0x08C8, no 0x0977 hp=0, no death vanish, no
-// EXP/quest-drop award. Built as its own minimal wiring mirroring
-// MapClientSessionNonLethalAttackFailClosedTests.cs's own established pattern (World-projection-
-// based target, a scripted FakeCombatWorldRuntime) rather than that file's own MobInstance-based
-// SetupAsync helper (MapClientSessionMonsterCombatTests.cs), since this needs to script
-// TryMarkMonsterDeadStatusOverride specifically.
+// Step 6 hardening (final correctness pass, item 1): the REQUIRED lethal ordering is
+// "CalculateAttack (read-only) -> TryMarkMonsterDeadAsync -> ONLY MarkedDead -> atomically finalize
+// local combat death (CommitConfirmedDeath) -> resolve quest/drop state -> 0x08C8 -> 0x0977 hp=0 ->
+// EXP/drop persistence -> 0x0080 died". World's death confirmation is now obtained BEFORE any local
+// combat-state mutation happens AT ALL - not merely before the wire/reward projection. A
+// StaleLifeReference/AlreadyDead (or any non-MarkedDead) result from TryMarkMonsterDeadAsync must
+// leave local HP COMPLETELY UNTOUCHED and produce none of the successful lethal wire/reward effects.
+// Built as its own minimal wiring mirroring MapClientSessionNonLethalAttackFailClosedTests.cs's own
+// established pattern (World-projection-based target, a scripted FakeCombatWorldRuntime) rather than
+// that file's own MobInstance-based SetupAsync helper (MapClientSessionMonsterCombatTests.cs), since
+// this needs to script TryMarkMonsterDeadStatusOverride specifically.
 public sealed class MapClientSessionLethalAttackFailClosedTests
 {
     private const uint AccountId = 11;
@@ -59,8 +60,7 @@ public sealed class MapClientSessionLethalAttackFailClosedTests
         public Task<CharacterGameplayState?> UpdateAsync(uint accountId, CharacterGameplayState expected, CharacterGameplayState updated, CancellationToken cancellationToken) => Task.FromResult<CharacterGameplayState?>(updated);
     }
 
-    [Fact]
-    public async Task LethalHit_TryMarkMonsterDeadRejectsWithStaleLifeReference_NoDamageNoHpInfoNoDeathVanishNoReward()
+    private static async Task<(TcpClient Client, NetworkStream Stream, MapClientSession Session, Task RunTask, MonsterCombatStateStore CombatState, string MapId, WorldSimulationEpoch Epoch, uint ActorId, WorldMonsterIncarnationId Incarnation)> SetupAsync(WorldMonsterDeathStatus overrideStatus)
     {
         var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
@@ -70,7 +70,6 @@ public sealed class MapClientSessionLethalAttackFailClosedTests
         await connect;
         listener.Stop();
         var stream = client.GetStream();
-        using var disposableClient = client;
 
         var allocator = new WorldActorIdAllocator();
         // 1 HP so the very first deterministic hit is unconditionally lethal.
@@ -86,7 +85,7 @@ public sealed class MapClientSessionLethalAttackFailClosedTests
         var monsterProjections = WorldMonsterProjectionTestHelper.SeedProjection(target.Map, epoch, combatState, registry.AllInstances);
 
         var gameplayPersistence = new RecordingGameplayStatePersistence(StrongAttacker());
-        var fakeWorld = new FakeCombatWorldRuntime { TryMarkMonsterDeadStatusOverride = WorldMonsterDeathStatus.StaleLifeReference };
+        var fakeWorld = new FakeCombatWorldRuntime { TryMarkMonsterDeadStatusOverride = overrideStatus };
 
         var session = new MapClientSession(
             1, serverClient, new CharServerConnector(new MapConfigStore(new MapConfig(), "unused.conf")), true,
@@ -107,28 +106,66 @@ public sealed class MapClientSessionLethalAttackFailClosedTests
         var spawn = await ReadDynamic(stream);
         var actorId = BinaryPrimitives.ReadUInt32LittleEndian(spawn.AsSpan(5));
 
+        return (client, stream, session, run, combatState, target.Map, epoch, actorId, incarnation);
+    }
+
+    [Fact]
+    public async Task LethalHit_TryMarkMonsterDeadRejectsWithStaleLifeReference_NoLocalHpMutation_NoDamageNoHpInfoNoDeathVanishNoReward_KeyDiscarded()
+    {
+        var (client, stream, _, run, combatState, mapId, epoch, actorId, incarnation) = await SetupAsync(WorldMonsterDeathStatus.StaleLifeReference);
+        using var disposableClient = client;
+
         await stream.WriteAsync(AttackPacket(actorId));
 
         // Poll for the local combat-state key being discarded (item 1's own observable completion
-        // signal for a rejected death - mirroring the non-lethal fail-closed test's own established
-        // pattern) with a bounded wait, rather than assuming a fixed number of packet round-trips
-        // already means the hit was processed.
-        var key = new MonsterCombatKey(target.Map, epoch, target.ActorId, incarnation);
+        // signal for a StaleLifeReference rejection) with a bounded wait, rather than assuming a
+        // fixed number of packet round-trips already means the hit was processed.
+        var key = new MonsterCombatKey(mapId, epoch, actorId, incarnation);
         var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
         while (combatState.TryGet(key, out _) && DateTime.UtcNow < deadline) await Task.Delay(20);
 
-        // No damage/HP-info/death-vanish/reward packet must EVER arrive for this hit - the local HP
-        // already reached zero (a real local lethal transition happened), but World's own rejection
-        // of the death confirmation means NONE of the successful lethal wire/reward effects may be
-        // projected. Confirmed by observing a harmless ping response land next instead of any combat
-        // packet.
+        // No damage/HP-info/death-vanish/reward packet must EVER arrive for this hit - World's own
+        // rejection of the death confirmation happened BEFORE any local combat-state mutation, so
+        // none of the successful lethal wire/reward effects may be projected. Confirmed by observing
+        // a harmless ping response land next instead of any combat packet.
         await stream.WriteAsync(new byte[] { 0x1c, 0x0b });
         var next = await ReadExact(stream, 2);
         Assert.Equal((short)PacketConstants.ZcPingLive, BinaryPrimitives.ReadInt16LittleEndian(next));
 
-        // The local combat-state entry, having genuinely reached HP==0 with World's confirmation
-        // rejected, must be discarded - a later stale read can never resurface it.
+        // StaleLifeReference proves the monster life itself is stale - the combat-state key must be
+        // discarded so a later stale read can never resurface it.
         Assert.False(combatState.TryGet(key, out _), "Expected the local combat-state key to be discarded after a StaleLifeReference death rejection.");
+
+        client.Close();
+        await run.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
+    public async Task LethalHit_TryMarkMonsterDeadRejectsWithAlreadyDead_LocalHpRemainsUntouched_KeySurvives_NoReward()
+    {
+        var (client, stream, _, run, combatState, mapId, epoch, actorId, incarnation) = await SetupAsync(WorldMonsterDeathStatus.AlreadyDead);
+        using var disposableClient = client;
+
+        var key = new MonsterCombatKey(mapId, epoch, actorId, incarnation);
+        Assert.True(combatState.TryGet(key, out var before));
+        Assert.Equal(1u, before.CurrentHp); // maxHp registered as 1 in SetupAsync.
+
+        await stream.WriteAsync(AttackPacket(actorId));
+
+        // No damage/HP-info/death-vanish/reward packet must EVER arrive - AlreadyDead is treated
+        // conservatively as NOT proving this call owns a fresh death reward/projection (no
+        // operation-identity mechanism exists to distinguish "replaying our own confirmed death"
+        // from "racing a different attacker's own kill" - see PerformDueRepeatAttackAsync's own doc
+        // comment). Confirmed by observing a harmless ping response land next.
+        await stream.WriteAsync(new byte[] { 0x1c, 0x0b });
+        var next = await ReadExact(stream, 2);
+        Assert.Equal((short)PacketConstants.ZcPingLive, BinaryPrimitives.ReadInt16LittleEndian(next));
+
+        // AlreadyDead does NOT prove the monster life itself is stale (unlike StaleLifeReference) -
+        // the combat-state key must SURVIVE, with HP COMPLETELY UNTOUCHED (never locally mutated to
+        // 0 before World's confirmation, per this pass's own core fix).
+        Assert.True(combatState.TryGet(key, out var after), "Expected the local combat-state key to SURVIVE an AlreadyDead rejection.");
+        Assert.Equal(1u, after.CurrentHp);
 
         client.Close();
         await run.WaitAsync(TimeSpan.FromSeconds(5));

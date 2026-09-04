@@ -212,6 +212,27 @@ public sealed class MapTcpServer
 
     public int BoundPort { get; private set; }
 
+    // Item 4 of the Step 6 final correctness pass: the accept loop and the monster-authority loop
+    // now supervise EACH OTHER via a linked cancellation source, instead of the accept loop running
+    // to completion independently and only observing the monster loop's own outcome afterward in a
+    // `finally` block. The earlier shape left a real gap: if `monsterTickLoop` faulted from a
+    // deterministic invariant while the TCP listener was healthy, `RunAsync` stayed blocked inside
+    // `AcceptTcpClientAsync` and kept accepting new players indefinitely, with the fatal failure only
+    // ever observed once the accept loop happened to end for some OTHER, unrelated reason - directly
+    // violating "MapServer must never unknowingly continue indefinitely with a permanently-dead
+    // monster-authority task". Task.WhenAny below reacts to whichever sibling finishes FIRST:
+    //   - the monster loop faults (a deterministic invariant escaped RunMonsterTickLoopAsync's own
+    //     classification) -> cancel the linked token (stops accepting new clients) and PROPAGATE the
+    //     fatal exception out of RunAsync itself, so the caller/process supervisor observes it
+    //     promptly instead of MapServer silently limping along with a dead monster-authority task.
+    //   - genuine external cancellation (the caller's own `cancellationToken`) -> both sibling loops
+    //     observe it via the SAME linked token and exit normally; RunAsync awaits both cleanly.
+    //   - the accept loop itself ends first (e.g. the listener socket faults) -> cancel the linked
+    //     token so the monster loop also winds down, then await it.
+    // Transient per-tick/per-map failures never reach this level at all - RunMonsterTickLoopAsync's
+    // own classification (IsDeterministicInvariantFailure) already keeps those from faulting the
+    // monster loop's task in the first place; only an ALREADY-classified fatal failure propagates
+    // this far.
     public async Task RunAsync(CancellationToken cancellationToken)
     {
         _listener.Start();
@@ -220,8 +241,45 @@ public sealed class MapTcpServer
         MapLogger.Status(
             $"WORLD: loaded {_world.Maps.EntityCount} world entities over {_world.Maps.MapCount} maps, {_world.Maps.StaticWarpCount} active warps, {_world.Maps.DynamicWarpActorCount} legacy dynamic/scripted warp actors, {_world.MonsterSpawns.Count} monster spawn declarations (World-authoritative simulation).");
 
-        var monsterTickLoop = RunMonsterTickLoopAsync(cancellationToken);
+        using var supervision = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var monsterTickLoop = RunMonsterTickLoopAsync(supervision.Token);
+        var acceptLoop = RunAcceptLoopAsync(supervision.Token);
 
+        var firstCompleted = await Task.WhenAny(monsterTickLoop, acceptLoop);
+        // Whichever sibling finished first (normally or by fault), cancel the OTHER one via the
+        // shared linked token so it winds down promptly rather than continuing to run against a
+        // MapServer that is already shutting down/already fatally broken.
+        await supervision.CancelAsync();
+        _listener.Stop();
+
+        if (firstCompleted == monsterTickLoop && monsterTickLoop.IsFaulted)
+        {
+            // The monster-authority loop faulted from an already-classified deterministic invariant
+            // failure (RunMonsterTickLoopAsync's own IsDeterministicInvariantFailure catch already
+            // filtered out ordinary transient failures before this could ever happen) - propagate it
+            // out of RunAsync itself. Still await the accept loop first so its own orderly shutdown
+            // (draining AcceptTcpClientAsync's cancellation) completes before this method returns/throws.
+            try { await acceptLoop; } catch (OperationCanceledException) { }
+            await monsterTickLoop; // Rethrows the original fault (never re-wrapped) via awaiting the already-completed, faulted task.
+            return;
+        }
+
+        // Normal paths: external cancellation, or the accept loop ending on its own (e.g. listener
+        // fault) - await both siblings so any exception either one legitimately still holds surfaces
+        // through Task.WhenAll rather than being silently dropped, while ordinary cancellation is
+        // swallowed here exactly like the pre-existing behavior.
+        try
+        {
+            await Task.WhenAll(acceptLoop, monsterTickLoop);
+        }
+        catch (OperationCanceledException)
+        {
+            // Shutdown.
+        }
+    }
+
+    private async Task RunAcceptLoopAsync(CancellationToken cancellationToken)
+    {
         try
         {
             while (!cancellationToken.IsCancellationRequested)
@@ -233,12 +291,16 @@ public sealed class MapTcpServer
         }
         catch (OperationCanceledException)
         {
-            // Shutdown
+            // Shutdown (either the caller's own cancellationToken, or the linked supervision token
+            // being cancelled because the sibling monster-authority loop faulted - see RunAsync's
+            // own doc comment).
         }
-        finally
+        catch (ObjectDisposedException)
         {
-            _listener.Stop();
-            await monsterTickLoop;
+            // The listener was already stopped (RunAsync's own supervision logic calls
+            // _listener.Stop() as soon as either sibling completes) - a benign race with
+            // AcceptTcpClientAsync observing the disposed socket before it observes the
+            // cancellation token.
         }
     }
 
@@ -497,7 +559,16 @@ public sealed class MapTcpServer
             case WorldMonsterSpawnLoadStatus.ContentMismatch:
             case WorldMonsterSpawnLoadStatus.CallerFingerprintMismatch:
             case WorldMonsterSpawnLoadStatus.SpawnMapMismatch:
-                MapLogger.Error($"[WORLD] LoadMonsterSpawnsAsync for map '{mapId}' failed with {result.Status} - this map's monster spawns will NOT be loaded until this configuration divergence is resolved.");
+                // Item 3 of the Step 6 final correctness pass: these are PERMANENT configuration
+                // divergences, not transient failures - without marking this map failed here, the
+                // NEXT 100ms tick's own poll would report SpawnInitializationRequired again (World
+                // never accepted the load), re-enter this exact method, hit the exact same mismatch,
+                // and log an identical error forever. Reuse the existing _permanentlyFailedMaps
+                // mechanism (already checked before every per-map poll in ProcessOneMonsterTickAsync)
+                // so this map is never retried again until an operator restarts MapServer with
+                // corrected spawn configuration - logged exactly ONCE, here.
+                MapLogger.Error($"[WORLD] LoadMonsterSpawnsAsync for map '{mapId}' failed with {result.Status} - this map's monster spawns will NOT be loaded until this configuration divergence is resolved; the map is now permanently failed and will not be retried until MapServer restarts with corrected configuration.");
+                _permanentlyFailedMaps[mapId] = $"LoadMonsterSpawnsAsync {result.Status}";
                 return;
         }
     }

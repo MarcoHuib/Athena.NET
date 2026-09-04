@@ -108,8 +108,27 @@ internal sealed class FakeCombatWorldRuntime : IWorldRuntime
     // rejected death) without needing a real incarnation/epoch mismatch to trigger it.
     public WorldMonsterDeathStatus? TryMarkMonsterDeadStatusOverride { get; set; }
 
+    // Item 2 of the Step 6 final correctness pass: throws a transient (IOException-shaped) failure
+    // for the FIRST N calls (decremented per call), then falls through to the ordinary
+    // override/Add-to-set behavior - proves MapClientSession's own transient-World-RPC-failure
+    // handling (log, leave HP untouched, re-arm the ordinary attack cadence, keep the repeat-attack
+    // loop alive) without needing a real Orleans transport failure.
+    private int _throwTransientTryMarkMonsterDeadCount;
+    public int ThrowTransientTryMarkMonsterDeadCount { set => _throwTransientTryMarkMonsterDeadCount = value; }
+    public int TryMarkMonsterDeadCallCount { get; private set; }
+
     public Task<WorldMonsterDeathResult> TryMarkMonsterDeadAsync(WorldMonsterLifeReference reference, CancellationToken cancellationToken)
     {
+        lock (_gate)
+        {
+            TryMarkMonsterDeadCallCount++;
+            if (_throwTransientTryMarkMonsterDeadCount > 0)
+            {
+                _throwTransientTryMarkMonsterDeadCount--;
+                throw new IOException("Simulated transient World RPC failure.");
+            }
+        }
+
         if (TryMarkMonsterDeadStatusOverride is { } overrideStatus) return Task.FromResult(new WorldMonsterDeathResult(overrideStatus));
 
         var key = (reference.MapId, reference.ActorId, reference.IncarnationId.Value);
@@ -132,8 +151,25 @@ internal sealed class FakeCombatWorldRuntime : IWorldRuntime
     // Step 6 hardening pass).
     public WorldMonsterAttackedStatus NotifyMonsterAttackedStatusOverride { get; set; } = WorldMonsterAttackedStatus.Acquired;
 
-    public Task<WorldMonsterAttackedResult> NotifyMonsterAttackedAsync(WorldMonsterAttackedCommand command, CancellationToken cancellationToken) =>
-        Task.FromResult(new WorldMonsterAttackedResult(NotifyMonsterAttackedStatusOverride));
+    // Item 2 of the Step 6 final correctness pass: same transient-failure-once shape as
+    // ThrowTransientTryMarkMonsterDeadCount above, for the non-lethal engagement-acquisition RPC.
+    private int _throwTransientNotifyMonsterAttackedCount;
+    public int ThrowTransientNotifyMonsterAttackedCount { set => _throwTransientNotifyMonsterAttackedCount = value; }
+    public int NotifyMonsterAttackedCallCount { get; private set; }
+
+    public Task<WorldMonsterAttackedResult> NotifyMonsterAttackedAsync(WorldMonsterAttackedCommand command, CancellationToken cancellationToken)
+    {
+        lock (_gate)
+        {
+            NotifyMonsterAttackedCallCount++;
+            if (_throwTransientNotifyMonsterAttackedCount > 0)
+            {
+                _throwTransientNotifyMonsterAttackedCount--;
+                throw new IOException("Simulated transient World RPC failure.");
+            }
+        }
+        return Task.FromResult(new WorldMonsterAttackedResult(NotifyMonsterAttackedStatusOverride));
+    }
 
     public Task<WorldPresenceRegistration> RegisterPresenceAsync(string mapId, WorldPlayerPresence presence, CancellationToken cancellationToken)
     {
