@@ -952,6 +952,7 @@
         "type": "Project",
         "dependencies": {
           "Athena.World.Contracts": "[1.0.0, )",
+          "Athena.World.Monsters": "[1.0.0, )",
           "Athena.World.Runtime": "[1.0.0, )",
           "Microsoft.Orleans.Server": "[10.3.0, )",
           "OpenTelemetry.Exporter.OpenTelemetryProtocol": "[1.17.0, )",
@@ -962,6 +963,12 @@
         "type": "Project",
         "dependencies": {
           "Microsoft.Orleans.Sdk": "[10.3.0, )"
+        }
+      },
+      "athena.world.monsters": {
+        "type": "Project",
+        "dependencies": {
+          "Athena.World.Runtime": "[1.0.0, )"
         }
       },
       "athena.world.runtime": {

@@ -19,5 +19,17 @@
   <ItemGroup>
     <ProjectReference Include="../Athena.World.Contracts/Athena.World.Contracts.csproj" />
     <ProjectReference Include="../Athena.World.Runtime/Athena.World.Runtime.csproj" />
+    <!-- Phase 2B: monster SIMULATION authority lives in WorldPartitionGrain, reusing the same
+         pure monster-domain logic (MobInstance/MonsterRegistry/MonsterRuntime/spawn cell
+         selection) Athena.World.Monsters already file-links from MapServer's own tree - see that
+         project's own .csproj doc comment. No ProjectReference back to MapServer.csproj is
+         introduced anywhere. PrivateAssets="all": this reference must NOT flow transitively to any
+         consumer of Athena.World.dll (e.g. MapServer.Tests, which already references BOTH
+         MapServer.csproj and Athena.World.csproj for its distributed-grain integration tests) -
+         MapServer.csproj compiles the SAME file-linked source directly into its own assembly, and
+         a transitive reference here would make every one of those types (MobSpawnDefinition,
+         MonsterRegistry, MobInstance, etc.) ambiguous (CS0433) between the two assemblies for any
+         consumer that can see both. -->
+    <ProjectReference Include="../Athena.World.Monsters/Athena.World.Monsters.csproj" PrivateAssets="all" />
   </ItemGroup>
 </Project>

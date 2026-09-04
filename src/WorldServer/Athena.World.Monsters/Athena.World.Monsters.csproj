@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>Athena.Net.MapServer.World</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- Pure monster-domain logic, file-linked (not moved/renamed) from MapServer's own tree, per
+         the same established pattern Athena.World.Runtime already uses for collision/pathfinding
+         code (see that project's own .csproj). Source stays physically under src/MapServer/World/
+         and keeps its original Athena.Net.MapServer.World namespace - MapServer keeps building and
+         using these files directly for anything not yet rewired to IWorldRuntime; Athena.World.Monsters
+         compiles the SAME source into a separate assembly Athena.World (the grain host) references,
+         with no ProjectReference back to MapServer.csproj at all. -->
+    <Compile Include="../../MapServer/World/SharedWorldRuntimeUsings.cs" Link="Monsters/SharedWorldRuntimeUsings.cs" />
+    <Compile Include="../../MapServer/World/MobData.cs" Link="Monsters/MobData.cs" />
+    <Compile Include="../../MapServer/World/MobInstance.cs" Link="Monsters/MobInstance.cs" />
+    <Compile Include="../../MapServer/World/MonsterRegistry.cs" Link="Monsters/MonsterRegistry.cs" />
+    <Compile Include="../../MapServer/World/MonsterRuntime.cs" Link="Monsters/MonsterRuntime.cs" />
+    <Compile Include="../../MapServer/World/IMonsterActorView.cs" Link="Monsters/IMonsterActorView.cs" />
+    <Compile Include="../../MapServer/World/MobSpawnCellSelector.cs" Link="Monsters/MobSpawnCellSelector.cs" />
+    <Compile Include="../../MapServer/World/MonsterTargetRangeRules.cs" Link="Monsters/MonsterTargetRangeRules.cs" />
+    <Compile Include="../../MapServer/World/CharacterMovementState.cs" Link="Movement/CharacterMovementState.cs" />
+    <Compile Include="../../MapServer/World/WorldVisibilityOptions.cs" Link="Monsters/WorldVisibilityOptions.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Athena.World.Runtime/Athena.World.Runtime.csproj" />
+  </ItemGroup>
+</Project>

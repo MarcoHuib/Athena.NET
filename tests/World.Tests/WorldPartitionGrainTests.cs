@@ -256,8 +256,16 @@ public sealed class WorldPartitionGrainTests : IAsyncLifetime
         // like MapServerApp.RunAsync/Athena.World's Program.cs resolve it for their own processes.
         // "geffen" is not "prontera"/"prt_fild*", so it resolves to "world-rest" (the catch-all),
         // matching this test's previous expectations exactly.
+        // This file's tests never touch monster spawning (see WorldMonsterSimulationTests.cs for
+        // that, which supplies a real all-walkable MapCollisionProvider instead) - the grain
+        // constructor unconditionally requires an IMapCollisionProvider regardless, so
+        // EmptyMapCollisionProvider.Instance (a real, explicit, deliberately collision-less
+        // provider - never the same thing as UnverifiedFallbackMobSpawnCellSelector, which is a
+        // SELECTOR choice this project's spawn-construction code must never make silently) is
+        // supplied here purely to satisfy that constructor requirement.
         public void Configure(ISiloBuilder siloBuilder) => siloBuilder.Services.AddSingleton<IWorldPartitionResolver>(
             WorldPartitionTopologyLoader.Load(TestWorldPartitionsPath.Resolve(), ["prontera", "prt_fild08d", "izlude", "geffen"]))
-            .AddSingleton<IMovementPathProvider, UnverifiedGridLineMovementPathProvider>();
+            .AddSingleton<IMovementPathProvider, UnverifiedGridLineMovementPathProvider>()
+            .AddSingleton<IMapCollisionProvider>(EmptyMapCollisionProvider.Instance);
     }
 }

@@ -45,4 +45,11 @@ internal sealed class VisibleActorTracker
     public bool TryMarkNotVisible(uint actorId) { lock (_gate) return _actorIds.Remove(actorId); }
 
     public void Clear() { lock (_gate) _actorIds.Clear(); }
+
+    // Immutable point-in-time copy of every currently-tracked actor id - used by a caller that needs
+    // to enumerate/diff "what is currently marked visible" (e.g. MapClientSession's own
+    // ReconcileMonsterVisibilityAsync) without holding this tracker's own lock across the diff loop
+    // (which may itself call back into TryMarkNotVisible/MarkNotVisible on this same tracker for
+    // entries the diff decides to vanish - re-entrant locking a plain `Lock` does not support).
+    public uint[] Snapshot() { lock (_gate) return [.. _actorIds]; }
 }

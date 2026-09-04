@@ -538,4 +538,86 @@ public sealed class MobInstanceTests
         var afterRealMinRandomWalkTime = instance.IsIdleWalkDue(epoch.AddMilliseconds(4000), () => 0);
         Assert.True(afterRealMinRandomWalkTime, "Idle random walk must become due once the REAL 4000ms MIN_RANDOMWALKTIME has elapsed since unlock.");
     }
+
+    // ===== IncarnationId (MonsterIncarnationId) - the single source of truth for distinguishing a
+    // MobInstance's current life from a prior one that ended in death. Only a successful
+    // Dead->Alive respawn transition may ever advance it - every other death/respawn-adjacent
+    // operation must leave it completely untouched. =====
+
+    [Fact]
+    public void FreshInstance_StartsAtIncarnationOne()
+    {
+        var instance = new MobInstance(1, MakeSpawn(), 0, 0);
+        Assert.Equal(MonsterIncarnationId.First, instance.IncarnationId);
+        Assert.Equal(1, instance.IncarnationId.Value);
+    }
+
+    [Fact]
+    public void Death_AloneDoesNotIncrementIncarnation()
+    {
+        var instance = new MobInstance(1, MakeSpawn(), 0, 0);
+        instance.ApplyDamage(55);
+
+        Assert.Equal(MonsterIncarnationId.First, instance.IncarnationId);
+    }
+
+    [Fact]
+    public void SchedulingARespawn_DoesNotIncrementIncarnation()
+    {
+        var instance = new MobInstance(1, MakeSpawn(), 0, 0);
+        instance.ApplyDamage(55);
+        instance.TryScheduleRespawn(1000);
+
+        Assert.Equal(MonsterIncarnationId.First, instance.IncarnationId);
+    }
+
+    [Fact]
+    public void RespawnAttempt_BeforeDueTime_DoesNotIncrementIncarnation()
+    {
+        var instance = new MobInstance(1, MakeSpawn(), 0, 0);
+        instance.ApplyDamage(55);
+        instance.TryScheduleRespawn(1000);
+
+        Assert.False(instance.TryRespawn(500, () => Fixed(0, 0)));
+        Assert.Equal(MonsterIncarnationId.First, instance.IncarnationId);
+    }
+
+    [Fact]
+    public void FailedRespawnSelection_DoesNotIncrementIncarnation()
+    {
+        var instance = new MobInstance(1, MakeSpawn(), 0, 0);
+        instance.ApplyDamage(55);
+        instance.TryScheduleRespawn(1000);
+
+        Assert.False(instance.TryRespawn(1000, () => (false, default)));
+        Assert.Equal(MonsterIncarnationId.First, instance.IncarnationId);
+    }
+
+    [Fact]
+    public void SuccessfulRespawn_IncrementsIncarnationExactlyOnce()
+    {
+        var instance = new MobInstance(1, MakeSpawn(), 0, 0);
+        instance.ApplyDamage(55);
+        instance.TryScheduleRespawn(1000);
+
+        Assert.True(instance.TryRespawn(1000, () => Fixed(0, 0)));
+
+        Assert.Equal(MonsterIncarnationId.First.Next(), instance.IncarnationId);
+        Assert.Equal(2, instance.IncarnationId.Value);
+    }
+
+    [Fact]
+    public void SecondSuccessfulRespawn_IncrementsIncarnationAgain()
+    {
+        var instance = new MobInstance(1, MakeSpawn(), 0, 0);
+        instance.ApplyDamage(55);
+        instance.TryScheduleRespawn(1000);
+        instance.TryRespawn(1000, () => Fixed(0, 0));
+
+        instance.ApplyDamage(55);
+        instance.TryScheduleRespawn(2000);
+        Assert.True(instance.TryRespawn(2000, () => Fixed(0, 0)));
+
+        Assert.Equal(3, instance.IncarnationId.Value);
+    }
 }

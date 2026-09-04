@@ -8,36 +8,55 @@ using Athena.Net.MapServer.World.GeneratedScripts;
 
 namespace Athena.Net.MapServer.World;
 
-// Composed live world: one WorldActorIdAllocator shared by the composed
-// WorldMapRegistry (NPC/warp actors) and MonsterRegistry (monster actors),
-// so every actor kind draws from one ID namespace - matching rAthena's own
-// single NPC/monster actor-ID domain rather than giving each content kind an
-// arbitrary disjoint sub-range. Built once by the MapServer startup path
-// (MapServerApp.RunAsync) and threaded explicitly through
-// MapTcpServer/MapClientSession from there; nothing in that live path should
-// fall back to WorldMapRegistry.Tutorial once this exists; that static
-// singleton remains only for existing tests/legacy standalone callers that
-// don't combine world data with a monster runtime.
-public sealed record MapServerWorld(WorldMapRegistry Maps, MonsterRegistry Monsters, MonsterCombatCoordinator Combat, IMapCollisionProvider Collision, MonsterSpatialInspector SpatialInspector, IMovementPathProvider MovementPathProvider, MonsterRuntime MonsterRuntime, PlayerPresenceRegistry Players, PlayerVisibilityCoordinator PlayerVisibility, WorldVisibilityOptions Visibility, GameplayRateOptions? Rates = null)
+// Composed live world: one WorldActorIdAllocator drives the composed WorldMapRegistry (NPC/warp
+// actors) - the ONLY actor kind MapServer allocates local ActorIds for post-cutover. Monster
+// ActorIds are World-authoritative (leased by the WorldPartitionGrain itself, see that grain's own
+// LoadMonsterSpawnsAsync) - MapServer no longer allocates a second, competing local ActorId set for
+// monsters at all (there is no local MobInstance for a production monster to allocate one for).
+//
+// Step 6 cutover: MonsterRegistry/MonsterRuntime are GONE from this record's own production shape -
+// see MonsterFeedProjectionRegistry's own doc comment for what replaced them (a per-map,
+// World-feed-driven projection, populated by MapTcpServer's own tick loop via IWorldRuntime, never
+// constructed here). `MonsterSpawns` retains the raw generated spawn declarations (still needed to
+// build a WorldMonsterSpawnBatch for LoadMonsterSpawnsAsync - see WorldMonsterSpawnBatchBuilder) and
+// the static MobDefinition data every spawn declaration already embeds (needed by
+// MonsterCombatCoordinator's damage formula and WorldMonsterActorView's own GeneratedMobRegistry
+// lookup) - WITHOUT ever constructing a live MonsterRegistry/MobInstance to hold it.
+public sealed record MapServerWorld(
+    WorldMapRegistry Maps,
+    IReadOnlyList<MobSpawnDefinition> MonsterSpawns,
+    MonsterCombatCoordinator Combat,
+    IMapCollisionProvider Collision,
+    IMovementPathProvider MovementPathProvider,
+    MonsterFeedProjectionRegistry MonsterProjections,
+    MonsterCombatStateStore CombatState,
+    PlayerPresenceRegistry Players,
+    PlayerVisibilityCoordinator PlayerVisibility,
+    WorldVisibilityOptions Visibility,
+    GameplayRateOptions? Rates = null)
 {
-    // Compatibility constructor for focused monster/world tests that compose the record directly.
-    // It still creates one coherent player-world bundle; it never leaves the new live components null.
-    public MapServerWorld(WorldMapRegistry maps, MonsterRegistry monsters, MonsterCombatCoordinator combat,
-        IMapCollisionProvider collision, MonsterSpatialInspector spatialInspector,
-        IMovementPathProvider movementPathProvider, MonsterRuntime monsterRuntime,
+    // Compatibility constructor for focused monster/world tests that compose the record directly
+    // without going through Build(). It still creates one coherent player-world bundle; it never
+    // leaves the new live components null.
+    public MapServerWorld(WorldMapRegistry maps, IReadOnlyList<MobSpawnDefinition> monsterSpawns, MonsterCombatCoordinator combat,
+        IMapCollisionProvider collision, IMovementPathProvider movementPathProvider,
+        MonsterFeedProjectionRegistry monsterProjections, MonsterCombatStateStore combatState,
         GameplayRateOptions? rates = null)
-        : this(maps, monsters, combat, collision, spatialInspector, movementPathProvider, monsterRuntime, CreatePlayerWorld(), rates)
+        : this(maps, monsterSpawns, combat, collision, movementPathProvider, monsterProjections, combatState, CreatePlayerWorld(), rates)
     {
     }
 
-    private MapServerWorld(WorldMapRegistry maps, MonsterRegistry monsters, MonsterCombatCoordinator combat,
-        IMapCollisionProvider collision, MonsterSpatialInspector spatialInspector,
-        IMovementPathProvider movementPathProvider, MonsterRuntime monsterRuntime,
+    private MapServerWorld(WorldMapRegistry maps, IReadOnlyList<MobSpawnDefinition> monsterSpawns, MonsterCombatCoordinator combat,
+        IMapCollisionProvider collision, IMovementPathProvider movementPathProvider,
+        MonsterFeedProjectionRegistry monsterProjections, MonsterCombatStateStore combatState,
         (PlayerPresenceRegistry Players, PlayerVisibilityCoordinator Coordinator, WorldVisibilityOptions Options) playerWorld,
         GameplayRateOptions? rates)
-        : this(maps, monsters, combat, collision, spatialInspector, movementPathProvider, monsterRuntime,
+        : this(maps, monsterSpawns, combat, collision, movementPathProvider, monsterProjections, combatState,
             playerWorld.Players, playerWorld.Coordinator, playerWorld.Options, rates)
     {
+        // Positional order matches the primary record constructor exactly: Maps, MonsterSpawns,
+        // Combat, Collision, MovementPathProvider, MonsterProjections, CombatState, Players,
+        // PlayerVisibility, Visibility, Rates.
     }
 
     private static (PlayerPresenceRegistry Players, PlayerVisibilityCoordinator Coordinator, WorldVisibilityOptions Options) CreatePlayerWorld()
@@ -47,67 +66,26 @@ public sealed record MapServerWorld(WorldMapRegistry Maps, MonsterRegistry Monst
         return (players, new PlayerVisibilityCoordinator(players, options), options);
     }
 
-    // `cellSelector` defaults to null, which means "explicitly choose ONE of the two selectors
-    // based on `collisionProvider`'s identity, right here at composition time" - never an internal
-    // fallback INSIDE a selector (see RathenaCompatibleMobSpawnCellSelector's own doc comment for
-    // why that distinction matters: a missing/broken map inside an otherwise real collision-backed
-    // world must be a hard error, not silently recovered by the placeholder selector). Exactly
-    // `EmptyMapCollisionProvider.Instance` (the collision-less default) selects
-    // UnverifiedFallbackMobSpawnCellSelector; ANY other configured provider (map_cache.dat now
-    // makes a real provider the normal startup case - see ai/world-data.md) selects
-    // RathenaCompatibleMobSpawnCellSelector. An explicit `cellSelector` argument always wins over
-    // this derivation (existing tests construct their own FixedCellSelector/etc. this way).
-    // `gameplayRules` is an ALREADY-COMPOSED bundle from the startup/composition
-    // root (MapServerApp.RunAsync -> GameplayRulesFactory.Create). This method never
-    // inspects GameplayOptions/RagnarokRuleSet and never calls GameplayRulesFactory
-    // itself - ruleset selection has already happened by the time a
-    // GameplayRuleServices value reaches here, so this class stays entirely unaware
-    // of which ruleset is active. Required (not optional/defaulted) precisely so
-    // this method cannot quietly re-introduce a ruleset decision of its own; callers
-    // that don't care about ruleset selection (most existing tests) construct
-    // `new GameplayRuleServices(new RenewalBasicAttackRules())` directly, the same
-    // way they already construct every other dependency this method takes.
+    // `gameplayRules` is an ALREADY-COMPOSED bundle from the startup/composition root
+    // (MapServerApp.RunAsync -> GameplayRulesFactory.Create). This method never inspects
+    // GameplayOptions/RagnarokRuleSet - ruleset selection has already happened by the time a
+    // GameplayRuleServices value reaches here.
     // `collisionProvider` defaults to EmptyMapCollisionProvider.Instance: the proprietary source
-    // .gat files and any real derived artifact stay local/gitignored, never committed, so a caller
-    // that doesn't explicitly configure one (map_cache_path/map_collision_artifact - see
-    // MapCollisionArtifact/MapCollisionCompiler's own doc comments) gets the collision-less
-    // placeholder. This is no longer "nothing consumes it yet" - a REAL provider (the normal
-    // production startup case, see ai/world-data.md) drives player movement pathing
-    // (RathenaCompatibleMovementPathProvider), monster spawn cell selection
-    // (RathenaCompatibleMobSpawnCellSelector), monster idle movement (MonsterRuntime), and combat
-    // range checks, all through this same `resolvedCollisionProvider` instance below.
-    // `customsEnabled` composes Athena.NET's own handwritten Customs/World content (currently
-    // just the Athena Test NPC - see ai/map-server.md's "Handwritten custom world content"
-    // section) alongside the generated world on the SAME WorldRegistryBuilder instance
-    // GeneratedScriptRegistry.Register already populates - never a second/parallel registry, and
-    // never by mutating GeneratedScriptRegistry's own static Result. Defaults to false so every
-    // existing caller (including every test that doesn't pass it) keeps building a customs-free
-    // world exactly as before.
+    // .gat files and any real derived artifact stay local/gitignored, never committed. A REAL
+    // provider (the normal production startup case) drives player movement pathing
+    // (RathenaCompatibleMovementPathProvider) and combat range checks against the World projection.
+    // `customsEnabled` composes Athena.NET's own handwritten Customs/World content alongside the
+    // generated world.
     // `servedMaps`: explicit runtime/deployment HOSTING SCOPE - which maps this MapServer build
     // actually serves - supplied by the caller, never inferred from warp graphs, collision data, or
-    // any other generated-content signal. "Reachable via a warp" and "served" are different
-    // concepts: a map can be served with no static warp at all (a character start_point, a
-    // persisted reconnect position, a save point, or a future non-warp entry mechanism), and a map
-    // could theoretically appear warp-reachable without this build actually intending to host it.
-    // Deliberately INDEPENDENT of collision-data availability too - a missing collision entry for a
-    // served map must still fail loudly (via the existing RathenaCompatibleMobSpawnCellSelector
-    // below), never be silently indistinguishable from a map this build never intended to serve at
-    // all. `null` (every existing caller/test) means "do not filter" - every generated spawn is
-    // instantiated exactly as before this parameter existed. When supplied, a generated
-    // MobSpawnDefinition whose Map is NOT in the set is silently excluded before MonsterRegistry
-    // construction (generated source data is untouched either way - see
-    // GeneratedScriptRegistry.MobSpawns/PrtFild08MobSpawns.cs, which still losslessly includes
-    // every pinned prt_fild08* family member); a spawn whose Map IS in the set flows through
-    // normally and still hits the existing fail-loud missing-collision-data check. The production
-    // composition root (MapServerApp.RunAsync) always passes an explicit literal set
-    // (MapServerHostingScope.ServedMaps) declaring what Athena.NET genuinely hosts today, never
-    // relies on this default and never derives it from WorldMapRegistry.ReachableMaps (that
-    // property remains a purely diagnostic/navigation view of the warp graph - see its own doc
-    // comment - not a hosting-scope source).
-    public static MapServerWorld Build(GameplayRuleServices gameplayRules, IMobSpawnCellSelector? cellSelector = null, TimeProvider? timeProvider = null, IMapCollisionProvider? collisionProvider = null, GameplayRateOptions? rates = null, bool customsEnabled = false, IReadOnlySet<string>? servedMaps = null, IEnumerable<WarpDefinition>? warpDefinitions = null, IReadOnlySet<string>? mobSpawnMaps = null)
+    // any other generated-content signal.
+    // `actorIdAllocator` defaults to null, which means "construct the default 110,000,000-based
+    // WorldActorIdAllocator here" for NPC/warp actors ONLY - monster ActorIds no longer come from
+    // this allocator at all post-cutover (see this record's own top-of-file doc comment).
+    public static MapServerWorld Build(GameplayRuleServices gameplayRules, TimeProvider? timeProvider = null, IMapCollisionProvider? collisionProvider = null, GameplayRateOptions? rates = null, bool customsEnabled = false, IReadOnlySet<string>? servedMaps = null, IEnumerable<WarpDefinition>? warpDefinitions = null, IReadOnlySet<string>? mobSpawnMaps = null, WorldActorIdAllocator? actorIdAllocator = null)
     {
         var resolvedCollisionProvider = collisionProvider ?? EmptyMapCollisionProvider.Instance;
-        var allocator = new WorldActorIdAllocator();
+        var allocator = actorIdAllocator ?? new WorldActorIdAllocator();
         var builder = new WorldRegistryBuilder();
         GeneratedScriptRegistry.Register(builder);
         if (customsEnabled) CustomWorldRegistry.Register(builder);
@@ -116,51 +94,29 @@ public sealed record MapServerWorld(WorldMapRegistry Maps, MonsterRegistry Monst
             ? GeneratedWarpRegistry.All
             : servedMaps.Order(StringComparer.Ordinal).SelectMany(GeneratedWarpRegistry.GetForMap));
         var maps = new WorldMapRegistry(servedWarps, world.Entities, scripts: world.Scripts, allocator: allocator);
-        // Explicit either/or choice, not a fallback: EmptyMapCollisionProvider.Instance IS the
-        // collision-less/dev case; anything else is a real collision-backed world.
-        IMobSpawnCellSelector defaultCellSelector = ReferenceEquals(resolvedCollisionProvider, EmptyMapCollisionProvider.Instance)
-            ? new UnverifiedFallbackMobSpawnCellSelector()
-            : new RathenaCompatibleMobSpawnCellSelector(resolvedCollisionProvider);
         var effectiveMobSpawnMaps = mobSpawnMaps ?? servedMaps;
         var servedMobSpawns = effectiveMobSpawnMaps is null ? world.MobSpawns : world.MobSpawns.Where(spawn => effectiveMobSpawnMaps.Contains(spawn.Map)).ToArray();
-        var monsters = new MonsterRegistry(
-            servedMobSpawns,
-            allocator,
-            cellSelector ?? defaultCellSelector,
-            timeProvider ?? TimeProvider.System);
         var questDrops = new QuestDropResolver(GeneratedQuestDrops.All);
-        var combat = new MonsterCombatCoordinator(monsters, questDrops, gameplayRules.BasicAttackRules);
-        var spatialInspector = new MonsterSpatialInspector(monsters, resolvedCollisionProvider);
-        // Same either/or composition rule as the mob spawn cell selector above (see that field's
-        // own doc comment): EmptyMapCollisionProvider.Instance keeps the collision-less placeholder
-        // path provider (the ONLY other IMovementPathProvider implementation, used by tests/dev
-        // fixtures - see that type's own doc comment); any real provider gets the collision-backed
-        // A* implementation. Player movement (MapClientSession) and monster idle movement
-        // (MonsterRuntime) both consume this SAME instance - one pathfinding foundation, not two.
+        var combatState = new MonsterCombatStateStore();
+        var combat = new MonsterCombatCoordinator(questDrops, gameplayRules.BasicAttackRules, combatState);
+        // Same either/or composition rule the old cell-selector/movement-provider split used:
+        // EmptyMapCollisionProvider.Instance keeps the collision-less placeholder path provider
+        // (tests/dev fixtures); any real provider gets the collision-backed A* implementation.
+        // Player movement (MapClientSession) is this provider's only remaining consumer post-cutover
+        // (monster movement/pathing is entirely World-authoritative now).
         IMovementPathProvider movementPathProvider = ReferenceEquals(resolvedCollisionProvider, EmptyMapCollisionProvider.Instance)
             ? new UnverifiedGridLineMovementPathProvider()
             : new RathenaCompatibleMovementPathProvider(resolvedCollisionProvider);
-        var monsterRuntime = new MonsterRuntime(monsters, resolvedCollisionProvider, movementPathProvider, timeProvider ?? TimeProvider.System);
         var visibility = WorldVisibilityOptions.Default;
         var players = new PlayerPresenceRegistry(visibility);
         var playerVisibility = new PlayerVisibilityCoordinator(players, visibility);
-        return new MapServerWorld(maps, monsters, combat, resolvedCollisionProvider, spatialInspector, movementPathProvider, monsterRuntime, players, playerVisibility, visibility, rates ?? new GameplayRateOptions());
+        var monsterProjections = new MonsterFeedProjectionRegistry();
+        return new MapServerWorld(maps, servedMobSpawns, combat, resolvedCollisionProvider, movementPathProvider, monsterProjections, combatState, players, playerVisibility, visibility, rates ?? new GameplayRateOptions());
     }
 
-    // Production fail-closed guard: called explicitly by MapServerApp.RunAsync (the live
-    // executable's own composition root) BEFORE calling Build, never from inside Build itself -
-    // Build must stay freely usable by tests that intentionally want the collision-less/
-    // fallback-selector default (see Build's own doc comment on why EmptyMapCollisionProvider ->
-    // UnverifiedFallbackMobSpawnCellSelector is a legitimate, explicit choice in that context).
-    // This guard exists because a REAL running MapServer is a different situation: once generated
-    // content includes monster spawn declarations, starting it without real collision data would
-    // silently place those monsters on UnverifiedFallbackMobSpawnCellSelector's fabricated
-    // deterministic raster ((50,50), (52,50), ... - observed live on generic int_land before this
-    // fix) rather than genuine pinned-rAthena-compatible cells - i.e. inventing authoritative world
-    // state instead of failing loudly. `hasGeneratedMobSpawns` is a plain bool (not a live query
-    // against GeneratedScriptRegistry.MobSpawns) so this method has no dependency on which mob
-    // family/content module is generated - it protects any FUTURE mob family the same way, not
-    // just G_PORING specifically.
+    // Production fail-closed guard: called explicitly by MapServerApp.RunAsync BEFORE calling
+    // Build, never from inside Build itself. `hasGeneratedMobSpawns` is a plain bool so this method
+    // has no dependency on which mob family/content module is generated.
     public static void RequireRealCollisionSourceIfMobSpawnsExist(bool hasGeneratedMobSpawns, IMapCollisionProvider collisionProvider)
     {
         if (hasGeneratedMobSpawns && ReferenceEquals(collisionProvider, EmptyMapCollisionProvider.Instance))
