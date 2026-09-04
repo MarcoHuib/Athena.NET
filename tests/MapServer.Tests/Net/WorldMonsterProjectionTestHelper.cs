@@ -115,8 +115,15 @@ internal sealed class FakeCombatWorldRuntime : IWorldRuntime
         lock (_gate) return _confirmedDead.Contains((reference.MapId, reference.ActorId, reference.IncarnationId.Value));
     }
 
+    // Defaults to Acquired (the existing behavior every pre-existing test in this file already
+    // depends on) - settable so a test can script a non-success status (StaleLifeReference,
+    // StaleAttackerPresence, MonsterNotAttackable, AttackerNotEngageable) to prove MapClientSession's
+    // own fail-closed handling of a rejected non-lethal engagement-acquisition result (item 8 of the
+    // Step 6 hardening pass).
+    public WorldMonsterAttackedStatus NotifyMonsterAttackedStatusOverride { get; set; } = WorldMonsterAttackedStatus.Acquired;
+
     public Task<WorldMonsterAttackedResult> NotifyMonsterAttackedAsync(WorldMonsterAttackedCommand command, CancellationToken cancellationToken) =>
-        Task.FromResult(new WorldMonsterAttackedResult(WorldMonsterAttackedStatus.Acquired));
+        Task.FromResult(new WorldMonsterAttackedResult(NotifyMonsterAttackedStatusOverride));
 
     public Task<WorldPresenceRegistration> RegisterPresenceAsync(string mapId, WorldPlayerPresence presence, CancellationToken cancellationToken)
     {

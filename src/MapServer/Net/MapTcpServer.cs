@@ -243,7 +243,28 @@ public sealed class MapTcpServer
             while (!cancellationToken.IsCancellationRequested)
             {
                 await Task.Delay(MonsterTickInterval, cancellationToken);
-                await ProcessOneMonsterTickAsync(_sessions.Values.ToArray(), cancellationToken);
+                try
+                {
+                    await ProcessOneMonsterTickAsync(_sessions.Values.ToArray(), cancellationToken);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    throw; // Genuine shutdown - let the outer catch below handle it.
+                }
+                catch (Exception ex)
+                {
+                    // An unexpected/transient exception from one tick's processing (e.g. a transient
+                    // Orleans timeout/transport failure not already caught by the narrower IOException/
+                    // OperationCanceledException guards inside PollAndReconcileMapAsync/
+                    // InitializeMapSpawnsAsync/the per-map try/catch below) must never fault this
+                    // entire background loop task permanently - the loop survives and naturally
+                    // retries via its own next 100ms tick, nothing more elaborate (no blanket
+                    // automatic retry/backoff is added here). Genuinely loud invariant/configuration
+                    // failures (ContentMismatch/CallerFingerprintMismatch/SpawnMapMismatch) are still
+                    // logged and left unretried by InitializeMapSpawnsAsync's own existing handling,
+                    // which this catch does not change or suppress further.
+                    MapLogger.Error($"[WORLD] Unhandled exception in monster tick processing - the loop will continue on its next tick: {ex}");
+                }
             }
         }
         catch (OperationCanceledException)
@@ -266,13 +287,40 @@ public sealed class MapTcpServer
     // zero-session gap is explicitly correct, never destroyed).
     internal async Task ProcessOneMonsterTickAsync(IReadOnlyCollection<MapClientSession> sessions, CancellationToken cancellationToken)
     {
-        foreach (var mapGroup in sessions.GroupBy(session => session.CurrentMapName, StringComparer.OrdinalIgnoreCase))
+        // Only sessions that have actually reached WorldVisible (authenticated AND registered with
+        // a genuine World presence on a real map) are eligible to be grouped/polled by map id here -
+        // a newly-accepted TCP session is inserted into MapTcpServer's own _sessions dictionary
+        // BEFORE authentication/World registration completes (see HandleClientAsync), so its
+        // CurrentMapName can be empty during that window. WorldMapId.Normalize rejects null/empty/
+        // whitespace map ids, so grouping such a session together with real sessions (or polling for
+        // map id "") is a bug this filter exists to prevent, never merely a cosmetic grouping choice.
+        var eligibleSessions = sessions.Where(session => session.IsWorldMapEligible).ToArray();
+        foreach (var mapGroup in eligibleSessions.GroupBy(session => session.CurrentMapName, StringComparer.OrdinalIgnoreCase))
         {
-            await PollAndReconcileMapAsync(mapGroup.Key, mapGroup.ToArray(), cancellationToken);
+            try
+            {
+                await PollAndReconcileMapAsync(mapGroup.Key, mapGroup.ToArray(), cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw; // Genuine shutdown - propagate, never swallow.
+            }
+            catch (Exception ex)
+            {
+                // An unexpected exception reconciling ONE map must never prevent every OTHER map in
+                // this SAME tick from being processed - each mapGroup iteration is independent
+                // (separate MonsterFeedProjection, separate cursor). Nothing about this map's
+                // in-flight cursor/combat-state/session projection was left partially applied here:
+                // PollAndReconcileMapAsync's own internal ordering only advances the cursor after
+                // every earlier step succeeds (see MonsterFeedProjection's own doc comment), so a
+                // failure here simply means this tick made no progress for this one map - the next
+                // tick's own poll naturally retries from the same, unadvanced cursor.
+                MapLogger.Error($"[WORLD] Unhandled exception reconciling map '{mapGroup.Key}' this tick - other maps still proceed, this map retries next tick: {ex}");
+            }
         }
 
-        var cadenceResult = await _cadenceExecutor.ProcessAsync(sessions, cancellationToken);
-        foreach (var session in sessions)
+        var cadenceResult = await _cadenceExecutor.ProcessAsync(eligibleSessions, cancellationToken);
+        foreach (var session in eligibleSessions)
         {
             // NotifyMonsterAttackOutcomeAsync owns its own visibility/victim rules internally
             // (AREA-visible 0x08C8 gated on _visibleActorIds, self-only SP_HP gated on
@@ -376,45 +424,55 @@ public sealed class MapTcpServer
     }
 
     // Step 4 of the binding bootstrap/resync ordering: reconcile every active session's actual
-    // client-visible monster projection. For each session: vanished/dead actors are handled by
-    // simply no longer re-sending anything for an ActorId the fresh snapshot doesn't contain (this
-    // project's own documented "no invented vanish packet" gap - see NotifyMonsterMovedAsync's own
-    // doc comment; a full explicit vanish+rediscovery reconciliation is future work, not fabricated
-    // here) - a session's own _visibleActorIds set naturally stops matching reality for a
-    // no-longer-projected actor and will simply never receive further updates for it. Newly-visible/
-    // currently-visible actors ARE explicitly (re-)projected here via NotifyMonsterMovedAsync's own
-    // discovery path (movementKind: null - a bootstrap/resync is a state re-observation, never a
-    // "movement just happened" event in its own right; discovery still triggers a stand/walk-entry
-    // packet for a not-yet-visible actor, exactly like ordinary per-tick discovery does).
+    // client-visible monster projection. Delegates the full per-session diff (vanish-on-leave-AOI,
+    // vanish-on-vanished/dead/old-incarnation/new-epoch actors, then rediscovery of everything
+    // currently Alive and in-AOI) to MapClientSession.ReconcileMonsterVisibilityAsync - see that
+    // method's own doc comment for the exact diff rules; MapTcpServer only owns session enumeration
+    // (it has no socket/visibility state of its own to reconcile).
     private async Task ReconcileSessionsFullyAsync(MonsterFeedProjection projection, IReadOnlyCollection<MapClientSession> mapSessions, CancellationToken cancellationToken)
     {
         foreach (var session in mapSessions)
         {
-            foreach (var instance in projection.AllInstances)
+            try
             {
-                if (instance.Lifecycle != WorldMonsterLifecycleState.Alive) continue;
-                if (!_world.CombatState.TryGet(new MonsterCombatKey(projection.MapId, projection.CurrentEpoch!.Value, instance.ActorId, instance.IncarnationId), out var combat)) continue;
+                await session.ReconcileMonsterVisibilityAsync(projection, _world.CombatState, cancellationToken);
+            }
+            catch (IOException) { /* Client disconnected; HandleClientAsync's own cleanup removes it from _sessions. */ }
+            catch (OperationCanceledException) { /* Server shutdown. */ }
+        }
+    }
+
+    // Fans out one incremental feed entry to every session on this map. `Died` is fanned out to
+    // EVERY session that currently has this actor visible (MapClientSession.NotifyMonsterDiedAsync
+    // owns the per-session IsActorVisible gate and the actual vanish send) - the ATTACKER's own
+    // session already sent its own death-vanish synchronously via its confirmed-local-kill path
+    // (PerformDueRepeatAttackAsync's own outcome.KilledByThisHit branch, which runs on the
+    // attacker's session's own repeat-attack loop, strictly before this SEPARATE MapTcpServer
+    // monster-tick loop can ever observe/poll the resulting Died feed entry) and therefore no longer
+    // has this actor marked visible by the time this runs, so NotifyMonsterDiedAsync's own
+    // IsActorVisible guard naturally skips it without a duplicate send. Every OTHER session that
+    // still had this monster visible (it never attacked it, or attacked a different one) has no
+    // other path that would ever tell it this monster died, and would otherwise show a live,
+    // undamaged monster forever. `Respawned` uses discovery (movementKind: null) so a session that
+    // had marked the OLD incarnation's ActorId not-visible (removed on death) re-discovers the NEW
+    // incarnation exactly like any other newly-visible actor. Every OTHER kind carrying a
+    // MovementKind is projected via its own explicit WorldMonsterMovementKind (never inferred from
+    // IsWalking - see WorldMonsterMovementKind's own doc comment).
+    private async Task FanOutEntryAsync(WorldMonsterFeedEntry entry, WorldSimulationEpoch epoch, IReadOnlyCollection<MapClientSession> mapSessions, CancellationToken cancellationToken)
+    {
+        if (entry.Kind == WorldMonsterFeedEntryKind.Died)
+        {
+            foreach (var session in mapSessions)
+            {
                 try
                 {
-                    await session.NotifyMonsterMovedAsync(new WorldMonsterActorView(instance), movementKind: null, combat, cancellationToken);
+                    await session.NotifyMonsterDiedAsync(entry.ActorId, cancellationToken);
                 }
                 catch (IOException) { /* Client disconnected; HandleClientAsync's own cleanup removes it from _sessions. */ }
                 catch (OperationCanceledException) { /* Server shutdown. */ }
             }
+            return;
         }
-    }
-
-    // Fans out one incremental feed entry to every session on this map. `Died` sends nothing new
-    // (a session's existing 0x0080 vanish-on-death handling, driven by the EXISTING attack-outcome/
-    // kill path, already covers the visible removal - Died itself carries no NEW wire behavior here
-    // beyond what the projection update already recorded) - `Respawned` uses discovery (movementKind:
-    // null) so a session that had marked the OLD incarnation's ActorId not-visible (removed on death)
-    // re-discovers the NEW incarnation exactly like any other newly-visible actor. Every OTHER kind
-    // carrying a MovementKind is projected via its own explicit WorldMonsterMovementKind (never
-    // inferred from IsWalking - see WorldMonsterMovementKind's own doc comment).
-    private async Task FanOutEntryAsync(WorldMonsterFeedEntry entry, WorldSimulationEpoch epoch, IReadOnlyCollection<MapClientSession> mapSessions, CancellationToken cancellationToken)
-    {
-        if (entry.Kind == WorldMonsterFeedEntryKind.Died) return;
 
         var actor = new WorldMonsterActorView(entry.Instance);
         var movementKind = entry.Kind == WorldMonsterFeedEntryKind.Respawned ? null : entry.MovementKind;

@@ -1,3 +1,4 @@
+using System.Linq;
 using Athena.Net.MapServer.Gameplay.Rules.Renewal;
 using Athena.Net.MapServer.Logging;
 using Athena.Net.MapServer.World;
@@ -42,16 +43,19 @@ internal sealed class MonsterAttackCadenceExecutor(
         // Only maps with at least one active session are ever polled/projected at all (see
         // MonsterFeedProjectionRegistry's own doc comment) - grouping sessions by map here means
         // this loop only ever visits a projection that genuinely has observers, never a map this
-        // MapServer process merely once touched.
-        foreach (var mapGroup in sessions.GroupBy(session => session.CurrentMapName, StringComparer.OrdinalIgnoreCase))
+        // MapServer process merely once touched. Filtered to IsWorldMapEligible sessions first,
+        // same as MapTcpServer.ProcessOneMonsterTickAsync's own identical filter - a session whose
+        // CurrentMapName is still empty (accepted but not yet authenticated/World-registered) must
+        // never be grouped by map id here either (see IsWorldMapEligible's own doc comment).
+        foreach (var mapGroup in sessions.Where(session => session.IsWorldMapEligible).GroupBy(session => session.CurrentMapName, StringComparer.OrdinalIgnoreCase))
         {
-            if (!projections.TryGet(mapGroup.Key, out var projection) || projection.CurrentEpoch is not { } epoch) continue;
+            if (!projections.TryGet(mapGroup.Key, out var projection) || !projection.SnapshotForCadence(out var epoch, out var instances)) continue;
             var mapSessions = mapGroup.ToArray();
 
-            foreach (var monster in projection.AllInstances)
+            foreach (var (monster, engagement) in instances)
             {
                 if (monster.Lifecycle != WorldMonsterLifecycleState.Alive) continue;
-                if (projection.EngagementOf(monster.ActorId) != WorldMonsterEngagementState.InAttackRange) continue;
+                if (engagement != WorldMonsterEngagementState.InAttackRange) continue;
                 if (monster.EngagedTarget is not { } target) continue;
 
                 var key = new MonsterCombatKey(mapGroup.Key, epoch, monster.ActorId, monster.IncarnationId);
@@ -82,12 +86,19 @@ internal sealed class MonsterAttackCadenceExecutor(
         IReadOnlyCollection<MapClientSession> sessions, WorldMonsterInstance monster, MonsterCombatKey key, WorldMonsterLifeReference life,
         WorldPlayerTargetReference target, DateTimeOffset now, CancellationToken cancellationToken)
     {
+        // Matches BOTH CharacterId AND PresenceId - never CharacterId alone (see
+        // WorldPlayerTargetReference's own doc comment for why: a reconnect race can leave an OLD
+        // session disconnecting while a NEW session with the SAME CharacterId but a genuinely
+        // different PresenceId is already active on this map). Selecting purely by CharacterId here
+        // could mutate player HP onto the wrong/replacement local session even though World's own
+        // ValidateMonsterAttackWindowAsync recheck below is unchanged/mandatory - this is an
+        // ADDITIONAL local guard, not a replacement for that World-side recheck.
         MapClientSession? targetSession = null;
         foreach (var candidate in sessions)
         {
-            if (candidate.CharacterId == target.CharacterId) { targetSession = candidate; break; }
+            if (candidate.CharacterId == target.CharacterId && candidate.PresenceId == target.PresenceId) { targetSession = candidate; break; }
         }
-        if (targetSession is null) return null; // Disconnected/moved off this map since the projection last observed it - World's own feed resolves the resulting Unlock.
+        if (targetSession is null) return null; // Disconnected/moved off this map, or reconnected under a different PresenceId, since the projection last observed it - World's own feed resolves the resulting Unlock.
 
         await _beforeFinalAttackRevalidation();
 

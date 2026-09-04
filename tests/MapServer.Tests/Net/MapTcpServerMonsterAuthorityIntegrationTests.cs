@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Linq;
 using System.Net;
 using System.Net.Sockets;
 using Athena.Net.MapServer.Config;
@@ -57,7 +58,7 @@ public sealed class MapTcpServerMonsterAuthorityIntegrationTests : IAsyncLifetim
     }
 
     private static async Task<(TcpClient Client, NetworkStream Stream, MapClientSession Session, Task RunTask, TcpListener Listener)> ConnectSessionAsync(
-        MapTcpServer server, MapServerWorld world, IWorldRuntime worldRuntime, uint accountId, string mapId, ushort x, ushort y)
+        MapTcpServer server, MapServerWorld world, IWorldRuntime worldRuntime, uint accountId, string mapId, ushort x, ushort y, CharacterGameplayState? gameplayState = null)
     {
         var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
@@ -67,7 +68,7 @@ public sealed class MapTcpServerMonsterAuthorityIntegrationTests : IAsyncLifetim
         await connect;
         var stream = client.GetStream();
         var connector = new CharServerConnector(new MapConfigStore(new MapConfig(), "unused.conf"));
-        var state = new CharacterGameplayState(accountId, 1, 0, 99, 10, 0, 0, 100, 20, 100, 20, 0, 0, 99, 9, 9, 9, 99, 9);
+        var state = gameplayState ?? new CharacterGameplayState(accountId, 1, 0, 99, 10, 0, 0, 100, 20, 100, 20, 0, 0, 99, 9, 9, 9, 99, 9);
         // The production MapClientSession(MapServerWorld, IWorldRuntime) constructor defaults
         // gameplayStatePersistence to `connector` itself (a disconnected CharServerConnector in
         // tests, whose GetInventoryAsync/gameplay-state fetch always fails) - using it here would
@@ -95,6 +96,18 @@ public sealed class MapTcpServerMonsterAuthorityIntegrationTests : IAsyncLifetim
         await ReadExact(stream, 6);  // inventory start
         await ReadExact(stream, 4);  // inventory end
         listener.Stop();
+
+        // EnterPlayerWorldAsync (which sets IsWorldMapEligible) is called AFTER the self weapon/
+        // inventory packets are already sent, and itself awaits an Orleans RegisterPresenceAsync RPC
+        // - it is not guaranteed to have completed merely because the client has finished reading
+        // those three packets. ProcessOneMonsterTickAsync's own IsWorldMapEligible filter (item 6 of
+        // the monster-authority hardening pass) means a caller MUST wait for this session to actually
+        // become world-visible before driving a monster tick against it, exactly like production
+        // code would naturally observe (a session only appears in a real map-group once eligible).
+        var eligibilityDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        while (!session.IsWorldMapEligible && DateTime.UtcNow < eligibilityDeadline) await Task.Delay(10);
+        Assert.True(session.IsWorldMapEligible, "Expected the session to reach WorldVisible (IsWorldMapEligible) before returning from ConnectSessionAsync.");
+
         return (client, stream, session, run, listener);
     }
 
@@ -168,7 +181,15 @@ public sealed class MapTcpServerMonsterAuthorityIntegrationTests : IAsyncLifetim
         var world = MakeWorld(mapId);
         var worldRuntime = new OrleansWorldRuntime(_cluster.Client, Resolver());
         var server = new MapTcpServer(new MapConfigStore(new MapConfig(), "unused.conf"), new CharServerConnector(new MapConfigStore(new MapConfig(), "unused.conf")), world, worldRuntime);
-        var (client, stream, session, run, _) = await ConnectSessionAsync(server, world, worldRuntime, accountId: 3, mapId, (ushort)(MonsterX - 1), MonsterY);
+        // Deliberately weak, deterministic attacker (BaseLevel 1, minimum stats, unarmed): the
+        // shared file-level fixture (BaseLevel 99, STR/DEX 99) computes an unarmed RENEWAL statusAtk
+        // far above Poring's 55 HP with ZERO randomness involved (WeaponAttackCalculator's own
+        // pinned trace: an unarmed hand never reaches the rollWeaponAtk RNG branch at all - weaponAtk
+        // is hard-fixed at 0), so reusing it here would DETERMINISTICALLY one-shot the monster before
+        // EngagementAcquired can ever be observed - this is not flaky, it always kills. A weak fixed
+        // attacker keeps this test's own damage deterministically non-lethal.
+        var weakAttacker = new CharacterGameplayState(3, 1, 0, 1, 1, 0, 0, 100, 20, 100, 20, 0, 0, 1, 1, 1, 1, 1, 1);
+        var (client, stream, session, run, _) = await ConnectSessionAsync(server, world, worldRuntime, accountId: 3, mapId, (ushort)(MonsterX - 1), MonsterY, weakAttacker);
         using var _dispose = client;
 
         await server.ProcessOneMonsterTickAsync([session], CancellationToken.None); // SpawnInitializationRequired.
@@ -211,9 +232,9 @@ public sealed class MapTcpServerMonsterAuthorityIntegrationTests : IAsyncLifetim
         drainCts.Cancel();
         try { await drainTask; } catch { /* Expected once the stream is torn down. */ }
 
-        // Non-lethal hit (Poring has 55 HP, unarmed low damage) - the monster must now be engaged
-        // with THIS exact attacker's CharacterId+PresenceId, proving NotifyMonsterAttackedAsync was
-        // called with the correct life/attacker identity.
+        // Non-lethal hit (Poring has 55 HP; this attacker's own deterministic unarmed statusAtk is
+        // small) - the monster must now be engaged with THIS exact attacker's CharacterId+PresenceId,
+        // proving NotifyMonsterAttackedAsync was called with the correct life/attacker identity.
         Assert.NotNull(acquiredInstance);
         Assert.NotNull(acquiredInstance!.EngagedTarget);
         Assert.Equal(3u, acquiredInstance.EngagedTarget!.CharacterId);
@@ -267,18 +288,22 @@ public sealed class MapTcpServerMonsterAuthorityIntegrationTests : IAsyncLifetim
 
         // World itself must report the life as Dead once MapServer's local hit reached HP==0 and
         // called TryMarkMonsterDeadAsync - proving the death transition genuinely reached World,
-        // not merely a local combat-state zero with no World-side effect.
+        // not merely a local combat-state zero with no World-side effect. Verified PURELY via the
+        // read-only PollMonsterFeedAsync (never by calling the mutating TryMarkMonsterDeadAsync RPC
+        // from this test as a "verification" step - that would be a false positive, since the
+        // test's OWN call could be the one that actually marks the life dead even if MapServer's
+        // production path never reached World at all).
         var grain = _cluster.GrainFactory.GetGrain<IWorldPartitionGrain>(Resolver().ResolvePartition(mapId));
         var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
         var confirmedDead = false;
         while (DateTime.UtcNow < deadline && !confirmedDead)
         {
             await Task.Delay(200);
-            var life = new WorldMonsterLifeReference(mapId, epoch, monster.ActorId, monster.IncarnationId);
-            var result = await grain.TryMarkMonsterDeadAsync(life);
-            confirmedDead = result.Status is WorldMonsterDeathStatus.AlreadyDead; // Already dead means OUR earlier call already marked it.
+            var page = await grain.PollMonsterFeedAsync(cursor: null, mapId);
+            var candidate = page.Snapshot!.SingleOrDefault(instance => instance.ActorId == monster.ActorId);
+            confirmedDead = candidate is { Lifecycle: WorldMonsterLifecycleState.Dead };
         }
-        Assert.True(confirmedDead, "Expected World to already report this life as Dead (AlreadyDead) after MapServer's own TryMarkMonsterDeadAsync call.");
+        Assert.True(confirmedDead, "Expected World's own feed to report this life's Lifecycle as Dead after MapServer's production attack path called TryMarkMonsterDeadAsync.");
 
         client.Close();
         await run.WaitAsync(TimeSpan.FromSeconds(5));
@@ -339,12 +364,18 @@ public sealed class MapTcpServerMonsterAuthorityIntegrationTests : IAsyncLifetim
         Assert.Equal(WorldMonsterAttackWindowStatus.StaleTargetPresence, staleWindow.Status);
     }
 
+    // Real capture-verified 8-byte shape (mirrors IroAttackRequestPacketTests' own CapturedBytes
+    // fixture: kill-poring-heal-jobup.pcapng frame 614) - id.W targetActorId.L actionType.B
+    // (7=DMG_REPEAT) opaqueByte.B (0x7F). A 7-byte packet is rejected outright by
+    // IroAttackRequestPacket.TryParse (PacketConstants.IroCzAttackRequestLength is 8), so the old
+    // shape here never actually exercised the real attack-request handling path at all.
     private static byte[] BuildAttackPacket(uint targetActorId)
     {
-        var packet = new byte[7];
+        var packet = new byte[8];
         BinaryPrimitives.WriteInt16LittleEndian(packet, 0x0437);
         BinaryPrimitives.WriteUInt32LittleEndian(packet.AsSpan(2), targetActorId);
-        packet[6] = 0;
+        packet[6] = 7; // DMG_REPEAT
+        packet[7] = 0x7F;
         return packet;
     }
 

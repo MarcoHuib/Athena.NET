@@ -144,6 +144,25 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     private volatile string _lastPacketWrittenDescription = "<none>";
     private readonly CancellationTokenSource _sessionCancellation = new();
     private readonly VisibleActorTracker _visibleActorIds = new();
+    // Monster-only mirror of "which monster ActorIds this session currently believes are visible" -
+    // reuses the exact same VisibleActorTracker type (thread-safe, same locking convention) but is a
+    // SEPARATE instance from the shared _visibleActorIds above (which also tracks NPC/warp/player
+    // actor ids and is used for actual send-gating everywhere else - see this field's own call
+    // sites). This narrower set exists ONLY so ReconcileMonsterVisibilityAsync's own diff (item 3:
+    // vanish-on-leave-AOI, vanish-on-resync-for-vanished/dead/old-incarnation/new-epoch actors) can
+    // enumerate "every monster ActorId this session had visible before this reconciliation" without
+    // scanning the shared tracker's mixed NPC/player/monster contents - every mutation here is
+    // mirrored 1:1 into the shared _visibleActorIds tracker so wire send-gating elsewhere never
+    // observes a divergence between the two.
+    private readonly VisibleActorTracker _visibleMonsterActorIds = new();
+    // The last SimulationEpoch this session's own ReconcileMonsterVisibilityAsync fully reconciled
+    // against - a change since the previous reconciliation means every monster this session had
+    // visible under the OLD epoch is stale (the World simulation was rebuilt) and must be vanished
+    // before being rediscovered fresh from the new snapshot. Guarded by the same instance-per-
+    // session-single-tick-loop-caller assumption ReconcileSessionsFullyAsync's own single caller
+    // (MapTcpServer's monster tick loop) already relies on - never read/written concurrently from
+    // more than one place for the SAME session.
+    private WorldSimulationEpoch? _lastReconciledEpoch;
     private ScriptExecutionSession? _scriptExecutionSession;
     private Task? _generatedScriptTask;
     private string? _generatedScriptEntityId;
@@ -374,6 +393,16 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     // presence (monster-attack RPCs, life-state updates) must handle the null case exactly like
     // every other `_distributedWorld is null`-guarded call site in this class does.
     internal Guid? PresenceId => _presenceId;
+    // True only once this session's lifecycle has actually reached WorldVisible - authenticated AND
+    // registered with a genuine World presence on a real map (see EnterPlayerWorldAsync's own
+    // transition into WorldVisible around line ~3309, which always sets _presenceId together with
+    // the lifecycle change under the SAME _playerPresenceGate lock, so a WorldVisible read here can
+    // never observe a null _presenceId - the extra null check is defense-in-depth, not required by
+    // any known ordering gap). A session read from MapTcpServer's _sessions dictionary can be in
+    // ANY lifecycle state, including Unauthenticated with an empty CurrentMapName - see
+    // ProcessOneMonsterTickAsync's own doc comment for why grouping/polling by map id must first
+    // filter to sessions where this is true.
+    internal bool IsWorldMapEligible { get { lock (_playerPresenceGate) return _playerLifecycle == PlayerSessionLifecycle.WorldVisible && _presenceId is not null; } }
     // Syncs against real elapsed walking time on every read (no background timer - mirrors
     // CharacterStatusEffectState's lazy-on-read expiration model), so any caller (tests, a future
     // melee-range check, actor visibility) always observes the character's ACTUAL current cell
@@ -1724,16 +1753,18 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         finally { _attackGate.Release(); }
 
         if (_combat is null || _gameplayState is null || _distributedWorld is null || _combatState is null) { ClearRepeatAttackIfCurrent(expected); return; }
-        if (!TryGetProjectedMonster(expected.TargetActorId, out var target) || target.Instance.Lifecycle != WorldMonsterLifecycleState.Alive)
+        // Epoch and instance MUST be captured under the SAME MonsterFeedProjection lock acquisition
+        // (TryGetLife) - reading the instance via TryGetProjectedMonster and CurrentEpoch as two
+        // SEPARATE calls (the old shape here) is exactly the race MonsterFeedProjection's own
+        // TryGetLife doc comment warns about: a resync could land between the two reads, pairing an
+        // instance from one epoch with a CurrentEpoch that has already moved past it, producing a
+        // WorldMonsterLifeReference whose epoch does not actually correspond to the instance data.
+        if (_monsterProjections is null || !_monsterProjections.TryGet(_mapName, out var projection) || !projection.TryGetLife(expected.TargetActorId, out var epoch, out var targetInstance) || targetInstance.Lifecycle != WorldMonsterLifecycleState.Alive)
         {
             ClearRepeatAttackIfCurrent(expected);
             return;
         }
-        if (!_monsterProjections!.TryGet(_mapName, out var projection) || projection.CurrentEpoch is not { } epoch)
-        {
-            ClearRepeatAttackIfCurrent(expected);
-            return;
-        }
+        var target = new WorldMonsterActorView(targetInstance);
         var life = new WorldMonsterLifeReference(_mapName, epoch, target.ActorId, target.Instance.IncarnationId);
 
         // Resolve the CURRENT authoritative right-hand weapon through the same shared
@@ -1859,6 +1890,27 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
             var attackedResult = await _distributedWorld.NotifyMonsterAttackedAsync(
                 new WorldMonsterAttackedCommand(life, CharacterId, attackerPresenceId), cancellationToken);
             MapLogger.Info($"[iRO MAP DEBUG] Mob engagement NotifyMonsterAttackedAsync mobActorId={target.ActorId} targetCharacterId={CharacterId} result={attackedResult.Status}");
+
+            // Fail closed: only Acquired/AlreadyCurrentTarget are a successful World-side
+            // confirmation for this non-lethal hit - proceed to wire-success projection (damage/HP
+            // packets below) ONLY for those. Every other status (StaleLifeReference,
+            // StaleAttackerPresence, MonsterNotAttackable, AttackerNotEngageable) means World did
+            // NOT accept this attacker/life as the current engagement, so this hit must NOT be
+            // treated as a successful, wire-visible attack: no damage/HP packet is sent, the
+            // repeat-attack target is cleared (mirroring the existing lethal StaleLifeReference
+            // handling below), and the now-known-stale local combat-state key is discarded so a
+            // later stale read can never resurface it. The already-applied local HP mutation
+            // (outcome.HpBefore/HpAfter, already committed inside MonsterCombatCoordinator.AttackAsync
+            // above) is NOT rolled back - this project has no distributed rollback protocol - but
+            // the next feed poll/resync naturally reconciles this map's projection to World's own
+            // actual state, and no client ever sees a hit that World itself refused to acknowledge.
+            if (attackedResult.Status is not (WorldMonsterAttackedStatus.Acquired or WorldMonsterAttackedStatus.AlreadyCurrentTarget))
+            {
+                MapLogger.Warning($"[iRO MAP DEBUG] NotifyMonsterAttackedAsync rejected {attackedResult.Status} mobActorId={target.ActorId} - no wire-visible hit projected.");
+                _combatState.Remove(MonsterCombatKey.From(life));
+                ClearRepeatAttackIfCurrent(expected);
+                return;
+            }
         }
 
         // Reschedule (or clear, on death) the repeat-attack runtime state BEFORE any wire
@@ -3533,6 +3585,8 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
             if (instance.Lifecycle != WorldMonsterLifecycleState.Alive) continue;
             if (Math.Abs(instance.X - _x) > WorldVisibilityOptions.DefaultAreaSize || Math.Abs(instance.Y - _y) > WorldVisibilityOptions.DefaultAreaSize) continue;
             if (!_visibleActorIds.TryMarkVisible(instance.ActorId)) continue;
+            _visibleMonsterActorIds.TryMarkVisible(instance.ActorId);
+            _lastKnownMonsterIncarnations[instance.ActorId] = instance.IncarnationId;
 
             var actor = new WorldMonsterActorView(instance);
             // Read CurrentHp from MonsterCombatStateStore (the sole HP authority on the live
@@ -3650,6 +3704,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         {
             if (!_visibilityOptions.IsVisible(_mapName, _x, _y, actor.Map, position.X, position.Y)) return;
             if (!_visibleActorIds.TryMarkVisible(actor.ActorId)) return;
+            _visibleMonsterActorIds.TryMarkVisible(actor.ActorId);
 
             if (actor.IsWalking)
             {
@@ -3681,6 +3736,18 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
                 currentHp: combat.CurrentHp,
                 maxHp: combat.MaxHp);
             await WriteAsync(standPacket, cancellationToken);
+            return;
+        }
+
+        // Ordinary incremental per-tick movement can carry an already-visible monster OUT of this
+        // session's own AOI mid-walk (e.g. FanOutEntryAsync's own Moved/CellCrossed/WalkFinished
+        // entries) - reusing the exact same AOI check the discovery branch above uses. Vanish it for
+        // THIS session and mark it not-visible (both trackers) rather than continuing to project
+        // movement for an actor the client should no longer be able to see; the session naturally
+        // rediscovers it later via this same method's own discovery branch if it re-enters range.
+        if (!_visibilityOptions.IsVisible(_mapName, _x, _y, actor.Map, position.X, position.Y))
+        {
+            await SendMonsterVanishAsync(actor.ActorId, cancellationToken);
             return;
         }
 
@@ -3726,6 +3793,132 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
                 return;
         }
     }
+
+    // Sends the existing out-of-sight ZC_NOTIFY_VANISH (0x0080, reason=OutOfSight) to THIS session
+    // for one monster ActorId and marks it not-visible in BOTH trackers (the shared _visibleActorIds
+    // used for actual send-gating everywhere else, and the narrower _visibleMonsterActorIds used
+    // only for ReconcileMonsterVisibilityAsync's own diff) - the single reused vanish helper for
+    // every monster-visibility-loss case this session can hit (AOI exit, resync cleanup). Reusing
+    // IroPlayerActorPackets.BuildVanish (itself just IroMonsterCombatPackets.BuildNotifyVanish with
+    // reason=OutOfSight) rather than the DIED reason (already sent by the local kill path elsewhere)
+    // or the 0x0088 fixpos packet (reserved for ChaseInterrupted only - never repurposed here).
+    // A no-op if this actor was not already visible to this session (nothing to vanish).
+    private async Task SendMonsterVanishAsync(uint actorId, CancellationToken cancellationToken)
+    {
+        if (!_visibleActorIds.TryMarkNotVisible(actorId)) { _visibleMonsterActorIds.MarkNotVisible(actorId); return; }
+        _visibleMonsterActorIds.MarkNotVisible(actorId);
+        await WriteAsync(IroPlayerActorPackets.BuildVanish(actorId), cancellationToken);
+    }
+
+    // Requirement 4 (World `Died` fan-out): called by MapTcpServer.FanOutEntryAsync for EVERY
+    // session on the map when World's feed reports a monster Died, not merely the attacker's own
+    // session. The attacker's own local confirmed-kill path (PerformDueRepeatAttackAsync's own
+    // `outcome.KilledByThisHit` branch) has ALREADY sent its own death-vanish and cleared its own
+    // _visibleActorIds entry for this actor SYNCHRONOUSLY, strictly before this feed entry can ever
+    // be observed by the SEPARATE MapTcpServer monster-tick loop that polls World afterward - so the
+    // attacker's own session naturally no longer has this actor marked visible by the time this
+    // method runs for it, and the guard below (IsActorVisible) skips it without sending a duplicate.
+    // Every OTHER session that currently has this actor visible receives the same out-of-sight-
+    // shaped vanish helper used elsewhere in this class (reason=OutOfSight is a slight simplification
+    // vs. the attacker's own reason=Died vanish - see IroMonsterCombatPackets.BuildNotifyVanish's own
+    // reason values - since a bystander session was never itself the one to observe the kill locally;
+    // the client's own vanish handling does not depend on which reason value it receives).
+    public async Task NotifyMonsterDiedAsync(uint actorId, CancellationToken cancellationToken)
+    {
+        if (!_visibleActorIds.IsActorVisible(actorId)) return;
+        await SendMonsterVanishAsync(actorId, cancellationToken);
+    }
+
+    // Step 4 of the binding bootstrap/resync ordering, per-session half (see MonsterFeedProjection's
+    // own doc comment) - called by MapTcpServer.ReconcileSessionsFullyAsync for EVERY active session
+    // whenever a full snapshot/resync page is applied. Diffs this session's own PREVIOUSLY-visible
+    // monster ActorIds (_visibleMonsterActorIds, the narrow monster-only mirror - see that field's
+    // own doc comment for why a separate set from the shared _visibleActorIds is needed here) against
+    // the FRESH projection snapshot, per the binding rules:
+    //   - Actor visible before but ABSENT from (or Dead in) the fresh snapshot -> vanish it.
+    //   - Same ActorId but a DIFFERENT IncarnationId than what this session last saw -> vanish the
+    //     OLD life first (never silently reuse the visible-slot for a different life), then let
+    //     NotifyMonsterMovedAsync's own discovery branch (called below, unconditionally, for every
+    //     Alive instance) rediscover it fresh as the new life.
+    //   - SimulationEpoch changed since this session's own last reconciliation -> EVERYTHING this
+    //     session had visible under the old epoch is stale; vanish all of it first.
+    //   - Still Alive in the fresh snapshot but now outside this session's own AOI -> vanish it.
+    //   - Newly in-AOI/not previously visible -> discovered via the existing NotifyMonsterMovedAsync
+    //     discovery path (movementKind: null), unchanged.
+    // Combat-state lookups mirror ReconcileSessionsFullyAsync's own existing per-instance
+    // MonsterCombatKey construction exactly (MapId, epoch, ActorId, IncarnationId).
+    public async Task ReconcileMonsterVisibilityAsync(MonsterFeedProjection projection, MonsterCombatStateStore combatState, CancellationToken cancellationToken)
+    {
+        if (projection.CurrentEpoch is not { } epoch) return;
+        var epochChanged = _lastReconciledEpoch is { } lastEpoch && !lastEpoch.Equals(epoch);
+        _lastReconciledEpoch = epoch;
+
+        var freshByActorId = new Dictionary<uint, WorldMonsterInstance>();
+        foreach (var instance in projection.AllInstances)
+        {
+            if (instance.Lifecycle == WorldMonsterLifecycleState.Alive) freshByActorId[instance.ActorId] = instance;
+        }
+
+        // Diff against what this session previously believed was visible - vanish anything that is
+        // now vanished/dead, has a different incarnation, is out of this session's own AOI, or is
+        // simply stale because the whole epoch moved on. VisibleActorTracker has no enumeration API
+        // (by design - see its own doc comment on why it exposes only narrow per-actor operations),
+        // so this loop drives the diff from the ImmutableArray snapshot MonsterFeedProjection itself
+        // tracked as "previously alive" is not available here; instead this session's own narrow
+        // _visibleMonsterActorIds set is the source of truth for "what did THIS session have visible
+        // before" - captured via a plain snapshot copy since TryMarkNotVisible mutates the tracker
+        // reintroduced under the SAME lock as any concurrent read of it by SendVisibleMonsterActorsAsync
+        // (both are the same narrow session-owned tracker type, safe under concurrent use by design).
+        foreach (var previouslyVisibleActorId in _visibleMonsterActorIds.Snapshot())
+        {
+            var stillAliveWithSameIncarnation =
+                freshByActorId.TryGetValue(previouslyVisibleActorId, out var fresh) &&
+                _lastKnownMonsterIncarnations.TryGetValue(previouslyVisibleActorId, out var lastIncarnation) &&
+                fresh.IncarnationId.Equals(lastIncarnation);
+
+            if (epochChanged || !stillAliveWithSameIncarnation)
+            {
+                await SendMonsterVanishAsync(previouslyVisibleActorId, cancellationToken);
+                _lastKnownMonsterIncarnations.Remove(previouslyVisibleActorId);
+                continue;
+            }
+
+            // Still the same life - but may have walked/been resynced outside this session's own
+            // AOI since it was last marked visible; vanish it if so, exactly like the ordinary
+            // incremental per-tick AOI-exit check in NotifyMonsterMovedAsync. `fresh!` is safe here:
+            // stillAliveWithSameIncarnation being true proves the TryGetValue above succeeded.
+            if (!_visibilityOptions.IsVisible(_mapName, _x, _y, fresh!.MapId, fresh.X, fresh.Y))
+            {
+                await SendMonsterVanishAsync(previouslyVisibleActorId, cancellationToken);
+                _lastKnownMonsterIncarnations.Remove(previouslyVisibleActorId);
+            }
+        }
+
+        // (Re-)discover every currently-Alive instance - NotifyMonsterMovedAsync's own discovery
+        // branch is a no-op for an already-visible, in-AOI actor (IsActorVisible short-circuits it
+        // into the ordinary movementKind switch, which returns immediately for movementKind: null),
+        // so calling it unconditionally here for every Alive instance is safe and matches
+        // ReconcileSessionsFullyAsync's own existing behavior for the non-diff case.
+        foreach (var instance in freshByActorId.Values)
+        {
+            if (!combatState.TryGet(new MonsterCombatKey(projection.MapId, epoch, instance.ActorId, instance.IncarnationId), out var combat)) continue;
+            try
+            {
+                await NotifyMonsterMovedAsync(new WorldMonsterActorView(instance), movementKind: null, combat, cancellationToken);
+                _lastKnownMonsterIncarnations[instance.ActorId] = instance.IncarnationId;
+            }
+            catch (IOException) { /* Client disconnected; HandleClientAsync's own cleanup removes it from _sessions. */ }
+            catch (OperationCanceledException) { /* Server shutdown. */ }
+        }
+    }
+
+    // Tracks the IncarnationId this session last observed for each monster ActorId it has marked
+    // visible - required by ReconcileMonsterVisibilityAsync's own incarnation-change diff (a plain
+    // ActorId match is not enough to prove "same life", see WorldMonsterIncarnationId's own doc
+    // comment). Only ever read/written from ReconcileMonsterVisibilityAsync, which MapTcpServer's
+    // own single monster-tick loop calls sequentially per session - no additional lock needed beyond
+    // that existing single-caller contract (matching _lastReconciledEpoch's own doc comment).
+    private readonly Dictionary<uint, WorldMonsterIncarnationId> _lastKnownMonsterIncarnations = new();
 
     // Sends the COMPLETE wire outcome of one mob-on-player basic-attack hit - both the AREA-visible
     // combat action and (victim-only) the resulting SP_HP update, in the exact order and gating
