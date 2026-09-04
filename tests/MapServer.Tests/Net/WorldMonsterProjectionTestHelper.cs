@@ -100,8 +100,18 @@ internal sealed class FakeCombatWorldRuntime : IWorldRuntime
     private readonly Dictionary<uint, (Guid Id, WorldPosition[] Path)> _movements = [];
     private readonly Lock _gate = new();
 
+    // Null (the default) means "use the real Add-to-set semantics below" (MarkedDead the first
+    // time, AlreadyDead thereafter) - the existing behavior every pre-existing test in this file
+    // already depends on. Settable to a fixed status (typically StaleLifeReference) so a test can
+    // script World rejecting the death confirmation outright, proving MapClientSession's own item-1
+    // fail-closed lethal-wire-ordering handling (no damage/HP/death-vanish/EXP/quest-drop for a
+    // rejected death) without needing a real incarnation/epoch mismatch to trigger it.
+    public WorldMonsterDeathStatus? TryMarkMonsterDeadStatusOverride { get; set; }
+
     public Task<WorldMonsterDeathResult> TryMarkMonsterDeadAsync(WorldMonsterLifeReference reference, CancellationToken cancellationToken)
     {
+        if (TryMarkMonsterDeadStatusOverride is { } overrideStatus) return Task.FromResult(new WorldMonsterDeathResult(overrideStatus));
+
         var key = (reference.MapId, reference.ActorId, reference.IncarnationId.Value);
         lock (_gate)
         {
@@ -205,6 +215,29 @@ internal sealed class FakeCombatWorldRuntime : IWorldRuntime
         throw new NotSupportedException("FakeCombatWorldRuntime only supports the monster-attack/death/RegisterPresence/MovePlayer RPCs.");
     public Task<WorldMonsterAttackWindowResult> ValidateMonsterAttackWindowAsync(WorldMonsterAttackWindowQuery query, CancellationToken cancellationToken) =>
         throw new NotSupportedException("FakeCombatWorldRuntime only supports the monster-attack/death/RegisterPresence/MovePlayer RPCs.");
-    public Task<WorldPresenceLifeStateResult> UpdatePresenceLifeStateAsync(string mapId, WorldPresenceLifeStateUpdate update, CancellationToken cancellationToken) =>
-        throw new NotSupportedException("FakeCombatWorldRuntime only supports the monster-attack/death/RegisterPresence/MovePlayer RPCs.");
+    // Item 6 of the Step 6 correctness-hardening pass: scriptable so a test can simulate a transient
+    // RPC failure on the FIRST N attempts (via ThrowTransientFailureCount, decremented on each call
+    // that throws) and confirm a LATER retry - driven by MapClientSession.TryReconcilePendingLifeStateAsync,
+    // called every tick regardless of whether a new transition happened - eventually succeeds without
+    // any further local life transition ever occurring. Every call (thrown or not) is counted in
+    // UpdatePresenceLifeStateCallCount so a test can assert "was retried" vs. "was never called
+    // again" (e.g. after a StalePresence result retires the pending update).
+    private int _throwTransientFailureCount;
+    public int ThrowTransientFailureCount { set => _throwTransientFailureCount = value; }
+    public int UpdatePresenceLifeStateCallCount { get; private set; }
+    public WorldPresenceLifeStateStatus UpdatePresenceLifeStateStatusOverride { get; set; } = WorldPresenceLifeStateStatus.Updated;
+
+    public Task<WorldPresenceLifeStateResult> UpdatePresenceLifeStateAsync(string mapId, WorldPresenceLifeStateUpdate update, CancellationToken cancellationToken)
+    {
+        lock (_gate)
+        {
+            UpdatePresenceLifeStateCallCount++;
+            if (_throwTransientFailureCount > 0)
+            {
+                _throwTransientFailureCount--;
+                throw new IOException("Simulated transient World RPC failure.");
+            }
+            return Task.FromResult(new WorldPresenceLifeStateResult(UpdatePresenceLifeStateStatusOverride));
+        }
+    }
 }

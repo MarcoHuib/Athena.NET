@@ -27,6 +27,16 @@ public sealed class MapTcpServer
     private readonly TcpListener _listener;
     private readonly ConcurrentDictionary<int, MapClientSession> _sessions = new();
     private readonly MonsterAttackCadenceExecutor _cadenceExecutor;
+    // Item 7 of the Step 6 correctness-hardening pass: maps whose monster-feed reconciliation hit a
+    // DETERMINISTIC invariant/configuration failure (see IsDeterministicInvariantFailure below) -
+    // never retried by the ordinary per-tick loop, since a deterministic failure would simply
+    // reproduce identically on every subsequent 100ms tick forever, hot-looping an error log without
+    // ever making progress. Distinct from a transient World/transport failure (an unexpected but
+    // NON-deterministic exception), which the ordinary per-map try/catch below still logs and lets
+    // retry on the next tick exactly as before this item. A map only ever enters this set from
+    // production code paths - never cleared automatically, since the underlying configuration/data
+    // problem (e.g. an unknown generated MobId) requires an operator/config correction, not a retry.
+    private readonly ConcurrentDictionary<string, string> _permanentlyFailedMaps = new(StringComparer.OrdinalIgnoreCase);
     private int _nextSessionId;
 
     public MapTcpServer(MapConfigStore configStore, CharServerConnector charConnector, MapServerWorld world, IWorldRuntime worldRuntime, TimeProvider? timeProvider = null)
@@ -251,6 +261,20 @@ public sealed class MapTcpServer
                 {
                     throw; // Genuine shutdown - let the outer catch below handle it.
                 }
+                catch (Exception ex) when (IsDeterministicInvariantFailure(ex))
+                {
+                    // Item 7: an unexpected DETERMINISTIC invariant/configuration failure that
+                    // escaped ProcessOneMonsterTickAsync's own per-map classification (e.g. thrown
+                    // from the shared cadence executor, which is not scoped to one single map/try-
+                    // catch) - this is not something a later tick can ever resolve by retrying, so
+                    // propagate it out of the loop entirely rather than logging it every 100ms
+                    // forever. RunAsync's own `await monsterTickLoop` in its `finally` block observes
+                    // this fault - see that method's own doc comment for why this deliberately does
+                    // NOT leave MapServer running indefinitely with a silently-dead monster-authority
+                    // task.
+                    MapLogger.Error($"[WORLD] Deterministic invariant/configuration failure in monster tick processing - the monster-authority loop cannot continue: {ex}");
+                    throw;
+                }
                 catch (Exception ex)
                 {
                     // An unexpected/transient exception from one tick's processing (e.g. a transient
@@ -272,6 +296,28 @@ public sealed class MapTcpServer
             // Shutdown
         }
     }
+
+    // Item 7 of the Step 6 correctness-hardening pass: distinguishes a DETERMINISTIC invariant/
+    // configuration failure (one that would reproduce IDENTICALLY on every retry - e.g. an unknown
+    // generated MobId reaching GeneratedMobRegistry.Get/WorldMonsterActorView, or any other
+    // "impossible configuration state" the codebase asserts via a thrown exception rather than a
+    // typed result) from an ordinary TRANSIENT World/transport failure (a network timeout, a
+    // dropped Orleans connection/gateway, an Orleans-generated InvalidOperationException wrapping a
+    // grain-call/activation problem, anything that might genuinely succeed on a LATER tick without
+    // any configuration change). Deliberately narrow: InvalidOperationException is EXCLUDED
+    // specifically because both a genuine local invariant violation (e.g.
+    // WorldMonsterActorView/NotifyMonsterMovedAsync's own mismatched-actor/combat-state guard) AND
+    // ordinary transient Orleans client-side failures can surface as that exact type, and this
+    // codebase has no reliable way to tell those apart by type alone - misclassifying a transient
+    // Orleans failure as permanent would incorrectly stop retrying a map that could have recovered
+    // on its own. KeyNotFoundException is the concrete example this pass DOES classify as
+    // deterministic: GeneratedMobRegistry.Get (used by WorldMonsterActorView and
+    // MonsterFeedProjection's own GeneratedMobRegistryLookup) throws it specifically when a
+    // referenced MobId has no corresponding generated static definition at all - a purely local,
+    // in-process static-data lookup with no I/O involved, so it can never be a transient failure by
+    // construction, and retrying the exact same poll can never fix it either.
+    private static bool IsDeterministicInvariantFailure(Exception ex) =>
+        ex is KeyNotFoundException;
 
     // The exact per-tick body RunMonsterTickLoopAsync's own Task.Delay loop calls - extracted so a
     // test can drive ONE production tick deterministically without needing to race a real 100ms
@@ -297,6 +343,7 @@ public sealed class MapTcpServer
         var eligibleSessions = sessions.Where(session => session.IsWorldMapEligible).ToArray();
         foreach (var mapGroup in eligibleSessions.GroupBy(session => session.CurrentMapName, StringComparer.OrdinalIgnoreCase))
         {
+            if (_permanentlyFailedMaps.ContainsKey(mapGroup.Key)) continue; // Item 7: a deterministic invariant failure already logged for this map - never hot-loop retrying it.
             try
             {
                 await PollAndReconcileMapAsync(mapGroup.Key, mapGroup.ToArray(), cancellationToken);
@@ -305,12 +352,25 @@ public sealed class MapTcpServer
             {
                 throw; // Genuine shutdown - propagate, never swallow.
             }
+            catch (Exception ex) when (IsDeterministicInvariantFailure(ex))
+            {
+                // Item 7 of the Step 6 correctness-hardening pass: a DETERMINISTIC invariant/
+                // configuration failure (e.g. an unknown generated MobId - see
+                // IsDeterministicInvariantFailure's own doc comment) would reproduce IDENTICALLY on
+                // every subsequent 100ms tick forever if treated like an ordinary transient failure -
+                // that is a permanently-broken map silently hot-looping an error log, not resilience.
+                // Fail loudly ONCE, and put this map into an explicit failed state requiring
+                // operator/config correction rather than retrying it again.
+                MapLogger.Error($"[WORLD] Deterministic invariant/configuration failure reconciling map '{mapGroup.Key}' - this map will NOT be retried until the underlying configuration/data problem is corrected (requires a MapServer restart to re-attempt): {ex}");
+                _permanentlyFailedMaps[mapGroup.Key] = ex.Message;
+            }
             catch (Exception ex)
             {
-                // An unexpected exception reconciling ONE map must never prevent every OTHER map in
-                // this SAME tick from being processed - each mapGroup iteration is independent
-                // (separate MonsterFeedProjection, separate cursor). Nothing about this map's
-                // in-flight cursor/combat-state/session projection was left partially applied here:
+                // An unexpected but NON-deterministic (transient World/transport) exception
+                // reconciling ONE map must never prevent every OTHER map in this SAME tick from
+                // being processed - each mapGroup iteration is independent (separate
+                // MonsterFeedProjection, separate cursor). Nothing about this map's in-flight
+                // cursor/combat-state/session projection was left partially applied here:
                 // PollAndReconcileMapAsync's own internal ordering only advances the cursor after
                 // every earlier step succeeds (see MonsterFeedProjection's own doc comment), so a
                 // failure here simply means this tick made no progress for this one map - the next
@@ -340,6 +400,25 @@ public sealed class MapTcpServer
                 {
                     // Server shutdown.
                 }
+            }
+
+            // Item 6 of the Step 6 correctness-hardening pass: retry any pending World life-state
+            // update (e.g. a prior UpdatePresenceLifeStateAsync call that failed transiently right
+            // after a real local Alive->Dead transition) on EVERY tick, not only immediately after
+            // the transition that created it - a transient RPC failure must not leave a player
+            // locally Dead while World indefinitely still reports IsAlive=true. A no-op call
+            // (no RPC at all) when nothing is pending for this session.
+            try
+            {
+                await session.TryReconcilePendingLifeStateAsync(cancellationToken);
+            }
+            catch (IOException)
+            {
+                // Client disconnected; HandleClientAsync's own cleanup removes it from _sessions.
+            }
+            catch (OperationCanceledException)
+            {
+                // Server shutdown.
             }
         }
     }

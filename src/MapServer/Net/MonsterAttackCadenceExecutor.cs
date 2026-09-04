@@ -118,7 +118,6 @@ internal sealed class MonsterAttackCadenceExecutor(
 
         var staticMob = Athena.Net.MapServer.Generated.GameData.Mobs.GeneratedMobRegistry.Get(monster.MobId);
         var result = MobBasicAttackCalculator.Calculate(staticMob, combatSnapshot);
-        combatState.ScheduleNextAttack(key, now.AddMilliseconds(staticMob.AttackDelay));
 
         (uint HpAfter, bool HpChanged)? applied;
         try
@@ -129,7 +128,14 @@ internal sealed class MonsterAttackCadenceExecutor(
         {
             applied = null; // Client disconnected mid-attack application; the orchestrator's own session cleanup removes it.
         }
-        if (applied is not { } hpOutcome) return null; // MutateAsync rejected a stale row - do not emit a successful attack result.
+        if (applied is not { } hpOutcome) return null; // MutateAsync rejected a stale row - do not emit a successful attack result, and do not consume a cadence slot for an attack that never actually landed.
+
+        // Item 6 of the Step 6 correctness-hardening pass: NextAttackAt is advanced ONLY after the
+        // local player HP mutation actually succeeded above - a persistence rejection/disconnect
+        // (the `applied is not {}` branch above, already returned) must never consume a successful
+        // attack cadence slot. Moving this call to AFTER the mutation (it used to run BEFORE,
+        // unconditionally) closes that gap.
+        combatState.ScheduleNextAttack(key, now.AddMilliseconds(staticMob.AttackDelay));
 
         // srcSpeed/dstSpeed: pinned clif_damage's own attacker-amotion/target-dmotion pair - the
         // mob's own DamageMotion is NEVER used here (that field serves the opposite direction).

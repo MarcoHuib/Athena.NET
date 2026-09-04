@@ -10,15 +10,21 @@ using Athena.Net.World.Contracts;
 
 namespace Athena.Net.MapServer.Tests.Net;
 
-// Step 6 hardening, item 8: a non-lethal local hit's own World-side confirmation
-// (NotifyMonsterAttackedAsync) must be FAILED CLOSED - a non-success status (StaleLifeReference,
-// StaleAttackerPresence, MonsterNotAttackable, AttackerNotEngageable) must produce NO wire-visible
-// successful-hit packet and must clear the repeat-attack target, mirroring the existing lethal
-// StaleLifeReference handling. Built as its own minimal wiring (mirroring
-// MapClientSessionMonsterCombatTests' own manually-constructed-session tests, e.g.
-// Attack_NewTargetRequest_ReplacesPriorRepeatTarget) rather than reusing that file's shared
-// SetupAsync helper, since this test needs to script FakeCombatWorldRuntime's own
-// NotifyMonsterAttackedStatusOverride - not exposed by SetupAsync's own return shape.
+// Step 6 hardening, item 8 (and item 2's own correction to it): a non-lethal local hit's own
+// World-side confirmation (NotifyMonsterAttackedAsync) must be FAILED CLOSED - a non-success status
+// (StaleLifeReference, StaleAttackerPresence, MonsterNotAttackable, AttackerNotEngageable) must
+// produce NO wire-visible successful-hit packet and must clear the repeat-attack target, mirroring
+// the existing lethal StaleLifeReference handling. Item 2's own correction: only StaleLifeReference
+// proves the MONSTER LIFE itself is stale - the other three describe the ATTACKER/presence/mode, so
+// they must NOT discard a perfectly valid monster life's combat-state key (a different attacker
+// could legitimately still hit it). Item 2 ALSO moved the local HP mutation to happen AFTER this
+// confirmation (never before) - so a rejection of any of these four statuses must leave HP
+// completely UNCHANGED, not merely "already applied but not rolled back" as an earlier round of
+// this file assumed. Built as its own minimal wiring (mirroring MapClientSessionMonsterCombatTests'
+// own manually-constructed-session tests, e.g. Attack_NewTargetRequest_ReplacesPriorRepeatTarget)
+// rather than reusing that file's shared SetupAsync helper, since this test needs to script
+// FakeCombatWorldRuntime's own NotifyMonsterAttackedStatusOverride - not exposed by SetupAsync's own
+// return shape.
 public sealed class MapClientSessionNonLethalAttackFailClosedTests
 {
     private const uint AccountId = 7;
@@ -115,12 +121,25 @@ public sealed class MapClientSessionNonLethalAttackFailClosedTests
 
         // The actual hit executes asynchronously on the session's own background repeat-attack loop
         // (HandleIroAttackRequestAsync itself only registers the repeat-attack target and returns) -
-        // poll for the resulting combat-state key removal (the concrete, unambiguous side effect of
-        // the fail-closed handling under test) with a bounded wait rather than assuming any fixed
-        // number of packet round-trips already means the hit has landed.
-        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        // poll for the repeat-attack target being cleared (the fail-closed handling's own observable
+        // completion signal for EVERY rejection status, including the surviving-key case where the
+        // combat-state key itself never changes) with a bounded wait, rather than assuming a fixed
+        // number of packet round-trips already means the hit has been processed.
         var key = new MonsterCombatKey(target.Map, epoch, target.ActorId, new WorldMonsterIncarnationId(target.IncarnationId.Value));
-        while (combatState.TryGet(key, out _) && DateTime.UtcNow < deadline) await Task.Delay(20);
+        var maxHp = target.Spawn.Mob.MaxHp;
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        while (DateTime.UtcNow < deadline)
+        {
+            if (rejectedStatus == WorldMonsterAttackedStatus.StaleLifeReference)
+            {
+                if (!combatState.TryGet(key, out _)) break;
+            }
+            else if (combatState.TryGet(key, out var current) && current.CurrentHp != maxHp)
+            {
+                Assert.Fail($"Expected HP to remain unchanged at {maxHp} for a {rejectedStatus} rejection, but observed {current.CurrentHp} - the local HP mutation must never happen before World's confirmation.");
+            }
+            await Task.Delay(20);
+        }
 
         // No damage/HP-info packet must ever arrive for this hit - the World-side rejection means
         // this must NOT be treated as a successful, wire-visible attack at all. Confirmed by
@@ -129,11 +148,23 @@ public sealed class MapClientSessionNonLethalAttackFailClosedTests
         var next = await ReadExact(stream, 2);
         Assert.Equal((short)PacketConstants.ZcPingLive, BinaryPrimitives.ReadInt16LittleEndian(next));
 
-        // The already-applied LOCAL HP mutation from MonsterCombatCoordinator.AttackAsync itself is
-        // not rolled back (no distributed rollback protocol exists) - but the now-known-stale local
-        // combat-state key must be discarded (mirroring the existing lethal StaleLifeReference
-        // handling's own _combatState.Remove call), so a later stale read can never resurface it.
-        Assert.False(combatState.TryGet(key, out _), "Expected the local combat-state key to be discarded after a rejected NotifyMonsterAttackedAsync result.");
+        if (rejectedStatus == WorldMonsterAttackedStatus.StaleLifeReference)
+        {
+            // Item 2: ONLY StaleLifeReference proves the monster life itself is stale - its
+            // combat-state key must be discarded so a later stale read can never resurface it.
+            Assert.False(combatState.TryGet(key, out _), "Expected the local combat-state key to be discarded after a StaleLifeReference rejection.");
+        }
+        else
+        {
+            // Item 2's own correction: StaleAttackerPresence/MonsterNotAttackable/AttackerNotEngageable
+            // describe the ATTACKER or the mob's own mode, never the monster life's own validity - a
+            // perfectly valid monster life's combat-state key must survive (a different attacker
+            // could still legitimately hit it), and since item 2 also moved the local HP mutation to
+            // happen AFTER this confirmation, HP must be completely UNCHANGED (never merely "applied
+            // but not rolled back").
+            Assert.True(combatState.TryGet(key, out var survivingState), $"Expected the local combat-state key to SURVIVE a {rejectedStatus} rejection (it describes the attacker, not the monster life).");
+            Assert.Equal(maxHp, survivingState.CurrentHp);
+        }
 
         client.Close();
         await run.WaitAsync(TimeSpan.FromSeconds(5));

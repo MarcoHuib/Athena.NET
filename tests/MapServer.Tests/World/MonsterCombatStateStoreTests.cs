@@ -305,4 +305,153 @@ public sealed class MonsterCombatStateStoreTests
             Assert.Equal((uint)(1000 - concurrentHits * damagePerHit), finalState.CurrentHp);
         }
     }
+
+    // ===== Item 2 of the Step 6 correctness-hardening pass: Peek/TryCommitDamage's own CAS-style
+    // calculate -> confirm -> commit contract, used by MonsterCombatCoordinator.CalculateAttack/
+    // CommitAttack(Async) to avoid mutating local HP before an external World confirmation lands. =====
+
+    [Fact]
+    public void Peek_DoesNotMutateAnything_ReportsCurrentHpForAliveLife()
+    {
+        var store = new MonsterCombatStateStore();
+        var epoch = Epoch();
+        var key = Key("int_land01", epoch, 1, First);
+        store.Register("int_land01", epoch, 1, First, maxHp: 55);
+
+        var peek = store.Peek(key);
+
+        Assert.Equal(MonsterCombatDamageStatus.Applied, peek.Status);
+        Assert.Equal(55u, peek.CurrentHp);
+        Assert.True(store.TryGet(key, out var unchanged));
+        Assert.Equal(55u, unchanged.CurrentHp); // Peek never mutates.
+    }
+
+    [Fact]
+    public void Peek_StaleLife_ReportsStaleLife()
+    {
+        var store = new MonsterCombatStateStore();
+        var epoch = Epoch();
+        store.Register("int_land01", epoch, 1, First, maxHp: 55);
+
+        var peek = store.Peek(Key("int_land01", epoch, 1, First.Next()));
+
+        Assert.Equal(MonsterCombatDamageStatus.StaleLife, peek.Status);
+    }
+
+    [Fact]
+    public void Peek_AlreadyDead_ReportsAlreadyDead()
+    {
+        var store = new MonsterCombatStateStore();
+        var epoch = Epoch();
+        var key = Key("int_land01", epoch, 1, First);
+        store.Register("int_land01", epoch, 1, First, maxHp: 1);
+        store.ApplyDamage(key, damage: 1);
+
+        var peek = store.Peek(key);
+
+        Assert.Equal(MonsterCombatDamageStatus.AlreadyDead, peek.Status);
+    }
+
+    [Fact]
+    public void TryCommitDamage_ExpectedHpMatches_AppliesExactlyLikeApplyDamage()
+    {
+        var store = new MonsterCombatStateStore();
+        var epoch = Epoch();
+        var key = Key("int_land01", epoch, 1, First);
+        store.Register("int_land01", epoch, 1, First, maxHp: 55);
+        var peek = store.Peek(key);
+
+        var result = store.TryCommitDamage(key, peek.CurrentHp, damage: 10);
+
+        Assert.Equal(MonsterCombatDamageStatus.Applied, result.Status);
+        Assert.Equal(55u, result.HpBefore);
+        Assert.Equal(45u, result.HpAfter);
+        Assert.True(store.TryGet(key, out var state));
+        Assert.Equal(45u, state.CurrentHp);
+    }
+
+    // The core scenario item 2 exists to prevent: a caller Peeks, awaits an external confirmation
+    // (a World RPC, simulated here as a concurrent hit landing in the gap), then tries to commit
+    // against the now-STALE pre-image it captured before the await - this must be rejected, not
+    // silently applied on top of the concurrent hit's own result (which would double-count damage
+    // or resurrect an already-dead life's HP arithmetic).
+    [Fact]
+    public void TryCommitDamage_ConcurrentHitChangedHpDuringTheGap_ReturnsConflict_AppliesNothing()
+    {
+        var store = new MonsterCombatStateStore();
+        var epoch = Epoch();
+        var key = Key("int_land01", epoch, 1, First);
+        store.Register("int_land01", epoch, 1, First, maxHp: 55);
+        var peek = store.Peek(key); // Caller A's own pre-image, captured BEFORE its own simulated "await".
+
+        store.ApplyDamage(key, damage: 5); // A concurrent hit (Caller B) lands while A's confirmation is in flight.
+
+        var result = store.TryCommitDamage(key, peek.CurrentHp, damage: 10); // A tries to commit against its now-stale pre-image.
+
+        Assert.Equal(MonsterCombatDamageStatus.Conflict, result.Status);
+        Assert.True(store.TryGet(key, out var state));
+        Assert.Equal(50u, state.CurrentHp); // Only B's own 5 damage landed - A's commit applied NOTHING.
+    }
+
+    [Fact]
+    public void TryCommitDamage_StaleLife_ReturnsStaleLife_AppliesNothing()
+    {
+        var store = new MonsterCombatStateStore();
+        var epoch = Epoch();
+        store.Register("int_land01", epoch, 1, First, maxHp: 55);
+        var staleKey = Key("int_land01", epoch, 1, First.Next());
+
+        var result = store.TryCommitDamage(staleKey, expectedCurrentHp: 55, damage: 10);
+
+        Assert.Equal(MonsterCombatDamageStatus.StaleLife, result.Status);
+    }
+
+    [Fact]
+    public void TryCommitDamage_AlreadyDead_ReturnsAlreadyDead_AppliesNothing()
+    {
+        var store = new MonsterCombatStateStore();
+        var epoch = Epoch();
+        var key = Key("int_land01", epoch, 1, First);
+        store.Register("int_land01", epoch, 1, First, maxHp: 1);
+        store.ApplyDamage(key, damage: 1);
+
+        var result = store.TryCommitDamage(key, expectedCurrentHp: 0, damage: 1);
+
+        Assert.Equal(MonsterCombatDamageStatus.AlreadyDead, result.Status);
+    }
+
+    // Concurrency: several concurrent calculate->commit sequences against the same key must never
+    // lose an update or double-apply - exactly like ApplyDamage's own established concurrency
+    // guarantee, but exercised through the Peek/TryCommitDamage CAS pair specifically. A Conflict
+    // result means that attempt applied nothing (by design) - this test only asserts the INVARIANT
+    // that final HP correctly reflects however many attempts actually got Applied, never more and
+    // never negative, not that every attempt necessarily succeeds (a caller retries on Conflict in
+    // production; this test does not need to model that retry to prove the store's own atomicity).
+    [Fact]
+    public async Task ConcurrentCalculateThenCommit_SameKey_NeverLosesOrDoublesAnUpdate()
+    {
+        for (var iteration = 0; iteration < 20; iteration++)
+        {
+            var store = new MonsterCombatStateStore();
+            var epoch = Epoch();
+            var key = Key("int_land01", epoch, 1, First);
+            store.Register("int_land01", epoch, 1, First, maxHp: 1000);
+
+            const int concurrentAttempts = 16;
+            const uint damagePerHit = 10;
+            var barrier = new Barrier(concurrentAttempts);
+            var tasks = Enumerable.Range(0, concurrentAttempts).Select(_ => Task.Run(() =>
+            {
+                var peek = store.Peek(key);
+                barrier.SignalAndWait(); // Maximize the window where a concurrent hit could land between Peek and commit.
+                return store.TryCommitDamage(key, peek.CurrentHp, damagePerHit);
+            })).ToArray();
+            var results = await Task.WhenAll(tasks);
+
+            var appliedCount = results.Count(r => r.Status == MonsterCombatDamageStatus.Applied);
+            Assert.True(store.TryGet(key, out var finalState));
+            Assert.Equal((uint)(1000 - appliedCount * damagePerHit), finalState.CurrentHp);
+            Assert.True(appliedCount >= 1, "At least one of the concurrent attempts must have succeeded.");
+        }
+    }
 }

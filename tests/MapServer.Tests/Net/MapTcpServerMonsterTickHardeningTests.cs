@@ -107,6 +107,54 @@ public sealed class MapTcpServerMonsterTickHardeningTests
         await session.DisposeAsync();
     }
 
+    // Item 7's own correction pass: a DETERMINISTIC invariant/configuration failure (e.g. an unknown
+    // generated MobId, surfaced as KeyNotFoundException) must NOT be retried forever like an ordinary
+    // transient failure - the affected map is put into an explicit permanently-failed state (never
+    // polled again this process lifetime), while a DIFFERENT map in the SAME tick still proceeds
+    // normally.
+    [Fact]
+    public async Task ProcessOneMonsterTickAsync_DeterministicInvariantFailureFromOneMap_NeverRetriesThatMap_OtherMapStillProceeds()
+    {
+        var world = MakeWorld();
+        var brokenMapCalls = 0;
+        var healthyMapCalls = 0;
+        var scripted = new ScriptedWorldRuntime
+        {
+            OnPollMonsterFeed = mapId =>
+            {
+                if (string.Equals(mapId, "broken", StringComparison.OrdinalIgnoreCase))
+                {
+                    brokenMapCalls++;
+                    throw new KeyNotFoundException("Simulated unknown generated MobId.");
+                }
+                healthyMapCalls++;
+            },
+        };
+        var server = new MapTcpServer(ConfigStore(), new CharServerConnector(ConfigStore()), world, scripted);
+
+        var (brokenSession, brokenClient) = await MakeWorldVisibleSessionAsync(world, scripted, mapId: "broken", characterId: 101);
+        var (healthySession, healthyClient) = await MakeWorldVisibleSessionAsync(world, scripted, mapId: "izlude", characterId: 102);
+        using var _b = brokenClient;
+        using var _h = healthyClient;
+
+        // First tick: "broken" throws KeyNotFoundException - must not propagate, and "izlude" must
+        // still be polled in the SAME tick.
+        var firstTickException = await Record.ExceptionAsync(() => server.ProcessOneMonsterTickAsync([brokenSession, healthySession], CancellationToken.None));
+        Assert.Null(firstTickException);
+        Assert.Equal(1, brokenMapCalls);
+        Assert.Equal(1, healthyMapCalls);
+
+        // Second tick: "broken" must NEVER be polled again (permanently failed - the deterministic
+        // failure would just reproduce identically), while "izlude" continues normally.
+        var secondTickException = await Record.ExceptionAsync(() => server.ProcessOneMonsterTickAsync([brokenSession, healthySession], CancellationToken.None));
+        Assert.Null(secondTickException);
+        Assert.Equal(1, brokenMapCalls); // Unchanged - never retried.
+        Assert.Equal(2, healthyMapCalls); // The healthy map's own second poll.
+
+        await brokenSession.DisposeAsync();
+        await healthySession.DisposeAsync();
+    }
+
     // Item 9: MonsterAttackCadenceExecutor's own LOCAL session-selection step must require BOTH
     // CharacterId AND PresenceId to match World's own WorldPlayerTargetReference before ever
     // reaching World's ValidateMonsterAttackWindowAsync recheck - a reconnect race (old session

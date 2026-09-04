@@ -105,6 +105,28 @@ public sealed class MonsterFeedProjection(string mapId)
         }
     }
 
+    // Atomic ordinary-visibility-scan snapshot for MapClientSession.SendVisibleMonsterActorsAsync -
+    // same shape/purpose as SnapshotForCadence above, minus engagement state (that call site never
+    // needed it). Exists specifically so CurrentEpoch and AllInstances are captured from ONE lock
+    // acquisition rather than two separate property reads, which could otherwise pair an instance
+    // from epoch N with a CurrentEpoch that a concurrent resync has already advanced to N+1 (item 4
+    // of the Step 6 correctness-hardening pass).
+    public bool SnapshotForProjection(out WorldSimulationEpoch epoch, out ImmutableArray<WorldMonsterInstance> instances)
+    {
+        lock (_gate)
+        {
+            if (_currentEpoch is not { } currentEpoch)
+            {
+                epoch = default;
+                instances = [];
+                return false;
+            }
+            epoch = currentEpoch;
+            instances = [.. _byActorId.Values];
+            return true;
+        }
+    }
+
     // Applies an atomic bootstrap or full resync snapshot (WorldMonsterFeedPage.Status is Ready
     // with a non-null Snapshot, OR ResyncRequired) - step 1-3 of the binding ordering above; the
     // caller is responsible for step 4 (session reconciliation, needs socket/session state this

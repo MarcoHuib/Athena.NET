@@ -91,6 +91,12 @@ public sealed class MonsterCombatStateStore
     //      is responsible for calling World's TryMarkMonsterDeadAsync when this is true; this store
     //      itself never calls into World and never mutates any MobInstance-shaped lifecycle state
     //      (there is none to mutate post-cutover).
+    //
+    // Retained for callers that intend to commit unconditionally (nothing awaits World between
+    // "calculate" and "commit" for them) - see TryCommitDamage below for the fail-closed, CAS-style
+    // variant the orchestration layer now uses whenever a World RPC confirmation must land between
+    // computing candidate damage and committing it (item 2 of the Step 6 correctness-hardening pass:
+    // "do not mutate local HP before World confirms the attack").
     public MonsterCombatDamageResult ApplyDamage(MonsterCombatKey key, uint damage)
     {
         lock (_gate)
@@ -99,6 +105,52 @@ public sealed class MonsterCombatStateStore
                 return MonsterCombatDamageResult.StaleLife;
             if (entry.CurrentHp == 0)
                 return new MonsterCombatDamageResult(MonsterCombatDamageStatus.AlreadyDead, 0, 0, KilledByThisHit: false);
+
+            var before = entry.CurrentHp;
+            var after = damage >= before ? 0u : before - damage;
+            _byKey[key] = entry with { CurrentHp = after };
+            return new MonsterCombatDamageResult(MonsterCombatDamageStatus.Applied, before, after, KilledByThisHit: after == 0);
+        }
+    }
+
+    // Read-only candidate-damage helper - reports what ApplyDamage/TryCommitDamage would currently
+    // see (StaleLife/AlreadyDead/the CurrentHp a damage roll should be computed against) WITHOUT
+    // mutating anything. Exists so a caller can calculate the damage formula's own result using the
+    // CurrentHp this returns, then await an external confirmation (a World RPC), then commit via
+    // TryCommitDamage below using THIS SAME CurrentHp as the expected pre-image - never mutating
+    // while any await is outstanding, and never holding this store's lock across that await.
+    public MonsterCombatPeekResult Peek(MonsterCombatKey key)
+    {
+        lock (_gate)
+        {
+            if (!_byKey.TryGetValue(key, out var entry))
+                return MonsterCombatPeekResult.StaleLife;
+            return entry.CurrentHp == 0
+                ? MonsterCombatPeekResult.AlreadyDead
+                : new MonsterCombatPeekResult(MonsterCombatDamageStatus.Applied, entry.CurrentHp);
+        }
+    }
+
+    // CAS-style commit: applies `damage` against the entry's CurrentHp ONLY IF it still equals
+    // `expectedCurrentHp` (the pre-image the caller's own Peek/damage-formula call observed earlier,
+    // BEFORE it awaited an external confirmation such as NotifyMonsterAttackedAsync). If a
+    // concurrent hit already changed CurrentHp in the meantime (same-process concurrent-hit race -
+    // e.g. two sessions attacking the same monster) this returns Conflict and applies NOTHING; the
+    // caller re-Peeks, recomputes damage against the fresh CurrentHp, and retries its own external
+    // confirmation/commit sequence rather than silently applying a damage roll computed against
+    // stale HP. Never awaits - entirely synchronous, inside this store's own lock, exactly like
+    // ApplyDamage above; the only difference is the extra compare-before-swap against
+    // expectedCurrentHp.
+    public MonsterCombatDamageResult TryCommitDamage(MonsterCombatKey key, uint expectedCurrentHp, uint damage)
+    {
+        lock (_gate)
+        {
+            if (!_byKey.TryGetValue(key, out var entry))
+                return MonsterCombatDamageResult.StaleLife;
+            if (entry.CurrentHp == 0)
+                return new MonsterCombatDamageResult(MonsterCombatDamageStatus.AlreadyDead, 0, 0, KilledByThisHit: false);
+            if (entry.CurrentHp != expectedCurrentHp)
+                return new MonsterCombatDamageResult(MonsterCombatDamageStatus.Conflict, entry.CurrentHp, entry.CurrentHp, KilledByThisHit: false);
 
             var before = entry.CurrentHp;
             var after = damage >= before ? 0u : before - damage;
@@ -143,9 +195,23 @@ public sealed class MonsterCombatStateStore
     }
 }
 
-public enum MonsterCombatDamageStatus { Applied, StaleLife, AlreadyDead }
+// Conflict: TryCommitDamage's own CAS pre-image check failed - a concurrent hit already changed
+// CurrentHp between the caller's Peek and this commit attempt. Not a failure of the attacker's
+// authority (unlike StaleLife/AlreadyDead) - the caller should re-Peek and retry its own
+// calculate -> confirm -> commit sequence against the fresh CurrentHp.
+public enum MonsterCombatDamageStatus { Applied, StaleLife, AlreadyDead, Conflict }
 
 public readonly record struct MonsterCombatDamageResult(MonsterCombatDamageStatus Status, uint HpBefore, uint HpAfter, bool KilledByThisHit)
 {
     public static readonly MonsterCombatDamageResult StaleLife = new(MonsterCombatDamageStatus.StaleLife, 0, 0, false);
+}
+
+// Peek's own read-only result shape - deliberately narrower than MonsterCombatDamageResult (no
+// HpAfter/KilledByThisHit, since nothing was mutated). CurrentHp is only meaningful when Status is
+// Applied (Peek's own "not stale, not already dead" case) - it is the exact pre-image a subsequent
+// TryCommitDamage call must pass as `expectedCurrentHp`.
+public readonly record struct MonsterCombatPeekResult(MonsterCombatDamageStatus Status, uint CurrentHp)
+{
+    public static readonly MonsterCombatPeekResult StaleLife = new(MonsterCombatDamageStatus.StaleLife, 0);
+    public static readonly MonsterCombatPeekResult AlreadyDead = new(MonsterCombatDamageStatus.AlreadyDead, 0);
 }

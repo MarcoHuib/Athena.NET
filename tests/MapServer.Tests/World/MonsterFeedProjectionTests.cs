@@ -231,6 +231,31 @@ public sealed class MonsterFeedProjectionTests
         Assert.Equal(WorldMonsterEngagementState.InAttackRange, engagement);
     }
 
+    // Item 4 of the Step 6 correctness-hardening pass: SnapshotForProjection is the atomic
+    // epoch+instances capture MapClientSession.SendVisibleMonsterActorsAsync now uses instead of two
+    // separate CurrentEpoch/AllInstances property reads.
+    [Fact]
+    public void SnapshotForProjection_ReturnsEpochAndInstancesFromOneAtomicRead()
+    {
+        var projection = new MonsterFeedProjection(MapId);
+        var combatState = new MonsterCombatStateStore();
+        var epoch = WorldSimulationEpoch.NewEpoch();
+        projection.ApplySnapshot([Alive(1, WorldMonsterIncarnationId.First)], epoch, combatState);
+
+        Assert.True(projection.SnapshotForProjection(out var observedEpoch, out var instances));
+        Assert.Equal(epoch, observedEpoch);
+        Assert.Single(instances);
+        Assert.Equal(1u, instances[0].ActorId);
+    }
+
+    [Fact]
+    public void SnapshotForProjection_NoEpochYet_ReturnsFalse()
+    {
+        var projection = new MonsterFeedProjection(MapId);
+
+        Assert.False(projection.SnapshotForProjection(out _, out _));
+    }
+
     [Fact]
     public void AllInstances_ReturnsImmutableSnapshot_NotLiveDictionaryView()
     {

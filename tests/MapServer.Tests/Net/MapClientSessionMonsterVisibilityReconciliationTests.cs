@@ -243,10 +243,14 @@ public sealed class MapClientSessionMonsterVisibilityReconciliationTests
         await attackerSession.NotifyMonsterDiedAsync(actorId, CancellationToken.None);
         await bystanderSession.NotifyMonsterDiedAsync(actorId, CancellationToken.None);
 
-        // Bystander receives exactly one vanish.
+        // Bystander receives exactly one vanish, with reason=Died - item 5 of the Step 6
+        // correctness-hardening pass: an authoritative World death must use reason=Died for every
+        // observer, never reason=OutOfSight (that reason is reserved for AOI exit/resync
+        // disappearance/map visibility loss only).
         var bystanderVanish = await ReadExact(bystanderStream, PacketConstants.ZcNotifyVanishLength);
         Assert.Equal((short)PacketConstants.ZcNotifyVanish, BinaryPrimitives.ReadInt16LittleEndian(bystanderVanish));
         Assert.Equal(actorId, BinaryPrimitives.ReadUInt32LittleEndian(bystanderVanish.AsSpan(2)));
+        Assert.Equal(PacketConstants.ZcNotifyVanishReasonDied, bystanderVanish[6]);
 
         // Attacker receives NO duplicate vanish - confirmed by a harmless ping round-trip landing
         // next instead of any vanish bytes.
@@ -258,5 +262,52 @@ public sealed class MapClientSessionMonsterVisibilityReconciliationTests
         bystanderClient.Close();
         await attackerRun.WaitAsync(TimeSpan.FromSeconds(5));
         await bystanderRun.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    // Item 5's own "no packet needed must not mean skip state cleanup" requirement: a session whose
+    // generic _visibleActorIds ALREADY says an actor is invisible (the attacker's own case above)
+    // must still have its monster-specific visibility/incarnation state (_monsterVisibility) cleaned
+    // up by NotifyMonsterDiedAsync - proven here by reconciling a FRESH incarnation for the SAME
+    // ActorId immediately afterward and confirming it is treated as a genuine rediscovery (a stand
+    // entry is sent), never silently compared against stale leftover metadata for the OLD life.
+    [Fact]
+    public async Task NotifyMonsterDiedAsync_AlreadyInvisibleActor_StillCleansMonsterVisibilityState_RespawnIsRediscovered()
+    {
+        var (client, stream, session, run) = await SetupViewerAsync();
+        using var _ = client;
+
+        var combatState = new MonsterCombatStateStore();
+        var epoch = WorldSimulationEpoch.NewEpoch();
+        var oldIncarnation = WorldMonsterIncarnationId.First;
+        const uint actorId = 1;
+        var instance = Alive(actorId, oldIncarnation, x: ViewerX, y: ViewerY);
+        combatState.Register(MapId, epoch, actorId, oldIncarnation, maxHp: 55);
+        var combat = CombatFor(combatState, MapId, epoch, instance);
+
+        await session.NotifyMonsterMovedAsync(new WorldMonsterActorView(instance), movementKind: null, combat, CancellationToken.None);
+        await ReadDynamic(stream);
+
+        // This session's own generic tracker already says the actor is invisible (mirroring the
+        // attacker's own already-cleared case) - NotifyMonsterDiedAsync must still run its own
+        // monster-visibility cleanup rather than short-circuiting entirely.
+        session.ForgetPlayer(actorId);
+        await session.NotifyMonsterDiedAsync(actorId, CancellationToken.None);
+
+        // A respawn under a NEW incarnation, same ActorId/position, reconciled via the ordinary full
+        // reconciliation path - must be treated as a genuine fresh discovery (a stand entry is sent),
+        // proving no stale _monsterVisibility entry for the OLD incarnation survived to interfere.
+        var newIncarnation = oldIncarnation.Next();
+        var respawned = Alive(actorId, newIncarnation, x: ViewerX, y: ViewerY);
+        var projections = new MonsterFeedProjectionRegistry();
+        var projection = projections.GetOrCreate(MapId);
+        projection.ApplySnapshot([respawned], epoch, combatState);
+        await session.ReconcileMonsterVisibilityAsync(projection, combatState, CancellationToken.None);
+
+        var rediscoveryPacket = await ReadDynamic(stream);
+        Assert.Equal((short)PacketConstants.ZcNotifyStandEntry, BinaryPrimitives.ReadInt16LittleEndian(rediscoveryPacket));
+        Assert.Equal(actorId, BinaryPrimitives.ReadUInt32LittleEndian(rediscoveryPacket.AsSpan(5)));
+
+        client.Close();
+        await run.WaitAsync(TimeSpan.FromSeconds(5));
     }
 }
