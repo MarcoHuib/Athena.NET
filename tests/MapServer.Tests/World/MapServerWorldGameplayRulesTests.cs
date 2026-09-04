@@ -13,6 +13,25 @@ namespace Athena.Net.MapServer.Tests.World;
 // root, MapServerApp.RunAsync; see GameplayRulesFactoryTests for ruleset-selection
 // coverage, including the PreRenewal-throws case, which is composition-root
 // behavior, not MapServerWorld behavior).
+// Step 6 cutover: MapServerWorld.Build no longer constructs a live MonsterRegistry (monster spawn
+// cell selection is entirely World's own concern now - see MapServerWorld's own doc comment).
+// Several tests in this file genuinely need live MobInstance-level position/cell-selection
+// behavior, so they build their OWN local MonsterRegistry directly from world.MonsterSpawns + the
+// SAME collision provider the test itself passed to Build, mirroring Build's own either/or
+// selector choice (RathenaCompatibleMobSpawnCellSelector for a real provider, the unverified
+// fallback for EmptyMapCollisionProvider) - never wired back into MapServerWorld itself.
+internal static class GameplayRulesLocalMonsterRegistryTestHelper
+{
+    public static MonsterRegistry BuildLocalRegistry(MapServerWorld world, IMapCollisionProvider? collisionProvider = null)
+    {
+        var resolvedCollisionProvider = collisionProvider ?? world.Collision;
+        IMobSpawnCellSelector selector = ReferenceEquals(resolvedCollisionProvider, EmptyMapCollisionProvider.Instance)
+            ? new UnverifiedFallbackMobSpawnCellSelector()
+            : new RathenaCompatibleMobSpawnCellSelector(resolvedCollisionProvider);
+        return new MonsterRegistry(world.MonsterSpawns, new WorldActorIdAllocator().Allocate, selector, TimeProvider.System);
+    }
+}
+
 public sealed class MapServerWorldGameplayRulesTests
 {
     [Fact]
@@ -76,8 +95,8 @@ public sealed class MapServerWorldGameplayRulesTests
     {
         var world = MapServerWorld.Build(new GameplayRuleServices(new RenewalBasicAttackRules()), warpDefinitions: []);
 
-        Assert.NotEmpty(world.Monsters.AllInstances);
-        Assert.All(world.Monsters.AllInstances, instance => Assert.True(instance.IsAlive));
+        Assert.NotEmpty(GameplayRulesLocalMonsterRegistryTestHelper.BuildLocalRegistry(world).AllInstances);
+        Assert.All(GameplayRulesLocalMonsterRegistryTestHelper.BuildLocalRegistry(world).AllInstances, instance => Assert.True(instance.IsAlive));
     }
 
     // Any real (non-Empty) provider - even one missing coverage for some of the world's spawn
@@ -101,8 +120,15 @@ public sealed class MapServerWorldGameplayRulesTests
             .Select(name => new MapCollisionMap(name, 100, 100, Enumerable.Repeat(MapCellFlags.Walkable, 100 * 100).ToArray()));
         var provider = new MapCollisionProvider(maps); // Generic int_land deliberately uncovered.
 
-        var exception = Assert.Throws<InvalidOperationException>(
-            () => MapServerWorld.Build(new GameplayRuleServices(new RenewalBasicAttackRules()), collisionProvider: provider, servedMaps: MapServerHostingScope.ServedMaps, mobSpawnMaps: MapServerHostingScope.MobSpawnMaps));
+        // Step 6 cutover: MapServerWorld.Build itself no longer performs monster spawn cell
+        // selection at all (that is entirely World's own concern in production - see
+        // MapServerWorld's own doc comment) - it only composes MonsterSpawns. The cell-selector
+        // behavior this test actually guards (a real, incomplete collision provider throws loudly
+        // for an uncovered spawn map rather than silently falling back) is exercised here by
+        // building a local MonsterRegistry from the composed spawns with the SAME either/or
+        // selector choice Build used to make internally.
+        var world = MapServerWorld.Build(new GameplayRuleServices(new RenewalBasicAttackRules()), collisionProvider: provider, servedMaps: MapServerHostingScope.ServedMaps, mobSpawnMaps: MapServerHostingScope.MobSpawnMaps);
+        var exception = Assert.Throws<InvalidOperationException>(() => GameplayRulesLocalMonsterRegistryTestHelper.BuildLocalRegistry(world, provider));
         Assert.Contains("int_land", exception.Message);
     }
 
@@ -123,7 +149,7 @@ public sealed class MapServerWorldGameplayRulesTests
         var world = MapServerWorld.Build(new GameplayRuleServices(new RenewalBasicAttackRules()), warpDefinitions: []);
 
         var intLandFamily = new[] { "int_land", "int_land01", "int_land02", "int_land03", "int_land04" };
-        var gPoringOnFamily = world.Monsters.AllInstances.Where(instance => intLandFamily.Contains(instance.Map)).ToArray();
+        var gPoringOnFamily = GameplayRulesLocalMonsterRegistryTestHelper.BuildLocalRegistry(world).AllInstances.Where(instance => intLandFamily.Contains(instance.Map)).ToArray();
 
         Assert.Equal(200, gPoringOnFamily.Length);
         foreach (var mapName in intLandFamily)
@@ -305,7 +331,7 @@ public sealed class MapServerWorldProductionCollisionCompositionTests
         var world = MapServerWorld.Build(new GameplayRuleServices(new RenewalBasicAttackRules()), collisionProvider: provider, servedMaps: MapServerHostingScope.ServedMaps, mobSpawnMaps: MapServerHostingScope.MobSpawnMaps);
 
         var intLandFamily = new[] { "int_land", "int_land01", "int_land02", "int_land03", "int_land04" };
-        var gPorings = world.Monsters.AllInstances.Where(instance => intLandFamily.Contains(instance.Map)).ToArray();
+        var gPorings = GameplayRulesLocalMonsterRegistryTestHelper.BuildLocalRegistry(world).AllInstances.Where(instance => intLandFamily.Contains(instance.Map)).ToArray();
         Assert.Equal(200, gPorings.Length);
 
         foreach (var instance in gPorings)
@@ -348,7 +374,7 @@ public sealed class MapServerWorldServedMapsTests
 
         var world = MapServerWorld.Build(new GameplayRuleServices(new RenewalBasicAttackRules()), collisionProvider: provider, servedMaps: MapServerHostingScope.ServedMaps, mobSpawnMaps: MapServerHostingScope.MobSpawnMaps);
 
-        Assert.Equal(40, world.Monsters.AllInstances.Count(instance => instance.Map == "int_land"));
+        Assert.Equal(40, GameplayRulesLocalMonsterRegistryTestHelper.BuildLocalRegistry(world).AllInstances.Count(instance => instance.Map == "int_land"));
     }
 
     // izlude_d is reached exclusively via #intro_to_izlude_d's scripted WarpAsync call (see
@@ -365,7 +391,7 @@ public sealed class MapServerWorldServedMapsTests
         var world = MapServerWorld.Build(new GameplayRuleServices(new RenewalBasicAttackRules()), collisionProvider: provider, servedMaps: MapServerHostingScope.ServedMaps, mobSpawnMaps: MapServerHostingScope.MobSpawnMaps);
 
         Assert.Contains("izlude_d", MapServerHostingScope.ServedMaps);
-        Assert.True(world.Monsters.AllInstances.Count > 0);
+        Assert.True(GameplayRulesLocalMonsterRegistryTestHelper.BuildLocalRegistry(world).AllInstances.Count > 0);
     }
 
     // The generic/base field is the destination paired with the generic tutorial start variant.
@@ -381,7 +407,7 @@ public sealed class MapServerWorldServedMapsTests
 
         Assert.Contains("prt_fild08", MapServerHostingScope.ServedMaps);
         Assert.Contains("prt_fild08", MapServerHostingScope.MobSpawnMaps);
-        Assert.Contains(world.Monsters.AllInstances, instance => instance.Map == "prt_fild08");
+        Assert.Contains(GameplayRulesLocalMonsterRegistryTestHelper.BuildLocalRegistry(world).AllInstances, instance => instance.Map == "prt_fild08");
     }
 
     // Plain prt_fild08's generated definitions remain complete/source-backed regardless of hosting
@@ -408,8 +434,11 @@ public sealed class MapServerWorldServedMapsTests
         var provider = CollisionProviderFor("int_land", "int_land01", "int_land02", "int_land03", "int_land04",
             "prt_fild08", "prt_fild08a", "prt_fild08b", "prt_fild08c", "prontera");
 
-        var exception = Assert.Throws<InvalidOperationException>(() =>
-            MapServerWorld.Build(new GameplayRuleServices(new RenewalBasicAttackRules()), collisionProvider: provider, servedMaps: MapServerHostingScope.ServedMaps, mobSpawnMaps: MapServerHostingScope.MobSpawnMaps));
+        // Step 6 cutover: cell selection no longer happens inside Build itself (see
+        // BuildLocalRegistry's own doc comment above) - exercised here against a locally-built
+        // MonsterRegistry using the same collision provider.
+        var world = MapServerWorld.Build(new GameplayRuleServices(new RenewalBasicAttackRules()), collisionProvider: provider, servedMaps: MapServerHostingScope.ServedMaps, mobSpawnMaps: MapServerHostingScope.MobSpawnMaps);
+        var exception = Assert.Throws<InvalidOperationException>(() => GameplayRulesLocalMonsterRegistryTestHelper.BuildLocalRegistry(world, provider));
 
         Assert.Contains("prt_fild08d", exception.Message);
     }
@@ -436,7 +465,7 @@ public sealed class MapServerWorldServedMapsTests
 
         var world = MapServerWorld.Build(new GameplayRuleServices(new RenewalBasicAttackRules()), collisionProvider: provider, servedMaps: MapServerHostingScope.ServedMaps, mobSpawnMaps: MapServerHostingScope.MobSpawnMaps);
 
-        var onPrtFild08d = world.Monsters.AllInstances.Where(instance => instance.Map == "prt_fild08d").ToArray();
+        var onPrtFild08d = GameplayRulesLocalMonsterRegistryTestHelper.BuildLocalRegistry(world).AllInstances.Where(instance => instance.Map == "prt_fild08d").ToArray();
         Assert.Equal(340, onPrtFild08d.Length);
         Assert.Equal(110, onPrtFild08d.Count(instance => instance.Spawn.Mob.AegisName == "PORING"));
         Assert.Equal(100, onPrtFild08d.Count(instance => instance.Spawn.Mob.AegisName == "LUNATIC"));

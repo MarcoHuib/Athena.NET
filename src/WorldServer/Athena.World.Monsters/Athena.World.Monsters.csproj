@@ -19,7 +19,6 @@
     <Compile Include="../../MapServer/World/MonsterRegistry.cs" Link="Monsters/MonsterRegistry.cs" />
     <Compile Include="../../MapServer/World/MonsterRuntime.cs" Link="Monsters/MonsterRuntime.cs" />
     <Compile Include="../../MapServer/World/IMonsterActorView.cs" Link="Monsters/IMonsterActorView.cs" />
-    <Compile Include="../../MapServer/World/MonsterCombatState.cs" Link="Monsters/MonsterCombatState.cs" />
     <Compile Include="../../MapServer/World/MobSpawnCellSelector.cs" Link="Monsters/MobSpawnCellSelector.cs" />
     <Compile Include="../../MapServer/World/MonsterTargetRangeRules.cs" Link="Monsters/MonsterTargetRangeRules.cs" />
     <Compile Include="../../MapServer/World/CharacterMovementState.cs" Link="Movement/CharacterMovementState.cs" />

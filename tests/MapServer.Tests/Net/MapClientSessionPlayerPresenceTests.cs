@@ -285,6 +285,16 @@ public sealed class MapClientSessionPlayerPresenceTests
         public Task<WorldTransferResult> TransferPlayerAsync(WorldTransferCommand command, CancellationToken cancellationToken) =>
             Task.FromResult(new WorldTransferResult(WorldTransferStatus.Completed, WorldTransferType.SamePartition, null));
 
+        // This file exercises player-presence/movement recording only - never monster authority
+        // (see IWorldRuntime's own doc comment: a scripted fake must never grow a second
+        // implementation of real World monster semantics).
+        public Task<WorldMonsterSpawnLoadResult> LoadMonsterSpawnsAsync(WorldMonsterSpawnBatch batch, CancellationToken cancellationToken) => throw new NotSupportedException();
+        public Task<WorldMonsterFeedPage> PollMonsterFeedAsync(WorldMonsterFeedCursor? cursor, string mapId, CancellationToken cancellationToken) => throw new NotSupportedException();
+        public Task<WorldMonsterDeathResult> TryMarkMonsterDeadAsync(WorldMonsterLifeReference reference, CancellationToken cancellationToken) => throw new NotSupportedException();
+        public Task<WorldMonsterAttackedResult> NotifyMonsterAttackedAsync(WorldMonsterAttackedCommand command, CancellationToken cancellationToken) => throw new NotSupportedException();
+        public Task<WorldMonsterAttackWindowResult> ValidateMonsterAttackWindowAsync(WorldMonsterAttackWindowQuery query, CancellationToken cancellationToken) => throw new NotSupportedException();
+        public Task<WorldPresenceLifeStateResult> UpdatePresenceLifeStateAsync(string mapId, WorldPresenceLifeStateUpdate update, CancellationToken cancellationToken) => throw new NotSupportedException();
+
         public Task WaitForMovementsAsync(int count) => WaitUntilAsync(() => Movements.Count >= count);
 
         private static async Task WaitUntilAsync(Func<bool> condition)

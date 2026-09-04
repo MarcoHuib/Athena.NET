@@ -6,6 +6,7 @@ using Athena.Net.MapServer.Generated.GameData.Mobs;
 using Athena.Net.MapServer.Net;
 using Athena.Net.MapServer.World;
 using Athena.Net.MapServer.World.GeneratedScripts;
+using Athena.Net.World.Contracts;
 
 namespace Athena.Net.MapServer.Tests.Net;
 
@@ -256,9 +257,17 @@ public sealed class MapClientSessionWarpTests
         var warpActorId = registry.GetVisibleWarpActors("test-warp-map", 20, 0).Single().ActorId;
         var monsterActorId = monsters.AllInstances[0].ActorId;
         Assert.NotEqual(warpActorId, monsterActorId);
+        // Step 6 cutover: SendVisibleMonsterActorsAsync (the monster spawn fan-out this test asserts
+        // on) requires a non-null combatState too - it reads CurrentHp from it for the spawn
+        // packet's own HP fields; see MapClientSessionMonsterMovementTests.SetupAsync's own doc
+        // comment for the identical fix.
+        var warpTestEpoch = WorldSimulationEpoch.NewEpoch();
+        var warpTestCombatState = new MonsterCombatStateStore();
+        warpTestCombatState.Register(monsters.AllInstances[0].Map, warpTestEpoch, monsters.AllInstances[0].ActorId, new WorldMonsterIncarnationId(monsters.AllInstances[0].IncarnationId.Value), monsters.AllInstances[0].Spawn.Mob.MaxHp);
+        var warpTestProjections = WorldMonsterProjectionTestHelper.SeedProjection(monsters.AllInstances[0].Map, warpTestEpoch, warpTestCombatState, monsters.AllInstances);
         await using var session = new MapClientSession(
             1, serverClient, connector, iroAuthenticated: true, mapName: "test-warp-map", x: 10, y: 0,
-            worldMapRegistry: registry, monsters: monsters);
+            worldMapRegistry: registry, monsterProjections: warpTestProjections, combatState: warpTestCombatState);
         var runTask = session.RunAsync(CancellationToken.None);
 
         await clientStream.WriteAsync(BuildMovementRequest(23, 0));
@@ -366,9 +375,15 @@ public sealed class MapClientSessionWarpTests
         var monsters = new MonsterRegistry([spawn], allocator.Allocate, new FixedCellSelector(25, 5), TimeProvider.System);
         var monsterActorId = monsters.AllInstances[0].ActorId;
         var clock = new Athena.Net.MapServer.Tests.Testing.ControllableTimeProvider();
+        // Step 6 cutover: SendVisibleMonsterActorsAsync requires a non-null combatState too - see
+        // this file's own sibling fixture above for the identical reasoning.
+        var aoiEpoch = WorldSimulationEpoch.NewEpoch();
+        var aoiCombatState = new MonsterCombatStateStore();
+        aoiCombatState.Register(monsters.AllInstances[0].Map, aoiEpoch, monsters.AllInstances[0].ActorId, new WorldMonsterIncarnationId(monsters.AllInstances[0].IncarnationId.Value), monsters.AllInstances[0].Spawn.Mob.MaxHp);
+        var aoiProjections = WorldMonsterProjectionTestHelper.SeedProjection(monsters.AllInstances[0].Map, aoiEpoch, aoiCombatState, monsters.AllInstances);
         await using var session = new MapClientSession(
             1, serverClient, connector, iroAuthenticated: true, mapName: "aoi-map", x: 0, y: 0,
-            monsters: monsters, timeProvider: clock);
+            monsterProjections: aoiProjections, combatState: aoiCombatState, timeProvider: clock);
         var runTask = session.RunAsync(CancellationToken.None);
 
         await clientStream.WriteAsync(BuildMovementRequest(30, 0));

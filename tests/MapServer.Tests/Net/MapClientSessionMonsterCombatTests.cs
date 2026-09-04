@@ -9,6 +9,7 @@ using Athena.Net.MapServer.Generated.GameData.Mobs;
 using Athena.Net.MapServer.Net;
 using Athena.Net.MapServer.Tests.Testing;
 using Athena.Net.MapServer.World;
+using Athena.Net.World.Contracts;
 
 namespace Athena.Net.MapServer.Tests.Net;
 
@@ -38,13 +39,20 @@ public sealed class MapClientSessionMonsterCombatTests
     private const uint Quest21008 = 21008;
     private RecordingGameplayStatePersistence? _lastGameplayPersistence;
     private MonsterCombatStateStore? _lastCombatState;
+    private WorldSimulationEpoch _lastEpoch;
 
-    // Reads the CURRENT HP from the SAME MonsterCombatStateStore instance the given test's combat
-    // was constructed with - the store (not MobInstance's own now-superseded CurrentHp field) is
-    // the sole authoritative HP owner on the migrated combat path (see MonsterCombatStateStore's
-    // own doc comment), so this is the correct oracle for this file's damage assertions.
-    private static uint CurrentHpOf(MonsterCombatStateStore combatState, MobInstance target) =>
-        combatState.TryGet(target.Map, target, out var state) ? state.CurrentHp : 0u;
+    // Step 6 cutover: MonsterCombatCoordinator no longer mutates a local MobInstance's own HP/
+    // lifecycle at all - CurrentHp/death now live exclusively in MonsterCombatStateStore, keyed by
+    // the real World-shaped (MapId, SimulationEpoch, ActorId, IncarnationId) tuple (see that
+    // store's own doc comment). These two helpers replace this file's old `target.IsAlive`/
+    // `target.CurrentHp` oracles for every test below - `target` (the local MobInstance) is now
+    // used ONLY for its stable identity/position/static-mob data, never as the combat authority.
+    private static uint CurrentHpOf(MonsterCombatStateStore combatState, WorldSimulationEpoch epoch, MobInstance target) =>
+        combatState.TryGet(new MonsterCombatKey(target.Map, epoch, target.ActorId, new WorldMonsterIncarnationId(target.IncarnationId.Value)), out var state) ? state.CurrentHp : 0u;
+
+    private uint CurrentHpOf(MonsterCombatStateStore combatState, MobInstance target) => CurrentHpOf(combatState, _lastEpoch, target);
+
+    private bool IsAlive(MobInstance target) => CurrentHpOf(_lastCombatState!, target) > 0;
 
     private sealed class RecordingQuestPersistence(uint questId, CharacterQuestStatus initialState) : ICharacterQuestPersistence
     {
@@ -174,7 +182,7 @@ public sealed class MapClientSessionMonsterCombatTests
     private async Task<(TcpClient Client, NetworkStream Stream, MapClientSession Session, Task RunTask, MobInstance Target)> SetupAsync(
         RecordingInventoryPersistence inventoryPersistence, CharacterQuestStatus questState, ICharacterInventoryListPersistence? inventoryListPersistence = null,
         CharacterGameplayState? gameplayState = null, TimeProvider? timeProvider = null, Func<int, int, int>? rollWeaponAtk = null,
-        MobDefinition? mobDefinition = null, GameplayRateOptions? rates = null)
+        MobDefinition? mobDefinition = null, GameplayRateOptions? rates = null, string characterName = "")
     {
         var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
@@ -190,10 +198,13 @@ public sealed class MapClientSessionMonsterCombatTests
         var registry = new MonsterRegistry([spawnDefinition], allocator.Allocate, new FixedCellSelector(75, 51), TimeProvider.System);
         var questDrops = new QuestDropResolver(Generated.GameData.Quests.GeneratedQuestDrops.All);
         var target = registry.AllInstances[0];
+        var epoch = WorldSimulationEpoch.NewEpoch();
+        _lastEpoch = epoch;
         var combatState = new MonsterCombatStateStore();
-        combatState.Register(target.Map, target);
+        combatState.Register(target.Map, epoch, target.ActorId, new WorldMonsterIncarnationId(target.IncarnationId.Value), target.Spawn.Mob.MaxHp);
         _lastCombatState = combatState;
-        var combat = new MonsterCombatCoordinator(registry, questDrops, new RenewalBasicAttackRules(rollWeaponAtk), combatState);
+        var combat = new MonsterCombatCoordinator(questDrops, new RenewalBasicAttackRules(rollWeaponAtk), combatState);
+        var monsterProjections = WorldMonsterProjectionTestHelper.SeedProjection(target.Map, epoch, combatState, registry.AllInstances);
 
         var questPersistence = new RecordingQuestPersistence(Quest21008, questState);
         var gameplayPersistence = new RecordingGameplayStatePersistence(gameplayState ?? StrongNovice());
@@ -203,11 +214,11 @@ public sealed class MapClientSessionMonsterCombatTests
             1, serverClient, new CharServerConnector(new MapConfigStore(new MapConfig(), "unused.conf")), true,
             "int_land03", 75, 51, WorldMapRegistry.Tutorial,
             questPersistence: questPersistence, gameplayStatePersistence: gameplayPersistence,
-            accountId: AccountId, charId: CharId, monsters: registry, combat: combat,
+            accountId: AccountId, charId: CharId, monsterProjections: monsterProjections, combat: combat,
             inventoryPersistence: inventoryPersistence, inventoryListPersistence: inventoryListPersistence,
-            timeProvider: timeProvider, rates: rates, combatState: combatState);
+            timeProvider: timeProvider, rates: rates, combatState: combatState, distributedWorld: new FakeCombatWorldRuntime());
         var run = session.RunAsync(CancellationToken.None);
-        await session.CompleteIroAuthenticationAsync(new(AccountId, CharId, 1, 2, 0, 0, false, "int_land03", 75, 51, 0, 0, 0));
+        await session.CompleteIroAuthenticationAsync(new(AccountId, CharId, 1, 2, 0, 0, false, "int_land03", 75, 51, 0, 0, 0, CharacterName: characterName));
 
         // Consume the fixed 4-packet iRO bootstrap (0x0B18/0x0283/0x0ADE/0x02EB) plus the
         // variable-length 0x0B32 skill list that now always follows it.
@@ -259,7 +270,7 @@ public sealed class MapClientSessionMonsterCombatTests
         Assert.Equal((ushort)2401, BinaryPrimitives.ReadUInt16LittleEndian(spawn.AsSpan(23)));
 
         uint hpAfter = target.Spawn.Mob.MaxHp;
-        for (var i = 0; i < 20 && target.IsAlive; i++)
+        for (var i = 0; i < 20 && IsAlive(target); i++)
         {
             await stream.WriteAsync(AttackPacket(actorId));
             var (damagePacket, hpInfoPacket) = await ReadDamageAndHpInfoAsync(stream);
@@ -277,7 +288,7 @@ public sealed class MapClientSessionMonsterCombatTests
             Assert.Equal(CurrentHpOf(_lastCombatState!, target), BinaryPrimitives.ReadUInt32LittleEndian(hpInfoPacket.AsSpan(6)));
             Assert.Equal(target.Spawn.Mob.MaxHp, BinaryPrimitives.ReadUInt32LittleEndian(hpInfoPacket.AsSpan(10)));
 
-            if (!target.IsAlive)
+            if (!IsAlive(target))
             {
                 var vanish = await ReadExact(stream, PacketConstants.ZcNotifyVanishLength);
                 Assert.Equal((short)PacketConstants.ZcNotifyVanish, BinaryPrimitives.ReadInt16LittleEndian(vanish));
@@ -292,7 +303,7 @@ public sealed class MapClientSessionMonsterCombatTests
             }
         }
 
-        Assert.False(target.IsAlive);
+        Assert.False(IsAlive(target));
         Assert.Equal(0, _lastGameplayPersistence!.Updates);
         client.Close();
         await run.WaitAsync(TimeSpan.FromSeconds(5));
@@ -322,7 +333,7 @@ public sealed class MapClientSessionMonsterCombatTests
         var damagePacket = await ReadExact(stream, PacketConstants.ZcNotifyAct3Length);
         Assert.Equal((short)PacketConstants.ZcNotifyAct3, BinaryPrimitives.ReadInt16LittleEndian(damagePacket));
         Assert.True(BinaryPrimitives.ReadUInt32LittleEndian(damagePacket.AsSpan(22)) > 0);
-        Assert.True(target.IsAlive, "Test requires a non-lethal first hit so the ordinary (non-death) packet sequence is what's being observed.");
+        Assert.True(IsAlive(target), "Test requires a non-lethal first hit so the ordinary (non-death) packet sequence is what's being observed.");
 
         // No ZC_HP_INFO must follow - confirmed by observing a harmless ping reply next instead.
         await stream.WriteAsync(new byte[] { 0x1c, 0x0b });
@@ -347,11 +358,11 @@ public sealed class MapClientSessionMonsterCombatTests
         var spawn = await ReadDynamic(stream);
         var actorId = BinaryPrimitives.ReadUInt32LittleEndian(spawn.AsSpan(5));
 
-        for (var i = 0; i < 20 && target.IsAlive; i++)
+        for (var i = 0; i < 20 && IsAlive(target); i++)
         {
             await stream.WriteAsync(AttackPacket(actorId));
             await ReadDamageAndHpInfoAsync(stream);
-            if (!target.IsAlive)
+            if (!IsAlive(target))
             {
                 var vanish = await ReadExact(stream, PacketConstants.ZcNotifyVanishLength);
                 Assert.Equal((short)PacketConstants.ZcNotifyVanish, BinaryPrimitives.ReadInt16LittleEndian(vanish));
@@ -359,7 +370,7 @@ public sealed class MapClientSessionMonsterCombatTests
             }
         }
 
-        Assert.False(target.IsAlive);
+        Assert.False(IsAlive(target));
 
         // No further bytes (specifically no 0x0B41) should follow - confirm by sending a
         // harmless ping the server always answers, and observing that response next instead of
@@ -394,11 +405,11 @@ public sealed class MapClientSessionMonsterCombatTests
         var actorId = BinaryPrimitives.ReadUInt32LittleEndian((await ReadDynamic(stream)).AsSpan(5));
         var progressionIds = new List<short>();
 
-        for (var i = 0; i < 30 && target.IsAlive; i++)
+        for (var i = 0; i < 30 && IsAlive(target); i++)
         {
             await stream.WriteAsync(AttackPacket(actorId));
             await ReadDamageAndHpInfoAsync(stream);
-            if (!target.IsAlive)
+            if (!IsAlive(target))
             {
                 while (true)
                 {
@@ -420,7 +431,7 @@ public sealed class MapClientSessionMonsterCombatTests
             }
         }
 
-        Assert.False(target.IsAlive);
+        Assert.False(IsAlive(target));
         Assert.Equal(1, _lastGameplayPersistence!.Updates);
         Assert.Equal((ushort)2, session.GameplayState!.State.BaseLevel);
         Assert.Equal(202UL, session.GameplayState.State.BaseExperience); // 150 * 500% - 548
@@ -447,18 +458,18 @@ public sealed class MapClientSessionMonsterCombatTests
         var spawn = await ReadDynamic(stream);
         var actorId = BinaryPrimitives.ReadUInt32LittleEndian(spawn.AsSpan(5));
 
-        for (var i = 0; i < 20 && target.IsAlive; i++)
+        for (var i = 0; i < 20 && IsAlive(target); i++)
         {
             await stream.WriteAsync(AttackPacket(actorId));
             await ReadDamageAndHpInfoAsync(stream);
-            if (!target.IsAlive)
+            if (!IsAlive(target))
             {
                 await ReadExact(stream, PacketConstants.ZcNotifyVanishLength);
                 await ReadExact(stream, PacketConstants.ZcItemPickupAckLength);
                 break;
             }
         }
-        Assert.False(target.IsAlive);
+        Assert.False(IsAlive(target));
 
         // Attacking the now-dead monster must produce no further wire traffic at all.
         await stream.WriteAsync(AttackPacket(actorId));
@@ -518,14 +529,14 @@ public sealed class MapClientSessionMonsterCombatTests
         var spawn = await ReadDynamic(stream);
         var actorId = BinaryPrimitives.ReadUInt32LittleEndian(spawn.AsSpan(5));
 
-        for (var i = 0; i < 20 && target.IsAlive; i++)
+        for (var i = 0; i < 20 && IsAlive(target); i++)
         {
             await stream.WriteAsync(AttackPacket(actorId));
             var (damagePacket, _) = await ReadDamageAndHpInfoAsync(stream);
             var damage = BinaryPrimitives.ReadUInt32LittleEndian(damagePacket.AsSpan(22));
             Assert.True(damage > 0, "Expected the equipped-Knife attacker to deal nonzero damage.");
 
-            if (!target.IsAlive)
+            if (!IsAlive(target))
             {
                 await ReadExact(stream, PacketConstants.ZcNotifyVanishLength);
                 await ReadExact(stream, PacketConstants.ZcItemPickupAckLength);
@@ -533,7 +544,7 @@ public sealed class MapClientSessionMonsterCombatTests
             }
         }
 
-        Assert.False(target.IsAlive);
+        Assert.False(IsAlive(target));
         client.Close();
         await run.WaitAsync(TimeSpan.FromSeconds(5));
     }
@@ -561,7 +572,7 @@ public sealed class MapClientSessionMonsterCombatTests
         await stream.WriteAsync(AttackPacket(actorId));
         var (armedDamagePacket, _) = await ReadDamageAndHpInfoAsync(stream);
         var armedDamage = BinaryPrimitives.ReadUInt32LittleEndian(armedDamagePacket.AsSpan(22));
-        Assert.True(target.IsAlive, "Test setup requires G_PORING to survive the first (armed) hit so a second, post-unequip hit can be observed.");
+        Assert.True(IsAlive(target), "Test setup requires G_PORING to survive the first (armed) hit so a second, post-unequip hit can be observed.");
 
         // clientIndex = server slotIndex(0) + 2, per the established client_index() convention.
         await stream.WriteAsync(UnequipRequestPacket(2));
@@ -604,14 +615,14 @@ public sealed class MapClientSessionMonsterCombatTests
         await ReadExact(stream, PacketConstants.IroZcReqWearEquipAckLength); // ack first for equip
         await ReadExact(stream, 15); // 0x01D7 appearance refresh (Knife again)
 
-        for (var i = 0; i < 20 && target.IsAlive; i++)
+        for (var i = 0; i < 20 && IsAlive(target); i++)
         {
             await stream.WriteAsync(AttackPacket(actorId));
             var (damagePacket, _) = await ReadDamageAndHpInfoAsync(stream);
             var damage = BinaryPrimitives.ReadUInt32LittleEndian(damagePacket.AsSpan(22));
             Assert.True(damage > 0, "Expected weapon-aware damage after re-equipping the Knife.");
 
-            if (!target.IsAlive)
+            if (!IsAlive(target))
             {
                 await ReadExact(stream, PacketConstants.ZcNotifyVanishLength);
                 await ReadExact(stream, PacketConstants.ZcItemPickupAckLength);
@@ -619,7 +630,7 @@ public sealed class MapClientSessionMonsterCombatTests
             }
         }
 
-        Assert.False(target.IsAlive);
+        Assert.False(IsAlive(target));
         client.Close();
         await run.WaitAsync(TimeSpan.FromSeconds(5));
     }
@@ -660,7 +671,7 @@ public sealed class MapClientSessionMonsterCombatTests
         Assert.Equal((short)PacketConstants.ZcPingLive, BinaryPrimitives.ReadInt16LittleEndian(next));
 
         Assert.Equal(target.Spawn.Mob.MaxHp, CurrentHpOf(_lastCombatState!, target)); // Monster HP must be completely untouched.
-        Assert.True(target.IsAlive);
+        Assert.True(IsAlive(target));
 
         client.Close();
         await run.WaitAsync(TimeSpan.FromSeconds(5));
@@ -705,11 +716,11 @@ public sealed class MapClientSessionMonsterCombatTests
         Assert.Equal(2u, session.Inventory.Items.Single(i => i.ItemId == 23484).SlotIndex);
 
         // --- First kill: Wood lands at slot 3 / client index 5, runtime snapshot updates immediately ---
-        for (var i = 0; i < 20 && target.IsAlive; i++)
+        for (var i = 0; i < 20 && IsAlive(target); i++)
         {
             await stream.WriteAsync(AttackPacket(actorId));
             await ReadDamageAndHpInfoAsync(stream);
-            if (!target.IsAlive)
+            if (!IsAlive(target))
             {
                 await ReadExact(stream, PacketConstants.ZcNotifyVanishLength);
                 var pickup = await ReadExact(stream, PacketConstants.ZcItemPickupAckLength);
@@ -718,7 +729,7 @@ public sealed class MapClientSessionMonsterCombatTests
                 break;
             }
         }
-        Assert.False(target.IsAlive);
+        Assert.False(IsAlive(target));
 
         // Requirement 7: MapClientSession.Inventory immediately contains the new item in the
         // correct slot without reconnecting.
@@ -787,17 +798,17 @@ public sealed class MapClientSessionMonsterCombatTests
 
         var inventoryCountBefore = session.Inventory!.Items.Count;
 
-        for (var i = 0; i < 20 && target.IsAlive; i++)
+        for (var i = 0; i < 20 && IsAlive(target); i++)
         {
             await stream.WriteAsync(AttackPacket(actorId));
             await ReadDamageAndHpInfoAsync(stream);
-            if (!target.IsAlive)
+            if (!IsAlive(target))
             {
                 await ReadExact(stream, PacketConstants.ZcNotifyVanishLength);
                 break; // No 0x0B41 must follow - checked below via the ping probe.
             }
         }
-        Assert.False(target.IsAlive);
+        Assert.False(IsAlive(target));
 
         Assert.Equal(inventoryCountBefore, session.Inventory!.Items.Count); // Runtime snapshot untouched.
 
@@ -873,7 +884,7 @@ public sealed class MapClientSessionMonsterCombatTests
         // advance needed for it.
         var (firstHit, _) = await ReadDamageAndHpInfoAsync(stream);
         Assert.True(BinaryPrimitives.ReadUInt32LittleEndian(firstHit.AsSpan(22)) > 0);
-        Assert.True(target.IsAlive, "WeakFreshNovice's Knife hit must not one-shot G_PORING for this test to observe a second hit.");
+        Assert.True(IsAlive(target), "WeakFreshNovice's Knife hit must not one-shot G_PORING for this test to observe a second hit.");
 
         // Second and third hits arrive from the server-owned loop alone, one source-backed delay
         // apart each, with NO further 0x0437 sent.
@@ -901,7 +912,7 @@ public sealed class MapClientSessionMonsterCombatTests
 
         await stream.WriteAsync(AttackPacket(actorId));
         await ReadDamageAndHpInfoAsync(stream); // First (immediate) hit.
-        Assert.True(target.IsAlive);
+        Assert.True(IsAlive(target));
 
         // Advancing less than the full source-backed delay must NOT produce a second hit yet. The
         // loop already rescheduled/re-armed its timer synchronously while processing the first
@@ -951,7 +962,7 @@ public sealed class MapClientSessionMonsterCombatTests
             // test with a stale packet boundary.
             if (i > 0) await clock.AdvanceAsync(TimeSpan.FromMilliseconds(weakNoviceKnifeDelayMs));
             await ReadDamageAndHpInfoAsync(stream);
-            isDead = !target.IsAlive;
+            isDead = !IsAlive(target);
             if (isDead)
             {
                 var vanish = await ReadExact(stream, PacketConstants.ZcNotifyVanishLength);
@@ -996,10 +1007,14 @@ public sealed class MapClientSessionMonsterCombatTests
         var questDrops = new QuestDropResolver(Generated.GameData.Quests.GeneratedQuestDrops.All);
         var targetA = registry.AllInstances[0];
         var targetB = registry.AllInstances[1];
+        var epoch = WorldSimulationEpoch.NewEpoch();
+        _lastEpoch = epoch;
         var combatState = new MonsterCombatStateStore();
-        combatState.Register(targetA.Map, targetA);
-        combatState.Register(targetB.Map, targetB);
-        var combat = new MonsterCombatCoordinator(registry, questDrops, new RenewalBasicAttackRules(MinWeaponAtkRoll), combatState);
+        combatState.Register(targetA.Map, epoch, targetA.ActorId, new WorldMonsterIncarnationId(targetA.IncarnationId.Value), targetA.Spawn.Mob.MaxHp);
+        combatState.Register(targetB.Map, epoch, targetB.ActorId, new WorldMonsterIncarnationId(targetB.IncarnationId.Value), targetB.Spawn.Mob.MaxHp);
+        _lastCombatState = combatState;
+        var combat = new MonsterCombatCoordinator(questDrops, new RenewalBasicAttackRules(MinWeaponAtkRoll), combatState);
+        var monsterProjections = WorldMonsterProjectionTestHelper.SeedProjection(targetA.Map, epoch, combatState, registry.AllInstances);
 
         var questPersistence = new RecordingQuestPersistence(Quest21008, CharacterQuestStatus.Absent);
         var gameplayPersistence = new RecordingGameplayStatePersistence(WeakFreshNovice());
@@ -1008,9 +1023,9 @@ public sealed class MapClientSessionMonsterCombatTests
             1, serverClient, new CharServerConnector(new MapConfigStore(new MapConfig(), "unused.conf")), true,
             "int_land03", 75, 51, WorldMapRegistry.Tutorial,
             questPersistence: questPersistence, gameplayStatePersistence: gameplayPersistence,
-            accountId: AccountId, charId: CharId, monsters: registry, combat: combat,
+            accountId: AccountId, charId: CharId, monsterProjections: monsterProjections, combat: combat,
             inventoryPersistence: inventoryPersistence, inventoryListPersistence: inventoryListPersistence,
-            timeProvider: clock, combatState: combatState);
+            timeProvider: clock, combatState: combatState, distributedWorld: new FakeCombatWorldRuntime());
         var run = session.RunAsync(CancellationToken.None);
         await session.CompleteIroAuthenticationAsync(new(AccountId, CharId, 1, 2, 0, 0, false, "int_land03", 75, 51, 0, 0, 0));
         await ReadExact(stream, 4 + 6 + 6 + 13);
@@ -1027,7 +1042,7 @@ public sealed class MapClientSessionMonsterCombatTests
         await stream.WriteAsync(AttackPacket(targetA.ActorId));
         var (firstHit, _) = await ReadDamageAndHpInfoAsync(stream);
         Assert.Equal(targetA.ActorId, BinaryPrimitives.ReadUInt32LittleEndian(firstHit.AsSpan(6)));
-        Assert.True(targetA.IsAlive, "WeakFreshNovice's Knife hit must not one-shot G_PORING for this test to observe the retarget.");
+        Assert.True(IsAlive(targetA), "WeakFreshNovice's Knife hit must not one-shot G_PORING for this test to observe the retarget.");
 
         // Before the next scheduled hit against A, retarget to B - pinned unit_attack's "just
         // change target/type" behavior (unit.cpp:2951-2953): while an attack timer is already
@@ -1094,7 +1109,7 @@ public sealed class MapClientSessionMonsterCombatTests
         await stream.WriteAsync(AttackPacket(actorId));
         var (firstHit, _) = await ReadDamageAndHpInfoAsync(stream);
         Assert.Equal(actorId, BinaryPrimitives.ReadUInt32LittleEndian(firstHit.AsSpan(6)));
-        Assert.True(target.IsAlive, "WeakFreshNovice's Knife hit must not one-shot G_PORING for this test to observe the no-double-hit invariant.");
+        Assert.True(IsAlive(target), "WeakFreshNovice's Knife hit must not one-shot G_PORING for this test to observe the no-double-hit invariant.");
 
         // Now duplicate the SAME request while that attack timer is genuinely pending (confirmed
         // above) - this must not add a second concurrent loop or force an immediate second hit.
@@ -1139,7 +1154,15 @@ public sealed class MapClientSessionMonsterCombatTests
         var knifeInventory = new CharacterInventorySnapshot([new CharacterInventoryItem(DurableId: 1, SlotIndex: 0, 1201, 1, 0x000002, true, 0, 0, 0)]);
         var inventoryListPersistence = new FixedInventoryListPersistence(knifeInventory);
         var clock = new ControllableTimeProvider();
-        var (client, stream, session, run, target) = await SetupAsync(inventoryPersistence, CharacterQuestStatus.Absent, inventoryListPersistence, gameplayState: WeakFreshNovice(), timeProvider: clock, rollWeaponAtk: MinWeaponAtkRoll);
+        // Step 6 cutover: HandleIroMovementAsync now resolves every fresh movement request through
+        // _distributedWorld.MovePlayerAsync (World-authoritative movement) whenever _distributedWorld
+        // is non-null - see ResolveWorldMovementTargetAsync's own doc comment. SetupAsync always
+        // supplies a non-null FakeCombatWorldRuntime (required for the attack path below), so this
+        // session needs a genuine World presence registered before a real movement packet reaches
+        // it, which only happens when EnterPlayerWorldAsync's own BuildCurrentPresence check passes -
+        // requiring a non-empty CharacterName, unlike every other test in this file that never
+        // exercises movement at all.
+        var (client, stream, session, run, target) = await SetupAsync(inventoryPersistence, CharacterQuestStatus.Absent, inventoryListPersistence, gameplayState: WeakFreshNovice(), timeProvider: clock, rollWeaponAtk: MinWeaponAtkRoll, characterName: "TestNovice");
         using var _ = client;
 
         await stream.WriteAsync(new byte[] { 0x7d, 0x00, 0xaa });
@@ -1149,7 +1172,7 @@ public sealed class MapClientSessionMonsterCombatTests
 
         await stream.WriteAsync(AttackPacket(actorId));
         await ReadDamageAndHpInfoAsync(stream); // Immediate first hit.
-        Assert.True(target.IsAlive, "WeakFreshNovice's Knife hit must not one-shot G_PORING so a repeat state remains scheduled to be cancelled.");
+        Assert.True(IsAlive(target), "WeakFreshNovice's Knife hit must not one-shot G_PORING so a repeat state remains scheduled to be cancelled.");
 
         // Move away before the next scheduled hit - must cancel the repeat attack outright.
         await stream.WriteAsync(MovementRequestPacket(76, 51));
@@ -1162,7 +1185,7 @@ public sealed class MapClientSessionMonsterCombatTests
         await stream.WriteAsync(new byte[] { 0x1c, 0x0b });
         var next = await ReadExact(stream, 2);
         Assert.Equal((short)PacketConstants.ZcPingLive, BinaryPrimitives.ReadInt16LittleEndian(next));
-        Assert.True(target.IsAlive); // Never took a second hit.
+        Assert.True(IsAlive(target)); // Never took a second hit.
 
         client.Close();
         await run.WaitAsync(TimeSpan.FromSeconds(5));
@@ -1185,7 +1208,7 @@ public sealed class MapClientSessionMonsterCombatTests
 
         await stream.WriteAsync(AttackPacket(actorId));
         await ReadDamageAndHpInfoAsync(stream);
-        Assert.True(target.IsAlive, "WeakFreshNovice's Knife hit must not one-shot G_PORING so a repeat state remains scheduled at disposal.");
+        Assert.True(IsAlive(target), "WeakFreshNovice's Knife hit must not one-shot G_PORING so a repeat state remains scheduled at disposal.");
 
         // Close the client (the same graceful-EOF shutdown path every other test in this file
         // uses) while a repeat attack is still scheduled (never fired again), then explicitly

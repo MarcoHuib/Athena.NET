@@ -2,14 +2,15 @@ using System.Text.RegularExpressions;
 
 namespace Athena.Net.MapServer.Tests.World;
 
-// Step 5 architectural regression: the migrated live combat path (MonsterCombatCoordinator,
-// MonsterEngagementTickProcessor) must route CurrentHp/NextAttackAt exclusively through
-// MonsterCombatStateStore - never MobInstance.ApplyDamage/ScheduleNextAttack directly (those are
-// superseded on this path, retained only for MobInstanceTests' own direct unit coverage). This
-// scans the actual production source files rather than relying on developer discipline, so a
-// future edit that reintroduces a direct MobInstance.ApplyDamage/ScheduleNextAttack call on the
-// migrated path fails this test immediately instead of silently reintroducing a second mutable HP
-// authority.
+// Step 5/6 architectural regression: the migrated live combat path (MonsterCombatCoordinator,
+// MonsterAttackCadenceExecutor - Step 6 cutover's replacement for the retired
+// MonsterEngagementTickProcessor, see that file's own doc comment) must route CurrentHp/
+// NextAttackAt exclusively through MonsterCombatStateStore - never MobInstance.ApplyDamage/
+// ScheduleNextAttack directly (those are superseded on this path, retained only for
+// MobInstanceTests' own direct unit coverage). This scans the actual production source files
+// rather than relying on developer discipline, so a future edit that reintroduces a direct
+// MobInstance.ApplyDamage/ScheduleNextAttack call on the migrated path fails this test immediately
+// instead of silently reintroducing a second mutable HP authority.
 public sealed class MigratedCombatPathArchitectureTests
 {
     // Repo-root-relative paths of the exact files this migration touched - deliberately narrow
@@ -19,7 +20,7 @@ public sealed class MigratedCombatPathArchitectureTests
     private static readonly string[] MigratedCombatFiles =
     [
         "src/MapServer/World/MonsterCombatCoordinator.cs",
-        "src/MapServer/Net/MonsterEngagementTickProcessor.cs",
+        "src/MapServer/Net/MonsterAttackCadenceExecutor.cs",
     ];
 
     // Matches a call of the form `<identifier>.ApplyDamage(` or `<identifier>.ScheduleNextAttack(`

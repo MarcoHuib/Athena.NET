@@ -1,28 +1,33 @@
+using Athena.Net.World.Contracts;
+
 namespace Athena.Net.MapServer.World;
 
-// The explicitly MapServer-LOCAL half of a monster's runtime state - CurrentHp/MaxHp/NextAttackAt
-// and (later) any other combat-cadence-only data - kept as a SEPARATE type from IMonsterActorView
-// (position/identity/movement) so a reviewer can see at a glance, from a method's own parameter
-// list, whether it depends on World-simulation-shaped data or on MapServer-local combat data. No
-// Orleans/World-contract dependency: this type is pure MapServer domain, exactly like MobInstance
-// itself, and stays that way even after a later step keys it by
-// (MapId, SimulationEpoch, ActorId, IncarnationId) for the real World-authority cutover - Step 4
-// does not need that key yet (no grain wiring here at all), so it is deliberately NOT invented
-// prematurely; ActorId/IncarnationId alone are enough to identify which MobInstance this snapshot
-// was read from in the meantime.
+// The explicitly MapServer-LOCAL half of a monster's runtime state - CurrentHp/MaxHp/NextAttackAt -
+// kept as a SEPARATE type from IMonsterActorView (position/identity/movement) so a reviewer can see
+// at a glance, from a method's own parameter list, whether it depends on World-simulation-shaped
+// data or on MapServer-local combat data. `IncarnationId` is WorldMonsterIncarnationId (the real
+// World wire type) since MonsterCombatStateStore is keyed by the full authoritative
+// (MapId, SimulationEpoch, ActorId, IncarnationId) tuple post-cutover (see MonsterCombatKey's own
+// doc comment) - this type carries the SAME incarnation representation its own key does, rather
+// than MapServer's separate MonsterIncarnationId domain type (used only by legacy/test MobInstance
+// composition, which this type also still supports via FromInstance below for exactly that reason).
 //
 // This is a per-read SNAPSHOT (record, not a live reference) - callers that need a fresh value
-// after HP changes must re-read via FromInstance again, matching MobPosition/MobEngagement's own
-// "atomic snapshot, re-read when needed" convention on MobInstance itself.
-public sealed record MonsterCombatState(uint ActorId, MonsterIncarnationId IncarnationId, uint CurrentHp, uint MaxHp, DateTimeOffset? NextAttackAt)
+// after HP changes must re-read from the store again.
+public sealed record MonsterCombatState(uint ActorId, WorldMonsterIncarnationId IncarnationId, uint CurrentHp, uint MaxHp, DateTimeOffset? NextAttackAt)
 {
-    // The ONE bridge point from MobInstance's own combat fields into this explicit local type -
-    // every other consumer takes a MonsterCombatState value, never a MobInstance, so this factory
-    // (not a cast, not a callback) is the single visible seam where "the current combat source
-    // happens to be MobInstance" lives during this preparatory step. Delegates to
-    // MobInstance.CaptureCombatState() rather than reading ActorId/IncarnationId/CurrentHp/
-    // NextAttackAt as separate property getters - each of those takes its OWN lock acquisition on
-    // MobInstance, so reading them independently could observe a torn mix spanning a concurrent
-    // respawn (old IncarnationId with new-life HP, etc.) - see CaptureCombatState's own doc comment.
-    public static MonsterCombatState FromInstance(MobInstance instance) => instance.CaptureCombatState();
+    // Legacy/test bridge point ONLY - production no longer constructs a MonsterCombatState from a
+    // live MobInstance at all (there is no local MobInstance for a production monster post-cutover;
+    // see MonsterCombatStateStore's own doc comment). Retained for focused unit tests / legacy
+    // MonsterRuntime-based test composition that still exercises a local MobInstance directly (see
+    // MobInstance.CaptureCombatState's own doc comment for why that method itself is retained too).
+    // Delegates to MobInstance.CaptureCombatState() (one atomic locked read) rather than reading
+    // ActorId/IncarnationId/CurrentHp/NextAttackAt as separate property getters, converting the
+    // MapServer-local MonsterIncarnationId into the WorldMonsterIncarnationId representation this
+    // type now carries.
+    public static MonsterCombatState FromInstance(MobInstance instance)
+    {
+        var captured = instance.CaptureCombatState();
+        return new MonsterCombatState(captured.ActorId, new WorldMonsterIncarnationId(captured.IncarnationId.Value), captured.CurrentHp, captured.MaxHp, captured.NextAttackAt);
+    }
 }

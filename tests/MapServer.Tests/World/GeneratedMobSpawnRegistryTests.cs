@@ -12,8 +12,20 @@ namespace Athena.Net.MapServer.Tests.World;
 // live in WorldDataImporter.Tests.MobSpawnGenerationTests instead (that project cannot reference
 // this compiled generated output - see its own doc comment); this file covers the COMPILED
 // GeneratedMobSpawnRegistry's own map-lookup contract and end-to-end runtime activation.
+// Step 6 cutover: MapServerWorld no longer owns a live MonsterRegistry (monster simulation is
+// World-authoritative now - see MapServerWorld's own doc comment). Several tests below genuinely
+// need live MobInstance-level data (per-instance Map/IsAlive/Spawn), so they build their OWN local
+// MonsterRegistry directly from world.MonsterSpawns, entirely outside MapServerWorld, purely for
+// local assertions - never wired back into MapServerWorld itself.
+internal static class LocalMonsterRegistryTestHelper
+{
+    public static MonsterRegistry BuildLocalRegistry(MapServerWorld world) =>
+        new(world.MonsterSpawns, new WorldActorIdAllocator().Allocate, new UnverifiedFallbackMobSpawnCellSelector(), TimeProvider.System);
+}
+
 public sealed class GeneratedMobSpawnRegistryTests
 {
+
     // Count corrected from 9,844 to 10,068 by a genuine parser bug fix (this branch): pinned
     // npc_parse_mob's own w1 sscanf success condition is `w1count >= 1` (src/map/npc.cpp:5233) - a
     // bare "<map>\tmonster\t..." declaration with no ",x,y" coordinates at all is valid pinned
@@ -69,7 +81,7 @@ public sealed class GeneratedMobSpawnRegistryTests
         Assert.DoesNotContain("evt_zombie", MapServerHostingScope.ServedMaps);
 
         var world = MapServerWorld.Build(new GameplayRuleServices(new RenewalBasicAttackRules()), servedMaps: MapServerHostingScope.ServedMaps, mobSpawnMaps: MapServerHostingScope.MobSpawnMaps);
-        Assert.DoesNotContain(world.Monsters.AllInstances, instance => instance.Map == "evt_zombie");
+        Assert.DoesNotContain(LocalMonsterRegistryTestHelper.BuildLocalRegistry(world).AllInstances, instance => instance.Map == "evt_zombie");
     }
 
     // Task section 25/26: proves the complete pipeline end-to-end for a real map that previously
@@ -111,7 +123,7 @@ public sealed class GeneratedMobSpawnRegistryTests
         var servedMaps = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { Map };
         var world = MapServerWorld.Build(new GameplayRuleServices(new RenewalBasicAttackRules()), servedMaps: servedMaps);
 
-        var instances = world.Monsters.AllInstances.Where(instance => instance.Map == Map).ToArray();
+        var instances = LocalMonsterRegistryTestHelper.BuildLocalRegistry(world).AllInstances.Where(instance => instance.Map == Map).ToArray();
         Assert.Equal(effectiveSpawns.Sum(spawn => spawn.Count), instances.Length);
         Assert.All(instances, instance => Assert.True(instance.IsAlive));
         Assert.Contains(instances, instance => instance.Spawn.Mob.AegisName == "WILOW" && instance.Spawn.Count == 181);
@@ -119,7 +131,7 @@ public sealed class GeneratedMobSpawnRegistryTests
         // Only the ONE served map's declarations were instantiated - definition availability stays
         // global (GeneratedMobSpawnRegistry.All has thousands more), but runtime instantiation
         // follows the explicit servedMaps set exactly.
-        Assert.All(world.Monsters.AllInstances, instance => Assert.Equal(Map, instance.Map, ignoreCase: true));
+        Assert.All(LocalMonsterRegistryTestHelper.BuildLocalRegistry(world).AllInstances, instance => Assert.Equal(Map, instance.Map, ignoreCase: true));
     }
 
     // No source declaration exists in more than one generated array - the physical
@@ -207,7 +219,7 @@ public sealed class GeneratedMobSpawnRegistryTests
         // organizational Events/ placement used to generate these three declarations.
         Assert.DoesNotContain("evt_zombie", MapServerHostingScope.ServedMaps);
         var world = MapServerWorld.Build(new GameplayRuleServices(new RenewalBasicAttackRules()), servedMaps: MapServerHostingScope.ServedMaps, mobSpawnMaps: MapServerHostingScope.MobSpawnMaps);
-        Assert.DoesNotContain(world.Monsters.AllInstances, instance => instance.Map == "evt_zombie");
+        Assert.DoesNotContain(LocalMonsterRegistryTestHelper.BuildLocalRegistry(world).AllInstances, instance => instance.Map == "evt_zombie");
     }
 }
 
@@ -272,7 +284,7 @@ public sealed class GeneratedMobSpawnLoadProfilesTests
 
         // Still reachable through a live built world exactly as today (unchanged behavior).
         var world = MapServerWorld.Build(new GameplayRuleServices(new RenewalBasicAttackRules()), servedMaps: MapServerHostingScope.ServedMaps, mobSpawnMaps: MapServerHostingScope.MobSpawnMaps);
-        Assert.Contains(world.Monsters.AllInstances, instance => instance.Map == "prt_fild08d" && instance.Spawn.Mob.AegisName == "PORING");
+        Assert.Contains(LocalMonsterRegistryTestHelper.BuildLocalRegistry(world).AllInstances, instance => instance.Map == "prt_fild08d" && instance.Spawn.Mob.AegisName == "PORING");
     }
 
     // evt_zombie: still represented, still absent from both profiles (Disabled - halloween_2008.txt

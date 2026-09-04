@@ -51,33 +51,23 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     private readonly ICharacterInventoryPersistence _inventoryPersistence;
     private readonly ICharacterSkillPersistence _skillPersistence;
     private readonly WorldMapRegistry _worldMapRegistry;
-    // Null when no MapServerWorld was supplied (test-facing constructor default).
-    private readonly MonsterRegistry? _monsters;
-    // Null alongside _monsters on the test-facing default path; both are populated together
-    // by the production MapServerWorld-based constructor.
+    // Step 6 cutover: the World-authoritative monster projection (position/movement/lifecycle/
+    // engagement, per-map, shared across every session on that map - see
+    // MonsterFeedProjectionRegistry's own doc comment) replaces the old local MonsterRegistry
+    // entirely. Null when no MapServerWorld was supplied (test-facing constructor default).
+    private readonly MonsterFeedProjectionRegistry? _monsterProjections;
+    // Null alongside _monsterProjections on the test-facing default path; both are populated
+    // together by the production MapServerWorld-based constructor.
     private readonly MonsterCombatCoordinator? _combat;
-    // The authoritative CurrentHp/NextAttackAt owner on the migrated combat path (see
-    // MonsterCombatStateStore's own doc comment) - null alongside _monsters/_combat on the
-    // test-facing default path, populated together with them by the production
-    // MapServerWorld-based constructor. Read here for monster-actor discovery packets
-    // (SendVisibleMonsterActorsAsync), which must report the SAME HP the store's own
-    // ApplyDamage-owned value currently holds, never MobInstance's own superseded CurrentHp field.
+    // The authoritative CurrentHp/NextAttackAt owner on the live combat path (see
+    // MonsterCombatStateStore's own doc comment) - null alongside _monsterProjections/_combat on
+    // the test-facing default path, populated together with them by the production
+    // MapServerWorld-based constructor.
     private readonly MonsterCombatStateStore? _combatState;
     // Diagnostic-only for now (0x0368 actor-info click/hover logging) - see LogMonsterCellDiagnostics.
-    // This actorId-correlated diagnostic is the ONE remaining live spatial diagnostic; the old bulk
-    // per-spawn [MONSTER CELL] log (MobSpawnCellSelector, ~200 lines at startup) was removed once
-    // this superseded it for live investigation - see this task's own report for that decision.
-    // Null on the test-facing default path, same as _monsters/_combat. A small, reusable, read-only
-    // spatial-inspection capability rather than threading IMapCollisionProvider into MonsterRegistry
-    // merely for logging - see MonsterSpatialInspector's own doc comment for why it exists as its
-    // own composed type.
+    // Backed by the World projection post-cutover (see MonsterSpatialInspector's own doc comment) -
+    // null on the test-facing default path, same as _monsterProjections/_combat.
     private readonly MonsterSpatialInspector? _spatialInspector;
-    // Null on the test-facing default path, same as _monsters/_combat/_spatialInspector. Shared
-    // across every session on this MapServer process (composed once in MapServerWorld.Build) -
-    // ProcessTick is safe to call from multiple sessions' own periodic loops because
-    // MonsterRegistry/MobInstance already own their own internal locking; this field is only a
-    // reference to that ONE shared scheduler, never a per-session copy.
-    private readonly MonsterRuntime? _monsterRuntime;
     private readonly IMovementPathProvider _movementPathProvider;
     // Same shared collision data every other collision-aware component uses (MonsterRuntime's own
     // idle-walk pathfinding, RathenaCompatibleMovementPathProvider) - never a second independently
@@ -232,8 +222,8 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     // so silently falling back to it here would reintroduce a second, independent actor-ID
     // namespace alongside the composed MonsterRegistry's shared one.
     public MapClientSession(int sessionId, TcpClient client, CharServerConnector charConnector, MapServerWorld world, IWorldRuntime worldRuntime)
-        : this(sessionId, client, charConnector, world.Maps, monsters: world.Monsters, combat: world.Combat, spatialInspector: world.SpatialInspector,
-               movementPathProvider: world.MovementPathProvider, monsterRuntime: world.MonsterRuntime, collisionProvider: world.Collision, rates: world.Rates,
+        : this(sessionId, client, charConnector, world.Maps, monsterProjections: world.MonsterProjections, combat: world.Combat,
+               movementPathProvider: world.MovementPathProvider, collisionProvider: world.Collision, rates: world.Rates,
                players: world.Players, playerVisibility: world.PlayerVisibility, visibilityOptions: world.Visibility, distributedWorld: worldRuntime,
                combatState: world.CombatState)
     {
@@ -248,14 +238,12 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         ICharacterQuestPersistence? questPersistence = null,
         ICharacterGameplayStatePersistence? gameplayStatePersistence = null,
         TimeProvider? timeProvider = null,
-        MonsterRegistry? monsters = null,
+        MonsterFeedProjectionRegistry? monsterProjections = null,
         IMovementPathProvider? movementPathProvider = null,
         MonsterCombatCoordinator? combat = null,
         ICharacterInventoryPersistence? inventoryPersistence = null,
         ICharacterInventoryListPersistence? inventoryListPersistence = null,
         ICharacterSkillPersistence? skillPersistence = null,
-        MonsterSpatialInspector? spatialInspector = null,
-        MonsterRuntime? monsterRuntime = null,
         IMapCollisionProvider? collisionProvider = null,
         GameplayRateOptions? rates = null,
         PlayerPresenceRegistry? players = null,
@@ -275,11 +263,10 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         _inventoryListPersistence = inventoryListPersistence ?? charConnector;
         _skillPersistence = skillPersistence ?? charConnector;
         _worldMapRegistry = worldMapRegistry;
-        _monsters = monsters;
+        _monsterProjections = monsterProjections;
         _combat = combat;
         _combatState = combatState;
-        _spatialInspector = spatialInspector;
-        _monsterRuntime = monsterRuntime;
+        _spatialInspector = monsterProjections is not null ? new MonsterSpatialInspector(monsterProjections, collisionProvider ?? EmptyMapCollisionProvider.Instance) : null;
         _timeProvider = timeProvider ?? TimeProvider.System;
         _movementPathProvider = movementPathProvider ?? new UnverifiedGridLineMovementPathProvider();
         _collisionProvider = collisionProvider ?? EmptyMapCollisionProvider.Instance;
@@ -310,14 +297,12 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         uint charId = 0,
         ICharacterGameplayStatePersistence? gameplayStatePersistence = null,
         TimeProvider? timeProvider = null,
-        MonsterRegistry? monsters = null,
+        MonsterFeedProjectionRegistry? monsterProjections = null,
         IMovementPathProvider? movementPathProvider = null,
         MonsterCombatCoordinator? combat = null,
         ICharacterInventoryPersistence? inventoryPersistence = null,
         ICharacterInventoryListPersistence? inventoryListPersistence = null,
         ICharacterSkillPersistence? skillPersistence = null,
-        MonsterSpatialInspector? spatialInspector = null,
-        MonsterRuntime? monsterRuntime = null,
         IMapCollisionProvider? collisionProvider = null,
         GameplayRateOptions? rates = null,
         PlayerPresenceRegistry? players = null,
@@ -334,7 +319,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
             questPersistence,
             gameplayStatePersistence,
             timeProvider,
-            monsters,
+            monsterProjections,
             movementPathProvider,
             combat,
             inventoryPersistence,
@@ -348,8 +333,6 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
             inventoryListPersistence ?? AlwaysEmptyInventoryListPersistence.Instance,
             // Same reasoning as inventoryListPersistence above, for skills.
             skillPersistence ?? AlwaysEmptySkillPersistence.Instance,
-            spatialInspector,
-            monsterRuntime,
             collisionProvider,
             rates,
             players,
@@ -380,6 +363,17 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     internal uint AccountId => _accountId;
     uint IPlayerPresenceObserver.ActorId => _accountId;
     internal string CurrentMapName => _mapName;
+    // The World-registered CharacterId for this session - by this codebase's own established
+    // convention (see RegisterPresenceAsync's own call site), CharacterId IS AccountId; a separate
+    // accessor exists so callers that specifically need "the identity World knows this player by"
+    // (e.g. building a WorldMonsterAttackWindowQuery/WorldMonsterAttackedCommand) read it under
+    // that name rather than reaching for AccountId and having to know they're the same value.
+    internal uint CharacterId => _accountId;
+    // Null until CompleteIroAuthenticationAsync's own presence-registration path has actually run
+    // (see _presenceId's own field doc comment) - a caller needing to address this session's World
+    // presence (monster-attack RPCs, life-state updates) must handle the null case exactly like
+    // every other `_distributedWorld is null`-guarded call site in this class does.
+    internal Guid? PresenceId => _presenceId;
     // Syncs against real elapsed walking time on every read (no background timer - mirrors
     // CharacterStatusEffectState's lazy-on-read expiration model), so any caller (tests, a future
     // melee-range check, actor visibility) always observes the character's ACTUAL current cell
@@ -1083,9 +1077,9 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
                     MapLogger.Info($"[iRO MAP DEBUG] Sending 0x0ADF NPC name actorId={requestedActorId} name='{actorName}'");
                     await WriteAsync(IroWorldActorPackets.BuildNpcName(requestedActorId, actorName), cancellationToken);
                 }
-                else if (_visibleActorIds.IsActorVisible(requestedActorId) && _monsters is not null && _monsters.TryGetInstance(requestedActorId, _mapName, out var monsterInstance))
+                else if (_visibleActorIds.IsActorVisible(requestedActorId) && TryGetProjectedMonster(requestedActorId, out var monsterActor))
                 {
-                    var monsterName = monsterInstance.Spawn.Mob.Name;
+                    var monsterName = monsterActor.Name;
                     MapLogger.Info($"[iRO MAP DEBUG] Sending 0x0ADF monster name actorId={requestedActorId} name='{monsterName}'");
                     LogMonsterCellDiagnostics(requestedActorId);
                     await WriteAsync(IroWorldActorPackets.BuildNpcName(requestedActorId, monsterName), cancellationToken);
@@ -1618,8 +1612,8 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     {
         if (!IroAttackRequestPacket.TryParse(packet, out var request)) return;
         var targetActorId = request.TargetActorId;
-        if (_monsters is null || _combat is null || _gameplayState is null) return;
-        if (!_monsters.TryGetInstance(targetActorId, _mapName, out var target) || !target.IsAlive) return;
+        if (_combat is null || _gameplayState is null) return;
+        if (!TryGetProjectedMonster(targetActorId, out var target) || target.Instance.Lifecycle != WorldMonsterLifecycleState.Alive) return;
 
         await _attackGate.WaitAsync(cancellationToken);
         try
@@ -1729,12 +1723,18 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         }
         finally { _attackGate.Release(); }
 
-        if (_monsters is null || _combat is null || _gameplayState is null) { ClearRepeatAttackIfCurrent(expected); return; }
-        if (!_monsters.TryGetInstance(expected.TargetActorId, _mapName, out var target) || !target.IsAlive)
+        if (_combat is null || _gameplayState is null || _distributedWorld is null || _combatState is null) { ClearRepeatAttackIfCurrent(expected); return; }
+        if (!TryGetProjectedMonster(expected.TargetActorId, out var target) || target.Instance.Lifecycle != WorldMonsterLifecycleState.Alive)
         {
             ClearRepeatAttackIfCurrent(expected);
             return;
         }
+        if (!_monsterProjections!.TryGet(_mapName, out var projection) || projection.CurrentEpoch is not { } epoch)
+        {
+            ClearRepeatAttackIfCurrent(expected);
+            return;
+        }
+        var life = new WorldMonsterLifeReference(_mapName, epoch, target.ActorId, target.Instance.IncarnationId);
 
         // Resolve the CURRENT authoritative right-hand weapon through the same shared
         // EquippedWeaponResolver path SendSelfWeaponAppearanceAsync uses - never the
@@ -1838,21 +1838,27 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         var effectiveStats = _statusEffects.Recalculate(_gameplayState.State);
         var outcome = await _combat.AttackAsync(
             target,
-            _mapName,
-            _accountId,
+            life,
             effectiveStats,
             _gameplayState.State.BaseLevel,
             equippedWeapon,
             ResolveQuestStatesAsync);
         if (!outcome.Accepted) { ClearRepeatAttackIfCurrent(expected); return; }
 
-        // Section 16: log ONLY the actual acquisition transition the coordinator reported - see
-        // MonsterAttackOutcome.EngagementAcquired's own doc comment for why that pure state/rules
-        // layer surfaces this as a flag rather than logging it itself.
-        if (outcome.EngagementAcquired)
+        // Requirement 10: for an accepted NON-LETHAL hit, tell World to (re)acquire the target -
+        // World owns authoritative target/engagement state, so the local coordinator's own
+        // EngagementAcquired flag is only ever a signal to make THIS call, never a mutation in its
+        // own right (see MonsterAttackOutcome.EngagementAcquired's own doc comment). This command
+        // is idempotent - re-acquiring an already-current target is a harmless no-op on World's own
+        // side (AlreadyCurrentTarget), so ordinary at-least-once delivery is safe. Transport/RPC
+        // failure here is NOT silently ignored - it propagates (fail closed) so this attack attempt
+        // does not proceed as if World accepted a mutation that may never have landed; the NEXT
+        // feed poll/resync naturally reconciles whatever World's actual state turned out to be.
+        if (!outcome.KilledByThisHit && outcome.EngagementAcquired && _presenceId is { } attackerPresenceId)
         {
-            var position = target.GetPosition();
-            MapLogger.Info($"[iRO MAP DEBUG] Mob engagement acquired mobActorId={target.ActorId} targetAccountId={_accountId} mobPosition=({position.X},{position.Y}) combatState={target.Engagement.State}");
+            var attackedResult = await _distributedWorld.NotifyMonsterAttackedAsync(
+                new WorldMonsterAttackedCommand(life, CharacterId, attackerPresenceId), cancellationToken);
+            MapLogger.Info($"[iRO MAP DEBUG] Mob engagement NotifyMonsterAttackedAsync mobActorId={target.ActorId} targetCharacterId={CharacterId} result={attackedResult.Status}");
         }
 
         // Reschedule (or clear, on death) the repeat-attack runtime state BEFORE any wire
@@ -1895,7 +1901,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
             expected.TargetActorId,
             tick,
             srcSpeed: 460,
-            dstSpeed: (uint)target.Spawn.Mob.DamageMotion,
+            dstSpeed: (uint)target.StaticMob.DamageMotion,
             damage: damageDealt,
             div: 1,
             actionType: 0);
@@ -1917,20 +1923,40 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         // which should not happen in the supported single-attacker-session combat path today).
         if (_visibleActorIds.IsActorVisible(expected.TargetActorId))
         {
-            var hpInfoPacket = IroMonsterCombatPackets.BuildHpInfo(expected.TargetActorId, outcome.HpAfter, target.Spawn.Mob.MaxHp);
+            var hpInfoPacket = IroMonsterCombatPackets.BuildHpInfo(expected.TargetActorId, outcome.HpAfter, target.StaticMob.MaxHp);
             await WriteAsync(hpInfoPacket, cancellationToken);
         }
 
         if (outcome.KilledByThisHit)
         {
+            // Requirement 10: World owns the resulting death state/feed entry/respawn schedule -
+            // this call is what actually transitions the authoritative life to Dead. Transport/RPC
+            // failure is NOT silently ignored (fail closed) - it propagates, so a local lethal HP
+            // transition whose World-side confirmation could not even be attempted never proceeds
+            // to award quest drops/EXP/a death wire projection as if it had succeeded.
+            var deathResult = await _distributedWorld.TryMarkMonsterDeadAsync(life, cancellationToken);
+            if (deathResult.Status == WorldMonsterDeathStatus.StaleLifeReference)
+            {
+                // The local combat-state entry this hit just zeroed no longer corresponds to
+                // World's own current authoritative life (a resync/incarnation change raced this
+                // attack) - do NOT award EXP/quest drops, do NOT project a successful death, and
+                // discard the now-meaningless local combat-state entry outright so a later stale
+                // read can never resurface it. The next feed poll/resync naturally reconciles this
+                // map's projection to whatever World's actual current state is.
+                MapLogger.Warning($"[iRO MAP DEBUG] TryMarkMonsterDeadAsync rejected StaleLifeReference mobActorId={expected.TargetActorId} - no quest/EXP/death projection.");
+                _combatState.Remove(MonsterCombatKey.From(life));
+                ClearRepeatAttackIfCurrent(expected);
+                return;
+            }
+
             // Pinned mob_dead awards generated monster EXP before clearing the dead unit.
             // This currently-supported session is the authoritative single recipient: the
             // accepted attack was made by this authenticated account, with no party/contribution
             // policy invented. Zero-valued generated EXP produces no persistence and no packets.
             var (ratedBaseExp, ratedJobExp) = ExperienceRewardService.ResolveReward(
                 _rates,
-                target.Spawn.Mob.BaseExp,
-                target.Spawn.Mob.JobExp,
+                target.StaticMob.BaseExp,
+                target.StaticMob.JobExp,
                 ExperienceSource.Monster);
             var progression = await new CharacterProgressionService(_gameplayState).AddExperienceAsync(
                 ratedBaseExp,
@@ -1946,7 +1972,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
                     await WriteAsync(packet, cancellationToken);
             }
 
-            MapLogger.Info($"[iRO MAP DEBUG] Monster died actorId={expected.TargetActorId} mob={target.Spawn.Mob.AegisName}");
+            MapLogger.Info($"[iRO MAP DEBUG] Monster died actorId={expected.TargetActorId} mob={target.StaticMob.AegisName}");
             var vanishPacket = IroMonsterCombatPackets.BuildNotifyVanish(expected.TargetActorId, PacketConstants.ZcNotifyVanishReasonDied);
             await WriteAsync(vanishPacket, cancellationToken);
             _visibleActorIds.MarkNotVisible(expected.TargetActorId);
@@ -2082,6 +2108,28 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         }, cancellationToken);
 
         if (mutated is null) return null; // Persistence rejected the mutation (stale row) - treat as a normal "target no longer valid this tick", not an error.
+
+        // Requirement 12: World's IsAlive is updated ONLY on the actual authoritative Alive->Dead
+        // transition THIS call performed (before>0, after==0) - never merely because a hit landed,
+        // never repeatedly for every subsequent hit/read while HP is already 0 (the `before == 0`
+        // early-return inside MutateAsync's own delegate already makes `mutated.CurrentHp != before`
+        // false for those, so this condition alone is sufficient to fire exactly once per death).
+        //
+        // KNOWN PHASE 2B LIMITATION, not an incomplete implementation: Dead -> Alive/revive
+        // synchronization is DEFERRED - Athena.NET currently has no player revive/resurrection/
+        // respawn-to-savepoint gameplay mechanic at all (no clif_resurrection packet, no
+        // authoritative Dead->Alive transition anywhere in this codebase) to hook an isAlive:true
+        // call into. Fabricating one here merely to exercise the RPC's other branch would be
+        // inventing player-facing behavior nobody asked for. UpdatePresenceLifeStateAsync's own
+        // contract remains fully capable of isAlive:true so a FUTURE genuine revive feature can
+        // call it without any World contract redesign - see that RPC's own World-side tests for
+        // proof the isAlive:true path itself already works correctly.
+        if (before > 0 && mutated.CurrentHp == 0 && _distributedWorld is not null && _presenceId is { } deadPresenceId)
+        {
+            var lifeStateResult = await _distributedWorld.UpdatePresenceLifeStateAsync(
+                _mapName, new WorldPresenceLifeStateUpdate(CharacterId, deadPresenceId, IsAlive: false), cancellationToken);
+            MapLogger.Info($"[iRO MAP DEBUG] Player death UpdatePresenceLifeStateAsync characterId={CharacterId} result={lifeStateResult.Status}");
+        }
 
         // The SP_HP packet itself is NOT written here - see MonsterAttackActionOutcome's own doc
         // comment for why the wire write is deferred to NotifyMonsterAttackOutcomeAsync, which sends
@@ -3468,45 +3516,57 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     }
 
     // Sends 0x09FF for every alive monster instance in range, reusing the same _visibleActorIds
-    // dedup set NPC/warp actors already share (one visibility-tracking collection, matching the
-    // one shared WorldActorIdAllocator namespace all actor kinds draw from - MapServerWorld.Build).
-    // Null _monsters (test-facing constructor default) means no monster runtime is composed for
-    // this session; the method is then a no-op rather than throwing, matching how existing tests
-    // exercise NPC/warp/dialogue behavior without ever touching monster state.
+    // dedup set NPC/warp actors already share. Reads from the World-authoritative projection (see
+    // MonsterFeedProjectionRegistry's own doc comment) - null _monsterProjections (test-facing
+    // constructor default) means no monster projection is composed for this session; the method is
+    // then a no-op, matching how existing tests exercise NPC/warp/dialogue behavior without ever
+    // touching monster state. A map this session is on that has no projection YET (no tick has
+    // polled it) is likewise a no-op here - the tick loop's own discovery-on-movement/state-change
+    // path (NotifyMonsterMovedAsync) is what actually announces monsters once bootstrap completes.
     private async Task SendVisibleMonsterActorsAsync(CancellationToken cancellationToken)
     {
-        if (_monsters is null) return;
+        if (_monsterProjections is null || _combatState is null) return;
+        if (!_monsterProjections.TryGet(_mapName, out var projection) || projection.CurrentEpoch is not { } epoch) return;
 
-        foreach (var instance in _monsters.GetVisibleInstances(_mapName, _x, _y))
+        foreach (var instance in projection.AllInstances)
         {
-            if (!_visibleActorIds.TryMarkVisible(instance.ActorId))
-            {
-                continue;
-            }
+            if (instance.Lifecycle != WorldMonsterLifecycleState.Alive) continue;
+            if (Math.Abs(instance.X - _x) > WorldVisibilityOptions.DefaultAreaSize || Math.Abs(instance.Y - _y) > WorldVisibilityOptions.DefaultAreaSize) continue;
+            if (!_visibleActorIds.TryMarkVisible(instance.ActorId)) continue;
 
-            var mob = instance.Spawn.Mob;
-            var position = instance.GetPosition(); // One atomic snapshot - never torn between axes.
-            // Read CurrentHp from MonsterCombatStateStore (the actual owner on the migrated combat
-            // path - see that type's own doc comment), never instance.CurrentHp, which is
-            // superseded. `_combatState` is null only on the test-facing default path alongside
-            // `_monsters`/`_combat` (see this session's own field doc comments); a genuinely
-            // unregistered/stale-incarnation lookup falls back to reporting 0, matching how a
-            // fresh MobInstance with no combat-state entry has no other authoritative HP to show.
-            var currentHp = _combatState is not null && _combatState.TryGet(instance.Map, instance, out var visibleCombat) ? visibleCombat.CurrentHp : 0u;
+            var actor = new WorldMonsterActorView(instance);
+            // Read CurrentHp from MonsterCombatStateStore (the sole HP authority on the live
+            // combat path) - a genuinely unregistered/stale-life lookup falls back to reporting 0,
+            // matching how a monster with no combat-state entry has no other authoritative HP to show.
+            var currentHp = _combatState.TryGet(new MonsterCombatKey(_mapName, epoch, instance.ActorId, instance.IncarnationId), out var visibleCombat) ? visibleCombat.CurrentHp : 0u;
             var packet = IroMonsterActorPackets.BuildStandEntry(
                 instance.ActorId,
-                (ushort)mob.Id,
-                (ushort)mob.WalkSpeed,
-                mob.Name,
-                position.X,
-                position.Y,
+                (ushort)actor.MobId,
+                (ushort)actor.WalkSpeed,
+                actor.Name,
+                instance.X,
+                instance.Y,
                 direction: 0,
                 currentHp: currentHp,
-                maxHp: mob.MaxHp);
+                maxHp: actor.StaticMob.MaxHp);
             MapLogger.Info(
-                $"[iRO MAP DEBUG] Sending monster actor id={instance.ActorId} name='{mob.Name}' class={mob.Id} map='{instance.Map}' x={position.X} y={position.Y} hp={currentHp}/{mob.MaxHp}");
+                $"[iRO MAP DEBUG] Sending monster actor id={instance.ActorId} name='{actor.Name}' class={actor.MobId} map='{instance.MapId}' x={instance.X} y={instance.Y} hp={currentHp}/{actor.StaticMob.MaxHp}");
             await WriteAsync(packet, cancellationToken);
         }
+    }
+
+    // Resolves an ActorId against the CURRENT World-authoritative projection for this session's own
+    // map - the one place this class looks up "is this ActorId a live monster right now" post-
+    // cutover. Returns false when no projection exists yet for this map (never touched/bootstrapped)
+    // or the ActorId is not present in it (includes both "never existed" and "died and was reaped").
+    private bool TryGetProjectedMonster(uint actorId, out WorldMonsterActorView actor)
+    {
+        actor = default;
+        if (_monsterProjections is null) return false;
+        if (!_monsterProjections.TryGet(_mapName, out var projection)) return false;
+        if (!projection.TryGetInstance(actorId, out var instance)) return false;
+        actor = new WorldMonsterActorView(instance);
+        return true;
     }
 
     // Called by MapTcpServer's shared MonsterRuntime tick loop for every MonsterMovementChange
@@ -3556,24 +3616,30 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     //     range will incorrectly continue to appear to that client. This is a known, documented gap
     //     (see this task's own report), not a silent omission.
     // `combat` is supplied by the caller (MapTcpServer's fan-out loop) as a FRESH MonsterCombatState
-    // read immediately before THIS call - never the state captured back when `change` itself was
-    // created. A MonsterMovementChange is often produced once per tick and then fanned out across
-    // several sessions/packet builds; HP captured at change-creation time can already be stale by
-    // the time an individual session's packet is actually built (e.g. a player's hit landed and
-    // correctly published fresh HP via 0x0977 in between) - projecting that stale captured HP here
-    // could regress the client's already-correct HP knowledge, or even re-show the full-HP -1/-1
-    // sentinel for a monster that was just damaged. See MonsterMovementChange's own doc comment for
-    // the full incident this replaced.
+    // read immediately before THIS call - never a value captured earlier this same tick. HP
+    // captured at an earlier point can already be stale by the time an individual session's packet
+    // is actually built (e.g. a player's hit landed and correctly published fresh HP via 0x0977 in
+    // between) - projecting that stale captured HP here could regress the client's already-correct
+    // HP knowledge, or even re-show the full-HP -1/-1 sentinel for a monster that was just damaged.
     //
-    // Validated against `change.Instance` before any packet is built: a caller that accidentally
-    // supplies combat state for a DIFFERENT actor or a DIFFERENT life (stale IncarnationId spanning
-    // a respawn) must never have its mismatched data projected onto this actor - that is an
+    // Validated against `actor` before any packet is built: a caller that accidentally supplies
+    // combat state for a DIFFERENT actor or a DIFFERENT life (stale IncarnationId spanning a
+    // respawn) must never have its mismatched data projected onto this actor - that is an
     // invariant violation in the caller, not a recoverable case, so this throws rather than
     // silently projecting mixed-life data.
-    public async Task NotifyMonsterMovedAsync(MonsterMovementChange change, MonsterCombatState combat, CancellationToken cancellationToken)
+    //
+    // `movementKind` is the feed's own explicit WorldMonsterMovementKind (see that type's own doc
+    // comment) - consumed EXACTLY as reported, never re-derived from actor.IsWalking (IsWalking
+    // alone cannot distinguish a fresh WalkStarted from an ordinary CellCrossed continuation, both
+    // of which leave IsWalking=true). Null means this feed entry carries no movement transition at
+    // all (e.g. a bare engagement-state change with no accompanying position change) - no movement
+    // packet is projected for the already-visible case in that situation, but the DISCOVERY branch
+    // below still needs to run for a not-yet-visible actor regardless of whether this particular
+    // call happens to carry a movement transition, since discovery is triggered by proximity, not
+    // by the specific entry kind that happened to be processed.
+    public async Task NotifyMonsterMovedAsync(IMonsterActorView actor, WorldMonsterMovementKind? movementKind, MonsterCombatState combat, CancellationToken cancellationToken)
     {
-        var actor = change.Instance;
-        if (combat.ActorId != actor.ActorId || !combat.IncarnationId.Equals(actor.IncarnationId))
+        if (combat.ActorId != actor.ActorId || !combat.IncarnationId.Value.Equals(actor.IncarnationId.Value))
             throw new InvalidOperationException(
                 $"MonsterCombatState (ActorId={combat.ActorId}, IncarnationId={combat.IncarnationId.Value}) does not match the projected actor (ActorId={actor.ActorId}, IncarnationId={actor.IncarnationId.Value}) - refusing to project mixed-life actor/combat data.");
         if (!string.Equals(actor.Map, _mapName, StringComparison.OrdinalIgnoreCase)) return;
@@ -3618,17 +3684,19 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
             return;
         }
 
-        switch (change.Kind)
+        switch (movementKind)
         {
-            case MonsterMovementChangeKind.CellCrossed:
-            case MonsterMovementChangeKind.WalkFinished:
+            case null:
+            case WorldMonsterMovementKind.CellCrossed:
+            case WorldMonsterMovementKind.WalkFinished:
                 // Pinned unit_walktoxy_nextcell never resends the walk packet for an ordinary
                 // per-cell continuation (sendMove=false, unit.cpp:749), and reaching the end of the
                 // walkpath sends nothing at all (unit.cpp:186-192, no clif_fixpos) - see this
-                // method's own doc comment for why the captured 0x0088 does NOT apply here.
+                // method's own doc comment for why the captured 0x0088 does NOT apply here. No
+                // movement transition at all (null) is likewise a no-op for an already-visible actor.
                 return;
 
-            case MonsterMovementChangeKind.ChaseInterrupted:
+            case WorldMonsterMovementKind.ChaseInterrupted:
                 // Pinned mob_ai_sub_hard's own "target in range -> unit_stop_walking(md,
                 // USW_FIXPOS|USW_RELEASE_TARGET)" (unit.cpp:2165-2166): USW_FIXPOS makes pinned
                 // unit_stop_walking call clif_fixpos (unit.cpp:1732-1737) - this is the ONE case
@@ -3639,7 +3707,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
                 MapLogger.Info($"[iRO MAP DEBUG] Sent 0x0088 fixpos mobActorId={actor.ActorId} accountId={_accountId} mobPosition=({position.X},{position.Y})");
                 return;
 
-            case MonsterMovementChangeKind.WalkStarted:
+            case WorldMonsterMovementKind.WalkStarted:
                 var destination = actor.MovementDestination;
                 var walkPacket = IroMonsterActorPackets.BuildWalkEntry(
                     actor.ActorId,

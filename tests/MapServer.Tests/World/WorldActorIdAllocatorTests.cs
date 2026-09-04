@@ -53,28 +53,11 @@ public sealed class WorldActorIdAllocatorTests
         Assert.Throws<InvalidOperationException>(() => allocator.Allocate());
     }
 
-    [Fact]
-    public void MapServerWorldBuild_SharesOneAllocator_MapAndMonsterActorIdsNeverCollide()
-    {
-        // MapServerWorld.Build() is the composition root: WorldMapRegistry (NPC/warp actors) and
-        // MonsterRegistry (monster actors) must draw from the SAME WorldActorIdAllocator instance,
-        // not two independently-numbered ones - this test would fail if that wiring regressed back
-        // to two separate `new WorldActorIdAllocator()` calls (as it did before this fix), since
-        // both would then start from 110,000,000 and immediately collide.
-        var world = MapServerWorld.Build(new GameplayRuleServices(new RenewalBasicAttackRules()), warpDefinitions: []);
-
-        var npcAndWarpActorIds = world.Maps
-            .GetVisibleWarpActors("iz_int01", 0, 0, range: ushort.MaxValue)
-            .Concat(world.Maps.GetVisibleWarpActors("int_land01", 0, 0, range: ushort.MaxValue))
-            .Concat(world.Maps.GetVisibleWarpActors("int_land02", 0, 0, range: ushort.MaxValue))
-            .Concat(world.Maps.GetVisibleWarpActors("int_land03", 0, 0, range: ushort.MaxValue))
-            .Concat(world.Maps.GetVisibleWarpActors("int_land04", 0, 0, range: ushort.MaxValue))
-            .Select(actor => actor.ActorId)
-            .ToHashSet();
-        var monsterActorIds = world.Monsters.AllInstances.Select(instance => instance.ActorId).ToHashSet();
-
-        Assert.NotEmpty(npcAndWarpActorIds);
-        Assert.NotEmpty(monsterActorIds);
-        Assert.Empty(npcAndWarpActorIds.Intersect(monsterActorIds));
-    }
+    // REMOVED (Step 6 cutover): this test asserted that WorldMapRegistry (NPC/warp actors) and
+    // MonsterRegistry (monster actors) drew from the SAME WorldActorIdAllocator instance inside
+    // MapServerWorld.Build(). That premise no longer holds - monster ActorIds are now
+    // World-authoritative, leased by the WorldPartitionGrain itself (see MapServerWorld's own
+    // top-of-file doc comment: "MapServer no longer allocates a second, competing local ActorId set
+    // for monsters at all"). MapServerWorld.Build() no longer constructs a live MonsterRegistry, so
+    // there is nothing left of this scenario to assert against.
 }

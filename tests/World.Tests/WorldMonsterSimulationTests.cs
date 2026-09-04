@@ -873,6 +873,65 @@ public sealed class WorldMonsterSimulationTests : IAsyncLifetime
         Assert.Null(page.Snapshot!.Single().EngagedTarget);
     }
 
+    // Step 6: UpdatePresenceLifeStateAsync's own contract must work correctly in BOTH directions
+    // (isAlive:false AND isAlive:true) even though MapServer currently only ever calls the
+    // isAlive:false half in production (no player revive/resurrection mechanic exists yet - see
+    // MapClientSession.ApplyIncomingMobBasicAttackAsync's own doc comment for that documented
+    // Phase 2B limitation). This proves the RPC itself is not one-sided, so a future genuine
+    // revive feature can call isAlive:true without any World contract change.
+    [Fact]
+    public async Task UpdatePresenceLifeState_IsAliveTrue_UpdatesAnAlreadyDeadPresenceBackToAlive()
+    {
+        var grain = Partition("world-rest");
+        var mapId = "izlude";
+        var characterId = 211u;
+        var presenceId = Guid.NewGuid();
+        await grain.RegisterPresenceAsync(Presence(presenceId, characterId, mapId));
+        Assert.Equal(WorldPresenceLifeStateStatus.Updated,
+            (await grain.UpdatePresenceLifeStateAsync(new WorldPresenceLifeStateUpdate(characterId, presenceId, IsAlive: false))).Status);
+
+        var reviveResult = await grain.UpdatePresenceLifeStateAsync(new WorldPresenceLifeStateUpdate(characterId, presenceId, IsAlive: true));
+
+        Assert.Equal(WorldPresenceLifeStateStatus.Updated, reviveResult.Status);
+    }
+
+    [Fact]
+    public async Task UpdatePresenceLifeState_StalePresenceId_NeverUpdatesTheReplacementSession()
+    {
+        var grain = Partition("world-rest");
+        var mapId = "izlude";
+        var characterId = 212u;
+        var originalPresenceId = Guid.NewGuid();
+        await grain.RegisterPresenceAsync(Presence(originalPresenceId, characterId, mapId));
+
+        // The character disconnects and reconnects with the SAME CharacterId but a genuinely
+        // different PresenceId - the grain's own current registration for that CharacterId is now
+        // the NEW presence.
+        var replacementPresenceId = Guid.NewGuid();
+        await grain.UnregisterPresenceAsync(mapId, characterId, originalPresenceId);
+        await grain.RegisterPresenceAsync(Presence(replacementPresenceId, characterId, mapId));
+
+        // A life-state update still carrying the OLD (now-stale) PresenceId must be rejected, never
+        // silently applied to the replacement presence merely because CharacterId matches.
+        var staleUpdate = await grain.UpdatePresenceLifeStateAsync(new WorldPresenceLifeStateUpdate(characterId, originalPresenceId, IsAlive: false));
+        Assert.Equal(WorldPresenceLifeStateStatus.StalePresence, staleUpdate.Status);
+
+        // The CURRENT (replacement) presence's own life state must be genuinely untouched by the
+        // rejected stale call - verified indirectly via a subsequent legitimate update succeeding
+        // normally against the replacement's own correct PresenceId.
+        var legitimateUpdate = await grain.UpdatePresenceLifeStateAsync(new WorldPresenceLifeStateUpdate(characterId, replacementPresenceId, IsAlive: false));
+        Assert.Equal(WorldPresenceLifeStateStatus.Updated, legitimateUpdate.Status);
+    }
+
+    [Fact]
+    public async Task UpdatePresenceLifeState_CharacterNeverRegistered_IsNotFound()
+    {
+        var grain = Partition("world-rest");
+        var result = await grain.UpdatePresenceLifeStateAsync(new WorldPresenceLifeStateUpdate(CharacterId: 9999u, Guid.NewGuid(), IsAlive: false));
+
+        Assert.Equal(WorldPresenceLifeStateStatus.NotFound, result.Status);
+    }
+
     [Fact]
     public async Task NotifyMonsterAttacked_AttackerPresenceOnDifferentMap_IsRejected_NeverAcquiresTarget()
     {

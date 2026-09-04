@@ -26,7 +26,7 @@ public sealed class MapTcpServer
     private readonly IWorldRuntime _worldRuntime;
     private readonly TcpListener _listener;
     private readonly ConcurrentDictionary<int, MapClientSession> _sessions = new();
-    private readonly MonsterEngagementTickProcessor _engagementProcessor;
+    private readonly MonsterAttackCadenceExecutor _cadenceExecutor;
     private int _nextSessionId;
 
     public MapTcpServer(MapConfigStore configStore, CharServerConnector charConnector, MapServerWorld world, IWorldRuntime worldRuntime, TimeProvider? timeProvider = null)
@@ -37,7 +37,7 @@ public sealed class MapTcpServer
         _worldRuntime = worldRuntime;
         var config = _configStore.Current;
         _listener = new TcpListener(config.BindIp, config.MapPort);
-        _engagementProcessor = new MonsterEngagementTickProcessor(_world.Monsters, _world.Collision, _world.MovementPathProvider, timeProvider ?? TimeProvider.System, _world.CombatState);
+        _cadenceExecutor = new MonsterAttackCadenceExecutor(_world.MonsterProjections, _world.CombatState, _worldRuntime, timeProvider ?? TimeProvider.System);
     }
 
     // Focused tests which exercise the existing process-local simulation do not start an Orleans
@@ -176,6 +176,28 @@ public sealed class MapTcpServer
         }
 
         private sealed record TestMovement(Guid Id, WorldPosition[] Path);
+
+        // Step 6: InMemoryTestWorldRuntime intentionally does NOT reimplement the monster-authority
+        // RPCs' real grain semantics (spawn fingerprinting, sequenced feed/cursor/epoch, engagement
+        // rules) - duplicating WorldMonsterMapSimulation's own logic here would be a second,
+        // divergence-prone implementation of the exact authority this cutover exists to centralize
+        // in one place. Any MapServer.Tests file that needs real monster-authority behavior spins
+        // up a genuine Orleans TestCluster and uses OrleansWorldRuntime directly (see World.Tests'
+        // own established TestClusterBuilder pattern) instead of this in-memory stand-in - this
+        // class remains only for tests that exercise player-presence/movement/transfer behavior
+        // with no monster involvement at all.
+        public Task<WorldMonsterSpawnLoadResult> LoadMonsterSpawnsAsync(WorldMonsterSpawnBatch batch, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("InMemoryTestWorldRuntime does not implement monster-authority RPCs - use a real Orleans TestCluster with OrleansWorldRuntime for tests that need monster behavior.");
+        public Task<WorldMonsterFeedPage> PollMonsterFeedAsync(WorldMonsterFeedCursor? cursor, string mapId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("InMemoryTestWorldRuntime does not implement monster-authority RPCs - use a real Orleans TestCluster with OrleansWorldRuntime for tests that need monster behavior.");
+        public Task<WorldMonsterDeathResult> TryMarkMonsterDeadAsync(WorldMonsterLifeReference reference, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("InMemoryTestWorldRuntime does not implement monster-authority RPCs - use a real Orleans TestCluster with OrleansWorldRuntime for tests that need monster behavior.");
+        public Task<WorldMonsterAttackedResult> NotifyMonsterAttackedAsync(WorldMonsterAttackedCommand command, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("InMemoryTestWorldRuntime does not implement monster-authority RPCs - use a real Orleans TestCluster with OrleansWorldRuntime for tests that need monster behavior.");
+        public Task<WorldMonsterAttackWindowResult> ValidateMonsterAttackWindowAsync(WorldMonsterAttackWindowQuery query, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("InMemoryTestWorldRuntime does not implement monster-authority RPCs - use a real Orleans TestCluster with OrleansWorldRuntime for tests that need monster behavior.");
+        public Task<WorldPresenceLifeStateResult> UpdatePresenceLifeStateAsync(string mapId, WorldPresenceLifeStateUpdate update, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("InMemoryTestWorldRuntime does not implement monster-authority RPCs - use a real Orleans TestCluster with OrleansWorldRuntime for tests that need monster behavior.");
     }
 
     public int BoundPort { get; private set; }
@@ -186,7 +208,7 @@ public sealed class MapTcpServer
         BoundPort = ((IPEndPoint)_listener.LocalEndpoint).Port;
         MapLogger.Status($"Map server listening on {_configStore.Current.BindIp}:{BoundPort}...");
         MapLogger.Status(
-            $"WORLD: loaded {_world.Maps.EntityCount} world entities over {_world.Maps.MapCount} maps, {_world.Maps.StaticWarpCount} active warps, {_world.Maps.DynamicWarpActorCount} legacy dynamic/scripted warp actors, {_world.Monsters.AllInstances.Count} monster instances.");
+            $"WORLD: loaded {_world.Maps.EntityCount} world entities over {_world.Maps.MapCount} maps, {_world.Maps.StaticWarpCount} active warps, {_world.Maps.DynamicWarpActorCount} legacy dynamic/scripted warp actors, {_world.MonsterSpawns.Count} monster spawn declarations (World-authoritative simulation).");
 
         var monsterTickLoop = RunMonsterTickLoopAsync(cancellationToken);
 
@@ -210,11 +232,10 @@ public sealed class MapTcpServer
         }
     }
 
-    // The single shared driver for both monster respawn processing and monster AI/movement
-    // (MonsterRegistry.ProcessDueRespawns / MonsterRuntime.ProcessTick) - see those methods' own
-    // doc comments for why neither may be driven by a per-monster Timer/Task. Every connected
-    // session observes the SAME authoritative MobInstance state from this ONE loop, matching the
-    // task requirement that monster movement seen by different players originates from one source.
+    // The single shared driver for World-monster-feed polling/reconciliation and the local
+    // attack-cadence executor. Every connected session observes the SAME World-authoritative
+    // projection from this ONE loop, matching the requirement that monster movement seen by
+    // different players originates from one source.
     private async Task RunMonsterTickLoopAsync(CancellationToken cancellationToken)
     {
         try
@@ -232,119 +253,32 @@ public sealed class MapTcpServer
     }
 
     // The exact per-tick body RunMonsterTickLoopAsync's own Task.Delay loop calls - extracted so a
-    // test can drive ONE production tick deterministically (e.g. under a ControllableTimeProvider)
-    // without needing to race a real 100ms Task.Delay via the private loop above, and WITHOUT any
-    // test-only production API for session membership (see this project's own rejected
-    // TeleportForTestAsync precedent - MapClientSession/MapTcpServer must never grow a method whose
-    // sole purpose is test setup). `sessions` is an explicit parameter for exactly this reason: the
-    // real caller above passes this instance's own live `_sessions.Values`, and a test passes
-    // whatever real, already-authenticated MapClientSession instances it already constructed
-    // itself - both go through the IDENTICAL fan-out algorithm below, unchanged.
+    // test can drive ONE production tick deterministically without needing to race a real 100ms
+    // Task.Delay via the private loop above. `sessions` is an explicit parameter for exactly this
+    // reason: the real caller above passes this instance's own live `_sessions.Values`, and a test
+    // passes whatever real, already-authenticated MapClientSession instances it already constructed
+    // itself - both go through the IDENTICAL algorithm below, unchanged.
+    //
+    // "Only poll maps which currently have active MapServer sessions" - maps are grouped from the
+    // CURRENT session set every tick; a map with zero sessions this tick is simply skipped (its
+    // MonsterFeedProjection, if one already exists, is left exactly as it was - see
+    // MonsterFeedProjectionRegistry's own doc comment for why retaining state across a temporary
+    // zero-session gap is explicitly correct, never destroyed).
     internal async Task ProcessOneMonsterTickAsync(IReadOnlyCollection<MapClientSession> sessions, CancellationToken cancellationToken)
     {
-        // A respawned instance was removed from every session's own _visibleActorIds when it died
-        // (existing vanish-on-death handling) and nothing else re-discovers it - idle-walk AI does
-        // not run again for MinRandomWalkTimeMs+ (4000ms+) after a fresh respawn, so waiting for a
-        // walk to accidentally re-trigger discovery would leave a respawned, stationary-so-far
-        // Poring invisible to any session already looking at its spawn area for seconds. Reported
-        // respawns are fanned out THIS SAME tick, reusing NotifyMonsterMovedAsync's own "not yet
-        // visible, but now in range" discovery path (CellCrossed is the correct Kind here: the
-        // instance is not walking - a fresh respawn's idle-walk timer has not fired yet - so this
-        // always resolves to a plain 0x09FF stand entry, never a spurious 0x09FD).
-        var respawned = _world.Monsters.ProcessDueRespawns();
-        // A respawn is a NEW incarnation (MobInstance.TryRespawn already bumped IncarnationId) -
-        // the combat-state store's key includes IncarnationId, so the OLD incarnation's entry is
-        // simply never looked up again (never explicitly deleted - see MonsterCombatStateStore's
-        // own doc comment on why this store never speculatively creates entries); this Register call
-        // is what actually gives the new incarnation its own fresh full-HP/no-cadence entry, exactly
-        // mirroring the same fresh-registration this map's monsters received at initial construction
-        // (MapServerWorld.Build's own foreach).
-        foreach (var instance in respawned) _world.CombatState.Register(instance.Map, instance);
-        var changed = _world.MonsterRuntime.ProcessTick();
-        var engagementResult = await _engagementProcessor.ProcessAsync(sessions, cancellationToken);
+        foreach (var mapGroup in sessions.GroupBy(session => session.CurrentMapName, StringComparer.OrdinalIgnoreCase))
+        {
+            await PollAndReconcileMapAsync(mapGroup.Key, mapGroup.ToArray(), cancellationToken);
+        }
 
-        // Every world-visible movement change this tick, from EITHER source (idle-walk AI or
-        // combat engagement) - both flow through the exact same NotifyMonsterMovedAsync
-        // visibility/wire-mapping path below, since from a session's own perspective a chase-driven
-        // walk start is indistinguishable from an idle-walk one. Without including
-        // engagementResult.MovementChanges here, a combat-driven chase/attack-interruption is
-        // computed and logged by the processor but never actually reaches any client - the exact
-        // live bug this fan-out exists to close (0x09FD/0x0088 "sent" only in the log, never on the
-        // wire).
-        if (changed.Count == 0 && respawned.Count == 0 && engagementResult.MovementChanges.Count == 0 && engagementResult.AttackActions.Count == 0) return;
-
+        var cadenceResult = await _cadenceExecutor.ProcessAsync(sessions, cancellationToken);
         foreach (var session in sessions)
         {
-            foreach (var change in changed)
-            {
-                try
-                {
-                    // Fresh combat state read HERE, immediately before this individual projection
-                    // call - never the state captured back when `change` was created (see
-                    // MonsterMovementChange's own doc comment for why that would be stale by now).
-                    // Read from MonsterCombatStateStore (the actual HP/cadence owner on the
-                    // migrated path - see that type's own doc comment), never
-                    // MonsterCombatState.FromInstance/MobInstance.CaptureCombatState, which are
-                    // superseded. A concurrent death/despawn/stale-incarnation is the only way
-                    // TryGet can miss - skip this session's projection for that change rather than
-                    // projecting mismatched data.
-                    if (_world.CombatState.TryGet(change.Instance.Map, change.Instance.ActorId, change.Instance.IncarnationId, out var freshCombat))
-                        await session.NotifyMonsterMovedAsync(change, freshCombat, cancellationToken);
-                }
-                catch (IOException)
-                {
-                    // Client disconnected; HandleClientAsync's own cleanup removes it from _sessions.
-                }
-                catch (OperationCanceledException)
-                {
-                    // Server shutdown.
-                }
-            }
-
-            foreach (var change in engagementResult.MovementChanges)
-            {
-                try
-                {
-                    if (_world.CombatState.TryGet(change.Instance.Map, change.Instance.ActorId, change.Instance.IncarnationId, out var freshCombat))
-                        await session.NotifyMonsterMovedAsync(change, freshCombat, cancellationToken);
-                }
-                catch (IOException)
-                {
-                    // Client disconnected; HandleClientAsync's own cleanup removes it from _sessions.
-                }
-                catch (OperationCanceledException)
-                {
-                    // Server shutdown.
-                }
-            }
-
-            foreach (var instance in respawned)
-            {
-                try
-                {
-                    // `instance` here is the live respawned MobInstance itself (not a queued
-                    // change) - it was already (re-)registered into the store above (see this
-                    // method's own respawn-registration comment), so this read already reflects
-                    // its just-completed respawn (full HP, cleared NextAttackAt).
-                    if (_world.CombatState.TryGet(instance.Map, instance, out var respawnCombat))
-                        await session.NotifyMonsterMovedAsync(new MonsterMovementChange(instance, MonsterMovementChangeKind.CellCrossed), respawnCombat, cancellationToken);
-                }
-                catch (IOException)
-                {
-                    // Client disconnected; HandleClientAsync's own cleanup removes it from _sessions.
-                }
-                catch (OperationCanceledException)
-                {
-                    // Server shutdown.
-                }
-            }
-
             // NotifyMonsterAttackOutcomeAsync owns its own visibility/victim rules internally
             // (AREA-visible 0x08C8 gated on _visibleActorIds, self-only SP_HP gated on
             // VictimAccountId+HpChanged, map-mismatch guard) - this loop only needs to call it once
-            // per session per outcome, exactly like the movement fan-out above; no duplicate gating
-            // logic belongs here.
-            foreach (var action in engagementResult.AttackActions)
+            // per session per outcome.
+            foreach (var action in cadenceResult.AttackActions)
             {
                 try
                 {
@@ -359,6 +293,140 @@ public sealed class MapTcpServer
                     // Server shutdown.
                 }
             }
+        }
+    }
+
+    // Polls World's monster feed for exactly ONE map and applies the BINDING bootstrap/resync/
+    // incremental ordering (see MonsterFeedProjection's own doc comment for the full contract this
+    // implements):
+    //   SpawnInitializationRequired -> build+load the spawn batch, then re-poll for a fresh bootstrap
+    //   ResyncRequired / first-ever poll (no cursor yet) -> full snapshot reconciliation, in order:
+    //     1. projection  2. combat-state  3. every active session  4. THEN advance the cursor
+    //   Ready with incremental Entries -> apply each entry in order, fan out any resulting movement
+    //     packet per WorldMonsterMovementKind, THEN advance the cursor
+    private async Task PollAndReconcileMapAsync(string mapId, IReadOnlyCollection<MapClientSession> mapSessions, CancellationToken cancellationToken)
+    {
+        var projection = _world.MonsterProjections.GetOrCreate(mapId);
+        WorldMonsterFeedPage page;
+        try
+        {
+            page = await _worldRuntime.PollMonsterFeedAsync(projection.Cursor, mapId, cancellationToken);
+        }
+        catch (IOException) { return; }
+        catch (OperationCanceledException) { return; }
+
+        if (page.Status == WorldMonsterFeedStatus.SpawnInitializationRequired)
+        {
+            await InitializeMapSpawnsAsync(mapId, cancellationToken);
+            return; // The NEXT tick's poll picks up the fresh bootstrap this produced - see requirement 4's own "obtain a fresh atomic bootstrap after successful initialization" (a second poll here would double this tick's work for no benefit; the 100ms cadence makes the one-tick delay unobservable).
+        }
+
+        // A page carrying a full Snapshot is a full-reconciliation page - covers BOTH a genuine
+        // ResyncRequired status AND the atomic first-ever bootstrap (cursor was null, Status is
+        // Ready WITH a full Snapshot - see WorldMonsterMapSimulation.BuildPage's own "cursor is
+        // null" branch). This must be detected via `page.Snapshot is not null`, NOT
+        // `page.ResyncRequired` (`Status != Ready`) - a bootstrap page's own Status IS Ready, so
+        // checking ResyncRequired here would skip reconciling the very first bootstrap entirely,
+        // leaving the cursor never committed and the projection stuck with no epoch forever.
+        if (page.Snapshot is { } snapshot)
+        {
+            projection.ApplySnapshot(snapshot, page.SimulationEpoch, _world.CombatState);
+            await ReconcileSessionsFullyAsync(projection, mapSessions, cancellationToken);
+            projection.CommitCursor(page.SimulationEpoch, page.AsOfSequence);
+            return;
+        }
+        if (page.ResyncRequired) return; // ResyncRequired with a malformed/missing Snapshot - never partially reconcile; the next tick's own poll retries.
+
+        if (page.Entries is not { Count: > 0 } entries) return;
+        foreach (var entry in entries)
+        {
+            projection.ApplyEntry(entry, _world.CombatState, page.SimulationEpoch);
+            await FanOutEntryAsync(entry, page.SimulationEpoch, mapSessions, cancellationToken);
+        }
+        projection.CommitCursor(page.SimulationEpoch, page.AsOfSequence);
+    }
+
+    // Requirement 4: builds the per-map WorldMonsterSpawnBatch from the existing generated spawn
+    // declarations and calls LoadMonsterSpawnsAsync. Content/fingerprint/map mismatches are HARD
+    // failures (logged, never silently swallowed into a retry-forever loop that could mask a real
+    // configuration divergence) - Loaded/AlreadyLoaded are the only statuses that let this map
+    // proceed to bootstrap on a later tick.
+    private async Task InitializeMapSpawnsAsync(string mapId, CancellationToken cancellationToken)
+    {
+        var batch = WorldMonsterSpawnBatchBuilder.Build(mapId, _world.MonsterSpawns);
+        WorldMonsterSpawnLoadResult result;
+        try
+        {
+            result = await _worldRuntime.LoadMonsterSpawnsAsync(batch, cancellationToken);
+        }
+        catch (IOException) { return; }
+        catch (OperationCanceledException) { return; }
+
+        switch (result.Status)
+        {
+            case WorldMonsterSpawnLoadStatus.Loaded:
+            case WorldMonsterSpawnLoadStatus.AlreadyLoaded:
+                return; // Next tick's own poll obtains the fresh atomic bootstrap.
+            case WorldMonsterSpawnLoadStatus.ContentMismatch:
+            case WorldMonsterSpawnLoadStatus.CallerFingerprintMismatch:
+            case WorldMonsterSpawnLoadStatus.SpawnMapMismatch:
+                MapLogger.Error($"[WORLD] LoadMonsterSpawnsAsync for map '{mapId}' failed with {result.Status} - this map's monster spawns will NOT be loaded until this configuration divergence is resolved.");
+                return;
+        }
+    }
+
+    // Step 4 of the binding bootstrap/resync ordering: reconcile every active session's actual
+    // client-visible monster projection. For each session: vanished/dead actors are handled by
+    // simply no longer re-sending anything for an ActorId the fresh snapshot doesn't contain (this
+    // project's own documented "no invented vanish packet" gap - see NotifyMonsterMovedAsync's own
+    // doc comment; a full explicit vanish+rediscovery reconciliation is future work, not fabricated
+    // here) - a session's own _visibleActorIds set naturally stops matching reality for a
+    // no-longer-projected actor and will simply never receive further updates for it. Newly-visible/
+    // currently-visible actors ARE explicitly (re-)projected here via NotifyMonsterMovedAsync's own
+    // discovery path (movementKind: null - a bootstrap/resync is a state re-observation, never a
+    // "movement just happened" event in its own right; discovery still triggers a stand/walk-entry
+    // packet for a not-yet-visible actor, exactly like ordinary per-tick discovery does).
+    private async Task ReconcileSessionsFullyAsync(MonsterFeedProjection projection, IReadOnlyCollection<MapClientSession> mapSessions, CancellationToken cancellationToken)
+    {
+        foreach (var session in mapSessions)
+        {
+            foreach (var instance in projection.AllInstances)
+            {
+                if (instance.Lifecycle != WorldMonsterLifecycleState.Alive) continue;
+                if (!_world.CombatState.TryGet(new MonsterCombatKey(projection.MapId, projection.CurrentEpoch!.Value, instance.ActorId, instance.IncarnationId), out var combat)) continue;
+                try
+                {
+                    await session.NotifyMonsterMovedAsync(new WorldMonsterActorView(instance), movementKind: null, combat, cancellationToken);
+                }
+                catch (IOException) { /* Client disconnected; HandleClientAsync's own cleanup removes it from _sessions. */ }
+                catch (OperationCanceledException) { /* Server shutdown. */ }
+            }
+        }
+    }
+
+    // Fans out one incremental feed entry to every session on this map. `Died` sends nothing new
+    // (a session's existing 0x0080 vanish-on-death handling, driven by the EXISTING attack-outcome/
+    // kill path, already covers the visible removal - Died itself carries no NEW wire behavior here
+    // beyond what the projection update already recorded) - `Respawned` uses discovery (movementKind:
+    // null) so a session that had marked the OLD incarnation's ActorId not-visible (removed on death)
+    // re-discovers the NEW incarnation exactly like any other newly-visible actor. Every OTHER kind
+    // carrying a MovementKind is projected via its own explicit WorldMonsterMovementKind (never
+    // inferred from IsWalking - see WorldMonsterMovementKind's own doc comment).
+    private async Task FanOutEntryAsync(WorldMonsterFeedEntry entry, WorldSimulationEpoch epoch, IReadOnlyCollection<MapClientSession> mapSessions, CancellationToken cancellationToken)
+    {
+        if (entry.Kind == WorldMonsterFeedEntryKind.Died) return;
+
+        var actor = new WorldMonsterActorView(entry.Instance);
+        var movementKind = entry.Kind == WorldMonsterFeedEntryKind.Respawned ? null : entry.MovementKind;
+        if (!_world.CombatState.TryGet(new MonsterCombatKey(entry.Instance.MapId, epoch, entry.ActorId, entry.IncarnationId), out var combat)) return;
+        foreach (var session in mapSessions)
+        {
+            try
+            {
+                await session.NotifyMonsterMovedAsync(actor, movementKind, combat, cancellationToken);
+            }
+            catch (IOException) { /* Client disconnected; HandleClientAsync's own cleanup removes it from _sessions. */ }
+            catch (OperationCanceledException) { /* Server shutdown. */ }
         }
     }
 

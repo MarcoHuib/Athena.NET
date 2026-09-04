@@ -9,6 +9,7 @@ using Athena.Net.MapServer.Generated.GameData.Quests;
 using Athena.Net.MapServer.Net;
 using Athena.Net.MapServer.Tests.Testing;
 using Athena.Net.MapServer.World;
+using Athena.Net.World.Contracts;
 
 namespace Athena.Net.MapServer.Tests.Net;
 
@@ -126,6 +127,9 @@ public sealed class MapClientSessionCombatRangeTests
         return damage;
     }
 
+    private WorldSimulationEpoch _lastEpoch;
+    private MonsterFeedProjectionRegistry? _lastProjections;
+
     private async Task<(TcpClient Client, NetworkStream Stream, MapClientSession Session, Task RunTask, MobInstance Target, MonsterRegistry Registry, MonsterCombatStateStore CombatState)> SetupAsync(
         ushort playerX, ushort playerY, ushort monsterX, ushort monsterY,
         IMapCollisionProvider? collisionProvider = null, TimeProvider? timeProvider = null, Func<int, int, int>? rollWeaponAtk = null,
@@ -145,9 +149,13 @@ public sealed class MapClientSessionCombatRangeTests
         var registry = new MonsterRegistry([spawnDefinition], allocator.Allocate, new FixedCellSelector(monsterX, monsterY), timeProvider ?? TimeProvider.System);
         var questDrops = new QuestDropResolver(GeneratedQuestDrops.All);
         var target = registry.AllInstances[0];
+        var epoch = WorldSimulationEpoch.NewEpoch();
+        _lastEpoch = epoch;
         var combatState = new MonsterCombatStateStore();
-        combatState.Register(target.Map, target);
-        var combat = new MonsterCombatCoordinator(registry, questDrops, new RenewalBasicAttackRules(rollWeaponAtk), combatState);
+        combatState.Register(target.Map, epoch, target.ActorId, new WorldMonsterIncarnationId(target.IncarnationId.Value), target.Spawn.Mob.MaxHp);
+        var combat = new MonsterCombatCoordinator(questDrops, new RenewalBasicAttackRules(rollWeaponAtk), combatState);
+        var monsterProjections = WorldMonsterProjectionTestHelper.SeedProjection(target.Map, epoch, combatState, registry.AllInstances);
+        _lastProjections = monsterProjections;
 
         var gameplayPersistence = new RecordingGameplayStatePersistence(gameplayState ?? StrongNovice());
         var inventoryListPersistence = new FixedInventoryListPersistence(KnifeEquipped());
@@ -157,9 +165,9 @@ public sealed class MapClientSessionCombatRangeTests
             1, serverClient, new CharServerConnector(new MapConfigStore(new MapConfig(), "unused.conf")), true,
             "int_land03", playerX, playerY, WorldMapRegistry.Tutorial,
             gameplayStatePersistence: gameplayPersistence,
-            accountId: AccountId, charId: CharId, monsters: registry, combat: combat,
+            accountId: AccountId, charId: CharId, monsterProjections: monsterProjections, combat: combat,
             inventoryPersistence: inventoryPersistence, inventoryListPersistence: inventoryListPersistence,
-            timeProvider: timeProvider, collisionProvider: collisionProvider, combatState: combatState);
+            timeProvider: timeProvider, collisionProvider: collisionProvider, combatState: combatState, distributedWorld: new FakeCombatWorldRuntime());
         var run = session.RunAsync(CancellationToken.None);
         await session.CompleteIroAuthenticationAsync(new(AccountId, CharId, 1, 2, 0, 0, false, "int_land03", playerX, playerY, 0, 0, 0));
 
@@ -191,8 +199,10 @@ public sealed class MapClientSessionCombatRangeTests
     // was constructed with - the store (not MobInstance's own now-superseded CurrentHp field) is
     // the sole authoritative HP owner on the migrated combat path (see MonsterCombatStateStore's
     // own doc comment), so this is the correct oracle for this file's damage assertions.
-    private static uint CurrentHpOf(MonsterCombatStateStore combatState, MobInstance target) =>
-        combatState.TryGet(target.Map, target, out var state) ? state.CurrentHp : 0u;
+    private uint CurrentHpOf(MonsterCombatStateStore combatState, MobInstance target) =>
+        combatState.TryGet(new MonsterCombatKey(target.Map, _lastEpoch, target.ActorId, new WorldMonsterIncarnationId(target.IncarnationId.Value)), out var state) ? state.CurrentHp : 0u;
+
+    private bool IsAlive(MonsterCombatStateStore combatState, MobInstance target) => CurrentHpOf(combatState, target) > 0;
 
     // Live evidence reproduced: player far from a Range=1 Knife-equipped G_PORING must never take
     // damage on the very first 0x0437, and must instead receive the pinned 0x0139
@@ -217,7 +227,7 @@ public sealed class MapClientSessionCombatRangeTests
         Assert.Equal((ushort)1, BinaryPrimitives.ReadUInt16LittleEndian(failurePacket.AsSpan(14))); // Knife Range=1.
 
         Assert.Equal(55u, CurrentHpOf(combatState, target));
-        Assert.True(target.IsAlive);
+        Assert.True(IsAlive(combatState, target));
 
         client.Close();
         await run.WaitAsync(TimeSpan.FromSeconds(5));
@@ -279,7 +289,7 @@ public sealed class MapClientSessionCombatRangeTests
         Assert.Equal((short)PacketConstants.ZcNotifyAct3, BinaryPrimitives.ReadInt16LittleEndian(firstHit));
         var hpAfterFirstHit = CurrentHpOf(combatState, target);
         Assert.True(hpAfterFirstHit < 55u, "First in-range hit must deal damage.");
-        Assert.True(target.IsAlive, "WeakFreshNovice's min-roll Knife hit must not one-shot G_PORING for this test to observe a second scheduled hit.");
+        Assert.True(IsAlive(combatState, target), "WeakFreshNovice's min-roll Knife hit must not one-shot G_PORING for this test to observe a second scheduled hit.");
 
         // The Poring "walks away" - simulate its authoritative position changing far out of range
         // (as MonsterRuntime's own idle-walk AI would do) directly on the real MobInstance, exactly
@@ -289,6 +299,13 @@ public sealed class MapClientSessionCombatRangeTests
         Assert.True(target.TryStartIdleWalk([(76, 51), (95, 51)], orthogonalStepMs: 50, now: DateTimeOffset.UnixEpoch, jitterMs: () => 0));
         target.AdvanceMovement(DateTimeOffset.UnixEpoch.AddMilliseconds(50));
         Assert.False(target.IsWalking); // Landed exactly on the far cell (95,51) - now well out of range.
+
+        // Position is World-authoritative post-cutover - MapClientSession's own repeat-attack range
+        // recheck reads the LIVE MonsterFeedProjectionRegistry, never the local MobInstance
+        // directly, so this test's simulated "walked away" position must be re-published into the
+        // SAME projection/epoch/combatState this session was set up with before the deferred hit
+        // fires, mirroring what a real Moved feed entry would have already reconciled.
+        WorldMonsterProjectionTestHelper.ResyncProjection(_lastProjections!, target.Map, _lastEpoch, combatState, registry.AllInstances);
 
         // Advance the clock far enough for the next repeat-attack hit to become due.
         await clock.AdvanceAsync(TimeSpan.FromSeconds(5));
@@ -307,7 +324,7 @@ public sealed class MapClientSessionCombatRangeTests
         Assert.Equal((short)PacketConstants.ZcPingLive, BinaryPrimitives.ReadInt16LittleEndian(reply));
 
         Assert.Equal(hpAfterFirstHit, CurrentHpOf(combatState, target)); // Unchanged since the first hit.
-        Assert.True(target.IsAlive);
+        Assert.True(IsAlive(combatState, target));
 
         client.Close();
         await run.WaitAsync(TimeSpan.FromSeconds(5));
@@ -323,7 +340,7 @@ public sealed class MapClientSessionCombatRangeTests
         using var _disposeClient = client;
 
         uint hpAfter = 55;
-        for (var i = 0; i < 20 && target.IsAlive; i++)
+        for (var i = 0; i < 20 && IsAlive(combatState, target); i++)
         {
             await stream.WriteAsync(AttackPacket(target.ActorId));
             var damagePacket = await ReadDamageThenHpInfo(stream);
@@ -331,7 +348,7 @@ public sealed class MapClientSessionCombatRangeTests
             var damage = BinaryPrimitives.ReadUInt32LittleEndian(damagePacket.AsSpan(22));
             hpAfter = hpAfter > damage ? hpAfter - damage : 0;
 
-            if (!target.IsAlive)
+            if (!IsAlive(combatState, target))
             {
                 var vanish = await ReadExact(stream, PacketConstants.ZcNotifyVanishLength);
                 Assert.Equal((short)PacketConstants.ZcNotifyVanish, BinaryPrimitives.ReadInt16LittleEndian(vanish));
@@ -340,7 +357,7 @@ public sealed class MapClientSessionCombatRangeTests
             }
         }
 
-        Assert.False(target.IsAlive);
+        Assert.False(IsAlive(combatState, target));
         client.Close();
         await run.WaitAsync(TimeSpan.FromSeconds(5));
     }

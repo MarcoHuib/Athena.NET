@@ -5,6 +5,7 @@ using Athena.Net.MapServer.Generated.GameData.Quests;
 using Athena.Net.MapServer.Generated.World;
 using Athena.Net.MapServer.Net;
 using Athena.Net.MapServer.World;
+using Athena.Net.World.Contracts;
 
 namespace Athena.Net.MapServer.Tests.World;
 
@@ -34,12 +35,14 @@ internal sealed class RecordingQuestPersistence(uint questId, CharacterQuestStat
 // This is deliberately a DOMAIN integration test, not a wire/network one: no
 // verified iRO attack/death/item-acquisition packet exists to drive this
 // through MapClientSession's actual socket path (see report). Everything
-// exercised here - MonsterRegistry, MonsterCombatCoordinator,
-// QuestDropResolver, CharacterInventorySession - is real production code,
-// composed the same way MapServerWorld.Build() composes it (shared
-// WorldActorIdAllocator); only the clock, quest/inventory persistence, and
-// (for the isolated-mechanics tests) character stats are test doubles,
-// matching every other MapServer.Tests domain test in this project.
+// exercised here - MonsterCombatCoordinator, QuestDropResolver,
+// CharacterInventorySession - is real production code. Step 6 cutover:
+// MonsterCombatCoordinator no longer depends on a live MonsterRegistry/MobInstance at all (position/
+// identity/lifecycle are World-authoritative post-cutover) - these tests still use a LOCAL
+// MonsterRegistry purely to derive realistic generated spawn data (real G_PORING stats, a real
+// RespawnDelay), then bridge each MobInstance's current state into a hand-built WorldMonsterInstance/
+// WorldMonsterActorView + WorldMonsterLifeReference, exactly like MonsterCombatCoordinatorTests does,
+// never wiring the local MonsterRegistry into the coordinator itself.
 public sealed class PoringQuestDropIntegrationTests
 {
     private const uint AccountId = 1;
@@ -72,6 +75,23 @@ public sealed class PoringQuestDropIntegrationTests
         return id => snapshot.GetValueOrDefault(id, CharacterQuestStatus.Absent);
     }
 
+    // Bridges one local MobInstance's CURRENT state into a (WorldMonsterActorView, WorldMonsterLifeReference)
+    // pair against the given epoch, mirroring WorldMonsterMapSimulation.ToWireInstance's own conversion
+    // on the real World side.
+    private static (WorldMonsterActorView Actor, WorldMonsterLifeReference Life) BridgeToWorldView(MobInstance instance, WorldSimulationEpoch epoch)
+    {
+        var position = instance.GetPosition();
+        var incarnationId = new WorldMonsterIncarnationId(instance.IncarnationId.Value);
+        var wireInstance = new WorldMonsterInstance(
+            ActorId: instance.ActorId, IncarnationId: incarnationId, MapId: instance.Map, MobId: instance.Spawn.Mob.Id,
+            X: position.X, Y: position.Y,
+            Lifecycle: instance.IsAlive ? WorldMonsterLifecycleState.Alive : WorldMonsterLifecycleState.Dead,
+            IsWalking: instance.IsWalking, DestinationX: instance.MovementDestination.X, DestinationY: instance.MovementDestination.Y,
+            Engagement: WorldMonsterEngagementState.Unengaged, EngagedTarget: null);
+        var life = new WorldMonsterLifeReference(instance.Map, epoch, instance.ActorId, incarnationId);
+        return (new WorldMonsterActorView(wireInstance), life);
+    }
+
     [Fact]
     public async Task FullVerticalSlice_TwoKillsGrantTwoWood_WithRespawnBetween()
     {
@@ -83,9 +103,10 @@ public sealed class PoringQuestDropIntegrationTests
             clock);
         var questDrops = new QuestDropResolver(GeneratedQuestDrops.All);
         var target = registry.AllInstances[0];
+        var epoch = WorldSimulationEpoch.NewEpoch();
         var combatState = new MonsterCombatStateStore();
-        combatState.Register(target.Map, target);
-        var combat = new MonsterCombatCoordinator(registry, questDrops, new RenewalBasicAttackRules(), combatState);
+        combatState.Register(target.Map, epoch, target.ActorId, new WorldMonsterIncarnationId(target.IncarnationId.Value), target.Spawn.Mob.MaxHp);
+        var combat = new MonsterCombatCoordinator(questDrops, new RenewalBasicAttackRules(), combatState);
         var inventoryPersistence = new FakeInventoryPersistence();
         var inventorySession = new CharacterInventorySession(AccountId, CharId, inventoryPersistence);
         var questPersistence = new RecordingQuestPersistence(Quest21008, CharacterQuestStatus.Active);
@@ -99,7 +120,9 @@ public sealed class PoringQuestDropIntegrationTests
         MonsterAttackOutcome outcome = default;
         for (var i = 0; i < 20 && target.IsAlive; i++)
         {
-            outcome = combat.Attack(target, target.Map, 1001, StrongEnoughToOneShot(), attackerBaseLevel: 1, null, questStatus);
+            var (actor, life) = BridgeToWorldView(target, epoch);
+            outcome = combat.Attack(actor, life, StrongEnoughToOneShot(), attackerBaseLevel: 1, null, questStatus);
+            if (outcome.KilledByThisHit) break;
         }
         Assert.True(outcome.KilledByThisHit);
         Assert.Single(outcome.QuestDrops);
@@ -108,6 +131,14 @@ public sealed class PoringQuestDropIntegrationTests
         var firstAward = await inventorySession.AddItemAsync(GeneratedItems.Wood, (uint)outcome.QuestDrops[0].Count, CancellationToken.None);
         Assert.True(firstAward.Success);
         Assert.Equal(1u, firstAward.NewAmount);
+
+        // The coordinator's own damage mutation lands in MonsterCombatStateStore, never on the local
+        // MobInstance (there is no local MobInstance for a production monster post-cutover) - to
+        // exercise a genuine respawn/incarnation cycle here, the local MobInstance driving this
+        // test's own generated-spawn/respawn-delay data must be independently killed too, mirroring
+        // what a real World life transition would have already done.
+        target.ApplyDamage(target.CurrentHp);
+        registry.ScheduleRespawnIfNeeded(target);
         Assert.False(target.IsAlive);
 
         // --- Respawn ---
@@ -115,17 +146,19 @@ public sealed class PoringQuestDropIntegrationTests
         var respawned = registry.ProcessDueRespawns();
         Assert.Equal(1, respawned.Count);
         // Mirrors MapTcpServer's own production respawn fan-out, which re-registers each respawned
-        // instance's combat-state entry (fresh full HP) into the SAME store - MonsterRegistry itself
-        // has no knowledge of MonsterCombatStateStore, so a caller driving ProcessDueRespawns
-        // directly (as this test does) must do the same re-registration production code does.
-        foreach (var instance in respawned) combatState.Register(instance.Map, instance);
+        // instance's combat-state entry (fresh full HP) into the SAME store under its new incarnation.
+        foreach (var instance in respawned)
+            combatState.Register(instance.Map, epoch, instance.ActorId, new WorldMonsterIncarnationId(instance.IncarnationId.Value), instance.Spawn.Mob.MaxHp);
         Assert.True(target.IsAlive);
-        Assert.Equal(target.Spawn.Mob.MaxHp, combatState.TryGet(target.Map, target, out var respawnedState) ? respawnedState.CurrentHp : 0u);
+        var respawnedKey = new MonsterCombatKey(target.Map, epoch, target.ActorId, new WorldMonsterIncarnationId(target.IncarnationId.Value));
+        Assert.Equal(target.Spawn.Mob.MaxHp, combatState.TryGet(respawnedKey, out var respawnedState) ? respawnedState.CurrentHp : 0u);
 
         // --- Second kill ---
         for (var i = 0; i < 20 && target.IsAlive; i++)
         {
-            outcome = combat.Attack(target, target.Map, 1001, StrongEnoughToOneShot(), attackerBaseLevel: 1, null, questStatus);
+            var (actor, life) = BridgeToWorldView(target, epoch);
+            outcome = combat.Attack(actor, life, StrongEnoughToOneShot(), attackerBaseLevel: 1, null, questStatus);
+            if (outcome.KilledByThisHit) break;
         }
         Assert.True(outcome.KilledByThisHit);
         Assert.Single(outcome.QuestDrops);
@@ -145,16 +178,19 @@ public sealed class PoringQuestDropIntegrationTests
             new FixedCellSelector(50, 50),
             clock);
         var target = registry.AllInstances[0];
+        var epoch = WorldSimulationEpoch.NewEpoch();
         var combatState = new MonsterCombatStateStore();
-        combatState.Register(target.Map, target);
-        var combat = new MonsterCombatCoordinator(registry, new QuestDropResolver(GeneratedQuestDrops.All), new RenewalBasicAttackRules(), combatState);
+        combatState.Register(target.Map, epoch, target.ActorId, new WorldMonsterIncarnationId(target.IncarnationId.Value), target.Spawn.Mob.MaxHp);
+        var combat = new MonsterCombatCoordinator(new QuestDropResolver(GeneratedQuestDrops.All), new RenewalBasicAttackRules(), combatState);
         var noQuests = new RecordingQuestPersistence(Quest21008, CharacterQuestStatus.Absent);
         var questStatus = await BuildQuestStatusLookupAsync(noQuests, GeneratedQuestDrops.All.Select(rule => rule.QuestId));
 
         MonsterAttackOutcome outcome = default;
         for (var i = 0; i < 20 && target.IsAlive; i++)
         {
-            outcome = combat.Attack(target, target.Map, 1001, StrongEnoughToOneShot(), 1, null, questStatus);
+            var (actor, life) = BridgeToWorldView(target, epoch);
+            outcome = combat.Attack(actor, life, StrongEnoughToOneShot(), 1, null, questStatus);
+            if (outcome.KilledByThisHit) break;
         }
 
         Assert.True(outcome.KilledByThisHit);
@@ -175,9 +211,10 @@ public sealed class PoringQuestDropIntegrationTests
             new FixedCellSelector(50, 50),
             clock);
         var target = registry.AllInstances[0];
+        var epoch = WorldSimulationEpoch.NewEpoch();
         var combatState = new MonsterCombatStateStore();
-        combatState.Register(target.Map, target);
-        var combat = new MonsterCombatCoordinator(registry, new QuestDropResolver(GeneratedQuestDrops.All), new RenewalBasicAttackRules(), combatState);
+        combatState.Register(target.Map, epoch, target.ActorId, new WorldMonsterIncarnationId(target.IncarnationId.Value), target.Spawn.Mob.MaxHp);
+        var combat = new MonsterCombatCoordinator(new QuestDropResolver(GeneratedQuestDrops.All), new RenewalBasicAttackRules(), combatState);
         var inventorySession = new CharacterInventorySession(AccountId, CharId, new FakeInventoryPersistence());
         var questPersistence = new RecordingQuestPersistence(Quest21008, CharacterQuestStatus.Active);
         var questStatus = await BuildQuestStatusLookupAsync(questPersistence, GeneratedQuestDrops.All.Select(rule => rule.QuestId));
@@ -189,7 +226,9 @@ public sealed class PoringQuestDropIntegrationTests
         // needs several hits, not one.
         for (var i = 0; i < 55 && target.IsAlive; i++, attackCount++)
         {
-            outcome = combat.Attack(target, target.Map, 1001, RealisticPostTutorialNovice(), RealisticNoviceBaseLevel, null, questStatus);
+            var (actor, life) = BridgeToWorldView(target, epoch);
+            outcome = combat.Attack(actor, life, RealisticPostTutorialNovice(), RealisticNoviceBaseLevel, null, questStatus);
+            if (outcome.KilledByThisHit) break;
         }
 
         Assert.True(outcome.KilledByThisHit, $"The realistic post-tutorial Novice state failed to kill G_PORING within {attackCount} attacks.");
