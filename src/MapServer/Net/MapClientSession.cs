@@ -163,6 +163,28 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     // MapTcpServer's separate monster-tick loop for the SAME exact life - see
     // LethalDeathProjectionArbiter's own doc comment for the full race this exists to close.
     private readonly LethalDeathProjectionArbiter _lethalDeathArbiter = new();
+    // Step 6 final race closure, item 1: set (within PerformDueRepeatAttackAsync only) to the exact
+    // life the moment CommitConfirmedDeath confirms THIS call owns the kill, and read-and-cleared
+    // exactly once - either at the death-vanish send call site (the success path, once the vanish has
+    // actually been sent) or by that same method's own surrounding try/finally if an unexpected
+    // exception escapes anywhere in between (a WriteAsync failure, EXP persistence, etc.) - so the
+    // arbiter's own in-flight registration can never leak open forever. Never read/written from more
+    // than one place concurrently: PerformDueRepeatAttackAsync only ever runs one hit at a time for
+    // this session (RunRepeatAttackLoopAsync's own single-loop-at-a-time shape), so a plain field
+    // (not a Lock-guarded one) is sufficient here - this is NOT shared state with
+    // LethalDeathProjectionArbiter's own internal dictionary, which remains the single source of
+    // truth for cross-session/cross-call-path arbitration; this field only remembers whether THIS
+    // call still owes that store a completion call.
+    private WorldMonsterLifeReference? _lethalCommitLife;
+    // Test-only seam (always null in production - never set by any production constructor/call
+    // site): lets MapClientSessionLethalDeathProjectionRaceTests force the exact, otherwise
+    // unreachable-by-timing interleaving of "World has ALREADY returned MarkedDead for this exact
+    // life, but CommitConfirmedDeath has not yet run" - proving the arbiter registration set up by
+    // BeginInFlight (still open at this point, per item 1's own final race closure) correctly defers
+    // a Died feed entry arriving in that specific window, distinct from the earlier
+    // "TryMarkMonsterDeadAsync itself still in flight" window FakeCombatWorldRuntime's own
+    // BeforeTryMarkMonsterDeadReturns hook already covers.
+    internal Func<Task>? DebugBeforeCommitConfirmedDeathAsync { get; set; }
     private ScriptExecutionSession? _scriptExecutionSession;
     private Task? _generatedScriptTask;
     private string? _generatedScriptEntityId;
@@ -1730,6 +1752,30 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         catch (ObjectDisposedException) when (cancellationToken.IsCancellationRequested)
         {
         }
+        catch (Exception ex)
+        {
+            // Step 6 final race closure, item 2: an unexpected/unclassified exception here (NOT
+            // genuine cancellation - both catches above already handle that) means a real
+            // programming/invariant defect escaped PerformDueRepeatAttackAsync's own narrow World-RPC
+            // classification (see that method's own doc comment on why the earlier broad backstop was
+            // removed). Before this fix, such a defect would fault ONLY this loop's own background
+            // Task (_attackLoop) - MapClientSession.RunAsync does not directly await/supervise that
+            // task while its own TCP read loop keeps running, so a real defect could leave a
+            // connected player session alive indefinitely with a permanently-dead attack scheduler,
+            // observable only much later (or never) via an explicit DisposeAsync/StopAsync call. That
+            // is not "fail loudly" for a live production session.
+            //
+            // Fix: log the failure, then cancel this session's OWN _sessionCancellation - which
+            // RunAsync's own read loop (and every other runtime loop) is linked to, so this promptly
+            // wakes/terminates the session's main packet loop through that EXISTING linked-token
+            // mechanism (no new supervision wiring introduced here) - and rethrow so this task itself
+            // still faults exactly as before (StopCoreAsync's own Task.WhenAll(loops) still observes
+            // and surfaces the original exception once RunAsync's finally/StopAsync joins it). This is
+            // NOT classified or retried - it is deliberately terminal.
+            MapLogger.Error($"[iRO MAP DEBUG] Unexpected/unclassified exception faulted the repeat-attack loop - terminating this session: {ex}");
+            try { await _sessionCancellation.CancelAsync(); } catch (ObjectDisposedException) { }
+            throw;
+        }
     }
 
     // Resolves each distinct QuestId GeneratedQuestDrops.All mentions through the real persistence
@@ -2032,16 +2078,42 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
                 return;
             }
 
-            // Item 1's own requirement D: MarkedDead - this session's own local projection now owns
-            // the successful lethal sequence. Complete the in-flight state (discarding whatever
-            // deferred-Died flag it may carry - MarkedDead means THIS call is the authoritative
-            // death, so a Died feed entry observed while pending was reporting the SAME transition
-            // this call itself just caused; the code below performs the full sequence exactly once
-            // regardless, and MapTcpServer.FanOutEntryAsync's own Died dispatch to this session is a
-            // no-op afterward since this session's own visibility state will already reflect the
-            // kill by the time any such feed entry could be dispatched again).
-            _lethalDeathArbiter.CompleteInFlight(life);
+            // Item 1's own final race closure: the arbiter registration is DELIBERATELY kept alive
+            // past MarkedDead - it is NOT completed here. Completing it immediately after MarkedDead
+            // (the earlier shape) left a real race window: World's Died feed reaching this SAME
+            // session's NotifyMonsterDiedAsync between that early completion and this method's own
+            // death-vanish send below would see NO in-flight registration, send its own 0x0080
+            // immediately (clearing visibility before this method's own 0x0977 hp=0 could even check
+            // it), and this method would then send a SECOND 0x0080 - corrupting the packet sequence.
+            // The registration now stays open through CommitConfirmedDeath AND the full wire
+            // projection tail below, and is completed by _lethalCommitLife's own try/finally-guarded
+            // cleanup (see that field's own doc comment) only once this session's own death vanish has
+            // actually been sent (or, per requirement F below, immediately here if CommitConfirmedDeath
+            // itself does not actually confirm a local death - in that case this session never reaches
+            // the vanish send at all, so there is nothing further to keep the registration open for).
+            if (DebugBeforeCommitConfirmedDeathAsync is { } hook) await hook(); // Test-only seam - see that field's own doc comment. Always null in production.
             outcome = _combat.CommitConfirmedDeath(candidate, life, target, attackerQuestStatus);
+            if (outcome.Accepted && outcome.KilledByThisHit)
+            {
+                // This session WILL send the attacker-owned death vanish further down in this same
+                // method (the shared `if (outcome.KilledByThisHit)` tail) - keep the registration open
+                // until that actually happens. _lethalCommitLife is read-and-cleared exactly once,
+                // immediately after that vanish send succeeds (see that call site).
+                _lethalCommitLife = life;
+            }
+            else
+            {
+                // Item 1's own requirement F: CommitConfirmedDeath returned non-Applied for some
+                // unexpected local-state reason even though World already confirmed MarkedDead - this
+                // session does NOT own a successful local lethal projection and will NOT reach the
+                // vanish send below. Release the arbiter registration now; if a Died was deferred while
+                // pending, process that deferred authoritative vanish exactly once so it is never
+                // silently discarded - otherwise leave ordinary future Died feed delivery (this
+                // session no longer has an in-flight registration) able to remove the actor normally.
+                MapLogger.Warning($"[iRO MAP DEBUG] World confirmed MarkedDead but local CommitConfirmedDeath did not itself confirm a kill (unexpected local-state mismatch) mobActorId={expected.TargetActorId} - no local reward/wire projection from this call.");
+                if (_lethalDeathArbiter.CompleteInFlight(life))
+                    await PerformDeferredAuthoritativeDiedAsync(expected.TargetActorId, cancellationToken);
+            }
         }
         else
         {
@@ -2053,7 +2125,26 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
             // loop simply tries again on its own next scheduled attempt rather than retrying inline.
             outcome = _combat.CommitAttack(candidate, life, target, _ => CharacterQuestStatus.Absent);
         }
-        if (!outcome.Accepted) { ClearRepeatAttackIfCurrent(expected); return; }
+        if (!outcome.Accepted)
+        {
+            ClearRepeatAttackIfCurrent(expected);
+            // _lethalCommitLife can only be non-null here if CommitConfirmedDeath itself set it while
+            // ALSO reporting outcome.Accepted=true (see that call site) - Accepted=false at this point
+            // therefore means it was never set on this call path, so there is nothing to release. This
+            // branch is reachable from the non-lethal CommitAttack path too, where the field is always
+            // still null from a previous call (already cleared - see the vanish-send call site below).
+            return;
+        }
+
+        // Step 6 final race closure, item 1: from this point through the death-vanish send below, a
+        // try/finally guarantees _lethalCommitLife's own arbiter registration (if this call is the one
+        // that owns a confirmed lethal projection - see the CommitConfirmedDeath call site above) is
+        // released exactly once even if an unexpected exception escapes anywhere in this span (a
+        // WriteAsync failure, EXP persistence, quest-drop persistence). The `finally` here never
+        // awaits anything itself (CompleteInFlight is synchronous) and never suppresses the original
+        // exception - it only ensures the registration cannot leak open forever.
+        try
+        {
 
         // Reschedule (or clear, on death) the repeat-attack runtime state BEFORE any wire
         // notification for this hit - matching this project's validate -> persist -> update
@@ -2155,6 +2246,21 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
             // second, inconsistent inline vanish-and-mark-not-visible sequence.
             await SendMonsterVanishAsync(expected.TargetActorId, PacketConstants.ZcNotifyVanishReasonDied, cancellationToken);
 
+            // Step 6 final race closure, item 1: THIS session's own attacker-owned death vanish has
+            // now actually been sent - the arbiter registration (if this call owns a confirmed lethal
+            // projection - see _lethalCommitLife's own doc comment) is released HERE, immediately
+            // after, never before. Any Died feed for this exact life that arrived while pending is
+            // discarded without a second send: this vanish just performed the SAME authoritative
+            // cleanup a deferred Died would have performed, so there is nothing further to do with
+            // that flag - MapTcpServer.FanOutEntryAsync's own future Died dispatch for this life finds
+            // this session's visibility already cleared and sends nothing (see SendMonsterVanishAsync's
+            // own IsActorVisible-gated no-duplicate-send behavior).
+            if (_lethalCommitLife is { } committedLife)
+            {
+                _lethalCommitLife = null;
+                _lethalDeathArbiter.CompleteInFlight(committedLife);
+            }
+
             foreach (var drop in outcome.QuestDrops)
             {
                 if (!GeneratedItems.ById.TryGetValue(drop.ItemId, out var itemDefinition))
@@ -2194,6 +2300,29 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
                 var pickupPacket = IroMonsterCombatPackets.BuildItemPickupAck(clientIndex, (ushort)drop.Count, itemDefinition.Id, itemType: 3);
                 MapLogger.Info($"[iRO MAP DEBUG] Sending 0x0B41 itemId={itemDefinition.Id} count={drop.Count} clientIndex={clientIndex}");
                 await WriteAsync(pickupPacket, cancellationToken);
+            }
+        }
+        }
+        finally
+        {
+            // Step 6 final race closure, item 1's own "make sure the in-flight registration cannot
+            // leak if an unexpected exception occurs after MarkedDead" requirement: if
+            // _lethalCommitLife is STILL non-null here, the death-vanish send above never actually
+            // completed (an exception escaped somewhere in this try block before reaching it) - the
+            // arbiter registration must still be released rather than left open forever. A deferred
+            // Died observed at that point is intentionally NOT specially replayed here: this session's
+            // own wire state is already in an unknown/partially-written condition once an exception
+            // has escaped this far, so the caller's own IOException/cancellation handling around this
+            // whole operation, and World's own next feed poll/resync, are what correctly recover
+            // client-visible state - inventing a second recovery path inside a `finally` (which must
+            // never await) would itself risk the exact kind of duplicate/out-of-order send this fix
+            // exists to prevent. CompleteInFlight is synchronous and never awaits, so this `finally`
+            // never holds anything across an await, and it never suppresses the original exception
+            // (no `catch` here - only cleanup).
+            if (_lethalCommitLife is { } leakedLife)
+            {
+                _lethalCommitLife = null;
+                _lethalDeathArbiter.CompleteInFlight(leakedLife);
             }
         }
     }

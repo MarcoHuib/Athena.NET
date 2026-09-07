@@ -123,21 +123,18 @@ public sealed class MapClientSessionWorldRpcFailureClassificationTests
 
         await stream.WriteAsync(AttackPacket(actorId));
 
-        // The local programming/invariant defect must NOT be swallowed as "transient, retry later" -
-        // it must fault the session's own background repeat-attack loop task. That task is not
-        // awaited by RunAsync directly (only joined later, by StopAsync/DisposeAsync - see
-        // MapClientSession.StopCoreAsync's own doc comment on why joining ALL runtime loops is an
-        // explicit lifecycle invariant), so the observable proof here is that DisposeAsync (which
-        // awaits every runtime loop task and rethrows the first genuine fault it finds via
-        // ExceptionDispatchInfo) throws the EXACT scripted exception type back out - proving the
-        // defect propagated out of the loop rather than being caught-and-retried forever (a
-        // misclassified "transient" retry would instead have this test time out waiting for
-        // TryMarkMonsterDeadCallCount to stop growing, which it never would).
-        var callCountDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
-        while (fakeWorld.TryMarkMonsterDeadCallCount < 1 && DateTime.UtcNow < callCountDeadline) await Task.Delay(20);
-        Assert.True(fakeWorld.TryMarkMonsterDeadCallCount >= 1, "Expected at least one TryMarkMonsterDeadAsync call to have happened.");
-
-        var thrown = await Assert.ThrowsAnyAsync<Exception>(() => session.DisposeAsync().AsTask());
+        // Step 6 final race closure, item 2: the local programming/invariant defect must NOT be
+        // swallowed as "transient, retry later" - it must fault the session's own background
+        // repeat-attack loop task AND promptly terminate the session's own live RunAsync (a real
+        // defect must not leave a connected player session alive indefinitely with a dead attack
+        // scheduler - see RunRepeatAttackLoopAsync's own terminal-failure catch, which cancels this
+        // session's own _sessionCancellation and rethrows). The observable production behavior is
+        // therefore: send attack -> scripted defect -> repeat-attack loop faults -> session
+        // cancellation is triggered -> RunAsync itself terminates/faults promptly - proven here
+        // directly against `run` (RunAsync's own task), with NO external DisposeAsync call required
+        // to finally observe it (a misclassified "transient" retry would instead have this test time
+        // out waiting for `run` to complete, since the session would stay alive indefinitely).
+        var thrown = await Assert.ThrowsAnyAsync<Exception>(() => run.WaitAsync(TimeSpan.FromSeconds(10)));
         Assert.IsType(exceptionType, thrown);
 
         // Exactly ONE call happened - a misclassified "transient" retry would have kept calling
@@ -150,6 +147,10 @@ public sealed class MapClientSessionWorldRpcFailureClassificationTests
         Assert.True(combatState.TryGet(key, out var state));
         Assert.Equal(1u, state.CurrentHp);
 
+        // `run` has already faulted and been awaited above (proving RunAsync itself terminated
+        // promptly without needing an external DisposeAsync call) - DisposeAsync would simply
+        // re-observe/rethrow the SAME already-surfaced fault via StopCoreAsync's own
+        // Task.WhenAll(loops), so it is deliberately not called again here.
         client.Close();
     }
 

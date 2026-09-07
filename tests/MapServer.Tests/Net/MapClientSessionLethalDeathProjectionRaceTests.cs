@@ -166,6 +166,103 @@ public sealed class MapClientSessionLethalDeathProjectionRaceTests
         await scenario.RunTask.WaitAsync(TimeSpan.FromSeconds(5));
     }
 
+    // Step 6's own final race closure (previously-uncovered interleaving, distinct from
+    // Interleaving1 above): TryMarkMonsterDeadAsync has ALREADY returned MarkedDead to the caller -
+    // the RPC itself is no longer "in flight" from PerformDueRepeatAttackAsync's own perspective -
+    // but CommitConfirmedDeath has not yet run. World's Died feed reaching NotifyMonsterDiedAsync
+    // for this exact life in EXACTLY that window must still be deferred (the arbiter registration is
+    // deliberately kept open through this entire span, not completed immediately after MarkedDead -
+    // see the CommitConfirmedDeath call site's own doc comment). The attacker must still ultimately
+    // receive exactly one 0x08C8, one 0x0977 hp=0, one 0x0080 reason=died, with no duplicate vanish -
+    // proving the fix actually closes the SMALLER post-RPC race window the earlier CompleteInFlight-
+    // right-after-MarkedDead shape left open.
+    [Fact]
+    public async Task PostMarkedDead_BeforeCommitConfirmedDeath_DiedFeedArrives_IsStillDeferred_AttackerReceivesExactlyOneOfEachPacket_NoDuplicateVanish()
+    {
+        var fakeWorld = new FakeCombatWorldRuntime();
+        var scenario = await SetupAsync(fakeWorld);
+        using var disposableClient = scenario.Client;
+
+        var life = new WorldMonsterLifeReference(scenario.MapId, scenario.Epoch, scenario.ActorId, scenario.Incarnation);
+        // Deliberately NOT set on FakeCombatWorldRuntime (BeforeTryMarkMonsterDeadReturns fires while
+        // the RPC call is still executing) - this hook fires on MapClientSession itself, strictly
+        // AFTER TryMarkMonsterDeadAsync has already returned MarkedDead and the caller has already
+        // passed its own status check, immediately before CommitConfirmedDeath is called.
+        scenario.Session.DebugBeforeCommitConfirmedDeathAsync = async () =>
+        {
+            await scenario.Session.NotifyMonsterDiedAsync(life, CancellationToken.None);
+        };
+
+        await scenario.Stream.WriteAsync(AttackPacket(scenario.ActorId));
+
+        var damagePacket = await ReadExact(scenario.Stream, PacketConstants.ZcNotifyAct3Length);
+        Assert.Equal((short)PacketConstants.ZcNotifyAct3, BinaryPrimitives.ReadInt16LittleEndian(damagePacket));
+
+        var hpInfoPacket = await ReadExact(scenario.Stream, PacketConstants.ZcHpInfoLength);
+        Assert.Equal((short)PacketConstants.ZcHpInfo, BinaryPrimitives.ReadInt16LittleEndian(hpInfoPacket));
+        Assert.Equal(0u, BinaryPrimitives.ReadUInt32LittleEndian(hpInfoPacket.AsSpan(6)));
+
+        var vanishPacket = await ReadExact(scenario.Stream, PacketConstants.ZcNotifyVanishLength);
+        Assert.Equal((short)PacketConstants.ZcNotifyVanish, BinaryPrimitives.ReadInt16LittleEndian(vanishPacket));
+        Assert.Equal(scenario.ActorId, BinaryPrimitives.ReadUInt32LittleEndian(vanishPacket.AsSpan(2)));
+        Assert.Equal(PacketConstants.ZcNotifyVanishReasonDied, vanishPacket[6]);
+
+        // No duplicate vanish - confirmed by a harmless ping round-trip landing next.
+        await scenario.Stream.WriteAsync(new byte[] { 0x1c, 0x0b });
+        var pingReply = await ReadExact(scenario.Stream, 2);
+        Assert.Equal((short)PacketConstants.ZcPingLive, BinaryPrimitives.ReadInt16LittleEndian(pingReply));
+
+        Assert.True(fakeWorld.IsConfirmedDead(life));
+        scenario.Client.Close();
+        await scenario.RunTask.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    // Item 1's own requirement F: MarkedDead was confirmed by World, but this session's own local
+    // CommitConfirmedDeath unexpectedly returns non-Applied (an unexpected local-state mismatch) - a
+    // Died that was deferred while pending must NOT be silently discarded; the deferred authoritative
+    // vanish cleanup must still be performed exactly once even though this session never reaches its
+    // own attacker-owned wire sequence.
+    [Fact]
+    public async Task MarkedDead_DiedDeferred_CommitConfirmedDeathUnexpectedlyReturnsNonApplied_DeferredDiedCleanupIsNotLost()
+    {
+        var fakeWorld = new FakeCombatWorldRuntime();
+        // maxHp: 1 registered normally by SetupAsync, but this test forces CommitConfirmedDeath's own
+        // non-Applied path by removing the local combat-state key entirely right before it would run -
+        // simulating "the local life is no longer registered" (an unexpected local-state mismatch)
+        // despite World having already confirmed MarkedDead moments earlier.
+        var scenario = await SetupAsync(fakeWorld);
+        using var disposableClient = scenario.Client;
+
+        var life = new WorldMonsterLifeReference(scenario.MapId, scenario.Epoch, scenario.ActorId, scenario.Incarnation);
+        scenario.Session.DebugBeforeCommitConfirmedDeathAsync = async () =>
+        {
+            await scenario.Session.NotifyMonsterDiedAsync(life, CancellationToken.None);
+            // Force CommitConfirmedDeath's own non-Applied path: remove the local combat-state entry
+            // out from under it immediately after the Died feed was deferred, simulating an
+            // unexpected local-state mismatch at the exact moment World already confirmed MarkedDead.
+            scenario.CombatState.Remove(MonsterCombatKey.From(life));
+        };
+
+        await scenario.Stream.WriteAsync(AttackPacket(scenario.ActorId));
+
+        // The deferred authoritative vanish must still arrive - reason=Died, exactly once - even
+        // though this session's own CommitConfirmedDeath never actually confirmed a local kill.
+        var vanishPacket = await ReadExact(scenario.Stream, PacketConstants.ZcNotifyVanishLength);
+        Assert.Equal((short)PacketConstants.ZcNotifyVanish, BinaryPrimitives.ReadInt16LittleEndian(vanishPacket));
+        Assert.Equal(scenario.ActorId, BinaryPrimitives.ReadUInt32LittleEndian(vanishPacket.AsSpan(2)));
+        Assert.Equal(PacketConstants.ZcNotifyVanishReasonDied, vanishPacket[6]);
+
+        // No damage/HP-info/reward packet - this session never owned a successful local projection.
+        // No duplicate vanish either - confirmed by a harmless ping landing next.
+        await scenario.Stream.WriteAsync(new byte[] { 0x1c, 0x0b });
+        var pingReply = await ReadExact(scenario.Stream, 2);
+        Assert.Equal((short)PacketConstants.ZcPingLive, BinaryPrimitives.ReadInt16LittleEndian(pingReply));
+
+        Assert.True(fakeWorld.IsConfirmedDead(life));
+        scenario.Client.Close();
+        await scenario.RunTask.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
     // Interleaving 2: lethal RPC is in flight -> Died feed arrives -> RPC then fails transiently ->
     // no local reward/damage ownership -> the authoritative Died vanish is eventually sent exactly
     // once -> the repeat target does not continue attacking the dead life.
