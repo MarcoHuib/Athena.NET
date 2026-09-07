@@ -157,6 +157,12 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     // (also covers NPC/warp/player actor ids) used for actual send-gating everywhere else in this
     // class; this type is the monster-specific metadata layered on top of it.
     private readonly MonsterVisibilityState _monsterVisibility = new();
+    // Step 6 final correctness pass, item 1: arbitrates between THIS session's own in-flight
+    // confirmed-lethal-hit projection (PerformDueRepeatAttackAsync's own TryMarkMonsterDeadAsync
+    // call) and World's independent, authoritative Died feed reaching this same session through
+    // MapTcpServer's separate monster-tick loop for the SAME exact life - see
+    // LethalDeathProjectionArbiter's own doc comment for the full race this exists to close.
+    private readonly LethalDeathProjectionArbiter _lethalDeathArbiter = new();
     private ScriptExecutionSession? _scriptExecutionSession;
     private Task? _generatedScriptTask;
     private string? _generatedScriptEntityId;
@@ -1698,26 +1704,24 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
                     try { await sleep; } catch (OperationCanceledException) { continue; }
                 }
 
-                try
-                {
-                    await PerformDueRepeatAttackAsync(active, cancellationToken);
-                }
-                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-                {
-                    throw; // Genuine shutdown - let the outer catch below handle it.
-                }
-                catch (Exception ex) when (IsTransientWorldRpcFailure(ex, cancellationToken))
-                {
-                    // Item 2 of the Step 6 final correctness pass: PerformDueRepeatAttackAsync's own
-                    // try/catch around each individual World RPC call already handles the expected
-                    // transient-failure cases without ever letting an exception escape to here - this
-                    // is a defense-in-depth backstop for anything unexpected that still does (e.g. a
-                    // future call site added without its own try/catch), so a single transient
-                    // failure can never permanently fault this session's whole attack-loop task. The
-                    // loop survives and re-evaluates on its own next wake, exactly like an ordinary
-                    // scheduled attempt.
-                    MapLogger.Warning($"[iRO MAP DEBUG] Unexpected transient exception in the repeat-attack loop - the loop will continue: {ex}");
-                }
+                // Item 3 of the Step 6 final correctness pass: the earlier broad
+                // `catch (Exception ex) when (IsTransientWorldRpcFailure(ex, cancellationToken))`
+                // backstop here is REMOVED - it surrounded the WHOLE PerformDueRepeatAttackAsync
+                // operation (range checks, weapon resolution, quest-state persistence, packet writes,
+                // inventory persistence, everything), not just the two World RPC call sites that
+                // actually warrant transient-retry treatment, so it could silently swallow a genuine
+                // local programming/invariant defect (a NullReferenceException, an ArgumentException,
+                // an unrelated CharServer/persistence failure) and mislabel it "transient World RPC
+                // failure" forever. PerformDueRepeatAttackAsync's own two narrow try/catch blocks
+                // (around NotifyMonsterAttackedAsync and TryMarkMonsterDeadAsync specifically) already
+                // fully handle the legitimate transient-World-RPC-failure case, including re-arming
+                // NextAttackAt via RearmAfterTransientFailureAsync so this loop never spins hot on an
+                // already-due RepeatAttackState. Anything that still escapes PerformDueRepeatAttackAsync
+                // here is therefore either genuine cancellation (propagates, handled below) or a real
+                // defect that must fail loudly rather than being caught and hidden - it faults this
+                // session's own RunAsync (contained by HandleClientAsync's own outer catch/session
+                // teardown), never silently retried.
+                await PerformDueRepeatAttackAsync(active, cancellationToken);
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -1943,24 +1947,35 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         // 0 while World still considered the life Alive, and a same-life resync/feed poll
         // deliberately PRESERVES local combat HP - so the monster could remain World-Alive but
         // permanently MapServer-dead forever). The REQUIRED shape is: CalculateAttack (already done,
-        // read-only, above) -> TryMarkMonsterDeadAsync -> ONLY MarkedDead -> CommitConfirmedDeath
-        // (atomically finalizes local HP=0 using whatever HP is ACTUALLY present at that moment,
-        // never the earlier candidate's own pre-image - see CommitConfirmedDeath's own doc comment
-        // for why a further valid local hit landing during the RPC's flight is still correctly
-        // folded in) -> quest/drop resolution -> wire projection.
+        // read-only, above) -> resolve quest states (read-only, item 2's own correction - see
+        // MonsterCombatCoordinator.CommitConfirmedDeath's own doc comment for why this must happen
+        // BEFORE the death confirmation, never after) -> TryMarkMonsterDeadAsync -> ONLY MarkedDead ->
+        // CommitConfirmedDeath (atomically finalizes local HP=0 using whatever HP is ACTUALLY present
+        // at that moment, never the earlier candidate's own pre-image) -> wire projection.
         if (candidate.WouldBeLethal)
         {
+            // Item 2's own correction: resolve quest state BEFORE calling TryMarkMonsterDeadAsync,
+            // while this attack is still entirely read-only/uncommitted - a fallible CharServer
+            // lookup can safely throw here with zero cleanup required (nothing has been mutated or
+            // confirmed yet). Doing this AFTER World already confirmed the death would risk a
+            // fallible RPC throwing while local HP is already 0 and World already Dead, with the
+            // successful lethal wire sequence never projected and the repeat-loop's own catch
+            // potentially misclassifying the failure as a "World transient failure" it is not.
+            var attackerQuestStatus = await ResolveActiveQuestStatesAsync(cancellationToken);
+
+            // Item 1: register this session's own in-flight lethal projection for the EXACT life
+            // BEFORE starting TryMarkMonsterDeadAsync - see LethalDeathProjectionArbiter's own doc
+            // comment for the full race this closes (World's independent Died feed reaching this
+            // SAME session's NotifyMonsterDiedAsync, via MapTcpServer's separate monster-tick loop,
+            // concurrently with this method still completing its own wire/reward projection).
+            _lethalDeathArbiter.BeginInFlight(life);
+
             // Item 2 of the Step 6 final correctness pass: a TRANSIENT transport/RPC failure here
             // must NOT fault RunRepeatAttackLoopAsync's own background task - caught, logged, and
             // this attempt is abandoned with the schedule re-armed for a normal later attempt. Local
             // HP is STILL completely untouched at this point (no combat-state mutation has happened
             // yet for a lethal candidate - see this block's own doc comment above), so there is
-            // nothing to roll back. If the request actually reached World but the response was lost,
-            // World's own Died feed will make the monster authoritative Dead before this later retry
-            // even runs (TryGetLife's own Lifecycle check at the top of this method would then clear
-            // the repeat-attack target normally) - this is intentionally fail-closed and may
-            // conservatively lose THIS attacker's own reward in that ambiguous case; no
-            // operation-id/exactly-once protocol is introduced here.
+            // nothing to roll back.
             WorldMonsterDeathResult deathResult;
             try
             {
@@ -1968,10 +1983,28 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
             }
             catch (Exception ex) when (IsTransientWorldRpcFailure(ex, cancellationToken))
             {
+                // Item 1's own requirement E: "the request actually reached World but the response
+                // was lost" case - if an authoritative Died for this EXACT life was already observed
+                // while this RPC's own result was ambiguous, World's Died feed already reached this
+                // session (via NotifyMonsterDiedAsync's own deferral) and the deferred authoritative
+                // vanish/cleanup must now be performed exactly once, and the repeat target must STOP
+                // (never keep attacking an already-dead life) - this is intentionally fail-closed and
+                // may conservatively lose THIS attacker's own reward in that ambiguous case; no
+                // operation-id/exactly-once protocol is introduced here. Otherwise (no Died observed
+                // yet), local HP remains untouched and the ordinary attack cadence re-arms normally.
+                var diedObservedWhilePending = _lethalDeathArbiter.CompleteInFlight(life);
+                if (diedObservedWhilePending)
+                {
+                    MapLogger.Warning($"[iRO MAP DEBUG] Transient TryMarkMonsterDeadAsync failure mobActorId={expected.TargetActorId}, but an authoritative Died feed for this exact life was already observed while pending - performing the deferred authoritative vanish now and stopping this repeat target.");
+                    await PerformDeferredAuthoritativeDiedAsync(expected.TargetActorId, cancellationToken);
+                    ClearRepeatAttackIfCurrent(expected);
+                    return;
+                }
                 MapLogger.Warning($"[iRO MAP DEBUG] Transient TryMarkMonsterDeadAsync failure mobActorId={expected.TargetActorId} - no local HP mutation, no lethal wire/reward projection, retrying on the ordinary attack cadence: {ex.Message}");
                 await RearmAfterTransientFailureAsync(expected, effectiveStats, equippedWeapon, cancellationToken);
                 return;
             }
+
             if (deathResult.Status != WorldMonsterDeathStatus.MarkedDead)
             {
                 // StaleLifeReference (a resync/incarnation change raced this attack) or AlreadyDead
@@ -1984,17 +2017,31 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
                 // stale; discard that life's combat-state key so a later stale read can never
                 // resurface it (AlreadyDead does NOT warrant discarding a key that may still be
                 // legitimately current for a different attacker's own already-confirmed kill).
+                //
+                // Item 1's own requirement F: release the in-flight state, and if a deferred matching
+                // Died was already observed while this call was pending, process that authoritative
+                // vanish exactly once now (this life IS genuinely Dead from World's own perspective
+                // either way - AlreadyDead/StaleLifeReference both mean SOME death already happened,
+                // just not one this call itself gets to claim ownership/reward for).
                 MapLogger.Warning($"[iRO MAP DEBUG] TryMarkMonsterDeadAsync did not confirm a fresh death ({deathResult.Status}) mobActorId={expected.TargetActorId} - no local HP mutation, no damage/HP/death wire projection, no quest/EXP.");
                 if (deathResult.Status == WorldMonsterDeathStatus.StaleLifeReference)
                     _combatState.Remove(MonsterCombatKey.From(life));
+                if (_lethalDeathArbiter.CompleteInFlight(life))
+                    await PerformDeferredAuthoritativeDiedAsync(expected.TargetActorId, cancellationToken);
                 ClearRepeatAttackIfCurrent(expected);
                 return;
             }
 
-            // Section 15: quest-state CharServer roundtrips are only genuinely needed when THIS hit
-            // kills the target (QuestDropResolver.ResolveDrops is only ever reached on death).
-            Task<Func<uint, CharacterQuestStatus>> ResolveQuestStatesAsync() => ResolveActiveQuestStatesAsync(cancellationToken);
-            outcome = await _combat.CommitConfirmedDeath(candidate, life, target, ResolveQuestStatesAsync);
+            // Item 1's own requirement D: MarkedDead - this session's own local projection now owns
+            // the successful lethal sequence. Complete the in-flight state (discarding whatever
+            // deferred-Died flag it may carry - MarkedDead means THIS call is the authoritative
+            // death, so a Died feed entry observed while pending was reporting the SAME transition
+            // this call itself just caused; the code below performs the full sequence exactly once
+            // regardless, and MapTcpServer.FanOutEntryAsync's own Died dispatch to this session is a
+            // no-op afterward since this session's own visibility state will already reflect the
+            // kill by the time any such feed entry could be dispatched again).
+            _lethalDeathArbiter.CompleteInFlight(life);
+            outcome = _combat.CommitConfirmedDeath(candidate, life, target, attackerQuestStatus);
         }
         else
         {
@@ -2102,9 +2149,11 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
             }
 
             MapLogger.Info($"[iRO MAP DEBUG] Monster died actorId={expected.TargetActorId} mob={target.StaticMob.AegisName}");
-            var vanishPacket = IroMonsterCombatPackets.BuildNotifyVanish(expected.TargetActorId, PacketConstants.ZcNotifyVanishReasonDied);
-            await WriteAsync(vanishPacket, cancellationToken);
-            _visibleActorIds.MarkNotVisible(expected.TargetActorId);
+            // Item 1: routed through the same SendMonsterVanishAsync helper every other death-vanish
+            // send in this class uses, so this session's own _monsterVisibility metadata (not only
+            // the generic _visibleActorIds tracker) is cleaned up exactly once here too - never a
+            // second, inconsistent inline vanish-and-mark-not-visible sequence.
+            await SendMonsterVanishAsync(expected.TargetActorId, PacketConstants.ZcNotifyVanishReasonDied, cancellationToken);
 
             foreach (var drop in outcome.QuestDrops)
             {
@@ -2165,23 +2214,22 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         finally { _attackGate.Release(); }
     }
 
-    // Item 2 of the Step 6 final correctness pass: classifies an exception caught around
-    // NotifyMonsterAttackedAsync/TryMarkMonsterDeadAsync as a transient World/transport failure
-    // (log-and-retry-later) versus a genuine cancellation (real shutdown, must propagate) or a
-    // deterministic invariant/programming failure (must NOT be blanket-swallowed - mirrors
-    // MapTcpServer's own IsDeterministicInvariantFailure classification: KeyNotFoundException is the
-    // concrete example this project already treats as "would reproduce identically on retry, not a
-    // legitimate target for a resilience catch"). OperationCanceledException is only transient when
-    // this session's OWN cancellationToken did NOT request it (e.g. an internal Orleans call timeout
-    // surfaces as OperationCanceledException too) - a genuine session-shutdown cancellation must
-    // still propagate immediately, never be treated as "retry later".
+    // Item 3 of the Step 6 final correctness pass: classifies an exception caught around
+    // NotifyMonsterAttackedAsync/TryMarkMonsterDeadAsync. Cancellation is decided FIRST and
+    // separately from WorldRpcFailureClassifier's own narrow transport/gateway/timeout type list
+    // (OperationCanceledException is only "transient" when this session's OWN cancellationToken did
+    // NOT request it - e.g. an internal Orleans call timeout can itself surface as
+    // OperationCanceledException too - a genuine session-shutdown cancellation must always propagate
+    // immediately, never be treated as "retry later"). Every other exception type defers to the
+    // SHARED classifier (WorldRpcFailureClassifier.IsTransientWorldRpcFailure) - the same one
+    // MapTcpServer's own monster tick loop uses - so a deterministic/programming/unrelated-subsystem
+    // exception (NullReferenceException, ArgumentException, KeyNotFoundException, an unrelated
+    // CharServer/persistence exception, etc.) is NEVER misclassified as a transient World RPC
+    // failure here; it propagates and fails loudly instead.
     private static bool IsTransientWorldRpcFailure(Exception ex, CancellationToken sessionCancellation) =>
-        ex switch
-        {
-            KeyNotFoundException => false,
-            OperationCanceledException => !sessionCancellation.IsCancellationRequested,
-            _ => true,
-        };
+        ex is OperationCanceledException
+            ? !sessionCancellation.IsCancellationRequested
+            : WorldRpcFailureClassifier.IsTransientWorldRpcFailure(ex);
 
     // Abandons the CURRENT attack attempt after a transient World RPC failure without leaving the
     // repeat-attack scheduler permanently dead: local HP/repeat-attack TARGET are both left
@@ -4014,27 +4062,45 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         await WriteAsync(IroMonsterCombatPackets.BuildNotifyVanish(actorId, reason), cancellationToken);
     }
 
-    // Requirement 4 (World `Died` fan-out): called by MapTcpServer.FanOutEntryAsync for EVERY
-    // session on the map when World's feed reports a monster Died, not merely the attacker's own
-    // session. The attacker's own local confirmed-kill path (PerformDueRepeatAttackAsync's own
-    // `outcome.KilledByThisHit` branch) has ALREADY sent its own death-vanish and cleared its own
-    // _visibleActorIds entry for this actor SYNCHRONOUSLY, strictly before this feed entry can ever
-    // be observed by the SEPARATE MapTcpServer monster-tick loop that polls World afterward - so the
-    // attacker's own session naturally no longer has this actor marked visible by the time this
-    // method runs for it, and the guard below (IsActorVisible) skips it without sending a duplicate.
-    // Every OTHER session that currently has this actor visible receives the SAME reason=Died vanish
-    // the attacker's own local kill path already sent to itself (item 5: an authoritative World
-    // death must use reason=Died for every observer, never reason=OutOfSight - that reason is
-    // reserved for AOI exit/resync disappearance/map visibility loss only). Monster-visibility/
-    // incarnation state is ALWAYS cleaned up (via SendMonsterVanishAsync's own unconditional
-    // _monsterVisibility.Remove) even for the attacker's own session, which already has
-    // _visibleActorIds saying this actor is invisible by the time this runs (see this method's own
-    // doc comment above) and therefore sends no duplicate packet - "no packet needed" must not mean
-    // "skip state cleanup" for that session either.
-    public async Task NotifyMonsterDiedAsync(uint actorId, CancellationToken cancellationToken)
+    // Requirement 4 (World `Died` fan-out), corrected by item 1 of the Step 6 final correctness
+    // pass: called by MapTcpServer.FanOutEntryAsync for EVERY session on the map when World's feed
+    // reports a monster Died, not merely the attacker's own session - now takes the EXACT life
+    // identity (`life`), never only an ActorId, so the arbitration below can never conflate two
+    // different incarnations of the same ActorId.
+    //
+    // The OLD assumption here - "the attacker's own local confirmed-kill path has ALREADY sent its
+    // own death-vanish and cleared its own visibility SYNCHRONOUSLY, strictly before this feed entry
+    // can ever be observed" - is NO LONGER TRUE after the correction that moved World's death
+    // confirmation to happen BEFORE the local lethal projection: World's Died feed becomes
+    // observable to this SAME MapTcpServer tick loop immediately once TryMarkMonsterDeadAsync
+    // returns MarkedDead, genuinely concurrently with PerformDueRepeatAttackAsync still completing
+    // its own CommitConfirmedDeath -> wire projection sequence. See LethalDeathProjectionArbiter's
+    // own doc comment for the full race and why arbitration (keyed by the EXACT life, not ActorId
+    // alone) is required instead of relying on ordering that can no longer be assumed.
+    //
+    // If this session has an in-flight local lethal projection for the EXACT same life (`life`),
+    // defer: record that Died was observed and return WITHOUT sending anything or touching
+    // visibility - PerformDueRepeatAttackAsync's own resolution (MarkedDead/StaleLifeReference/
+    // AlreadyDead/transient-failure) is what decides the final wire outcome for THIS session,
+    // exactly once, per LethalDeathProjectionArbiter's own state machine. A Died feed entry for a
+    // DIFFERENT incarnation of the same ActorId (no matching in-flight registration) is NEVER
+    // suppressed - it proceeds through the ordinary immediate-vanish path below unchanged, exactly
+    // like any bystander session's own Died handling.
+    public async Task NotifyMonsterDiedAsync(WorldMonsterLifeReference life, CancellationToken cancellationToken)
     {
-        await SendMonsterVanishAsync(actorId, PacketConstants.ZcNotifyVanishReasonDied, cancellationToken);
+        if (_lethalDeathArbiter.TryDeferDiedWhileInFlight(life)) return;
+        await SendMonsterVanishAsync(life.ActorId, PacketConstants.ZcNotifyVanishReasonDied, cancellationToken);
     }
+
+    // Performs the exact same wire vanish + visibility cleanup NotifyMonsterDiedAsync's own ordinary
+    // path performs - the DEFERRED half of item 1's arbitration, called by
+    // PerformDueRepeatAttackAsync itself when its own lethal RPC resolves to anything OTHER than
+    // MarkedDead (transient failure, StaleLifeReference, AlreadyDead) while an authoritative Died for
+    // the exact same life was already observed mid-flight. Kept as its own tiny named method (rather
+    // than inlining SendMonsterVanishAsync at each of those call sites) so the "this is the deferred-
+    // cleanup half of the arbitration" intent reads clearly at each call site.
+    private async Task PerformDeferredAuthoritativeDiedAsync(uint actorId, CancellationToken cancellationToken) =>
+        await SendMonsterVanishAsync(actorId, PacketConstants.ZcNotifyVanishReasonDied, cancellationToken);
 
     // Step 4 of the binding bootstrap/resync ordering, per-session half (see MonsterFeedProjection's
     // own doc comment) - called by MapTcpServer.ReconcileSessionsFullyAsync for EVERY active session

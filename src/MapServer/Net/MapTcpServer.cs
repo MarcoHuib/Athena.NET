@@ -230,9 +230,13 @@ public sealed class MapTcpServer
     //   - the accept loop itself ends first (e.g. the listener socket faults) -> cancel the linked
     //     token so the monster loop also winds down, then await it.
     // Transient per-tick/per-map failures never reach this level at all - RunMonsterTickLoopAsync's
-    // own classification (IsDeterministicInvariantFailure) already keeps those from faulting the
-    // monster loop's task in the first place; only an ALREADY-classified fatal failure propagates
-    // this far.
+    // own classification (IsDeterministicInvariantFailure for the known unknown-MobId-shaped case,
+    // WorldRpcFailureClassifier.IsTransientWorldRpcFailure for genuine Orleans transport/gateway/
+    // timeout failures - item 3 of the Step 6 final correctness pass) already keeps those from
+    // faulting the monster loop's task in the first place; only an exception that is NEITHER of
+    // those two verified categories (a genuinely unexpected/unclassified failure, deliberately
+    // treated the same as a deterministic one - see that loop's own final `catch` doc comment)
+    // propagates this far.
     public async Task RunAsync(CancellationToken cancellationToken)
     {
         _listener.Start();
@@ -323,33 +327,41 @@ public sealed class MapTcpServer
                 {
                     throw; // Genuine shutdown - let the outer catch below handle it.
                 }
-                catch (Exception ex) when (IsDeterministicInvariantFailure(ex))
+                catch (Exception ex) when (WorldRpcFailureClassifier.IsTransientWorldRpcFailure(ex))
                 {
-                    // Item 7: an unexpected DETERMINISTIC invariant/configuration failure that
-                    // escaped ProcessOneMonsterTickAsync's own per-map classification (e.g. thrown
-                    // from the shared cadence executor, which is not scoped to one single map/try-
-                    // catch) - this is not something a later tick can ever resolve by retrying, so
-                    // propagate it out of the loop entirely rather than logging it every 100ms
-                    // forever. RunAsync's own `await monsterTickLoop` in its `finally` block observes
-                    // this fault - see that method's own doc comment for why this deliberately does
-                    // NOT leave MapServer running indefinitely with a silently-dead monster-authority
-                    // task.
-                    MapLogger.Error($"[WORLD] Deterministic invariant/configuration failure in monster tick processing - the monster-authority loop cannot continue: {ex}");
-                    throw;
-                }
-                catch (Exception ex)
-                {
-                    // An unexpected/transient exception from one tick's processing (e.g. a transient
-                    // Orleans timeout/transport failure not already caught by the narrower IOException/
-                    // OperationCanceledException guards inside PollAndReconcileMapAsync/
-                    // InitializeMapSpawnsAsync/the per-map try/catch below) must never fault this
+                    // Item 3 of the Step 6 final correctness pass: ONLY the shared, narrow,
+                    // explicitly-verified transient-World-RPC-failure classification (the SAME one
+                    // MapClientSession's own repeat-attack loop uses) is retried here - a genuine
+                    // Orleans timeout/transport/gateway failure not already caught by the narrower
+                    // IOException/OperationCanceledException guards inside PollAndReconcileMapAsync/
+                    // InitializeMapSpawnsAsync/the per-map try/catch below. This must never fault this
                     // entire background loop task permanently - the loop survives and naturally
                     // retries via its own next 100ms tick, nothing more elaborate (no blanket
                     // automatic retry/backoff is added here). Genuinely loud invariant/configuration
                     // failures (ContentMismatch/CallerFingerprintMismatch/SpawnMapMismatch) are still
-                    // logged and left unretried by InitializeMapSpawnsAsync's own existing handling,
-                    // which this catch does not change or suppress further.
-                    MapLogger.Error($"[WORLD] Unhandled exception in monster tick processing - the loop will continue on its next tick: {ex}");
+                    // logged and left unretried by InitializeMapSpawnsAsync's own existing handling
+                    // (marked permanently failed), which this catch does not change or suppress
+                    // further.
+                    MapLogger.Error($"[WORLD] Transient World RPC failure in monster tick processing - the loop will continue on its next tick: {ex}");
+                }
+                catch (Exception ex)
+                {
+                    // Item 3's own correction: the earlier broad, UNCONDITIONAL `catch (Exception ex)`
+                    // that used to sit here logged-and-swallowed EVERY exception type not already
+                    // classified as deterministic/transient above, including a genuine local
+                    // programming/invariant defect (NullReferenceException, ArgumentException, an
+                    // unexpected InvalidOperationException, an unrelated CharServer/persistence
+                    // exception surfacing through this same call path) - silently logging it every
+                    // single 100ms tick forever instead of ever surfacing it. Anything that reaches
+                    // THIS catch now (not a KeyNotFoundException-shaped deterministic invariant
+                    // failure per IsDeterministicInvariantFailure above, not a shutdown cancellation,
+                    // not a verified transient World RPC failure per WorldRpcFailureClassifier) is, by
+                    // elimination, an unexpected/unclassified failure that must be treated exactly
+                    // like a deterministic one: propagate it out of the loop entirely so RunAsync's
+                    // own supervision (see that method's own doc comment) observes and fails on it
+                    // promptly, rather than hiding it behind an infinite retry loop.
+                    MapLogger.Error($"[WORLD] Deterministic invariant/programming failure in monster tick processing - the monster-authority loop cannot continue: {ex}");
+                    throw;
                 }
             }
         }
@@ -426,19 +438,30 @@ public sealed class MapTcpServer
                 MapLogger.Error($"[WORLD] Deterministic invariant/configuration failure reconciling map '{mapGroup.Key}' - this map will NOT be retried until the underlying configuration/data problem is corrected (requires a MapServer restart to re-attempt): {ex}");
                 _permanentlyFailedMaps[mapGroup.Key] = ex.Message;
             }
-            catch (Exception ex)
+            catch (Exception ex) when (WorldRpcFailureClassifier.IsTransientWorldRpcFailure(ex))
             {
-                // An unexpected but NON-deterministic (transient World/transport) exception
-                // reconciling ONE map must never prevent every OTHER map in this SAME tick from
-                // being processed - each mapGroup iteration is independent (separate
-                // MonsterFeedProjection, separate cursor). Nothing about this map's in-flight
-                // cursor/combat-state/session projection was left partially applied here:
-                // PollAndReconcileMapAsync's own internal ordering only advances the cursor after
-                // every earlier step succeeds (see MonsterFeedProjection's own doc comment), so a
-                // failure here simply means this tick made no progress for this one map - the next
+                // Item 3 of the Step 6 final correctness pass: ONLY the shared, narrow, explicitly-
+                // verified transient-World-RPC-failure classification is retried here - a genuine
+                // Orleans timeout/transport/gateway failure reconciling ONE map must never prevent
+                // every OTHER map in this SAME tick from being processed (each mapGroup iteration is
+                // independent - separate MonsterFeedProjection, separate cursor). Nothing about this
+                // map's in-flight cursor/combat-state/session projection was left partially applied
+                // here: PollAndReconcileMapAsync's own internal ordering only advances the cursor
+                // after every earlier step succeeds (see MonsterFeedProjection's own doc comment), so
+                // a failure here simply means this tick made no progress for this one map - the next
                 // tick's own poll naturally retries from the same, unadvanced cursor.
-                MapLogger.Error($"[WORLD] Unhandled exception reconciling map '{mapGroup.Key}' this tick - other maps still proceed, this map retries next tick: {ex}");
+                MapLogger.Error($"[WORLD] Transient World RPC failure reconciling map '{mapGroup.Key}' - other maps still proceed, this map retries next tick: {ex}");
             }
+            // Item 3's own correction: the earlier broad, UNCONDITIONAL `catch (Exception ex)` that
+            // used to sit here (with no `when` filter) would have caught EVERY exception type not
+            // already classified as deterministic/transient above - including a genuine local
+            // programming/invariant defect - and silently logged-and-swallowed it EVERY 100ms tick
+            // forever for this map, never surfacing it. Anything reaching this point now is, by
+            // elimination, unexpected/unclassified and must propagate exactly like a deterministic
+            // failure would - this per-map try/catch does not swallow it; it escapes to
+            // RunMonsterTickLoopAsync's own outer classification, which (per that method's own
+            // identical correction) also propagates it to RunAsync's supervision rather than hiding
+            // it behind an infinite per-map retry.
         }
 
         var cadenceResult = await _cadenceExecutor.ProcessAsync(eligibleSessions, cancellationToken);
@@ -593,30 +616,31 @@ public sealed class MapTcpServer
     }
 
     // Fans out one incremental feed entry to every session on this map. `Died` is fanned out to
-    // EVERY session that currently has this actor visible (MapClientSession.NotifyMonsterDiedAsync
-    // owns the per-session IsActorVisible gate and the actual vanish send) - the ATTACKER's own
-    // session already sent its own death-vanish synchronously via its confirmed-local-kill path
-    // (PerformDueRepeatAttackAsync's own outcome.KilledByThisHit branch, which runs on the
-    // attacker's session's own repeat-attack loop, strictly before this SEPARATE MapTcpServer
-    // monster-tick loop can ever observe/poll the resulting Died feed entry) and therefore no longer
-    // has this actor marked visible by the time this runs, so NotifyMonsterDiedAsync's own
-    // IsActorVisible guard naturally skips it without a duplicate send. Every OTHER session that
-    // still had this monster visible (it never attacked it, or attacked a different one) has no
-    // other path that would ever tell it this monster died, and would otherwise show a live,
-    // undamaged monster forever. `Respawned` uses discovery (movementKind: null) so a session that
-    // had marked the OLD incarnation's ActorId not-visible (removed on death) re-discovers the NEW
-    // incarnation exactly like any other newly-visible actor. Every OTHER kind carrying a
-    // MovementKind is projected via its own explicit WorldMonsterMovementKind (never inferred from
-    // IsWalking - see WorldMonsterMovementKind's own doc comment).
+    // EVERY session on the map, passing the EXACT life identity (item 1 of the Step 6 final
+    // correctness pass corrected this from ActorId-only) - MapClientSession.NotifyMonsterDiedAsync
+    // owns the per-session visibility gate AND the arbitration against its own possibly-in-flight
+    // local lethal projection for that SAME exact life (see LethalDeathProjectionArbiter's own doc
+    // comment for the race this closes: World's death confirmation now happens BEFORE the local
+    // lethal projection completes, so this SEPARATE tick loop's own Died observation can genuinely
+    // race the attacker's own session finishing its wire/reward sequence - the old assumption that
+    // the attacker's session "necessarily" already vanished itself before this loop could ever
+    // observe Died no longer holds). Every OTHER session that still had this monster visible (it
+    // never attacked it, or attacked a different one) has no other path that would ever tell it this
+    // monster died, and would otherwise show a live, undamaged monster forever. `Respawned` uses
+    // discovery (movementKind: null) so a session that had marked the OLD incarnation's ActorId
+    // not-visible (removed on death) re-discovers the NEW incarnation exactly like any other
+    // newly-visible actor. Every OTHER kind carrying a MovementKind is projected via its own explicit
+    // WorldMonsterMovementKind (never inferred from IsWalking - see that type's own doc comment).
     private async Task FanOutEntryAsync(WorldMonsterFeedEntry entry, WorldSimulationEpoch epoch, IReadOnlyCollection<MapClientSession> mapSessions, CancellationToken cancellationToken)
     {
         if (entry.Kind == WorldMonsterFeedEntryKind.Died)
         {
+            var life = new WorldMonsterLifeReference(entry.Instance.MapId, epoch, entry.ActorId, entry.IncarnationId);
             foreach (var session in mapSessions)
             {
                 try
                 {
-                    await session.NotifyMonsterDiedAsync(entry.ActorId, cancellationToken);
+                    await session.NotifyMonsterDiedAsync(life, cancellationToken);
                 }
                 catch (IOException) { /* Client disconnected; HandleClientAsync's own cleanup removes it from _sessions. */ }
                 catch (OperationCanceledException) { /* Server shutdown. */ }

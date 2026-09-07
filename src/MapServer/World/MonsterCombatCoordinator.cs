@@ -118,16 +118,23 @@ public sealed class MonsterCombatCoordinator(QuestDropResolver questDrops, IBasi
         return new(true, damageResult.HpBefore, damageResult.HpAfter, candidate.IsMiss, killed, engagementAcquired, drops);
     }
 
-    // Item 1 of the Step 6 final correctness pass: finalizes a lethal hit ONLY after the caller
-    // already holds World's own MarkedDead confirmation (TryMarkMonsterDeadAsync) for this EXACT
-    // life - never before. Uses MonsterCombatStateStore.CommitConfirmedDeath (never
+    // Item 1 of the Step 6 final correctness pass (final race closure): finalizes a lethal hit ONLY
+    // after the caller already holds World's own MarkedDead confirmation (TryMarkMonsterDeadAsync)
+    // for this EXACT life - never before. Uses MonsterCombatStateStore.CommitConfirmedDeath (never
     // TryCommitDamage/ApplyDamage) so the actual HP present at commit time is used for the final
     // clamped damage/HpBefore/HpAfter outcome, correctly folding in any further valid local hit that
-    // landed on this same life while the TryMarkMonsterDeadAsync RPC was in flight. Quest-drop
-    // resolution only runs when the store confirms THIS call performed the HP>0->0 transition
-    // (Applied with KilledByThisHit) - AlreadyDead/StaleLife return Accepted=false with no reward,
-    // exactly like every other rejected-commit shape in this coordinator.
-    public async Task<MonsterAttackOutcome> CommitConfirmedDeath(MonsterAttackCandidate candidate, WorldMonsterLifeReference life, WorldMonsterActorView target, Func<Task<Func<uint, CharacterQuestStatus>>> resolveQuestStates)
+    // landed on this same life while the TryMarkMonsterDeadAsync RPC was in flight.
+    //
+    // Item 2 of this pass's own correction: `attackerQuestStatus` is now an ALREADY-RESOLVED
+    // synchronous lookup, not an async resolver awaited from inside this method - the caller must
+    // resolve quest state BEFORE calling TryMarkMonsterDeadAsync (while the attack is still
+    // read-only/uncommitted), never after World has already confirmed the death. This method itself
+    // therefore no longer awaits ANY remote lookup once the death has been confirmed - a fallible
+    // CharServer quest-state RPC can no longer throw AFTER local HP has already been mutated to 0
+    // and World already considers the life Dead, which would otherwise leave the successful lethal
+    // wire sequence never projected while the repeat-loop's own catch could misclassify the failure
+    // as a "World transient failure" it is not.
+    public MonsterAttackOutcome CommitConfirmedDeath(MonsterAttackCandidate candidate, WorldMonsterLifeReference life, WorldMonsterActorView target, Func<uint, CharacterQuestStatus> attackerQuestStatus)
     {
         if (!candidate.Attackable) return new(false, 0, 0, false, false, false, []);
         var key = MonsterCombatKey.From(life);
@@ -135,7 +142,6 @@ public sealed class MonsterCombatCoordinator(QuestDropResolver questDrops, IBasi
         if (damageResult.Status != MonsterCombatDamageStatus.Applied || !damageResult.KilledByThisHit)
             return new(false, damageResult.HpBefore, damageResult.HpAfter, false, false, false, []);
 
-        var attackerQuestStatus = await resolveQuestStates();
         var drops = questDrops.ResolveDrops(attackerQuestStatus, target.MobId);
         return new(true, damageResult.HpBefore, damageResult.HpAfter, candidate.IsMiss, KilledByThisHit: true, EngagementAcquired: false, drops);
     }

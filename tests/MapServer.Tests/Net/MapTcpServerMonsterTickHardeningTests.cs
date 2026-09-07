@@ -70,11 +70,16 @@ public sealed class MapTcpServerMonsterTickHardeningTests
         await unauthenticatedSession.DisposeAsync();
     }
 
-    // Item 7: an unexpected (non-IOException/non-OperationCanceledException) exception thrown from
+    // Item 3 of the Step 6 final correctness pass (this test's own exception type corrected by that
+    // pass - it used InvalidOperationException before, which is now correctly classified as a
+    // DETERMINISTIC/unclassified failure, not transient, and would propagate instead of being
+    // retried; see ProcessOneMonsterTickAsync_ProgrammingDefectFromOneMap_PropagatesRatherThanRetrying
+    // below for that corrected case): a genuinely transient World RPC failure (IOException, part of
+    // the shared WorldRpcFailureClassifier's own narrow verified-transient set) thrown from
     // PollMonsterFeedAsync for one map must not fault ProcessOneMonsterTickAsync outright - a
     // SUBSEQUENT call/tick for the SAME (or a different) map must still succeed normally afterward.
     [Fact]
-    public async Task ProcessOneMonsterTickAsync_UnexpectedExceptionFromOneMap_DoesNotFaultSubsequentTicks()
+    public async Task ProcessOneMonsterTickAsync_TransientExceptionFromOneMap_DoesNotFaultSubsequentTicks()
     {
         var world = MakeWorld();
         var callCount = 0;
@@ -83,7 +88,7 @@ public sealed class MapTcpServerMonsterTickHardeningTests
             OnPollMonsterFeed = _ =>
             {
                 callCount++;
-                if (callCount == 1) throw new InvalidOperationException("Simulated transient World RPC failure.");
+                if (callCount == 1) throw new IOException("Simulated transient World RPC failure.");
             },
         };
         var server = new MapTcpServer(ConfigStore(), new CharServerConnector(ConfigStore()), world, scripted);
@@ -103,6 +108,34 @@ public sealed class MapTcpServerMonsterTickHardeningTests
         var secondTickException = await Record.ExceptionAsync(() => server.ProcessOneMonsterTickAsync([session], CancellationToken.None));
         Assert.Null(secondTickException);
         Assert.Equal(2, callCount);
+
+        await session.DisposeAsync();
+    }
+
+    // Item 3 of the Step 6 final correctness pass: a genuinely UNEXPECTED/unclassified exception
+    // (neither the narrow deterministic KeyNotFoundException case, nor a verified transient
+    // WorldRpcFailureClassifier type) thrown from PollMonsterFeedAsync must PROPAGATE out of
+    // ProcessOneMonsterTickAsync rather than being logged-and-swallowed every 100ms forever - the
+    // earlier broad, unconditional `catch (Exception ex)` this correction removed would have silently
+    // hidden a real local programming/invariant defect (InvalidOperationException here, deliberately
+    // NOT one of WorldRpcFailureClassifier's own verified types) as if it were an ordinary transient
+    // World hiccup.
+    [Fact]
+    public async Task ProcessOneMonsterTickAsync_ProgrammingDefectFromOneMap_PropagatesRatherThanRetrying()
+    {
+        var world = MakeWorld();
+        var scripted = new ScriptedWorldRuntime
+        {
+            OnPollMonsterFeed = _ => throw new InvalidOperationException("Simulated local programming/invariant defect - never World transport."),
+        };
+        var server = new MapTcpServer(ConfigStore(), new CharServerConnector(ConfigStore()), world, scripted);
+
+        var (session, client) = await MakeWorldVisibleSessionAsync(world, scripted, mapId: "izlude");
+        using var _ = client;
+
+        var thrown = await Record.ExceptionAsync(() => server.ProcessOneMonsterTickAsync([session], CancellationToken.None));
+
+        Assert.IsType<InvalidOperationException>(thrown);
 
         await session.DisposeAsync();
     }

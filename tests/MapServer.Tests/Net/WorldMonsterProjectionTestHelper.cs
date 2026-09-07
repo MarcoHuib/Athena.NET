@@ -108,34 +108,47 @@ internal sealed class FakeCombatWorldRuntime : IWorldRuntime
     // rejected death) without needing a real incarnation/epoch mismatch to trigger it.
     public WorldMonsterDeathStatus? TryMarkMonsterDeadStatusOverride { get; set; }
 
-    // Item 2 of the Step 6 final correctness pass: throws a transient (IOException-shaped) failure
-    // for the FIRST N calls (decremented per call), then falls through to the ordinary
-    // override/Add-to-set behavior - proves MapClientSession's own transient-World-RPC-failure
-    // handling (log, leave HP untouched, re-arm the ordinary attack cadence, keep the repeat-attack
-    // loop alive) without needing a real Orleans transport failure.
+    // Item 2/3 of the Step 6 final correctness pass: throws a scripted exception for the FIRST N
+    // calls (decremented per call), then falls through to the ordinary override/Add-to-set behavior.
+    // `ThrowTransientTryMarkMonsterDeadCount` defaults the thrown exception to IOException (a
+    // genuinely transient, retryable failure per WorldRpcFailureClassifier) - proves
+    // MapClientSession's own transient-World-RPC-failure handling (log, leave HP untouched, re-arm
+    // the ordinary attack cadence, keep the repeat-attack loop alive) without needing a real Orleans
+    // transport failure. `TryMarkMonsterDeadThrows` overrides WHICH exception type is thrown (e.g. an
+    // ArgumentException/InvalidOperationException, to prove item 3's own "must NOT be swallowed as
+    // transient" requirement) - set it BEFORE setting the count.
     private int _throwTransientTryMarkMonsterDeadCount;
     public int ThrowTransientTryMarkMonsterDeadCount { set => _throwTransientTryMarkMonsterDeadCount = value; }
+    public Func<Exception> TryMarkMonsterDeadThrows { get; set; } = static () => new IOException("Simulated transient World RPC failure.");
     public int TryMarkMonsterDeadCallCount { get; private set; }
 
-    public Task<WorldMonsterDeathResult> TryMarkMonsterDeadAsync(WorldMonsterLifeReference reference, CancellationToken cancellationToken)
+    // Step 6 final correctness pass, item 1's own race tests: an optional hook invoked immediately
+    // BEFORE TryMarkMonsterDeadAsync returns (its normal result OR its scripted exception) - lets a
+    // test simulate "World's independent Died feed reaches this same session's
+    // NotifyMonsterDiedAsync WHILE this exact RPC call is still in flight" at the precise moment
+    // this arbitration race requires, without needing genuine multi-threaded timing.
+    public Func<Task>? BeforeTryMarkMonsterDeadReturns { get; set; }
+
+    public async Task<WorldMonsterDeathResult> TryMarkMonsterDeadAsync(WorldMonsterLifeReference reference, CancellationToken cancellationToken)
     {
+        bool shouldThrow;
         lock (_gate)
         {
             TryMarkMonsterDeadCallCount++;
-            if (_throwTransientTryMarkMonsterDeadCount > 0)
-            {
-                _throwTransientTryMarkMonsterDeadCount--;
-                throw new IOException("Simulated transient World RPC failure.");
-            }
+            shouldThrow = _throwTransientTryMarkMonsterDeadCount > 0;
+            if (shouldThrow) _throwTransientTryMarkMonsterDeadCount--;
         }
 
-        if (TryMarkMonsterDeadStatusOverride is { } overrideStatus) return Task.FromResult(new WorldMonsterDeathResult(overrideStatus));
+        if (BeforeTryMarkMonsterDeadReturns is { } hook) await hook();
+
+        if (shouldThrow) throw TryMarkMonsterDeadThrows();
+        if (TryMarkMonsterDeadStatusOverride is { } overrideStatus) return new WorldMonsterDeathResult(overrideStatus);
 
         var key = (reference.MapId, reference.ActorId, reference.IncarnationId.Value);
         lock (_gate)
         {
             var status = _confirmedDead.Add(key) ? WorldMonsterDeathStatus.MarkedDead : WorldMonsterDeathStatus.AlreadyDead;
-            return Task.FromResult(new WorldMonsterDeathResult(status));
+            return new WorldMonsterDeathResult(status);
         }
     }
 

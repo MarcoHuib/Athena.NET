@@ -240,8 +240,9 @@ public sealed class MapClientSessionMonsterVisibilityReconciliationTests
         attackerSession.ForgetPlayer(actorId);
 
         // Now the World feed's own Died entry is fanned out to both sessions.
-        await attackerSession.NotifyMonsterDiedAsync(actorId, CancellationToken.None);
-        await bystanderSession.NotifyMonsterDiedAsync(actorId, CancellationToken.None);
+        var life = new WorldMonsterLifeReference(MapId, epoch, actorId, incarnation);
+        await attackerSession.NotifyMonsterDiedAsync(life, CancellationToken.None);
+        await bystanderSession.NotifyMonsterDiedAsync(life, CancellationToken.None);
 
         // Bystander receives exactly one vanish, with reason=Died - item 5 of the Step 6
         // correctness-hardening pass: an authoritative World death must use reason=Died for every
@@ -291,7 +292,7 @@ public sealed class MapClientSessionMonsterVisibilityReconciliationTests
         // attacker's own already-cleared case) - NotifyMonsterDiedAsync must still run its own
         // monster-visibility cleanup rather than short-circuiting entirely.
         session.ForgetPlayer(actorId);
-        await session.NotifyMonsterDiedAsync(actorId, CancellationToken.None);
+        await session.NotifyMonsterDiedAsync(new WorldMonsterLifeReference(MapId, epoch, actorId, oldIncarnation), CancellationToken.None);
 
         // A respawn under a NEW incarnation, same ActorId/position, reconciled via the ordinary full
         // reconciliation path - must be treated as a genuine fresh discovery (a stand entry is sent),
