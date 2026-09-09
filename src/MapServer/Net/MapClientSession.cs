@@ -418,12 +418,21 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     internal uint AccountId => _accountId;
     uint IPlayerPresenceObserver.ActorId => _accountId;
     internal string CurrentMapName => _mapName;
-    // The World-registered CharacterId for this session - by this codebase's own established
-    // convention (see RegisterPresenceAsync's own call site), CharacterId IS AccountId; a separate
-    // accessor exists so callers that specifically need "the identity World knows this player by"
-    // (e.g. building a WorldMonsterAttackWindowQuery/WorldMonsterAttackedCommand) read it under
-    // that name rather than reaching for AccountId and having to know they're the same value.
-    internal uint CharacterId => _accountId;
+    // Live-acceptance fix: CharacterId is NOT AccountId - they are two intentionally distinct
+    // Ragnarok identities (the earlier comment here claiming "CharacterId IS AccountId" was
+    // disproven by a real live capture: accountId=2000000, charId=1, and every World-side call
+    // built with the OLD accessor's value (2000000) was rejected as StaleAttackerPresence because
+    // World registers/resolves player presence by the REAL CharacterId (_charId), never the
+    // account/actor id). PlayerPresence/WorldPlayerPresence both already keep ActorId and
+    // CharacterId as separate fields (BuildCurrentPresence passes _accountId and _charId
+    // separately), and the existing movement path already correctly sends _charId as
+    // WorldMovementCommand.CharacterId - this accessor now matches that same, already-correct
+    // convention. Every World contract field explicitly named CharacterId (WorldMonsterAttackedCommand.
+    // AttackerCharacterId, WorldMonsterAttackWindowQuery, WorldPresenceLifeStateUpdate.CharacterId,
+    // MonsterAttackCadenceExecutor's own target-session matching) must use THIS accessor, never
+    // AccountId/ActorId - see this codebase's own audit trail in the commit that introduced this
+    // fix for the full list of corrected call sites.
+    internal uint CharacterId => _charId;
     // Null until CompleteIroAuthenticationAsync's own presence-registration path has actually run
     // (see _presenceId's own field doc comment) - a caller needing to address this session's World
     // presence (monster-attack RPCs, life-state updates) must handle the null case exactly like

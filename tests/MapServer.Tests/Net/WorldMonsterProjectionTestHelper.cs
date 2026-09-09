@@ -161,8 +161,22 @@ internal sealed class FakeCombatWorldRuntime : IWorldRuntime
     // depends on) - settable so a test can script a non-success status (StaleLifeReference,
     // StaleAttackerPresence, MonsterNotAttackable, AttackerNotEngageable) to prove MapClientSession's
     // own fail-closed handling of a rejected non-lethal engagement-acquisition result (item 8 of the
-    // Step 6 hardening pass).
+    // Step 6 hardening pass). Ignored entirely when StrictPresenceValidation is true (see that
+    // field's own doc comment) - the strict path derives its own status from the ACTUAL registered
+    // presence instead of a scripted override.
     public WorldMonsterAttackedStatus NotifyMonsterAttackedStatusOverride { get; set; } = WorldMonsterAttackedStatus.Acquired;
+
+    // Live-acceptance identity-bug regression: when true, NotifyMonsterAttackedAsync stops
+    // returning the scripted NotifyMonsterAttackedStatusOverride unconditionally and instead
+    // genuinely validates command.AttackerCharacterId/AttackerPresenceId against whatever presence
+    // was actually registered via RegisterPresenceAsync - returning StaleAttackerPresence for a
+    // CharacterId/PresenceId that does not match a real registered presence, exactly like the real
+    // WorldPartitionGrain does. This exists specifically so a test proving the CharacterId-vs-
+    // AccountId identity fix cannot pass merely because a lenient fake blindly returns Acquired for
+    // whatever value it's handed - see MapClientSessionAttackerIdentityTests.cs for the tests that
+    // require this validation to be genuine.
+    public bool StrictPresenceValidation { get; set; }
+    public WorldMonsterAttackedCommand? LastNotifyMonsterAttackedCommand { get; private set; }
 
     // Item 2 of the Step 6 final correctness pass: same transient-failure-once shape as
     // ThrowTransientTryMarkMonsterDeadCount above, for the non-lethal engagement-acquisition RPC.
@@ -175,10 +189,19 @@ internal sealed class FakeCombatWorldRuntime : IWorldRuntime
         lock (_gate)
         {
             NotifyMonsterAttackedCallCount++;
+            LastNotifyMonsterAttackedCommand = command;
             if (_throwTransientNotifyMonsterAttackedCount > 0)
             {
                 _throwTransientNotifyMonsterAttackedCount--;
                 throw new IOException("Simulated transient World RPC failure.");
+            }
+
+            if (StrictPresenceValidation)
+            {
+                var status = _presences.TryGetValue(command.AttackerCharacterId, out var registered) && registered.PresenceId == command.AttackerPresenceId
+                    ? WorldMonsterAttackedStatus.Acquired
+                    : WorldMonsterAttackedStatus.StaleAttackerPresence;
+                return Task.FromResult(new WorldMonsterAttackedResult(status));
             }
         }
         return Task.FromResult(new WorldMonsterAttackedResult(NotifyMonsterAttackedStatusOverride));
@@ -275,12 +298,17 @@ internal sealed class FakeCombatWorldRuntime : IWorldRuntime
     public int ThrowTransientFailureCount { set => _throwTransientFailureCount = value; }
     public int UpdatePresenceLifeStateCallCount { get; private set; }
     public WorldPresenceLifeStateStatus UpdatePresenceLifeStateStatusOverride { get; set; } = WorldPresenceLifeStateStatus.Updated;
+    // Live-acceptance identity-bug regression: records the exact update this fake most recently
+    // received, so a test can assert its CharacterId is the REAL World CharacterId (never the
+    // account/actor id) - see MapClientSessionAttackerIdentityTests.cs.
+    public WorldPresenceLifeStateUpdate? LastUpdatePresenceLifeStateUpdate { get; private set; }
 
     public Task<WorldPresenceLifeStateResult> UpdatePresenceLifeStateAsync(string mapId, WorldPresenceLifeStateUpdate update, CancellationToken cancellationToken)
     {
         lock (_gate)
         {
             UpdatePresenceLifeStateCallCount++;
+            LastUpdatePresenceLifeStateUpdate = update;
             if (_throwTransientFailureCount > 0)
             {
                 _throwTransientFailureCount--;
