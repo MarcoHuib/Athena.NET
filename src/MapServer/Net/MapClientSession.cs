@@ -199,6 +199,14 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     // "TryMarkMonsterDeadAsync itself still in flight" window FakeCombatWorldRuntime's own
     // BeforeTryMarkMonsterDeadReturns hook already covers.
     internal Func<Task>? DebugBeforeCommitConfirmedDeathAsync { get; set; }
+    // TEMPORARY live-acceptance diagnostic (Issue A investigation) - see MoveToAttackDiagnostics's
+    // own doc comment. Narrow, opt-in (only logs for the ONE targetActorId a live operator sets via
+    // DebugMoveToAttackTargetActorId), and REMOVE once the sub-millisecond latency question this
+    // exists to answer is closed. Never set in normal production use - defaults to null, meaning
+    // this entire diagnostic path is a complete no-op (single null-check per call site, no
+    // measurable overhead for every session/target this isn't explicitly armed for).
+    internal uint? DebugMoveToAttackTargetActorId { get; set; }
+    private MoveToAttackDiagnostics? _moveToAttackDiagnostics;
     private ScriptExecutionSession? _scriptExecutionSession;
     private Task? _generatedScriptTask;
     private string? _generatedScriptEntityId;
@@ -833,6 +841,14 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
             arrival = movement.IsMoving ? null : _pendingArrival; // Only relevant once the walk actually finished.
             mapAtAdvance = _mapName;
             movementDestinationAfterAdvance = movement.IsMoving ? movement.Destination : null;
+
+            // TEMPORARY Issue A diagnostic - see MoveToAttackDiagnostics's own doc comment. Fires
+            // exactly once, at the real authoritative moment the walk fully finishes (never mid-walk,
+            // never on a retarget that installed a brand-new in-progress route via StartWalk above) -
+            // matches event 5's own definition ("authoritative player arrival at the final movement
+            // cell") precisely.
+            if (!movement.IsMoving && _moveToAttackDiagnostics is { HasActiveCorrelation: true } diagArrival)
+                diagArrival.RecordAuthoritativeArrival(_x, _y);
 
             // World's own WorldPartitionGrain.AdvanceMovementAsync already removes its
             // ActiveMovement entry the moment the crossed cell reaches the final path cell - once
@@ -1470,6 +1486,14 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
             return;
         }
 
+        // TEMPORARY Issue A diagnostic - see MoveToAttackDiagnostics's own doc comment. Only logs
+        // while a correlation for the watched target is already active (started by event 1) - the
+        // live-test operator is expected to attack ONLY the watched monster during the diagnostic
+        // window, so any movement request arriving mid-correlation is presumptively the client's
+        // own auto-walk response to the just-sent 0x0139, matching event 3's own definition.
+        if (_moveToAttackDiagnostics is { HasActiveCorrelation: true } diag)
+            diag.RecordAutoWalkMovementRequestReceived(_x, _y, request.TargetX, request.TargetY);
+
         // Pinned unit_walktoxy (unit.cpp:888) unconditionally calls unit_stop_attack REGARDLESS of
         // whether this becomes a fresh walk or a mid-walk retarget - a real client movement request
         // always cancels any active repeat attack.
@@ -1577,6 +1601,8 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         MapLogger.Info(
             $"[iRO MAP DEBUG] Sending 0x0087 len=12 from=({fromX},{fromY}) to=({resolved.TargetX},{resolved.TargetY})");
         await WriteAsync(response, cancellationToken);
+        if (_moveToAttackDiagnostics is { HasActiveCorrelation: true } diagAfter0087)
+            diagAfter0087.RecordMovementResponseWriteCompleted(fromX, fromY, resolved.TargetX, resolved.TargetY);
         await StartPresenceMovementAsync(fromX, fromY, resolved.TargetX, resolved.TargetY, movementTick, cancellationToken);
 
         if (resolved.IntersectsWarp)
@@ -1707,6 +1733,18 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         var targetActorId = request.TargetActorId;
         if (_combat is null || _gameplayState is null) return;
         if (!TryGetProjectedMonster(targetActorId, out var target) || target.Instance.Lifecycle != WorldMonsterLifecycleState.Alive) return;
+
+        // TEMPORARY Issue A diagnostic - see MoveToAttackDiagnostics's own doc comment. No-op unless
+        // an operator explicitly armed DebugMoveToAttackTargetActorId for this exact ActorId.
+        if (DebugMoveToAttackTargetActorId == targetActorId)
+        {
+            _moveToAttackDiagnostics ??= new MoveToAttackDiagnostics(_timeProvider, _accountId, _charId, targetActorId);
+            var targetPos = target.GetPosition();
+            if (_moveToAttackDiagnostics.HasActiveCorrelation)
+                _moveToAttackDiagnostics.RecordSecondAttackRequest(_x, _y, targetPos.X, targetPos.Y);
+            else
+                _moveToAttackDiagnostics.RecordFirstAttackRequest(_x, _y, targetPos.X, targetPos.Y);
+        }
 
         RepeatAttackState newState;
         bool dueNow;
@@ -2013,6 +2051,8 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
             // byte-for-byte against what Athena actually sent.
             MapLogger.Info($"[iRO MAP DEBUG] Sending 0x0139 (PINNED-SOURCE-BACKED, NOT capture-verified) len={failurePacket.Length} bytes={Convert.ToHexString(failurePacket)}");
             await WriteAsync(failurePacket, cancellationToken);
+            if (DebugMoveToAttackTargetActorId == expected.TargetActorId)
+                _moveToAttackDiagnostics?.RecordAttackFailureWriteCompleted(_x, _y, targetPositionForRangeCheck.X, targetPositionForRangeCheck.Y);
             // Pinned unit_attack_timer_sub's far-away branch never re-arms ud->attacktimer - only
             // the tail AFTER a real hit lands does that (unit.cpp:3333, "if (attack_continue &&
             // !status_isdead)"). The repeat-attack intent is therefore cleared here, not merely
@@ -2083,6 +2123,8 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
                 return;
             }
             MapLogger.Info($"[iRO MAP DEBUG] Mob engagement NotifyMonsterAttackedAsync mobActorId={target.ActorId} targetCharacterId={CharacterId} result={attackedResult.Status}");
+            if (DebugMoveToAttackTargetActorId == target.ActorId)
+                _moveToAttackDiagnostics?.RecordNotifyMonsterAttackedCompleted(_x, _y);
 
             if (attackedResult.Status is not (WorldMonsterAttackedStatus.Acquired or WorldMonsterAttackedStatus.AlreadyCurrentTarget))
             {
@@ -2308,6 +2350,8 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
             div: 1,
             actionType: 0);
         await WriteAsync(damagePacket, cancellationToken);
+        if (DebugMoveToAttackTargetActorId == expected.TargetActorId)
+            _moveToAttackDiagnostics?.RecordFirstDamageWriteCompleted(_x, _y, target.GetPosition().X, target.GetPosition().Y);
 
         // ZC_HP_INFO (0x0977) immediately follows the damage packet, matching pinned
         // status_damage -> mob_damage's own ordering (status.cpp:1629-1657): HP is already

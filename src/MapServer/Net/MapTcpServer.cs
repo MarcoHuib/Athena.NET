@@ -674,6 +674,12 @@ public sealed class MapTcpServer
         using (client)
         await using (var session = new MapClientSession(sessionId, client, _charConnector, _world, _worldRuntime))
         {
+            // TEMPORARY Issue A diagnostic wiring - see MoveToAttackDiagnostics's own doc comment.
+            // Opt-in only: reads an environment variable ONCE per session so an operator can arm the
+            // diagnostic for a single live-test run without any config-file/CLI surface, and REMOVE
+            // this block (and the env var) once Issue A's investigation is closed.
+            if (uint.TryParse(Environment.GetEnvironmentVariable("ATHENA_DEBUG_MOVE_TO_ATTACK_TARGET_ACTOR_ID"), out var debugTargetActorId))
+                session.DebugMoveToAttackTargetActorId = debugTargetActorId;
             _sessions[sessionId] = session;
             try
             {
