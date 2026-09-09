@@ -132,6 +132,20 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     // replaced repeat-attack target may need the loop to wake earlier than its current sleep, or
     // wake it from indefinite waiting when no repeat attack was previously active.
     private readonly SemaphoreSlim _attackSignal = new(0, 1);
+    // Live-acceptance fix: serializes ACTUAL attack-turn EXECUTION (PerformDueRepeatAttackAsync's
+    // own body - range checks, World RPCs, HP mutation, wire projection) across its two possible
+    // callers: HandleIroAttackRequestAsync's own inline due-now execution (see that method's own
+    // doc comment for why an immediately-due 0x0437 now executes synchronously within the packet
+    // handler, matching pinned unit_attack's "Attack NOW" branch - unit.cpp:2971-2978) and
+    // RunRepeatAttackLoopAsync's background scheduled execution. Distinct from _attackGate, which
+    // ONLY guards brief reads/writes of the _repeatAttack field reference itself and is never held
+    // across an await beyond the wait call - this gate instead wraps the FULL multi-step execution
+    // (World RPCs, packet writes, persistence) so the required invariant "one RepeatAttackState -> at
+    // most one due attack execution at a time" holds even though two independently-scheduled call
+    // paths can now both reach PerformDueRepeatAttackAsync. Never held across a wait on _attackGate
+    // itself (that would be a lock-ordering hazard) - _attackGate is always acquired/released for its
+    // own short field check first, independently.
+    private readonly SemaphoreSlim _attackExecutionGate = new(1, 1);
     private Task? _attackLoop;
     private readonly SemaphoreSlim _writeLock = new(1, 1);
     // Diagnostic-only, read solely by RunAsync's own finally block to log the last packet
@@ -1050,6 +1064,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
             _movementGate.Dispose();
             _attackSignal.Dispose();
             _attackGate.Dispose();
+            _attackExecutionGate.Dispose();
         }
 
         if (firstError is not null)
@@ -1653,14 +1668,30 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     // Verified capture: 0x0437/8 (clif_parse_ActionRequest, clif.cpp:11818): id.W targetActorId.L
     // actionType.B (offset 6, DMG_REPEAT=7 in every live capture) opaqueByte.B (offset 7).
     // Pinned clif_parse_ActionRequest_sub (clif.cpp:11716-11739) dispatches DMG_NORMAL/DMG_REPEAT
-    // to the SAME unit_attack call - this handler does the same: it never performs a hit itself,
-    // it only resolves/validates the target and registers (or replaces) this session's ONE
-    // server-owned repeat-attack state (pinned unit_attack, unit.cpp:2942-2953 - "just change
-    // target/type" when an attack is already active for this unit). RunRepeatAttackLoopAsync
-    // (started once per session by EnsureRuntimeLoopsStarted, same pattern as the movement/status
-    // loops) owns actually executing hits on the pinned attack-delay cadence. A target that does
-    // not resolve to a live MobInstance on the player's current map is silently ignored (no fake
-    // success), matching this handler's existing "never fake a result" rule.
+    // to the SAME unit_attack call - this handler does the same: it resolves/validates the target
+    // and registers (or replaces) this session's ONE server-owned repeat-attack state (pinned
+    // unit_attack, unit.cpp:2942-2953 - "just change target/type" when an attack is already active
+    // for this unit). A target that does not resolve to a live MobInstance on the player's current
+    // map is silently ignored (no fake success), matching this handler's existing "never fake a
+    // result" rule.
+    //
+    // Live-acceptance fix: pinned unit_attack does NOT always defer the first turn to an
+    // independently-scheduled timer (unit.cpp:2971-2978 - "if (DIFF_TICK(ud->attackabletime,
+    // tick) > 0) { add attack timer } else { Attack NOW }"). The earlier shape here ALWAYS deferred
+    // a due-now attack to RunRepeatAttackLoopAsync's own background task via _attackSignal, which
+    // opened a real race proven by a live Ragexe capture: the client's own frequent 0x035F
+    // movement-continuation packets (sent while auto-walking after a ZC_ATTACK_FAILURE_FOR_DISTANCE
+    // response) could reach HandleIroMovementAsync and clear _repeatAttack BEFORE the background
+    // loop ever got scheduled to run PerformDueRepeatAttackAsync for the state this exact request
+    // just created - producing a SILENT drop (the ReferenceEquals check at the top of that method
+    // returns without any log line) with no 0x0139, no 0x08C8, nothing. A due-now turn is therefore
+    // now executed SYNCHRONOUSLY within this packet handler, closing that window entirely: no other
+    // incoming packet (movement or otherwise) can be processed by this session's own packet-read
+    // loop until this handler returns, since RunAsync's own read loop awaits each handler in turn.
+    // A NOT-yet-due retarget (an already-pending cooldown inherited from the existing target, per
+    // "just change target/type") is left scheduled for RunRepeatAttackLoopAsync exactly as before -
+    // unit_attack's own "Attack NOW" branch is specifically for the immediately-due case, never for
+    // forcing an extra hit ahead of an already-ticking cooldown.
     private async Task HandleIroAttackRequestAsync(byte[] packet, CancellationToken cancellationToken)
     {
         if (!IroAttackRequestPacket.TryParse(packet, out var request)) return;
@@ -1668,6 +1699,8 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         if (_combat is null || _gameplayState is null) return;
         if (!TryGetProjectedMonster(targetActorId, out var target) || target.Instance.Lifecycle != WorldMonsterLifecycleState.Alive) return;
 
+        RepeatAttackState newState;
+        bool dueNow;
         await _attackGate.WaitAsync(cancellationToken);
         try
         {
@@ -1682,9 +1715,45 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
             // a brand-new repeat state (no prior NextAttackAt to inherit) is always "now", since
             // Athena has no cross-target attackabletime state to carry over otherwise.
             var nextAttackAt = _repeatAttack?.NextAttackAt ?? _timeProvider.GetUtcNow();
-            _repeatAttack = new RepeatAttackState(targetActorId) { NextAttackAt = nextAttackAt };
+            newState = new RepeatAttackState(targetActorId) { NextAttackAt = nextAttackAt };
+            _repeatAttack = newState;
+            dueNow = nextAttackAt <= _timeProvider.GetUtcNow();
         }
         finally { _attackGate.Release(); }
+
+        if (dueNow)
+        {
+            // Executes synchronously within this packet handler - see this method's own doc comment
+            // above for exactly why. The wake signal for RunRepeatAttackLoopAsync is DELIBERATELY
+            // deferred to the `finally` below (released only once this inline attempt has fully
+            // resolved - success, a benign no-op, OR an exception) rather than released up front:
+            // releasing it before this call would let the loop's own background execution race in
+            // and attempt the EXACT SAME due turn concurrently. _attackExecutionGate correctly
+            // serializes their EXECUTION either way, and PerformDueRepeatAttackCoreAsync's own
+            // "already executed" re-check (NextAttackAt now in the future) correctly prevents a
+            // genuine double-HIT for the success case - but a call that instead THROWS (e.g. a World
+            // RPC failure) never reaches that reschedule at all, so a concurrently-woken loop would
+            // still find the turn "due" and attempt the SAME failing call a second time, wastefully
+            // (and misleadingly, for anything counting attempts). Deferring the wake until this
+            // attempt has resolved SUCCESSFULLY (never in a `finally` - deliberately NOT released
+            // when this call throws) closes that gap entirely: an exception here is, per this
+            // session's own established classification (IsTransientWorldRpcFailure), either already
+            // internally caught/handled inside PerformDueRepeatAttackCoreAsync's own narrow World-RPC
+            // try/catch blocks (which DO reschedule NextAttackAt before returning normally, so this
+            // line still runs and correctly wakes the loop for its own future sleep) or a genuinely
+            // unclassified/terminal defect propagating all the way out (which tears the whole session
+            // down via RunAsync's own top-level `finally` -> StopAsync -> cancellation - see that
+            // method's own doc comment) - in the terminal case there is nothing useful left to wake
+            // the loop FOR: it is about to be cancelled and joined anyway, and waking it first would
+            // only let it race in and re-attempt the SAME already-failing call before that
+            // cancellation lands, exactly the double-attempt this fix exists to prevent.
+            await PerformDueRepeatAttackAsync(newState, cancellationToken);
+            try { _attackSignal.Release(); } catch (SemaphoreFullException) { }
+            return;
+        }
+
+        // Not yet due - wake the loop so it can register its own delay wait toward the (possibly
+        // earlier-than-previously-computed) NextAttackAt, exactly as before.
         try { _attackSignal.Release(); } catch (SemaphoreFullException) { }
     }
 
@@ -1794,6 +1863,28 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         return questId => questStates.GetValueOrDefault(questId, CharacterQuestStatus.Absent);
     }
 
+    // Live-acceptance fix: the ONE entry point either caller (HandleIroAttackRequestAsync's own
+    // inline due-now execution, or RunRepeatAttackLoopAsync's background scheduled execution) uses
+    // to actually execute a due attack turn - serializes them via _attackExecutionGate so the
+    // required invariant "one RepeatAttackState -> at most one due attack execution at a time"
+    // holds regardless of which caller reaches it first, then delegates to
+    // PerformDueRepeatAttackCoreAsync (the unchanged original body) for the actual execution.
+    // _attackExecutionGate is only ever held around this call - never across any OTHER await in
+    // either caller - so a caller blocked waiting for it is simply waiting for whichever execution
+    // is already in flight to finish, never for an unrelated I/O operation.
+    private async Task PerformDueRepeatAttackAsync(RepeatAttackState expected, CancellationToken cancellationToken)
+    {
+        await _attackExecutionGate.WaitAsync(cancellationToken);
+        try
+        {
+            await PerformDueRepeatAttackCoreAsync(expected, cancellationToken);
+        }
+        finally
+        {
+            _attackExecutionGate.Release();
+        }
+    }
+
     // Executes exactly one authoritative hit for the repeat-attack state active at the time the
     // loop woke. Reschedules the next hit (or clears the state on death/target-loss) BEFORE
     // sending any wire notification for this hit - the pinned unit_attack_timer_sub tail
@@ -1807,13 +1898,30 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     // still the CURRENT session target (not merely non-null) before doing anything: a replacing
     // attack request or a teleport/movement cancellation between "the loop woke" and "this method
     // acquired the gate" must not let a stale hit execute or reschedule against a target the
-    // session no longer intends to attack.
-    private async Task PerformDueRepeatAttackAsync(RepeatAttackState expected, CancellationToken cancellationToken)
+    // session no longer intends to attack. Only ever called through PerformDueRepeatAttackAsync
+    // above, which holds _attackExecutionGate for the ENTIRE duration of this method's own body.
+    private async Task PerformDueRepeatAttackCoreAsync(RepeatAttackState expected, CancellationToken cancellationToken)
     {
         await _attackGate.WaitAsync(cancellationToken);
         try
         {
             if (!ReferenceEquals(_repeatAttack, expected)) return;
+            // Live-acceptance fix: RepeatAttackState.NextAttackAt is mutated IN PLACE on the same
+            // instance (see that record's own doc comment) - ReferenceEquals alone is therefore
+            // insufficient to detect "this exact turn was already executed": HandleIroAttackRequestAsync's
+            // own inline due-now execution and RunRepeatAttackLoopAsync's background execution can
+            // both be woken for the SAME RepeatAttackState instance (the inline path always signals
+            // the loop too - see that method's own doc comment on why), and _attackExecutionGate only
+            // serializes their EXECUTION, never prevents a second caller from re-entering after the
+            // first already completed and rescheduled `expected.NextAttackAt` to a future time on
+            // that SAME object. Without this explicit re-check, the second caller would silently
+            // re-execute an already-completed turn, producing a real double-hit (proven by this
+            // project's own test suite: WeakFreshNovice's deterministic Knife damage one-shot a
+            // monster that should have taken two hits, and a lethal-death test observed roughly
+            // double the expected total damage). Re-reading `_timeProvider.GetUtcNow()` here (not
+            // reusing a value captured before this gate was acquired) matches PerformDueRepeatAttackAsync's
+            // own "current" semantics used everywhere else in this method.
+            if (expected.NextAttackAt > _timeProvider.GetUtcNow()) return;
         }
         finally { _attackGate.Release(); }
 
