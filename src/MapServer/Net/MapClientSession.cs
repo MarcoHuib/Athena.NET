@@ -200,13 +200,33 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     // BeforeTryMarkMonsterDeadReturns hook already covers.
     internal Func<Task>? DebugBeforeCommitConfirmedDeathAsync { get; set; }
     // TEMPORARY live-acceptance diagnostic (Issue A investigation) - see MoveToAttackDiagnostics's
-    // own doc comment. Narrow, opt-in (only logs for the ONE targetActorId a live operator sets via
-    // DebugMoveToAttackTargetActorId), and REMOVE once the sub-millisecond latency question this
-    // exists to answer is closed. Never set in normal production use - defaults to null, meaning
-    // this entire diagnostic path is a complete no-op (single null-check per call site, no
-    // measurable overhead for every session/target this isn't explicitly armed for).
+    // own doc comment for the full two-mode design. Both are opt-in and REMOVE-together once the
+    // sub-millisecond latency question this exists to answer is closed. Never set in normal
+    // production use - both default to null/false, meaning the diagnostic path is a complete no-op
+    // (single null-check per call site, no measurable overhead when not armed).
+    //   - DebugMoveToAttackTargetActorId: exact-ActorId mode - the operator already knows the live
+    //     ActorId to watch.
+    //   - DebugMoveToAttackAutoArm: simpler live-test mode - auto-picks whichever monster this
+    //     session's FIRST out-of-range attack rejection targets, no ActorId/restart needed.
+    // At most one is meaningfully used per session in practice (MapTcpServer's own wiring sets
+    // exactly one, from the ATHENA_DEBUG_MOVE_TO_ATTACK_TARGET_ACTOR_ID / ATHENA_DEBUG_MOVE_TO_ATTACK
+    // environment variables respectively) - EnsureMoveToAttackDiagnostics below picks whichever is set.
     internal uint? DebugMoveToAttackTargetActorId { get; set; }
+    internal bool DebugMoveToAttackAutoArm { get; set; }
     private MoveToAttackDiagnostics? _moveToAttackDiagnostics;
+
+    // Lazily constructs (once) the diagnostics instance matching whichever mode is armed - null if
+    // neither is armed, making every call site's own check a single field read plus a pattern match,
+    // never a repeated re-evaluation of which mode is active.
+    private MoveToAttackDiagnostics? EnsureMoveToAttackDiagnostics()
+    {
+        if (_moveToAttackDiagnostics is not null) return _moveToAttackDiagnostics;
+        if (DebugMoveToAttackTargetActorId is { } fixedTarget)
+            return _moveToAttackDiagnostics = new MoveToAttackDiagnostics(_timeProvider, _accountId, _charId, fixedTarget);
+        if (DebugMoveToAttackAutoArm)
+            return _moveToAttackDiagnostics = new MoveToAttackDiagnostics(_timeProvider, _accountId, _charId, autoArm: true);
+        return null;
+    }
     private ScriptExecutionSession? _scriptExecutionSession;
     private Task? _generatedScriptTask;
     private string? _generatedScriptEntityId;
@@ -1316,6 +1336,12 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         _attackGate.Wait();
         try { _repeatAttack = null; }
         finally { _attackGate.Release(); }
+
+        // TEMPORARY Issue A diagnostic - a map change/warp genuinely cancels any in-progress
+        // move-to-attack sequence (the player left the area entirely) - abort cleanly rather than
+        // leaving a stale correlation that would otherwise misattribute a LATER, unrelated attack's
+        // events to this abandoned one.
+        _moveToAttackDiagnostics?.Abort("map transition/warp");
     }
 
     // Reconciles _x/_y against real elapsed walking time. Pinned rAthena's authoritative position
@@ -1734,16 +1760,33 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         if (_combat is null || _gameplayState is null) return;
         if (!TryGetProjectedMonster(targetActorId, out var target) || target.Instance.Lifecycle != WorldMonsterLifecycleState.Alive) return;
 
-        // TEMPORARY Issue A diagnostic - see MoveToAttackDiagnostics's own doc comment. No-op unless
-        // an operator explicitly armed DebugMoveToAttackTargetActorId for this exact ActorId.
-        if (DebugMoveToAttackTargetActorId == targetActorId)
+        // TEMPORARY Issue A diagnostic - see MoveToAttackDiagnostics's own doc comment.
+        // Exact-ActorId mode: logs event 1 the moment the FIRST request for the fixed watched
+        // ActorId arrives (IsWatching is true from construction, HasActiveCorrelation starts false),
+        // and event 6 for any LATER request while a correlation is already active (the genuine
+        // retry after an out-of-range rejection).
+        // Auto-arm mode: IsWatching is only ever true once a correlation has ALREADY been armed (by
+        // the first out-of-range rejection - see that call site's own comment) - so this block can
+        // only ever observe/log event 6 for it, never event 1 (auto-arm's own event 1 is
+        // synthesized retroactively at the rejection site instead, since arming itself only becomes
+        // possible once the range check there has run).
+        if (EnsureMoveToAttackDiagnostics() is { } diagAttackReq)
         {
-            _moveToAttackDiagnostics ??= new MoveToAttackDiagnostics(_timeProvider, _accountId, _charId, targetActorId);
-            var targetPos = target.GetPosition();
-            if (_moveToAttackDiagnostics.HasActiveCorrelation)
-                _moveToAttackDiagnostics.RecordSecondAttackRequest(_x, _y, targetPos.X, targetPos.Y);
-            else
-                _moveToAttackDiagnostics.RecordFirstAttackRequest(_x, _y, targetPos.X, targetPos.Y);
+            if (diagAttackReq.IsWatching(targetActorId))
+            {
+                var targetPos = target.GetPosition();
+                if (diagAttackReq.HasActiveCorrelation)
+                    diagAttackReq.RecordSecondAttackRequest(_x, _y, targetPos.X, targetPos.Y);
+                else
+                    diagAttackReq.RecordFirstAttackRequest(_x, _y, targetPos.X, targetPos.Y);
+            }
+            else if (diagAttackReq.HasActiveCorrelation)
+            {
+                // A fresh attack against a DIFFERENT target replaces the one being watched - the
+                // in-progress correlation is genuinely abandoned (the player switched targets before
+                // this move-to-attack sequence ever completed), not merely delayed.
+                diagAttackReq.Abort("replaced by attack against a different target");
+            }
         }
 
         RepeatAttackState newState;
@@ -2051,8 +2094,24 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
             // byte-for-byte against what Athena actually sent.
             MapLogger.Info($"[iRO MAP DEBUG] Sending 0x0139 (PINNED-SOURCE-BACKED, NOT capture-verified) len={failurePacket.Length} bytes={Convert.ToHexString(failurePacket)}");
             await WriteAsync(failurePacket, cancellationToken);
-            if (DebugMoveToAttackTargetActorId == expected.TargetActorId)
-                _moveToAttackDiagnostics?.RecordAttackFailureWriteCompleted(_x, _y, targetPositionForRangeCheck.X, targetPositionForRangeCheck.Y);
+            // TEMPORARY Issue A diagnostic - see MoveToAttackDiagnostics's own doc comment. THIS is
+            // the exact moment auto-arm mode picks its watched target: the genuine, real start of a
+            // move-to-attack sequence (an actual out-of-range rejection), never merely "any attack
+            // request arrived". Event 1 is synthesized retroactively here (using the SAME
+            // player/target position this rejection itself just computed - _x,_y already reflects
+            // SyncPositionToNow's own authoritative read above) ONLY when TryAutoArm genuinely just
+            // armed a fresh correlation - a request against an ALREADY-watched target (exact-ActorId
+            // mode, or an auto-arm correlation already in flight) must never re-log event 1 a second
+            // time for the same attempt.
+            if (EnsureMoveToAttackDiagnostics() is { } diagRejected)
+            {
+                var justArmed = diagRejected.TryAutoArm(expected.TargetActorId);
+                if (diagRejected.IsWatching(expected.TargetActorId))
+                {
+                    if (justArmed) diagRejected.RecordFirstAttackRequest(_x, _y, targetPositionForRangeCheck.X, targetPositionForRangeCheck.Y);
+                    diagRejected.RecordAttackFailureWriteCompleted(_x, _y, targetPositionForRangeCheck.X, targetPositionForRangeCheck.Y);
+                }
+            }
             // Pinned unit_attack_timer_sub's far-away branch never re-arms ud->attacktimer - only
             // the tail AFTER a real hit lands does that (unit.cpp:3333, "if (attack_continue &&
             // !status_isdead)"). The repeat-attack intent is therefore cleared here, not merely
@@ -2123,8 +2182,8 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
                 return;
             }
             MapLogger.Info($"[iRO MAP DEBUG] Mob engagement NotifyMonsterAttackedAsync mobActorId={target.ActorId} targetCharacterId={CharacterId} result={attackedResult.Status}");
-            if (DebugMoveToAttackTargetActorId == target.ActorId)
-                _moveToAttackDiagnostics?.RecordNotifyMonsterAttackedCompleted(_x, _y);
+            if (_moveToAttackDiagnostics is { HasActiveCorrelation: true } diagNotify && diagNotify.IsWatching(target.ActorId))
+                diagNotify.RecordNotifyMonsterAttackedCompleted(_x, _y);
 
             if (attackedResult.Status is not (WorldMonsterAttackedStatus.Acquired or WorldMonsterAttackedStatus.AlreadyCurrentTarget))
             {
@@ -2350,8 +2409,8 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
             div: 1,
             actionType: 0);
         await WriteAsync(damagePacket, cancellationToken);
-        if (DebugMoveToAttackTargetActorId == expected.TargetActorId)
-            _moveToAttackDiagnostics?.RecordFirstDamageWriteCompleted(_x, _y, target.GetPosition().X, target.GetPosition().Y);
+        if (_moveToAttackDiagnostics is { HasActiveCorrelation: true } diagDamage && diagDamage.IsWatching(expected.TargetActorId))
+            diagDamage.RecordFirstDamageWriteCompleted(_x, _y, target.GetPosition().X, target.GetPosition().Y);
 
         // ZC_HP_INFO (0x0977) immediately follows the damage packet, matching pinned
         // status_damage -> mob_damage's own ordering (status.cpp:1629-1657): HP is already

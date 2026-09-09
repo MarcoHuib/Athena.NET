@@ -609,6 +609,143 @@ public sealed class WorldMonsterSimulationTests : IAsyncLifetime
         Assert.NotNull(afterBoundary);
     }
 
+    // Live-acceptance Issue B fix regression: pinned rAthena's unit_walktoxy_nextcell checks attack
+    // range (via unit_update_chase) BEFORE ever sending clif_move for a fresh leg - if the mob has
+    // already reached range, unit_stop_walking(USW_FIXPOS) sends ONLY clif_fixpos, never clif_move,
+    // because unit_walktoxy_nextcell returns before its own clif_move call is ever reached
+    // (unit.cpp:219-242). Before this fix, WorldMonsterMapSimulation.Tick's own Step 2 unconditionally
+    // started a fresh retarget walk (Append ChaseStarted/WalkStarted) BEFORE Step 4's later range
+    // re-evaluation could discover the mob was already in range and stop it (Append
+    // ChaseInterrupted/ChaseInterrupted) - producing a redundant WalkStarted-then-ChaseInterrupted
+    // pair for the SAME cell boundary, which MapServer projects verbatim as a spurious 0x09FD
+    // immediately followed by a 0x0088 fixpos correction (the exact live "monster snaps" symptom).
+    //
+    // Reproduces the same-tick case deterministically: a slow-walking mob is chasing a target that
+    // starts far away, then the target is repositioned to well within AttackRange (1) WHILE the mob
+    // is still mid-cell - forcing the pending-retarget consumption at the next cell boundary
+    // (AdvanceMovementForCombat's own retargetApplied=true branch) to land on a position that is
+    // ALREADY in range of the target's new location.
+    [Fact]
+    public async Task EngagedChase_RetargetConsumedAtCellBoundary_TargetAlreadyInRange_NoRedundantWalkStarted_DirectlyReportsChaseInterrupted()
+    {
+        var grain = Partition("world-rest");
+        var mapId = "izlude";
+        var slowSpawn = Spawn(mapId) with { Mode = CanMoveAndAttackMode, WalkSpeedMs = SlowWalkSpeedMs };
+        var load = await grain.LoadMonsterSpawnsAsync(Batch(mapId, [slowSpawn]));
+        var bootstrap = await grain.PollMonsterFeedAsync(cursor: null, mapId);
+        var actorId = bootstrap.Snapshot!.Single().ActorId;
+        var life = new WorldMonsterLifeReference(mapId, load.SimulationEpoch, actorId, WorldMonsterIncarnationId.First);
+
+        var characterId = 301u;
+        var presenceId = Guid.NewGuid();
+        // Starts far enough away (well outside AttackRange=1) that the mob begins a genuine chase walk.
+        await grain.RegisterPresenceAsync(Presence(presenceId, characterId, mapId, x: (ushort)(MonsterX + 10), y: MonsterY));
+        Assert.Equal(WorldMonsterAttackedStatus.Acquired,
+            (await grain.NotifyMonsterAttackedAsync(new WorldMonsterAttackedCommand(life, characterId, presenceId))).Status);
+
+        // Wait for the mob to have crossed AT LEAST ONE real cell boundary (X actually changed from
+        // spawn) - this proves AdvanceMovementForCombat's own retargetApplied branch is genuinely
+        // reachable (it only fires on an ACTUAL crossing, never merely "IsWalking=true" the instant
+        // a walk starts before any boundary has been reached) - a retarget issued before any
+        // crossing would instead be picked up directly by Step 4's own re-evaluation against the
+        // mob's still-at-spawn position, never exercising the Step 2 code path this test targets.
+        var crossedDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(6);
+        WorldMonsterInstance? crossed = null;
+        while (DateTime.UtcNow < crossedDeadline)
+        {
+            await Task.Delay(50);
+            var instance = (await grain.PollMonsterFeedAsync(cursor: null, mapId)).Snapshot!.Single();
+            if (instance.X != MonsterX || instance.Y != MonsterY) { crossed = instance; break; }
+        }
+        Assert.NotNull(crossed);
+        Assert.True(crossed!.IsWalking, "Expected the mob to still be walking (mid-chase) immediately after its first real cell crossing.");
+        var cursorBeforeRetarget = new WorldMonsterFeedCursor(load.SimulationEpoch, (await grain.PollMonsterFeedAsync(cursor: null, mapId)).AsOfSequence);
+
+        // Reposition the target to exactly 2 cells past the mob's OWN just-crossed CURRENT position -
+        // still genuinely OUT of AttackRange=1 right now (so Step 4's own immediate re-evaluation
+        // this same tick still correctly reports Chase, never InAttackRange), but exactly ONE cell
+        // closer than that is already in range - the crossing the mob's own pending retarget walk is
+        // about to make. This is the narrow same-tick window the fix targets: the mob is out of
+        // range the instant BEFORE crossing, and in range the instant AFTER - all within ONE
+        // AdvanceMovementForCombat call, never observable as two separate Step-4-only evaluations.
+        var closeTargetX = (ushort)(crossed.X + 2);
+        await grain.RegisterPresenceAsync(Presence(presenceId, characterId, mapId, x: closeTargetX, y: crossed.Y));
+
+        // Wait past the full 2-second cell boundary so the pending retarget is genuinely consumed.
+        var resolvedDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(6);
+        WorldMonsterInstance? resolved = null;
+        while (DateTime.UtcNow < resolvedDeadline)
+        {
+            await Task.Delay(300);
+            var instance = (await grain.PollMonsterFeedAsync(cursor: null, mapId)).Snapshot!.Single();
+            if (instance.Engagement == WorldMonsterEngagementState.InAttackRange) { resolved = instance; break; }
+        }
+        Assert.NotNull(resolved);
+        Assert.False(resolved!.IsWalking, "Expected the mob to be stationary once InAttackRange - no stale movement remains active.");
+
+        // The critical assertion: the incremental feed entries produced by this exact retarget-
+        // consumption/range-discovery boundary must contain NO WalkStarted entry - only the direct
+        // ChaseInterrupted transition, matching pinned rAthena's own clif_fixpos-only behavior.
+        var page = await grain.PollMonsterFeedAsync(cursorBeforeRetarget, mapId);
+        Assert.False(page.ResyncRequired, "Expected an ordinary incremental page, not a resync, for this bounded window.");
+        var entries = page.Entries!;
+        Assert.DoesNotContain(entries, e => e.MovementKind == WorldMonsterMovementKind.WalkStarted);
+        Assert.Contains(entries, e => e.Kind == WorldMonsterFeedEntryKind.ChaseInterrupted && e.MovementKind == WorldMonsterMovementKind.ChaseInterrupted);
+        // Final authoritative position/engagement/life identity are all correct despite skipping the
+        // redundant walk-start narrative.
+        Assert.Equal(WorldMonsterEngagementState.InAttackRange, resolved.Engagement);
+        Assert.Equal(actorId, resolved.ActorId);
+        Assert.Equal(WorldMonsterIncarnationId.First, resolved.IncarnationId);
+        Assert.NotNull(resolved.EngagedTarget);
+        Assert.Equal(characterId, resolved.EngagedTarget!.CharacterId);
+        Assert.Equal(presenceId, resolved.EngagedTarget.PresenceId);
+    }
+
+    // Control test for the same fix: when the retarget-consumption cell boundary lands on a position
+    // that is STILL genuinely out of range, the fresh chase WalkStarted entry must still be emitted
+    // normally - the fix must never suppress a legitimate walk-continuation, only the redundant one
+    // immediately superseded within the same evaluation.
+    [Fact]
+    public async Task EngagedChase_RetargetConsumedAtCellBoundary_TargetStillOutOfRange_WalkStartedStillEmitted()
+    {
+        var grain = Partition("world-rest");
+        var mapId = "izlude";
+        var slowSpawn = Spawn(mapId) with { Mode = CanMoveAndAttackMode, WalkSpeedMs = SlowWalkSpeedMs };
+        var load = await grain.LoadMonsterSpawnsAsync(Batch(mapId, [slowSpawn]));
+        var bootstrap = await grain.PollMonsterFeedAsync(cursor: null, mapId);
+        var actorId = bootstrap.Snapshot!.Single().ActorId;
+        var life = new WorldMonsterLifeReference(mapId, load.SimulationEpoch, actorId, WorldMonsterIncarnationId.First);
+
+        var characterId = 302u;
+        var presenceId = Guid.NewGuid();
+        await grain.RegisterPresenceAsync(Presence(presenceId, characterId, mapId, x: (ushort)(MonsterX + 10), y: MonsterY));
+        Assert.Equal(WorldMonsterAttackedStatus.Acquired,
+            (await grain.NotifyMonsterAttackedAsync(new WorldMonsterAttackedCommand(life, characterId, presenceId))).Status);
+
+        var startDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        while (DateTime.UtcNow < startDeadline && !(await grain.PollMonsterFeedAsync(cursor: null, mapId)).Snapshot!.Single().IsWalking)
+            await Task.Delay(150);
+        Assert.True((await grain.PollMonsterFeedAsync(cursor: null, mapId)).Snapshot!.Single().IsWalking);
+        var cursorBeforeRetarget = new WorldMonsterFeedCursor(load.SimulationEpoch, (await grain.PollMonsterFeedAsync(cursor: null, mapId)).AsOfSequence);
+
+        // Reposition the target to a DIFFERENT far-away cell - still well outside AttackRange=1 -
+        // forcing an ordinary retarget that must still be reported as a fresh WalkStarted, never
+        // suppressed.
+        var stillFarTargetX = (ushort)(MonsterX + 20);
+        await grain.RegisterPresenceAsync(Presence(presenceId, characterId, mapId, x: stillFarTargetX, y: MonsterY));
+
+        var appliedDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(6);
+        var sawWalkStarted = false;
+        while (DateTime.UtcNow < appliedDeadline && !sawWalkStarted)
+        {
+            await Task.Delay(300);
+            var page = await grain.PollMonsterFeedAsync(cursorBeforeRetarget, mapId);
+            if (page.ResyncRequired) continue;
+            sawWalkStarted = page.Entries!.Any(e => e.MovementKind == WorldMonsterMovementKind.WalkStarted);
+        }
+        Assert.True(sawWalkStarted, "Expected the fresh chase WalkStarted entry to still be emitted normally when the retargeted destination remains genuinely out of range.");
+    }
+
     // Correction #2: an engaged mob's ordinary chase cell-crossings must be feed-visible even when
     // no wire packet would be required for them - the feed must never suppress engaged-mob
     // position changes (the exact prior bug: Tick only appended Moved for UNENGAGED mobs).

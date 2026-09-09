@@ -359,14 +359,63 @@ internal sealed class WorldMonsterMapSimulation
                 instance.Spawn.Mob.WalkSpeed);
             if (retargetApplied)
             {
-                // The replacement path's own first leg is exactly the "movement changed, tell
-                // observers" event a fresh chase-start already produces - mirrors
-                // MonsterEngagementTickProcessor's own identical WalkStarted-shaped report for this
-                // exact case (see that type's own ProcessAsync comment). MovementKind=WalkStarted:
-                // a pending combat retarget applied at a real cell boundary IS a fresh walk from the
-                // Ragexe projection's own perspective (a new 0x09FD-shaped walk-entry is warranted),
-                // exactly like MonsterMovementChangeKind.WalkStarted on the MapServer side.
-                Append(WorldMonsterFeedEntryKind.ChaseStarted, instance, WorldMonsterMovementKind.WalkStarted);
+                // Pinned rAthena compatibility fix (live-acceptance Issue B): unit_walktoxy_nextcell
+                // (unit.cpp:180-247) checks attack range via unit_update_chase BEFORE ever sending
+                // clif_move for a fresh leg (unit.cpp:219-223) - if the mob has already reached
+                // attack range, unit_update_chase calls unit_stop_walking(USW_FIXPOS) and returns
+                // true, which makes unit_walktoxy_nextcell return immediately (unit.cpp:222) WITHOUT
+                // ever reaching its own clif_move call at unit.cpp:242. unit_stop_walking's own
+                // USW_FIXPOS branch (unit.cpp:1732-1737) sends ONLY clif_fixpos, never clif_move -
+                // so pinned rAthena can never emit a move packet immediately followed by a fixpos
+                // correction for the SAME evaluation; the range check structurally happens first.
+                //
+                // AdvanceMovementForCombat above already updated `instance`'s own position to the
+                // cell it just crossed INTO (the real authoritative arrival) and, if a retarget was
+                // pending, already installed a fresh walk toward the replacement destination via
+                // StartWalk - this mirrors pinned unit_walktoxy_sub's own "compute+install the
+                // replacement path" step, which pinned source also does unconditionally before the
+                // per-leg range check that may immediately cancel it (unit_walktoxy_nextcell is the
+                // FOLLOWING per-cell callback, not part of unit_walktoxy_sub itself). The check here
+                // reproduces that FOLLOWING per-cell range check, using the exact same
+                // WorldMonsterEngagementRules.Evaluate Step 4 below already uses, against the
+                // instance's now-current (just-arrived) position - never a stale pre-crossing one.
+                var retargetTarget = _engagementByActorId[actorId].Target;
+                var retargetPresence = retargetTarget is { } rt ? resolvePresence(rt.CharacterId) : null;
+                // Same stale-reconnect guard as Step 4's own identical check below (see that check's
+                // own doc comment) - a resolved presence whose CURRENT PresenceId no longer matches
+                // this engagement's own stored target reference is treated as "target gone" here too.
+                var retargetValidPresence = retargetTarget is { } rtRef && retargetPresence is { } rp && rp.PresenceId == rtRef.PresenceId ? rp : null;
+                var immediateDecision = WorldMonsterEngagementRules.Evaluate(instance, retargetValidPresence, isWalking(retargetTarget?.CharacterId ?? 0));
+
+                if (immediateDecision is WorldMonsterEngagementDecision.InAttackRange)
+                {
+                    // The freshly-installed walk leg never becomes visible to any Ragexe consumer -
+                    // stop it immediately (matching pinned USW_FIXPOS's own "stop on cell center"
+                    // behavior, unit.cpp:1732-1737) and report ONLY the authoritative stop-chase
+                    // transition, exactly like Step 4's own wasChasing branch below would for an
+                    // ordinary (non-retarget) chase reaching range - never both WalkStarted AND
+                    // ChaseInterrupted for the same evaluation. _engagementByActorId's own State is
+                    // updated here too so Step 4's later re-evaluation this SAME tick sees
+                    // InAttackRange already current (wasInAttackRangeAlready=true) and does not
+                    // append a SECOND, redundant entry for the identical transition.
+                    instance.StopChase();
+                    _engagementByActorId[actorId].State = WorldMonsterEngagementState.InAttackRange;
+                    Append(WorldMonsterFeedEntryKind.ChaseInterrupted, instance, WorldMonsterMovementKind.ChaseInterrupted);
+                }
+                else
+                {
+                    // The replacement path's own first leg is exactly the "movement changed, tell
+                    // observers" event a fresh chase-start already produces - mirrors
+                    // MonsterEngagementTickProcessor's own identical WalkStarted-shaped report for this
+                    // exact case (see that type's own ProcessAsync comment). MovementKind=WalkStarted:
+                    // a pending combat retarget applied at a real cell boundary IS a fresh walk from the
+                    // Ragexe projection's own perspective (a new 0x09FD-shaped walk-entry is warranted),
+                    // exactly like MonsterMovementChangeKind.WalkStarted on the MapServer side. Only
+                    // reached when the immediate range re-check above did NOT already resolve
+                    // InAttackRange - an ordinary chase retarget while genuinely still out of range,
+                    // unchanged from before this fix.
+                    Append(WorldMonsterFeedEntryKind.ChaseStarted, instance, WorldMonsterMovementKind.WalkStarted);
+                }
             }
             else if (crossed.Count > 0)
             {

@@ -675,11 +675,19 @@ public sealed class MapTcpServer
         await using (var session = new MapClientSession(sessionId, client, _charConnector, _world, _worldRuntime))
         {
             // TEMPORARY Issue A diagnostic wiring - see MoveToAttackDiagnostics's own doc comment.
-            // Opt-in only: reads an environment variable ONCE per session so an operator can arm the
+            // Opt-in only: reads environment variables ONCE per session so an operator can arm the
             // diagnostic for a single live-test run without any config-file/CLI surface, and REMOVE
-            // this block (and the env var) once Issue A's investigation is closed.
+            // this block (and both env vars) once Issue A's investigation is closed.
+            //   ATHENA_DEBUG_MOVE_TO_ATTACK=1 - simple auto-arm mode: no ActorId/restart needed, the
+            //     diagnostic picks whichever monster this session's own FIRST out-of-range attack
+            //     rejection targets.
+            //   ATHENA_DEBUG_MOVE_TO_ATTACK_TARGET_ACTOR_ID=<id> - exact-ActorId mode, kept for when
+            //     watching one already-known specific monster is more useful. If BOTH are set, the
+            //     exact-ActorId one wins (see MapClientSession.EnsureMoveToAttackDiagnostics).
             if (uint.TryParse(Environment.GetEnvironmentVariable("ATHENA_DEBUG_MOVE_TO_ATTACK_TARGET_ACTOR_ID"), out var debugTargetActorId))
                 session.DebugMoveToAttackTargetActorId = debugTargetActorId;
+            if (Environment.GetEnvironmentVariable("ATHENA_DEBUG_MOVE_TO_ATTACK") == "1")
+                session.DebugMoveToAttackAutoArm = true;
             _sessions[sessionId] = session;
             try
             {
