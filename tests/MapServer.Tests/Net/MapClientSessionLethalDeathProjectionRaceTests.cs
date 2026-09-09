@@ -140,6 +140,14 @@ public sealed class MapClientSessionLethalDeathProjectionRaceTests
 
         await scenario.Stream.WriteAsync(AttackPacket(scenario.ActorId));
 
+        // Live-acceptance wire-fidelity fix: pinned unit_attack's own due-now branch (unit.cpp:
+        // 2971-2978) sends clif_fixpos (0x0088, the ATTACKER's own current position)
+        // unconditionally, before the attack-timer-equivalent execution/World lethal-RPC race
+        // exercised below.
+        var fixposPacket = await ReadExact(scenario.Stream, PacketConstants.ZcStopMoveLength);
+        Assert.Equal((short)PacketConstants.ZcStopMove, BinaryPrimitives.ReadInt16LittleEndian(fixposPacket));
+        Assert.Equal(AccountId, BinaryPrimitives.ReadUInt32LittleEndian(fixposPacket.AsSpan(2)));
+
         // Read the damage packet (0x08C8, fixed length), HP-info (0x0977 hp=0, fixed length), and
         // vanish (0x0080 died, fixed length) - in that exact order - and confirm nothing else (no
         // duplicate vanish) follows.
@@ -195,6 +203,12 @@ public sealed class MapClientSessionLethalDeathProjectionRaceTests
 
         await scenario.Stream.WriteAsync(AttackPacket(scenario.ActorId));
 
+        // Live-acceptance wire-fidelity fix: the due-now fixpos precedes this due-now hit
+        // regardless of the later post-MarkedDead race exercised below.
+        var fixposPacket = await ReadExact(scenario.Stream, PacketConstants.ZcStopMoveLength);
+        Assert.Equal((short)PacketConstants.ZcStopMove, BinaryPrimitives.ReadInt16LittleEndian(fixposPacket));
+        Assert.Equal(AccountId, BinaryPrimitives.ReadUInt32LittleEndian(fixposPacket.AsSpan(2)));
+
         var damagePacket = await ReadExact(scenario.Stream, PacketConstants.ZcNotifyAct3Length);
         Assert.Equal((short)PacketConstants.ZcNotifyAct3, BinaryPrimitives.ReadInt16LittleEndian(damagePacket));
 
@@ -245,6 +259,12 @@ public sealed class MapClientSessionLethalDeathProjectionRaceTests
 
         await scenario.Stream.WriteAsync(AttackPacket(scenario.ActorId));
 
+        // Live-acceptance wire-fidelity fix: the due-now fixpos precedes this due-now hit
+        // regardless of the later CommitConfirmedDead non-Applied race exercised below.
+        var fixposPacket = await ReadExact(scenario.Stream, PacketConstants.ZcStopMoveLength);
+        Assert.Equal((short)PacketConstants.ZcStopMove, BinaryPrimitives.ReadInt16LittleEndian(fixposPacket));
+        Assert.Equal(AccountId, BinaryPrimitives.ReadUInt32LittleEndian(fixposPacket.AsSpan(2)));
+
         // The deferred authoritative vanish must still arrive - reason=Died, exactly once - even
         // though this session's own CommitConfirmedDeath never actually confirmed a local kill.
         var vanishPacket = await ReadExact(scenario.Stream, PacketConstants.ZcNotifyVanishLength);
@@ -283,6 +303,12 @@ public sealed class MapClientSessionLethalDeathProjectionRaceTests
         };
 
         await scenario.Stream.WriteAsync(AttackPacket(scenario.ActorId));
+
+        // Live-acceptance wire-fidelity fix: the due-now fixpos precedes this due-now hit
+        // regardless of the transient RPC failure exercised below.
+        var fixposPacket = await ReadExact(scenario.Stream, PacketConstants.ZcStopMoveLength);
+        Assert.Equal((short)PacketConstants.ZcStopMove, BinaryPrimitives.ReadInt16LittleEndian(fixposPacket));
+        Assert.Equal(AccountId, BinaryPrimitives.ReadUInt32LittleEndian(fixposPacket.AsSpan(2)));
 
         // The deferred authoritative vanish must arrive - reason=Died, exactly once - even though
         // the RPC that would have let THIS session claim ownership of the kill failed transiently.

@@ -119,6 +119,14 @@ public sealed class MapClientSessionNonLethalAttackFailClosedTests
 
         await stream.WriteAsync(AttackPacket(actorId));
 
+        // Live-acceptance wire-fidelity fix: pinned unit_attack's own due-now branch (unit.cpp:
+        // 2971-2978) sends clif_fixpos (0x0088, the ATTACKER's own current position)
+        // unconditionally, before the attack-timer-equivalent execution/World confirmation check -
+        // sent regardless of whether World subsequently confirms or rejects the hit.
+        var fixposPacket = await ReadExact(stream, PacketConstants.ZcStopMoveLength);
+        Assert.Equal((short)PacketConstants.ZcStopMove, BinaryPrimitives.ReadInt16LittleEndian(fixposPacket));
+        Assert.Equal(AccountId, BinaryPrimitives.ReadUInt32LittleEndian(fixposPacket.AsSpan(2)));
+
         // The actual hit executes asynchronously on the session's own background repeat-attack loop
         // (HandleIroAttackRequestAsync itself only registers the repeat-attack target and returns) -
         // poll for the repeat-attack target being cleared (the fail-closed handling's own observable

@@ -127,6 +127,20 @@ public sealed class MapClientSessionCombatRangeTests
         return damage;
     }
 
+    // Live-acceptance wire-fidelity fix: pinned unit_attack's own due-now branch (unit.cpp:2971-
+    // 2978) sends clif_fixpos (0x0088, the ATTACKER's own current position) unconditionally,
+    // immediately before the attack-timer-equivalent execution/range check - so EVERY genuinely
+    // due-now attack request in this file (whether the subsequent range check ultimately accepts
+    // or rejects it) gets exactly one of these first. Every attack request in this file is a
+    // fresh client packet (no server-owned repeat-attack scheduling is exercised here), so this
+    // is read once immediately after every AttackPacket write below.
+    private static async Task ReadFixposAsync(Stream stream)
+    {
+        var fixpos = await ReadExact(stream, PacketConstants.ZcStopMoveLength);
+        Assert.Equal((short)PacketConstants.ZcStopMove, BinaryPrimitives.ReadInt16LittleEndian(fixpos));
+        Assert.Equal(AccountId, BinaryPrimitives.ReadUInt32LittleEndian(fixpos.AsSpan(2)));
+    }
+
     private WorldSimulationEpoch _lastEpoch;
     private MonsterFeedProjectionRegistry? _lastProjections;
 
@@ -217,6 +231,14 @@ public sealed class MapClientSessionCombatRangeTests
 
         await stream.WriteAsync(AttackPacket(target.ActorId));
 
+        // Live-acceptance wire-fidelity fix: the due-now fixpos precedes even a REJECTED attack -
+        // pinned unit_attack sends it unconditionally before unit_attack_timer_sub's own range check.
+        var fixposPacket = await ReadExact(stream, PacketConstants.ZcStopMoveLength);
+        Assert.Equal((short)PacketConstants.ZcStopMove, BinaryPrimitives.ReadInt16LittleEndian(fixposPacket));
+        Assert.Equal(AccountId, BinaryPrimitives.ReadUInt32LittleEndian(fixposPacket.AsSpan(2)));
+        Assert.Equal((ushort)81, BinaryPrimitives.ReadUInt16LittleEndian(fixposPacket.AsSpan(6))); // player X.
+        Assert.Equal((ushort)64, BinaryPrimitives.ReadUInt16LittleEndian(fixposPacket.AsSpan(8))); // player Y.
+
         var failurePacket = await ReadExact(stream, PacketConstants.ZcAttackFailureForDistanceLength);
         Assert.Equal((short)PacketConstants.ZcAttackFailureForDistance, BinaryPrimitives.ReadInt16LittleEndian(failurePacket));
         Assert.Equal(target.ActorId, BinaryPrimitives.ReadUInt32LittleEndian(failurePacket.AsSpan(2)));
@@ -242,6 +264,7 @@ public sealed class MapClientSessionCombatRangeTests
         using var _disposeClient = client;
 
         await stream.WriteAsync(AttackPacket(target.ActorId));
+        await ReadFixposAsync(stream);
 
         var damagePacket = await ReadDamageThenHpInfo(stream);
         Assert.Equal((short)PacketConstants.ZcNotifyAct3, BinaryPrimitives.ReadInt16LittleEndian(damagePacket));
@@ -264,6 +287,7 @@ public sealed class MapClientSessionCombatRangeTests
         using var _disposeClient = client;
 
         await stream.WriteAsync(AttackPacket(target.ActorId));
+        await ReadFixposAsync(stream);
 
         var failurePacket = await ReadExact(stream, PacketConstants.ZcAttackFailureForDistanceLength);
         Assert.Equal((short)PacketConstants.ZcAttackFailureForDistance, BinaryPrimitives.ReadInt16LittleEndian(failurePacket));
@@ -285,6 +309,7 @@ public sealed class MapClientSessionCombatRangeTests
         using var _disposeClient = client;
 
         await stream.WriteAsync(AttackPacket(target.ActorId));
+        await ReadFixposAsync(stream);
         var firstHit = await ReadDamageThenHpInfo(stream);
         Assert.Equal((short)PacketConstants.ZcNotifyAct3, BinaryPrimitives.ReadInt16LittleEndian(firstHit));
         var hpAfterFirstHit = CurrentHpOf(combatState, target);
@@ -343,6 +368,7 @@ public sealed class MapClientSessionCombatRangeTests
         for (var i = 0; i < 20 && IsAlive(combatState, target); i++)
         {
             await stream.WriteAsync(AttackPacket(target.ActorId));
+            await ReadFixposAsync(stream);
             var damagePacket = await ReadDamageThenHpInfo(stream);
             Assert.Equal((short)PacketConstants.ZcNotifyAct3, BinaryPrimitives.ReadInt16LittleEndian(damagePacket));
             var damage = BinaryPrimitives.ReadUInt32LittleEndian(damagePacket.AsSpan(22));
@@ -372,6 +398,7 @@ public sealed class MapClientSessionCombatRangeTests
         using var _disposeClient = client;
 
         await stream.WriteAsync(AttackPacket(target.ActorId));
+        await ReadFixposAsync(stream);
 
         var failurePacket = await ReadExact(stream, PacketConstants.ZcAttackFailureForDistanceLength);
         Assert.Equal((short)PacketConstants.ZcAttackFailureForDistance, BinaryPrimitives.ReadInt16LittleEndian(failurePacket));

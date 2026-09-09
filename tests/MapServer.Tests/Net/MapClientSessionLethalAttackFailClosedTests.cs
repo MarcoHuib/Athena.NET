@@ -117,6 +117,14 @@ public sealed class MapClientSessionLethalAttackFailClosedTests
 
         await stream.WriteAsync(AttackPacket(actorId));
 
+        // Live-acceptance wire-fidelity fix: pinned unit_attack's own due-now branch (unit.cpp:
+        // 2971-2978) sends clif_fixpos (0x0088, the ATTACKER's own current position)
+        // unconditionally, before the attack-timer-equivalent execution/World death-confirmation
+        // check - sent regardless of whether World subsequently confirms or rejects the kill.
+        var fixposPacket = await ReadExact(stream, PacketConstants.ZcStopMoveLength);
+        Assert.Equal((short)PacketConstants.ZcStopMove, BinaryPrimitives.ReadInt16LittleEndian(fixposPacket));
+        Assert.Equal(AccountId, BinaryPrimitives.ReadUInt32LittleEndian(fixposPacket.AsSpan(2)));
+
         // Poll for the local combat-state key being discarded (item 1's own observable completion
         // signal for a StaleLifeReference rejection) with a bounded wait, rather than assuming a
         // fixed number of packet round-trips already means the hit was processed.
@@ -151,6 +159,12 @@ public sealed class MapClientSessionLethalAttackFailClosedTests
         Assert.Equal(1u, before.CurrentHp); // maxHp registered as 1 in SetupAsync.
 
         await stream.WriteAsync(AttackPacket(actorId));
+
+        // Live-acceptance wire-fidelity fix: the due-now fixpos precedes even a World-REJECTED
+        // lethal hit - pinned unit_attack sends it unconditionally before the range/execution check.
+        var fixposPacket = await ReadExact(stream, PacketConstants.ZcStopMoveLength);
+        Assert.Equal((short)PacketConstants.ZcStopMove, BinaryPrimitives.ReadInt16LittleEndian(fixposPacket));
+        Assert.Equal(AccountId, BinaryPrimitives.ReadUInt32LittleEndian(fixposPacket.AsSpan(2)));
 
         // No damage/HP-info/death-vanish/reward packet must EVER arrive - AlreadyDead is treated
         // conservatively as NOT proving this call owns a fresh death reward/projection (no

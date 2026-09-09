@@ -221,6 +221,15 @@ public sealed class MapClientSessionAttackSchedulingRaceTests
         await stream.WriteAsync(AttackPacket(target.ActorId));
         await stream.WriteAsync(MovementRequestPacket(76, 51));
 
+        // Live-acceptance wire-fidelity fix: pinned unit_attack's own due-now branch sends
+        // clif_fixpos (0x0088, the ATTACKER's own current position) unconditionally, before the
+        // attack-timer-equivalent execution/range check.
+        var fixposPacket = await ReadExact(stream, PacketConstants.ZcStopMoveLength);
+        Assert.Equal((short)PacketConstants.ZcStopMove, BinaryPrimitives.ReadInt16LittleEndian(fixposPacket));
+        Assert.Equal(AccountId, BinaryPrimitives.ReadUInt32LittleEndian(fixposPacket.AsSpan(2)));
+        Assert.Equal((ushort)75, BinaryPrimitives.ReadUInt16LittleEndian(fixposPacket.AsSpan(6)));
+        Assert.Equal((ushort)51, BinaryPrimitives.ReadUInt16LittleEndian(fixposPacket.AsSpan(8)));
+
         var damagePacket = await ReadExact(stream, PacketConstants.ZcNotifyAct3Length);
         Assert.Equal((short)PacketConstants.ZcNotifyAct3, BinaryPrimitives.ReadInt16LittleEndian(damagePacket));
         Assert.Equal(target.ActorId, BinaryPrimitives.ReadUInt32LittleEndian(damagePacket.AsSpan(6)));
@@ -267,6 +276,12 @@ public sealed class MapClientSessionAttackSchedulingRaceTests
 
         await stream.WriteAsync(AttackPacket(target.ActorId));
 
+        // Live-acceptance wire-fidelity fix: the due-now fixpos precedes even a REJECTED attack -
+        // pinned unit_attack sends it unconditionally before unit_attack_timer_sub's own range check.
+        var fixposPacket = await ReadExact(stream, PacketConstants.ZcStopMoveLength);
+        Assert.Equal((short)PacketConstants.ZcStopMove, BinaryPrimitives.ReadInt16LittleEndian(fixposPacket));
+        Assert.Equal(AccountId, BinaryPrimitives.ReadUInt32LittleEndian(fixposPacket.AsSpan(2)));
+
         var failurePacket = await ReadExact(stream, PacketConstants.ZcAttackFailureForDistanceLength);
         Assert.Equal((short)PacketConstants.ZcAttackFailureForDistance, BinaryPrimitives.ReadInt16LittleEndian(failurePacket));
         Assert.Equal(target.ActorId, BinaryPrimitives.ReadUInt32LittleEndian(failurePacket.AsSpan(2)));
@@ -301,6 +316,10 @@ public sealed class MapClientSessionAttackSchedulingRaceTests
 
         // First attack: executes immediately (dueNow), establishing a real future NextAttackAt.
         await stream.WriteAsync(AttackPacket(target.ActorId));
+        // Live-acceptance wire-fidelity fix: the due-now fixpos precedes the first (genuinely due)
+        // attack only.
+        var firstFixpos = await ReadExact(stream, PacketConstants.ZcStopMoveLength);
+        Assert.Equal((short)PacketConstants.ZcStopMove, BinaryPrimitives.ReadInt16LittleEndian(firstFixpos));
         var firstDamage = await ReadExact(stream, PacketConstants.ZcNotifyAct3Length);
         Assert.Equal((short)PacketConstants.ZcNotifyAct3, BinaryPrimitives.ReadInt16LittleEndian(firstDamage));
         await ReadExact(stream, PacketConstants.ZcHpInfoLength);
@@ -308,11 +327,14 @@ public sealed class MapClientSessionAttackSchedulingRaceTests
         Assert.True(hpAfterFirstHit > 0, "WeakFreshNovice's Knife hit must not one-shot G_PORING for this test to observe an intact cooldown.");
 
         // Immediately retarget the SAME target while the cooldown from the first hit is still
-        // ticking - must NOT produce a second hit right now.
+        // ticking - must NOT produce a second hit right now, and (this fix's own requirement) must
+        // NOT emit a second, incorrect due-now-only fixpos either - pinned unit_attack's own "just
+        // change target/type" early return (unit.cpp:2951-2953) never reaches its own clif_fixpos
+        // call at all for a mid-cooldown retarget.
         await stream.WriteAsync(AttackPacket(target.ActorId));
 
-        // Confirmed via a harmless ping round-trip landing next, with no damage packet observed in
-        // between - the retarget did not force an immediate extra hit.
+        // Confirmed via a harmless ping round-trip landing next, with NEITHER a fixpos NOR a damage
+        // packet observed in between - the retarget did not force an immediate extra hit or fixpos.
         await stream.WriteAsync(new byte[] { 0x1c, 0x0b });
         var pingReply = await ReadExact(stream, 2);
         Assert.Equal((short)PacketConstants.ZcPingLive, BinaryPrimitives.ReadInt16LittleEndian(pingReply));
@@ -346,6 +368,8 @@ public sealed class MapClientSessionAttackSchedulingRaceTests
         // re-evaluating the (now rescheduled-to-the-future) RepeatAttackState must never re-execute
         // it, only recompute its own next sleep duration.
         await stream.WriteAsync(AttackPacket(target.ActorId));
+        var fixposPacket = await ReadExact(stream, PacketConstants.ZcStopMoveLength);
+        Assert.Equal((short)PacketConstants.ZcStopMove, BinaryPrimitives.ReadInt16LittleEndian(fixposPacket));
         var damagePacket = await ReadExact(stream, PacketConstants.ZcNotifyAct3Length);
         var damage = BinaryPrimitives.ReadUInt32LittleEndian(damagePacket.AsSpan(22));
         await ReadExact(stream, PacketConstants.ZcHpInfoLength);

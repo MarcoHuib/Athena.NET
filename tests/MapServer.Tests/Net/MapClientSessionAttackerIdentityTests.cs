@@ -157,6 +157,15 @@ public sealed class MapClientSessionAttackerIdentityTests
 
         await stream.WriteAsync(AttackPacket(target.ActorId));
 
+        // Live-acceptance wire-fidelity fix: pinned unit_attack's own due-now branch (unit.cpp:
+        // 2971-2978) sends clif_fixpos (0x0088, the ATTACKER's own current position)
+        // unconditionally, before the attack-timer-equivalent execution/World-presence check - the
+        // field asserted here is the REAL AccountId (wire identity), distinct from the CharacterId
+        // this test's own identity fix is about.
+        var fixposPacket = await ReadExact(stream, PacketConstants.ZcStopMoveLength);
+        Assert.Equal((short)PacketConstants.ZcStopMove, BinaryPrimitives.ReadInt16LittleEndian(fixposPacket));
+        Assert.Equal(LiveAccountId, BinaryPrimitives.ReadUInt32LittleEndian(fixposPacket.AsSpan(2)));
+
         var damagePacket = await ReadExact(stream, PacketConstants.ZcNotifyAct3Length);
         Assert.Equal((short)PacketConstants.ZcNotifyAct3, BinaryPrimitives.ReadInt16LittleEndian(damagePacket));
         var damage = BinaryPrimitives.ReadUInt32LittleEndian(damagePacket.AsSpan(22));

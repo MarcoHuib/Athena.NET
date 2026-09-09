@@ -1837,6 +1837,32 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
             // the loop FOR: it is about to be cancelled and joined anyway, and waking it first would
             // only let it race in and re-attempt the SAME already-failing call before that
             // cancellation lands, exactly the double-attempt this fix exists to prevent.
+            //
+            // Live-acceptance wire-fidelity fix: pinned unit_attack's own due-now branch
+            // (unit.cpp:2971-2978) sends clif_fixpos(*src) - 0x0088 ZC_STOPMOVE for the ATTACKING
+            // PLAYER, not the target - unconditionally, BEFORE calling unit_attack_timer(INVALID_TIMER,
+            // ...) (the equivalent of PerformDueRepeatAttackAsync below), regardless of whether the
+            // range check inside unit_attack_timer_sub subsequently accepts or rejects the attack:
+            // "// We need to send fixpos before the attack so that we don't cancel the attack
+            // animation". This is sent EXACTLY ONCE per due-now request (never for the not-yet-due/
+            // retarget-only branch below, which pinned unit_attack's own "just change target/type"
+            // early return at unit.cpp:2951-2953 never reaches this fixpos at all) and never
+            // duplicated by PerformDueRepeatAttackCoreAsync itself (that method sends none of its
+            // own for this specific transition - see this fix's own doc comment there).
+            //
+            // Fanout: pinned clif_fixpos sends to AREA (every nearby observer, self included) - this
+            // codebase's existing player-visibility fanout (PlayerVisibilityCoordinator/
+            // IPlayerPresenceObserver) has no observer callback for "this player's own position
+            // snapped/synced" today (only PlayerMovementChangedAsync/PlayerLookChangedAsync/etc,
+            // none of which are semantically a fixpos), and adding one is a genuinely new fanout
+            // surface, not the smallest change for this fix - deferred, not implemented here. Sent
+            // to THIS session only (the attacker itself, matching the existing
+            // ReconcileAfterGameplayRejectionAsync's own identical self-only BuildStopMove usage) -
+            // full AREA-equivalent projection to nearby observers remains a known Phase 2B gap,
+            // documented rather than silently approximated.
+            SyncPositionToNow();
+            await WriteAsync(IroMonsterActorPackets.BuildStopMove(_accountId, _x, _y), cancellationToken);
+
             await PerformDueRepeatAttackAsync(newState, cancellationToken);
             try { _attackSignal.Release(); } catch (SemaphoreFullException) { }
             return;
@@ -2084,8 +2110,17 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
             var clientDistance = ClientDistance.DistanceClient(dxForRangeCheck, dyForRangeCheck);
             MapLogger.Info(
                 $"[iRO MAP DEBUG] Attack range rejected player=({_x},{_y}) targetActorId={expected.TargetActorId} target=({targetPositionForRangeCheck.X},{targetPositionForRangeCheck.Y}) weapon={(equippedWeapon is null ? "unarmed" : $"{equippedWeapon.AegisName}/{equippedWeapon.Id}")} range={effectiveRangeForRangeCheck} clientDistance={clientDistance}");
+            // Live-acceptance wire-fidelity fix: pinned clif_movetoattack (clif.cpp:8172-8184) sets
+            // `packet.currentAttRange = sd.battle_status.rhw.range` - the attacker's RAW/base weapon
+            // range (status_get_range, this project's own resolvedRange), NEVER the temporary +1
+            // "chasing" bonus unit_attack_timer_sub itself adds on top of that base value purely for
+            // its own distance-CHECK purposes (unit.cpp:3253-3258, the exact source of
+            // effectiveRangeForRangeCheck above). The legality/range CHECK above correctly keeps
+            // using effectiveRangeForRangeCheck (the chasing bonus genuinely affects whether an
+            // attack against a walking target is accepted) - only the WIRE FIELD serialized into
+            // this packet must use the un-bonused resolvedRange, matching pinned source exactly.
             var failurePacket = IroCombatDistancePackets.BuildAttackFailureForDistance(
-                expected.TargetActorId, targetPositionForRangeCheck.X, targetPositionForRangeCheck.Y, _x, _y, (ushort)effectiveRangeForRangeCheck);
+                expected.TargetActorId, targetPositionForRangeCheck.X, targetPositionForRangeCheck.Y, _x, _y, (ushort)resolvedRange);
             // Live acceptance instrumentation (task requirement): 0x0139's exact outgoing bytes.
             // IroCombatDistancePackets is PINNED-SOURCE-BACKED ONLY - no verified stock-iRO capture
             // of ZC_ATTACK_FAILURE_FOR_DISTANCE exists in this project's evidence base

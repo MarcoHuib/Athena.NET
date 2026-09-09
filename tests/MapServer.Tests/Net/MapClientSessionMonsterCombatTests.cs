@@ -157,6 +157,22 @@ public sealed class MapClientSessionMonsterCombatTests
         return (damage, hpInfo);
     }
 
+    // Live-acceptance wire-fidelity fix: pinned unit_attack's own due-now branch (unit.cpp:2971-
+    //2978) sends clif_fixpos (0x0088, the ATTACKER's own current position) unconditionally,
+    // immediately before the attack-timer-equivalent execution/range check - for every genuinely
+    // due-now attack request (never for a retarget arriving while an existing cooldown is still
+    // pending, matching pinned unit_attack's own "just change target/type" early return, which
+    // never reaches clif_fixpos at all). Deliberately kept separate from
+    // ReadDamageAndHpInfoAsync/WaitForNextDamagePacketAsync above, since the latter is also used
+    // to read a SCHEDULED hit fired by RunRepeatAttackLoopAsync's own background loop (via a fake
+    // -clock advance, not a fresh client packet) - a case that never sends a fixpos at all.
+    private static async Task ReadFixposAsync(Stream stream)
+    {
+        var fixpos = await ReadExact(stream, PacketConstants.ZcStopMoveLength);
+        Assert.Equal((short)PacketConstants.ZcStopMove, BinaryPrimitives.ReadInt16LittleEndian(fixpos));
+        Assert.Equal(AccountId, BinaryPrimitives.ReadUInt32LittleEndian(fixpos.AsSpan(2)));
+    }
+
     // Strong enough to kill G_PORING's 55 HP in very few hits, keeping the test fast and
     // deterministic without depending on the exact RenewalBasicAttackRules formula's per-hit value.
     private static CharacterGameplayState StrongNovice() => new(
@@ -273,6 +289,7 @@ public sealed class MapClientSessionMonsterCombatTests
         for (var i = 0; i < 20 && IsAlive(target); i++)
         {
             await stream.WriteAsync(AttackPacket(actorId));
+            await ReadFixposAsync(stream);
             var (damagePacket, hpInfoPacket) = await ReadDamageAndHpInfoAsync(stream);
             Assert.Equal((short)PacketConstants.ZcNotifyAct3, BinaryPrimitives.ReadInt16LittleEndian(damagePacket));
             Assert.Equal(actorId, BinaryPrimitives.ReadUInt32LittleEndian(damagePacket.AsSpan(6)));
@@ -330,6 +347,7 @@ public sealed class MapClientSessionMonsterCombatTests
         // Deliberately skip 0x007D (map-load) - the monster is never added to this session's
         // _visibleActorIds, matching a session that has not (yet) been told this actor exists.
         await stream.WriteAsync(AttackPacket(target.ActorId));
+        await ReadFixposAsync(stream);
         var damagePacket = await ReadExact(stream, PacketConstants.ZcNotifyAct3Length);
         Assert.Equal((short)PacketConstants.ZcNotifyAct3, BinaryPrimitives.ReadInt16LittleEndian(damagePacket));
         Assert.True(BinaryPrimitives.ReadUInt32LittleEndian(damagePacket.AsSpan(22)) > 0);
@@ -361,6 +379,7 @@ public sealed class MapClientSessionMonsterCombatTests
         for (var i = 0; i < 20 && IsAlive(target); i++)
         {
             await stream.WriteAsync(AttackPacket(actorId));
+            await ReadFixposAsync(stream);
             await ReadDamageAndHpInfoAsync(stream);
             if (!IsAlive(target))
             {
@@ -405,9 +424,22 @@ public sealed class MapClientSessionMonsterCombatTests
         var actorId = BinaryPrimitives.ReadUInt32LittleEndian((await ReadDynamic(stream)).AsSpan(5));
         var progressionIds = new List<short>();
 
+        // Real TimeProvider.System is used here (no ControllableTimeProvider) - only the FIRST
+        // 0x0437 below is genuinely due-now (no prior attack was ever registered). Every
+        // subsequent client-sent 0x0437 in this loop arrives well within the source-backed
+        // attack-delay cooldown the previous real hit just started (a few real milliseconds of
+        // socket round-trip versus the unarmed WeakFreshNovice delay), so - matching pinned
+        // unit_attack's own "just change target/type" early return (unit.cpp:2951-2953) - those
+        // are mid-cooldown retargets and get NO fixpos; the actual next hit each iteration reads
+        // is delivered by the session's own background repeat-attack loop once that inherited
+        // cooldown elapses (see RunRepeatAttackLoopAsync's own doc comment), never by the retarget
+        // packet itself.
+        await stream.WriteAsync(AttackPacket(actorId));
+        await ReadFixposAsync(stream);
+
         for (var i = 0; i < 30 && IsAlive(target); i++)
         {
-            await stream.WriteAsync(AttackPacket(actorId));
+            if (i > 0) await stream.WriteAsync(AttackPacket(actorId));
             await ReadDamageAndHpInfoAsync(stream);
             if (!IsAlive(target))
             {
@@ -461,6 +493,7 @@ public sealed class MapClientSessionMonsterCombatTests
         for (var i = 0; i < 20 && IsAlive(target); i++)
         {
             await stream.WriteAsync(AttackPacket(actorId));
+            await ReadFixposAsync(stream);
             await ReadDamageAndHpInfoAsync(stream);
             if (!IsAlive(target))
             {
@@ -471,8 +504,17 @@ public sealed class MapClientSessionMonsterCombatTests
         }
         Assert.False(IsAlive(target));
 
-        // Attacking the now-dead monster must produce no further wire traffic at all.
+        // Attacking the now-dead monster still reaches HandleIroAttackRequestAsync's own dueNow/
+        // fixpos branch: TryGetProjectedMonster's own Lifecycle check reads the SEPARATE
+        // MonsterFeedProjectionRegistry projection (never this test's own MonsterCombatStateStore-
+        // backed IsAlive/combatState oracle above), and nothing in this single-session test drives
+        // the world-feed tick that would resync that projection's Lifecycle to Dead after the local
+        // kill just above - so the projection still reports Alive, the fixpos still fires, and only
+        // the SUBSEQUENT combat resolution (never reached by this test's own name/assertion below)
+        // silently no-ops against the already-locally-dead target. No further wire traffic (no
+        // damage/vanish/pickup) must follow the fixpos.
         await stream.WriteAsync(AttackPacket(actorId));
+        await ReadFixposAsync(stream);
         await stream.WriteAsync(new byte[] { 0x1c, 0x0b });
         var next = await ReadExact(stream, 2);
         Assert.Equal((short)PacketConstants.ZcPingLive, BinaryPrimitives.ReadInt16LittleEndian(next));
@@ -532,6 +574,7 @@ public sealed class MapClientSessionMonsterCombatTests
         for (var i = 0; i < 20 && IsAlive(target); i++)
         {
             await stream.WriteAsync(AttackPacket(actorId));
+            await ReadFixposAsync(stream);
             var (damagePacket, _) = await ReadDamageAndHpInfoAsync(stream);
             var damage = BinaryPrimitives.ReadUInt32LittleEndian(damagePacket.AsSpan(22));
             Assert.True(damage > 0, "Expected the equipped-Knife attacker to deal nonzero damage.");
@@ -570,6 +613,7 @@ public sealed class MapClientSessionMonsterCombatTests
         // First hit while still armed - establishes the weapon-aware damage magnitude to compare
         // the post-unequip hit against.
         await stream.WriteAsync(AttackPacket(actorId));
+        await ReadFixposAsync(stream);
         var (armedDamagePacket, _) = await ReadDamageAndHpInfoAsync(stream);
         var armedDamage = BinaryPrimitives.ReadUInt32LittleEndian(armedDamagePacket.AsSpan(22));
         Assert.True(IsAlive(target), "Test setup requires G_PORING to survive the first (armed) hit so a second, post-unequip hit can be observed.");
@@ -579,6 +623,16 @@ public sealed class MapClientSessionMonsterCombatTests
         await ReadExact(stream, 15); // 0x01D7 self weapon look refresh, now unarmed (view id 0)
         await ReadExact(stream, PacketConstants.IroZcReqTakeoffEquipAckLength);
 
+        // This second 0x0437 arrives while the first hit's own source-backed attack-delay cooldown
+        // is still ticking (a real TimeProvider.System delay of ~1160ms for WeakFreshNovice+Knife -
+        // see WeakNoviceKnifeDelayMs elsewhere in this file - versus the handful of real
+        // milliseconds these few socket round-trips actually take) - matching pinned unit_attack's
+        // own "just change target/type" early return (unit.cpp:2951-2953), it is a mid-cooldown
+        // retarget, NOT a fresh due-now request, so it gets NO fixpos (unlike the genuinely due-now
+        // first attack above). The unarmed hit this test actually observes below is delivered by
+        // the session's own background repeat-attack loop once that inherited cooldown elapses -
+        // see RunRepeatAttackLoopAsync's own doc comment - re-resolving the (now unarmed) weapon
+        // state at that later, real point in time.
         await stream.WriteAsync(AttackPacket(actorId));
         var (unarmedDamagePacket, _) = await ReadDamageAndHpInfoAsync(stream);
         var unarmedDamage = BinaryPrimitives.ReadUInt32LittleEndian(unarmedDamagePacket.AsSpan(22));
@@ -618,6 +672,7 @@ public sealed class MapClientSessionMonsterCombatTests
         for (var i = 0; i < 20 && IsAlive(target); i++)
         {
             await stream.WriteAsync(AttackPacket(actorId));
+            await ReadFixposAsync(stream);
             var (damagePacket, _) = await ReadDamageAndHpInfoAsync(stream);
             var damage = BinaryPrimitives.ReadUInt32LittleEndian(damagePacket.AsSpan(22));
             Assert.True(damage > 0, "Expected weapon-aware damage after re-equipping the Knife.");
@@ -662,6 +717,14 @@ public sealed class MapClientSessionMonsterCombatTests
         var actorId = BinaryPrimitives.ReadUInt32LittleEndian(spawn.AsSpan(5));
 
         await stream.WriteAsync(AttackPacket(actorId));
+
+        // Live-acceptance wire-fidelity fix: the due-now fixpos precedes even a REJECTED attack -
+        // pinned unit_attack sends it unconditionally before unit_attack_timer_sub's own weapon-
+        // resolution/range checks. The target here is genuinely alive/live-projected, so this
+        // request still reaches HandleIroAttackRequestAsync's own dueNow branch and its fixpos -
+        // only the SUBSEQUENT weapon-resolution rejection (never a further combat-result packet)
+        // is what this test's own name refers to.
+        await ReadFixposAsync(stream);
 
         // No damage/vanish/pickup packet must ever arrive for the rejected attack. Confirm by
         // sending a harmless ping the server always answers, and observing THAT next instead of
@@ -719,6 +782,7 @@ public sealed class MapClientSessionMonsterCombatTests
         for (var i = 0; i < 20 && IsAlive(target); i++)
         {
             await stream.WriteAsync(AttackPacket(actorId));
+            await ReadFixposAsync(stream);
             await ReadDamageAndHpInfoAsync(stream);
             if (!IsAlive(target))
             {
@@ -801,6 +865,7 @@ public sealed class MapClientSessionMonsterCombatTests
         for (var i = 0; i < 20 && IsAlive(target); i++)
         {
             await stream.WriteAsync(AttackPacket(actorId));
+            await ReadFixposAsync(stream);
             await ReadDamageAndHpInfoAsync(stream);
             if (!IsAlive(target))
             {
@@ -878,6 +943,7 @@ public sealed class MapClientSessionMonsterCombatTests
 
         // Exactly ONE client attack request.
         await stream.WriteAsync(AttackPacket(actorId));
+        await ReadFixposAsync(stream);
 
         // First hit fires immediately (pinned unit_attack: attackabletime already elapsed ->
         // unit_attack_timer(INVALID_TIMER, ...) runs right away, unit.cpp:2971-2978) - no clock
@@ -911,6 +977,7 @@ public sealed class MapClientSessionMonsterCombatTests
         var actorId = BinaryPrimitives.ReadUInt32LittleEndian(spawn.AsSpan(5));
 
         await stream.WriteAsync(AttackPacket(actorId));
+        await ReadFixposAsync(stream);
         await ReadDamageAndHpInfoAsync(stream); // First (immediate) hit.
         Assert.True(IsAlive(target));
 
@@ -949,6 +1016,7 @@ public sealed class MapClientSessionMonsterCombatTests
         var actorId = BinaryPrimitives.ReadUInt32LittleEndian(spawn.AsSpan(5));
 
         await stream.WriteAsync(AttackPacket(actorId));
+        await ReadFixposAsync(stream);
 
         const int weakNoviceKnifeDelayMs = 1160; // WeakFreshNovice (DEX/AGI=9) + Knife, hand-derived.
         var isDead = false;
@@ -1040,6 +1108,7 @@ public sealed class MapClientSessionMonsterCombatTests
 
         // Start a repeat attack against target A.
         await stream.WriteAsync(AttackPacket(targetA.ActorId));
+        await ReadFixposAsync(stream);
         var (firstHit, _) = await ReadDamageAndHpInfoAsync(stream);
         Assert.Equal(targetA.ActorId, BinaryPrimitives.ReadUInt32LittleEndian(firstHit.AsSpan(6)));
         Assert.True(IsAlive(targetA), "WeakFreshNovice's Knife hit must not one-shot G_PORING for this test to observe the retarget.");
@@ -1107,6 +1176,7 @@ public sealed class MapClientSessionMonsterCombatTests
         // returned) - two genuinely-simultaneous FRESH requests can validly produce two immediate
         // hits, and this test must not assert otherwise.
         await stream.WriteAsync(AttackPacket(actorId));
+        await ReadFixposAsync(stream);
         var (firstHit, _) = await ReadDamageAndHpInfoAsync(stream);
         Assert.Equal(actorId, BinaryPrimitives.ReadUInt32LittleEndian(firstHit.AsSpan(6)));
         Assert.True(IsAlive(target), "WeakFreshNovice's Knife hit must not one-shot G_PORING for this test to observe the no-double-hit invariant.");
@@ -1171,6 +1241,7 @@ public sealed class MapClientSessionMonsterCombatTests
         var actorId = BinaryPrimitives.ReadUInt32LittleEndian(spawn.AsSpan(5));
 
         await stream.WriteAsync(AttackPacket(actorId));
+        await ReadFixposAsync(stream);
         await ReadDamageAndHpInfoAsync(stream); // Immediate first hit.
         Assert.True(IsAlive(target), "WeakFreshNovice's Knife hit must not one-shot G_PORING so a repeat state remains scheduled to be cancelled.");
 
@@ -1207,6 +1278,7 @@ public sealed class MapClientSessionMonsterCombatTests
         var actorId = BinaryPrimitives.ReadUInt32LittleEndian(spawn.AsSpan(5));
 
         await stream.WriteAsync(AttackPacket(actorId));
+        await ReadFixposAsync(stream);
         await ReadDamageAndHpInfoAsync(stream);
         Assert.True(IsAlive(target), "WeakFreshNovice's Knife hit must not one-shot G_PORING so a repeat state remains scheduled at disposal.");
 

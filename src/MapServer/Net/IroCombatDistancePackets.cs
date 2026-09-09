@@ -30,9 +30,14 @@ internal static class IroCombatDistancePackets
     // Fields are all CURRENT authoritative state at the moment of the rejected attack attempt -
     // targetX/targetY is the target's CURRENT resolved position (MobInstance.GetPosition(), not a
     // stale/cached one), playerX/playerY is the attacker's CURRENT authoritative position (after
-    // SyncPositionToNow()), and currentAttRange is the CURRENT resolved basic-attack range
-    // (BasicAttackRangeResolver.Resolve against the CURRENT equipped weapon) - never a fixed/
-    // hardcoded value for any of the three.
+    // SyncPositionToNow()), and currentAttRange is the attacker's CURRENT resolved BASE basic-attack
+    // range (BasicAttackRangeResolver.Resolve against the CURRENT equipped weapon - this project's
+    // own `resolvedRange`) - never a fixed/hardcoded value for any of the three, and, per pinned
+    // clif_movetoattack's own `sd.battle_status.rhw.range` (the raw base value, see this file's own
+    // doc comment above), NEVER the temporary +1 "chasing" bonus a caller's own distance-CHECK may
+    // separately apply on top of this same base value for legality purposes only - callers must pass
+    // the pre-bonus resolvedRange here even when the actual accept/reject decision used a larger
+    // bonused value.
     internal static byte[] BuildAttackFailureForDistance(uint targetActorId, ushort targetX, ushort targetY, ushort playerX, ushort playerY, ushort currentAttackRange)
     {
         var packet = new byte[PacketConstants.ZcAttackFailureForDistanceLength];

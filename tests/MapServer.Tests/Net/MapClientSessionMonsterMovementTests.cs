@@ -558,6 +558,14 @@ public sealed class MapClientSessionMonsterMovementTests
         attackPacket[7] = 0x7f;
         await WriteBoundedAsync(stream, attackPacket);
 
+        // Live-acceptance wire-fidelity fix: pinned unit_attack's own due-now branch (unit.cpp:
+        // 2971-2978) sends clif_fixpos (0x0088, the ATTACKER's own current position)
+        // unconditionally, before the attack-timer-equivalent execution/range check - including
+        // for this test's genuinely due-now killing blow.
+        var fixposPacket = await ReadExact(stream, PacketConstants.ZcStopMoveLength);
+        Assert.Equal((short)PacketConstants.ZcStopMove, BinaryPrimitives.ReadInt16LittleEndian(fixposPacket));
+        Assert.Equal(AccountId, BinaryPrimitives.ReadUInt32LittleEndian(fixposPacket.AsSpan(2)));
+
         var damagePacket = await ReadExact(stream, PacketConstants.ZcNotifyAct3Length);
         Assert.Equal((short)PacketConstants.ZcNotifyAct3, BinaryPrimitives.ReadInt16LittleEndian(damagePacket));
         // ZC_HP_INFO (0x0977) follows the killing blow itself (with hp=0) before the vanish
