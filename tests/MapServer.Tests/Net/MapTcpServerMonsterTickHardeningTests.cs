@@ -429,6 +429,8 @@ public sealed class MapTcpServerMonsterTickHardeningTests
 
         public Task<WorldMonsterDeathResult> TryMarkMonsterDeadAsync(WorldMonsterLifeReference reference, CancellationToken cancellationToken) =>
             throw new NotSupportedException("ScriptedWorldRuntime does not script TryMarkMonsterDeadAsync for these tests.");
+        public Task<WorldMonsterDamageResult> ApplyMonsterDamageAsync(WorldMonsterDamageCommand command, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("ScriptedWorldRuntime does not script ApplyMonsterDamageAsync for these tests.");
         public Task<WorldMonsterAttackedResult> NotifyMonsterAttackedAsync(WorldMonsterAttackedCommand command, CancellationToken cancellationToken) =>
             throw new NotSupportedException("ScriptedWorldRuntime does not script NotifyMonsterAttackedAsync for these tests.");
         public Task<WorldPresenceLifeStateResult> UpdatePresenceLifeStateAsync(string mapId, WorldPresenceLifeStateUpdate update, CancellationToken cancellationToken) =>

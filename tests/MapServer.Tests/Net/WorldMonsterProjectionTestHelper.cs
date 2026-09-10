@@ -157,6 +157,35 @@ internal sealed class FakeCombatWorldRuntime : IWorldRuntime
         lock (_gate) return _confirmedDead.Contains((reference.MapId, reference.ActorId, reference.IncarnationId.Value));
     }
 
+    // Step 7 substep 1: contract/plumbing wiring only - a minimal scriptable fake matching this
+    // file's existing TryMarkMonsterDeadAsync/NotifyMonsterAttackedAsync scripting shape
+    // (override status, call count, transient-throw-N-times). The real sequence-idempotency/
+    // ReplayedSequence/Conflict scripting this fake will need once MapClientSession's live attack
+    // path is cut over to this RPC lands in that later substep, not here.
+    public WorldMonsterDamageResult? ApplyMonsterDamageResultOverride { get; set; }
+    private int _throwTransientApplyMonsterDamageCount;
+    public int ThrowTransientApplyMonsterDamageCount { set => _throwTransientApplyMonsterDamageCount = value; }
+    public int ApplyMonsterDamageCallCount { get; private set; }
+    public WorldMonsterDamageCommand? LastApplyMonsterDamageCommand { get; private set; }
+
+    public Task<WorldMonsterDamageResult> ApplyMonsterDamageAsync(WorldMonsterDamageCommand command, CancellationToken cancellationToken)
+    {
+        lock (_gate)
+        {
+            ApplyMonsterDamageCallCount++;
+            LastApplyMonsterDamageCommand = command;
+            if (_throwTransientApplyMonsterDamageCount > 0)
+            {
+                _throwTransientApplyMonsterDamageCount--;
+                throw new IOException("Simulated transient World RPC failure.");
+            }
+        }
+
+        var result = ApplyMonsterDamageResultOverride
+            ?? new WorldMonsterDamageResult(WorldMonsterDamageStatus.StaleLifeReference, 0, 0, 0, false, null);
+        return Task.FromResult(result);
+    }
+
     // Defaults to Acquired (the existing behavior every pre-existing test in this file already
     // depends on) - settable so a test can script a non-success status (StaleLifeReference,
     // StaleAttackerPresence, MonsterNotAttackable, AttackerNotEngageable) to prove MapClientSession's

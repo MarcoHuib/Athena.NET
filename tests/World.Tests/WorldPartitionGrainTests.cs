@@ -243,6 +243,27 @@ public sealed class WorldPartitionGrainTests : IAsyncLifetime
             new(movementId, presence.PresenceId, presence.CharacterId, "prontera", 150, 180, nextCell.X, nextCell.Y))).Status);
     }
 
+    // Step 7 substep 1: contract-plumbing round-trip only. ApplyMonsterDamageAsync's real
+    // clamped-subtract/Alive->Dead/AttackSequence-idempotency behavior lands in a later substep -
+    // this proves the new command/result/status types serialize correctly across the real Orleans
+    // grain boundary and that the (deliberately rejecting) stub responds deterministically.
+    [Fact]
+    public async Task ApplyMonsterDamageStubRoundTripsAndRejectsUnknownLife()
+    {
+        var grain = Partition("world-rest");
+        var life = new WorldMonsterLifeReference("izlude", new WorldSimulationEpoch(Guid.NewGuid()), 5001, WorldMonsterIncarnationId.First);
+        var command = new WorldMonsterDamageCommand(life, AttackerCharacterId: 1001, AttackerPresenceId: Guid.NewGuid(), AttackSequence: 1, Damage: 10, AcquireEngagement: true);
+
+        var result = await grain.ApplyMonsterDamageAsync(command);
+
+        Assert.Equal(WorldMonsterDamageStatus.StaleLifeReference, result.Status);
+        Assert.Equal(0u, result.HpBefore);
+        Assert.Equal(0u, result.HpAfter);
+        Assert.Equal(0u, result.MaxHp);
+        Assert.False(result.KilledByThisHit);
+        Assert.Null(result.Engagement);
+    }
+
     private IWorldPartitionGrain Partition(string id) => _cluster.GrainFactory.GetGrain<IWorldPartitionGrain>(id);
     private static WorldPlayerPresence Presence(Guid id, string map) => new(id, 2001, 1001, map, 150, 180);
     private static WorldTransferCommand Transfer(WorldPlayerPresence presence, string destination) =>

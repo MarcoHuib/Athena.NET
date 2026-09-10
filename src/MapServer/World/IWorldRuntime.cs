@@ -15,16 +15,20 @@ public interface IWorldRuntime
     Task<WorldMovementCancellationResult> CancelMovementAsync(WorldMovementCancellation command, CancellationToken cancellationToken);
     Task<WorldTransferResult> TransferPlayerAsync(WorldTransferCommand command, CancellationToken cancellationToken);
 
-    // Step 6 monster-authority RPCs - the World-authoritative monster simulation seam (see the
-    // Phase 2B plan's own approved authority boundary: World owns identity/epoch/incarnation/
-    // position/movement/lifecycle/engagement/chase/respawn timing; MapServer keeps local HP/
-    // cadence/damage-calculation/quest-drop/packet-projection). Every implementation must apply
-    // the SAME normalize-map + resolve-partition + WaitAsync(cancellationToken) + telemetry
-    // pattern already used by the player-presence/movement RPCs above (see OrleansWorldRuntime's
-    // own MovePlayerAsync for the reference shape).
+    // Step 6/7 monster-authority RPCs - the World-authoritative monster simulation seam. As of
+    // Step 7, World owns identity/epoch/incarnation/position/movement/lifecycle/engagement/chase/
+    // respawn timing AND monster CurrentHp/the Alive->Dead transition (ApplyMonsterDamageAsync);
+    // MapServer keeps damage calculation/quest-drop/packet-projection/cadence-timing only - it no
+    // longer stores authoritative HP locally. Every implementation must apply the SAME
+    // normalize-map + resolve-partition + WaitAsync(cancellationToken) + telemetry pattern already
+    // used by the player-presence/movement RPCs above (see OrleansWorldRuntime's own
+    // MovePlayerAsync for the reference shape).
     Task<WorldMonsterSpawnLoadResult> LoadMonsterSpawnsAsync(WorldMonsterSpawnBatch batch, CancellationToken cancellationToken);
     Task<WorldMonsterFeedPage> PollMonsterFeedAsync(WorldMonsterFeedCursor? cursor, string mapId, CancellationToken cancellationToken);
+    // TEMPORARY: retained only until the live MapServer attack path is cut over to
+    // ApplyMonsterDamageAsync - scheduled removal in that same substep. Do not add new callers.
     Task<WorldMonsterDeathResult> TryMarkMonsterDeadAsync(WorldMonsterLifeReference reference, CancellationToken cancellationToken);
+    Task<WorldMonsterDamageResult> ApplyMonsterDamageAsync(WorldMonsterDamageCommand command, CancellationToken cancellationToken);
     Task<WorldMonsterAttackedResult> NotifyMonsterAttackedAsync(WorldMonsterAttackedCommand command, CancellationToken cancellationToken);
     Task<WorldMonsterAttackWindowResult> ValidateMonsterAttackWindowAsync(WorldMonsterAttackWindowQuery query, CancellationToken cancellationToken);
     // `mapId` routes this call to the correct partition - see OrleansWorldRuntime's own doc

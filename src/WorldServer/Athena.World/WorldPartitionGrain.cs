@@ -422,6 +422,16 @@ public sealed class WorldPartitionGrain(IWorldPartitionResolver resolver, IMovem
         return Task.FromResult(new WorldMonsterDeathResult(simulation.MarkDead(instance)));
     }
 
+    // STUB (Step 7 substep 1): contract wiring only. The real clamped-subtract/Alive->Dead/
+    // AttackSequence-idempotency logic lands in WorldMonsterMapSimulation.ApplyDamage in the next
+    // substep - this stub exists solely so the contract/runtime/fake plumbing compiles and has a
+    // deterministic (rejecting) behavior before that logic exists.
+    public Task<WorldMonsterDamageResult> ApplyMonsterDamageAsync(WorldMonsterDamageCommand command)
+    {
+        _ = RequireOwnedMap(command.Life.MapId);
+        return Task.FromResult(new WorldMonsterDamageResult(WorldMonsterDamageStatus.StaleLifeReference, 0, 0, 0, false, null));
+    }
+
     public Task<WorldMonsterAttackedResult> NotifyMonsterAttackedAsync(WorldMonsterAttackedCommand command)
     {
         var reference = command.Life;

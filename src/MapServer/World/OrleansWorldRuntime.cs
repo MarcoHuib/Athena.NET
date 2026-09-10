@@ -110,6 +110,16 @@ public sealed class OrleansWorldRuntime(IClusterClient clusterClient, IWorldPart
         finally { Duration(started, "try-mark-monster-dead", partitionId); }
     }
 
+    public async Task<WorldMonsterDamageResult> ApplyMonsterDamageAsync(WorldMonsterDamageCommand command, CancellationToken cancellationToken)
+    {
+        var mapId = WorldMapId.Normalize(command.Life.MapId);
+        var partitionId = resolver.ResolvePartition(mapId);
+        var started = Stopwatch.GetTimestamp();
+        try { return await Grain(partitionId).ApplyMonsterDamageAsync(command with { Life = command.Life with { MapId = mapId } }).WaitAsync(cancellationToken); }
+        catch { Failure("apply-monster-damage"); throw; }
+        finally { Duration(started, "apply-monster-damage", partitionId); }
+    }
+
     public async Task<WorldMonsterAttackedResult> NotifyMonsterAttackedAsync(WorldMonsterAttackedCommand command, CancellationToken cancellationToken)
     {
         var mapId = WorldMapId.Normalize(command.Life.MapId);

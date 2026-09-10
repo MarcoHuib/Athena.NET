@@ -17,20 +17,27 @@ public interface IWorldPartitionGrain : IGrainWithStringKey
     Task<OutgoingTransferResult> FinalizeOutgoingTransferAsync(Guid transferId);
     Task<WorldMapSnapshot> GetMapSnapshotAsync(string mapId);
 
-    // Player -> monster combat is intentionally MapServer-local for Phase 2B (damage calculation,
-    // quest-drop orchestration, and current HP all remain MapServer-owned - see
-    // WorldMonsterInstance's own doc comment for why no CurrentHp field exists here). These five
-    // members are the ONLY seam MapServer-local combat crosses into World: acquiring/refreshing
-    // the authoritative target on a landed hit (NotifyMonsterAttackedAsync), reporting a death so
-    // World's own respawn/lifecycle takes over (TryMarkMonsterDeadAsync), a read-only just-in-time
-    // recheck immediately before a locally-cadenced attack actually executes
-    // (ValidateMonsterAttackWindowAsync - never an executable command, never a reservation/claim),
-    // life-state so World's own engagement rules can see it (UpdatePresenceLifeStateAsync), and the
-    // per-map sequenced feed of pure state transitions a MapServer instance polls to project
-    // monster movement/lifecycle/engagement to its connected sessions (PollMonsterFeedAsync).
+    // Step 7: World is the sole authority for monster CurrentHp and the Alive->Dead transition.
+    // Damage calculation (weapon/ATK/DEF formula) and quest-drop orchestration remain MapServer-
+    // local - only the atomic clamped-subtract + Alive->Dead compare, and the exactly-once
+    // idempotency ledger that guards it (AttackSequence), live here. ApplyMonsterDamageAsync is
+    // the sole seam MapServer-local combat crosses into World for actually mutating HP/lifecycle;
+    // NotifyMonsterAttackedAsync remains the separate, narrower seam for target
+    // acquisition/refresh only. TryMarkMonsterDeadAsync (below) is retained ONLY until the live
+    // MapServer call site is cut over to ApplyMonsterDamageAsync - see that member's own doc
+    // comment. ValidateMonsterAttackWindowAsync is a read-only just-in-time recheck immediately
+    // before a locally-cadenced attack actually executes (never an executable command, never a
+    // reservation/claim), UpdatePresenceLifeStateAsync feeds World's own engagement rules, and
+    // PollMonsterFeedAsync is the per-map sequenced feed of pure state transitions a MapServer
+    // instance polls to project monster movement/lifecycle/engagement/HP to its connected
+    // sessions.
     Task<WorldMonsterSpawnLoadResult> LoadMonsterSpawnsAsync(WorldMonsterSpawnBatch batch);
     Task<WorldMonsterFeedPage> PollMonsterFeedAsync(WorldMonsterFeedCursor? cursor, string mapId);
+    // TEMPORARY: retained only until the live MapServer attack path (MapClientSession's
+    // PerformDueRepeatAttackCoreAsync) is cut over to ApplyMonsterDamageAsync - scheduled removal
+    // in that same substep. Do not add new callers.
     Task<WorldMonsterDeathResult> TryMarkMonsterDeadAsync(WorldMonsterLifeReference reference);
+    Task<WorldMonsterDamageResult> ApplyMonsterDamageAsync(WorldMonsterDamageCommand command);
     Task<WorldMonsterAttackedResult> NotifyMonsterAttackedAsync(WorldMonsterAttackedCommand command);
     Task<WorldMonsterAttackWindowResult> ValidateMonsterAttackWindowAsync(WorldMonsterAttackWindowQuery query);
     Task<WorldPresenceLifeStateResult> UpdatePresenceLifeStateAsync(WorldPresenceLifeStateUpdate update);
@@ -355,7 +362,20 @@ public readonly record struct WorldMonsterFeedCursor(
 // claimed Moved was emitted only for a mob with no current target - that was inaccurate as of the
 // tick restructuring that fixed the "engaged mob's feed goes stale mid-chase" bug and has been
 // corrected here.
-public enum WorldMonsterFeedEntryKind { Moved, EngagementAcquired, ChaseStarted, ChaseInterrupted, TargetUnlocked, InAttackRange, Died, Respawned }
+// HealthChanged: Step 7's atomic ApplyMonsterDamageAsync appends this whenever the clamped
+// subtract actually reduces CurrentHp on a hit that does NOT kill the monster - a miss (Damage=0)
+// never emits it, and a lethal hit emits Died only (Died's own instance snapshot already carries
+// CurrentHp=0, so a redundant HealthChanged(0) immediately before it is never appended). This
+// exists because the feed is cursor/entry based - merely widening WorldMonsterInstance with
+// CurrentHp/MaxHp fields does not, by itself, cause an already-issued cursor to observe anything;
+// a poller only learns of a change via a NEW entry (or a fresh snapshot). Without this entry, a
+// non-lethal hit that changes no other tracked state would produce zero feed traffic, and a
+// second MapServer process polling the same simulation would have nothing new to read - breaking
+// cross-process HP convergence. FanOutEntryAsync deliberately does NOT give this kind a Died-style
+// dedicated dispatch: it falls through to the same generic projection-update tail every other
+// non-Died kind already uses, updating local projection state only - never forcing an unsolicited
+// HP-info packet to bystander sessions.
+public enum WorldMonsterFeedEntryKind { Moved, EngagementAcquired, ChaseStarted, ChaseInterrupted, TargetUnlocked, InAttackRange, HealthChanged, Died, Respawned }
 
 // The Ragexe wire-projection-relevant distinction WorldMonsterFeedEntryKind alone cannot express:
 // whether a movement transition is a FRESH walk beginning (a real 0x09FD walk-entry packet is
@@ -436,6 +456,52 @@ public enum WorldMonsterDeathStatus { MarkedDead, AlreadyDead, StaleLifeReferenc
 
 [GenerateSerializer]
 public sealed record WorldMonsterDeathResult([property: Id(0)] WorldMonsterDeathStatus Status);
+
+// Step 7: the sole atomic HP-mutation command. AttackSequence is a per-attacker monotonic long
+// (NOT a Guid/TTL cache - see AttackSequenceState's own doc comment for why a time-evicted dedup
+// key is unsound for a non-lethal command), minted client-side by the same MapClientSession that
+// owns this attacker/life pair and never recomputed on retry - a retry of an ambiguous prior
+// attempt resends this exact command verbatim, including the original Damage roll, never a fresh
+// one (WeaponAttackCalculator.Calculate rolls Random.Shared.Next fresh every call, so a recomputed
+// retry would legitimately collide with Conflict below). Damage=0 is a legal, meaningful value - a
+// miss still needs to reach World so it can still refresh engagement via AcquireEngagement.
+[GenerateSerializer]
+public sealed record WorldMonsterDamageCommand(
+    [property: Id(0)] WorldMonsterLifeReference Life,
+    [property: Id(1)] uint AttackerCharacterId,
+    [property: Id(2)] Guid AttackerPresenceId,
+    [property: Id(3)] long AttackSequence,
+    [property: Id(4)] uint Damage,
+    [property: Id(5)] bool AcquireEngagement);
+
+// HpBefore/HpAfter/KilledByThisHit fold directly into MapServer's existing MonsterAttackOutcome
+// shape. MaxHp rides along so the HP-info packet reads MaxHp from the same authority as HpAfter -
+// otherwise a future MaxHp change (boss mode, buffs) could produce a torn HP bar between two
+// sources of truth. Engagement reuses WorldMonsterAttackedStatus verbatim (no parallel enum) -
+// null means no engagement attempt was made on this call (AcquireEngagement was false).
+[GenerateSerializer]
+public sealed record WorldMonsterDamageResult(
+    [property: Id(0)] WorldMonsterDamageStatus Status,
+    [property: Id(1)] uint HpBefore,
+    [property: Id(2)] uint HpAfter,
+    [property: Id(3)] uint MaxHp,
+    [property: Id(4)] bool KilledByThisHit,
+    [property: Id(5)] WorldMonsterAttackedStatus? Engagement);
+
+// Deliberately absent: MonsterNotAttackable (a passive/no-CanAttack mob is still fully damageable -
+// only engagement acquisition cares about CanAttack) and NotFound (folded into StaleLifeReference,
+// matching how TryMarkMonsterDeadAsync already collapses "not found" into the same status).
+public enum WorldMonsterDamageStatus
+{
+    Applied,
+    ReplayedSequence,
+    StaleSequence,
+    Conflict,
+    StaleLifeReference,
+    StaleAttackerPresence,
+    AttackerNotEngageable,
+    AlreadyDead
+}
 
 [GenerateSerializer]
 public sealed record WorldMonsterAttackedCommand(

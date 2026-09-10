@@ -202,6 +202,8 @@ public sealed class MapTcpServer
             throw new NotSupportedException("InMemoryTestWorldRuntime does not implement monster-authority RPCs - use a real Orleans TestCluster with OrleansWorldRuntime for tests that need monster behavior.");
         public Task<WorldMonsterDeathResult> TryMarkMonsterDeadAsync(WorldMonsterLifeReference reference, CancellationToken cancellationToken) =>
             throw new NotSupportedException("InMemoryTestWorldRuntime does not implement monster-authority RPCs - use a real Orleans TestCluster with OrleansWorldRuntime for tests that need monster behavior.");
+        public Task<WorldMonsterDamageResult> ApplyMonsterDamageAsync(WorldMonsterDamageCommand command, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("InMemoryTestWorldRuntime does not implement monster-authority RPCs - use a real Orleans TestCluster with OrleansWorldRuntime for tests that need monster behavior.");
         public Task<WorldMonsterAttackedResult> NotifyMonsterAttackedAsync(WorldMonsterAttackedCommand command, CancellationToken cancellationToken) =>
             throw new NotSupportedException("InMemoryTestWorldRuntime does not implement monster-authority RPCs - use a real Orleans TestCluster with OrleansWorldRuntime for tests that need monster behavior.");
         public Task<WorldMonsterAttackWindowResult> ValidateMonsterAttackWindowAsync(WorldMonsterAttackWindowQuery query, CancellationToken cancellationToken) =>
