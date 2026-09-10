@@ -454,12 +454,17 @@ public sealed class WorldPartitionGrain(IWorldPartitionResolver resolver, IMovem
         if (simulation.TryAcceptAttackSequence(command) is { } sequenceRejection)
             return Task.FromResult(sequenceRejection);
 
+        // AlreadyDead is a REJECTION, never a committed outcome - this command did not mutate HP,
+        // did not append a feed entry, and won no transition, so it must NOT be recorded into the
+        // AttackSequence ledger. Recording it here would let a later exact retry of THIS sequence
+        // incorrectly synthesize ReplayedSequence (implying "this session's first look at an
+        // already-committed result", with its own damage/reward-projection allowance) for a
+        // command that was never actually committed. A genuinely committed lethal command (from an
+        // EARLIER sequence) is still replayable normally - TryAcceptAttackSequence above already
+        // returned its stored ReplayedSequence result before this check is ever reached, exactly
+        // because the ledger is consulted BEFORE this liveness check, not after.
         if (!instance.IsAlive)
-        {
-            var alreadyDead = new WorldMonsterDamageResult(WorldMonsterDamageStatus.AlreadyDead, 0, 0, instance.Spawn.Mob.MaxHp, false, null);
-            simulation.RecordAttackSequenceResult(command, alreadyDead);
-            return Task.FromResult(alreadyDead);
-        }
+            return Task.FromResult(new WorldMonsterDamageResult(WorldMonsterDamageStatus.AlreadyDead, 0, 0, instance.Spawn.Mob.MaxHp, false, null));
 
         var (hpBefore, hpAfter, killed, maxHp) = simulation.ApplyDamage(instance, command.Damage);
 

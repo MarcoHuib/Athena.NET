@@ -395,6 +395,94 @@ public sealed class WorldMonsterSimulationTests : IAsyncLifetime
         Assert.False(again.KilledByThisHit);
     }
 
+    // Regression: AlreadyDead is a REJECTION, never a committed outcome - it must NOT be recorded
+    // into the AttackSequence ledger, or a later exact retry of that same (rejected) sequence
+    // would incorrectly synthesize ReplayedSequence instead of AlreadyDead again.
+    [Fact]
+    public async Task ApplyMonsterDamage_NewSequenceAfterDeath_ReturnsAlreadyDead_NotRecordedIntoLedger_RetryIsAlsoAlreadyDead()
+    {
+        var (grain, mapId, life, presenceId) = await SetupAttackerAsync("izlude");
+        var bootstrap = await grain.PollMonsterFeedAsync(cursor: null, mapId);
+        var lethal = await grain.ApplyMonsterDamageAsync(DamageCommand(life, presenceId, sequence: 1, damage: 100));
+        Assert.True(lethal.KilledByThisHit);
+
+        var sequenceTwoCommand = DamageCommand(life, presenceId, sequence: 2, damage: 5);
+        var first = await grain.ApplyMonsterDamageAsync(sequenceTwoCommand);
+        Assert.Equal(WorldMonsterDamageStatus.AlreadyDead, first.Status);
+
+        // The exact retry of the SAME (rejected) sequence 2 must ALSO be AlreadyDead - never
+        // ReplayedSequence, which would incorrectly imply sequence 2 had once actually committed.
+        var retry = await grain.ApplyMonsterDamageAsync(sequenceTwoCommand);
+        Assert.Equal(WorldMonsterDamageStatus.AlreadyDead, retry.Status);
+        Assert.False(retry.KilledByThisHit);
+
+        // No additional feed entries (HealthChanged/Died/engagement) resulted from EITHER
+        // AlreadyDead call - only the original lethal command's own single Died entry exists.
+        var page = await grain.PollMonsterFeedAsync(new WorldMonsterFeedCursor(bootstrap.SimulationEpoch, bootstrap.AsOfSequence), mapId);
+        Assert.Single(page.Entries!, entry => entry.Kind == WorldMonsterFeedEntryKind.Died);
+        Assert.DoesNotContain(page.Entries!, entry => entry.Kind == WorldMonsterFeedEntryKind.HealthChanged);
+    }
+
+    // Regression: the rejected sequence 2 attempts above must not have replaced or advanced the
+    // ledger entry the original, genuinely committed sequence 1 owns - a later exact retry of
+    // sequence 1 must still return ReplayedSequence with sequence 1's own original authoritative
+    // outcome, never anything derived from the rejected sequence 2 attempts.
+    [Fact]
+    public async Task ApplyMonsterDamage_AfterRejectedLaterSequenceAttempts_OriginalCommittedSequenceStillReplaysCorrectly()
+    {
+        var (grain, mapId, life, presenceId) = await SetupAttackerAsync("izlude");
+        var bootstrap = await grain.PollMonsterFeedAsync(cursor: null, mapId);
+        var sequenceOneCommand = DamageCommand(life, presenceId, sequence: 1, damage: 100);
+        var original = await grain.ApplyMonsterDamageAsync(sequenceOneCommand);
+        Assert.Equal(WorldMonsterDamageStatus.Applied, original.Status);
+        Assert.True(original.KilledByThisHit);
+
+        // Two rejected AlreadyDead attempts at sequence 2, including a retry of that same rejected
+        // sequence (per the previous test) - neither may disturb sequence 1's own ledger entry.
+        await grain.ApplyMonsterDamageAsync(DamageCommand(life, presenceId, sequence: 2, damage: 5));
+        await grain.ApplyMonsterDamageAsync(DamageCommand(life, presenceId, sequence: 2, damage: 5));
+
+        var replayOfOriginal = await grain.ApplyMonsterDamageAsync(sequenceOneCommand);
+        Assert.Equal(WorldMonsterDamageStatus.ReplayedSequence, replayOfOriginal.Status);
+        Assert.Equal(original.HpBefore, replayOfOriginal.HpBefore);
+        Assert.Equal(original.HpAfter, replayOfOriginal.HpAfter);
+        Assert.Equal(original.MaxHp, replayOfOriginal.MaxHp);
+        Assert.True(replayOfOriginal.KilledByThisHit);
+
+        // Still exactly one Died entry total - the rejected attempts and the sequence-1 replay
+        // together produced no additional feed entries.
+        var page = await grain.PollMonsterFeedAsync(new WorldMonsterFeedCursor(bootstrap.SimulationEpoch, bootstrap.AsOfSequence), mapId);
+        Assert.Single(page.Entries!, entry => entry.Kind == WorldMonsterFeedEntryKind.Died);
+    }
+
+    // Regression: a brand-new attacker/sequence pair that has NEVER been seen before, presented
+    // against an already-dead life, must return AlreadyDead every time - never ReplayedSequence,
+    // since no ledger entry for this key exists at all (TryAcceptAttackSequence correctly returns
+    // null - "proceed as new" - and the liveness check below it is what rejects it).
+    [Fact]
+    public async Task ApplyMonsterDamage_BrandNewAttackerSequenceAgainstAlreadyDeadLife_AlwaysAlreadyDead_NeverReplayedSequence()
+    {
+        var (grain, mapId, life, presenceId) = await SetupAttackerAsync("izlude");
+        var bootstrap = await grain.PollMonsterFeedAsync(cursor: null, mapId);
+        await grain.ApplyMonsterDamageAsync(DamageCommand(life, presenceId, sequence: 1, damage: 100));
+
+        var otherPresenceId = Guid.NewGuid();
+        const uint otherAttacker = 902;
+        await grain.RegisterPresenceAsync(Presence(otherPresenceId, otherAttacker, mapId, x: MonsterX, y: MonsterY));
+        var brandNewCommand = new WorldMonsterDamageCommand(life, otherAttacker, otherPresenceId, AttackSequence: 1, Damage: 5, AcquireEngagement: false);
+
+        var first = await grain.ApplyMonsterDamageAsync(brandNewCommand);
+        Assert.Equal(WorldMonsterDamageStatus.AlreadyDead, first.Status);
+
+        var retry = await grain.ApplyMonsterDamageAsync(brandNewCommand);
+        Assert.Equal(WorldMonsterDamageStatus.AlreadyDead, retry.Status);
+
+        var page = await grain.PollMonsterFeedAsync(new WorldMonsterFeedCursor(bootstrap.SimulationEpoch, bootstrap.AsOfSequence), mapId);
+        Assert.Single(page.Entries!, entry => entry.Kind == WorldMonsterFeedEntryKind.Died);
+        Assert.DoesNotContain(page.Entries!, entry => entry.Kind == WorldMonsterFeedEntryKind.HealthChanged);
+        Assert.DoesNotContain(page.Entries!, entry => entry.Kind is WorldMonsterFeedEntryKind.EngagementAcquired or WorldMonsterFeedEntryKind.ChaseStarted);
+    }
+
     [Fact]
     public async Task ApplyMonsterDamage_LethalHit_AppendsDiedExactlyOnce_NeverHealthChanged()
     {
