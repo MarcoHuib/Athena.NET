@@ -796,6 +796,302 @@ public sealed class WorldMonsterSimulationTests : IAsyncLifetime
         Assert.Equal(55u, result.HpBefore);
     }
 
+    // Step 7 substep 3: WorldPartitionGrain.Remove(presence) -> AttackSequence cleanup wiring.
+    // Every removal path funnels through the same single Remove(presence) chokepoint - these tests
+    // exercise each of the four production removal paths that reach it, proving the cleanup
+    // triggers regardless of which one is used, without duplicating cleanup logic per caller.
+    // Correctness (never mutating HP for a departed presence) does NOT depend on this cleanup's
+    // timing at all - ApplyMonsterDamageAsync's own presence-validation step already rejects a
+    // stale presence as StaleAttackerPresence before the ledger is ever consulted, regardless of
+    // whether RemoveAttackSequencesForPresence has run yet. This cleanup is purely memory-bounding.
+
+    [Fact]
+    public async Task Remove_ViaUnregisterPresenceAsync_CleansThatPresencesAttackSequenceState_UnrelatedPresenceUntouched()
+    {
+        var (grain, mapId, life, presenceIdA) = await SetupAttackerAsync("izlude");
+        var presenceIdB = Guid.NewGuid();
+        const uint attackerB = 901;
+        await grain.RegisterPresenceAsync(Presence(presenceIdB, attackerB, mapId, x: MonsterX, y: MonsterY));
+
+        var commandA = new WorldMonsterDamageCommand(life, AttackerCharacterId, presenceIdA, AttackSequence: 3, Damage: 5, AcquireEngagement: false);
+        var commandB = new WorldMonsterDamageCommand(life, attackerB, presenceIdB, AttackSequence: 4, Damage: 5, AcquireEngagement: false);
+        var originalA = await grain.ApplyMonsterDamageAsync(commandA);
+        var originalB = await grain.ApplyMonsterDamageAsync(commandB);
+        Assert.Equal(WorldMonsterDamageStatus.Applied, originalA.Status);
+        Assert.Equal(WorldMonsterDamageStatus.Applied, originalB.Status);
+
+        Assert.Equal(WorldPresenceUnregistrationStatus.Removed, (await grain.UnregisterPresenceAsync(mapId, AttackerCharacterId, presenceIdA)).Status);
+
+        // Re-register the SAME presenceId (a fresh session reusing the identity a real reconnect
+        // would NOT reuse, but this test is specifically isolating the LEDGER's own cleanup from
+        // presence-validation - see the other tests for the "genuinely new PresenceId" case) so
+        // presence validation passes and the ledger check is what's actually being exercised. A's
+        // ledger entry is gone: the same command, resent verbatim, is treated as brand-new (Applied
+        // again, mutating HP a SECOND time) rather than replayed - proving no stale ledger entry
+        // survived to intercept it as ReplayedSequence.
+        await grain.RegisterPresenceAsync(Presence(presenceIdA, AttackerCharacterId, mapId, x: MonsterX, y: MonsterY));
+        var afterRemovalA = await grain.ApplyMonsterDamageAsync(commandA);
+        Assert.Equal(WorldMonsterDamageStatus.Applied, afterRemovalA.Status);
+        // HP by this point reflects BOTH A's and B's earlier hits (55 - 5 - 5 = 45) - this second
+        // application of A's own 5 damage further reduces it to 40, proving it was a genuinely
+        // NEW mutation, not a zero-mutation ReplayedSequence (which would have left HP at 45).
+        Assert.Equal(originalB.HpAfter, afterRemovalA.HpBefore);
+        Assert.Equal(originalB.HpAfter - 5, afterRemovalA.HpAfter);
+
+        // B's ledger entry is completely untouched by A's removal - the exact same command still
+        // replays with B's own original authoritative outcome.
+        var replayB = await grain.ApplyMonsterDamageAsync(commandB);
+        Assert.Equal(WorldMonsterDamageStatus.ReplayedSequence, replayB.Status);
+        Assert.Equal(originalB.HpBefore, replayB.HpBefore);
+        Assert.Equal(originalB.HpAfter, replayB.HpAfter);
+    }
+
+    [Fact]
+    public async Task Remove_ViaSamePartitionTransfer_CleansSourceMapAttackSequenceState_DestinationRegistrationRemainsCorrect()
+    {
+        var (grain, sourceMapId, life, presenceId) = await SetupAttackerAsync("izlude");
+        var command = DamageCommand(life, presenceId, sequence: 1, damage: 5);
+        var original = await grain.ApplyMonsterDamageAsync(command);
+        Assert.Equal(WorldMonsterDamageStatus.Applied, original.Status);
+
+        // "prontera-region" and "world-rest" (which owns izlude/geffen) are both mapped to real
+        // partitions by TopologyConfigurator's own topology - transferring izlude -> geffen stays
+        // on the SAME partition (world-rest), matching this test's own "same-partition" scope.
+        var destinationMapId = "geffen";
+        var transferCommand = new WorldTransferCommand(Guid.NewGuid(), presenceId, AttackerCharacterId, sourceMapId, destinationMapId, DestinationX: 50, DestinationY: 50);
+        var transferResult = await grain.TransferPlayerAsync(transferCommand);
+        Assert.Equal(WorldTransferStatus.Completed, transferResult.Status);
+        Assert.Equal(WorldTransferType.SamePartition, transferResult.Type);
+
+        // Destination registration itself is correct - the presence is now on the destination map.
+        var destinationSnapshot = await grain.GetMapSnapshotAsync(destinationMapId);
+        Assert.Contains(destinationSnapshot.Players, p => p.CharacterId == AttackerCharacterId && p.PresenceId == presenceId);
+
+        // Source map's ledger entry for this presence is gone - the exact same source-map command,
+        // resent verbatim, is treated as brand-new rather than replayed. (World validation itself
+        // would separately reject this as StaleAttackerPresence/AttackerNotEngageable too, since
+        // the presence is now registered elsewhere - but this assertion specifically proves the
+        // LEDGER's own cleanup by first moving the presence back to the source map, so the
+        // presence-validation step passes and the ledger check is what's actually being
+        // exercised. RegisterPresenceAsync refuses to silently relocate an already-registered
+        // PresenceId to a different map [Conflict] - explicitly unregister from the destination
+        // first, matching how a real client-driven "go back" would also require a genuine
+        // unregister/re-register cycle, not an in-place move.)
+        await grain.UnregisterPresenceAsync(destinationMapId, AttackerCharacterId, presenceId);
+        await grain.RegisterPresenceAsync(Presence(presenceId, AttackerCharacterId, sourceMapId, x: MonsterX, y: MonsterY));
+        var afterTransfer = await grain.ApplyMonsterDamageAsync(command);
+        Assert.Equal(WorldMonsterDamageStatus.Applied, afterTransfer.Status);
+        Assert.Equal(original.HpAfter, afterTransfer.HpBefore);
+    }
+
+    [Fact]
+    public async Task Remove_ViaCrossPartitionFinalizeOutgoingTransfer_CleansSourceMapAttackSequenceState()
+    {
+        var prontera = Partition("prontera-region");
+        var rest = Partition("world-rest");
+        var mapId = "prontera";
+        var load = await prontera.LoadMonsterSpawnsAsync(SingleMonsterBatch(mapId));
+        var bootstrap = await prontera.PollMonsterFeedAsync(cursor: null, mapId);
+        var actorId = bootstrap.Snapshot!.Single().ActorId;
+        var life = new WorldMonsterLifeReference(mapId, load.SimulationEpoch, actorId, WorldMonsterIncarnationId.First);
+        var presenceId = Guid.NewGuid();
+        await prontera.RegisterPresenceAsync(Presence(presenceId, AttackerCharacterId, mapId, x: MonsterX, y: MonsterY));
+
+        var command = DamageCommand(life, presenceId, sequence: 1, damage: 5);
+        var original = await prontera.ApplyMonsterDamageAsync(command);
+        Assert.Equal(WorldMonsterDamageStatus.Applied, original.Status);
+
+        // "izlude" is owned by the "world-rest" partition per TopologyConfigurator - a
+        // prontera -> izlude transfer is genuinely cross-partition.
+        var transferCommand = new WorldTransferCommand(Guid.NewGuid(), presenceId, AttackerCharacterId, mapId, "izlude", DestinationX: 50, DestinationY: 50);
+        var transferResult = await prontera.TransferPlayerAsync(transferCommand);
+        Assert.Equal(WorldTransferStatus.Completed, transferResult.Status);
+        Assert.Equal(WorldTransferType.CrossPartition, transferResult.Type);
+        // TransferPlayerAsync's own cross-partition branch drives PrepareIncomingTransferAsync ->
+        // CommitIncomingTransferAsync -> FinalizeOutgoingTransferAsync internally (see
+        // ContinueCrossPartitionAsync) - by the time it returns Completed, FinalizeOutgoingTransferAsync
+        // has already run and Remove(current) has already fired on the SOURCE (prontera) partition.
+        var destinationSnapshot = await rest.GetMapSnapshotAsync("izlude");
+        Assert.Contains(destinationSnapshot.Players, p => p.CharacterId == AttackerCharacterId && p.PresenceId == presenceId);
+
+        // Source simulation's ledger entry is gone - move the presence back to the source map
+        // (RegisterPresenceAsync refuses to silently relocate an already-registered PresenceId to
+        // a different map/partition - unregister from the destination first, matching a genuine
+        // reconnect cycle) and resend the exact same command: it must be treated as brand-new.
+        await rest.UnregisterPresenceAsync("izlude", AttackerCharacterId, presenceId);
+        await prontera.RegisterPresenceAsync(Presence(presenceId, AttackerCharacterId, mapId, x: MonsterX, y: MonsterY));
+        var afterTransfer = await prontera.ApplyMonsterDamageAsync(command);
+        Assert.Equal(WorldMonsterDamageStatus.Applied, afterTransfer.Status);
+        Assert.Equal(original.HpAfter, afterTransfer.HpBefore);
+    }
+
+    [Fact]
+    public async Task Remove_ViaIncomingCommitOwnerReplacement_CleansOldOwnersOldMapAttackSequenceState()
+    {
+        // CommitIncomingTransferAsync's own `if (owner is not null) Remove(owner)` branch (line
+        // 300) is reached ONLY when an existing owner for this CharacterId shares the SAME
+        // PresenceId as the incoming transfer (a genuinely DIFFERENT PresenceId is already
+        // rejected earlier, by PrepareIncomingTransferAsync's own conflict check at line 287, and
+        // again by CommitIncomingTransferAsync's own line 298 - see those methods' own logic).
+        // This is the shape a real cross-partition transfer's own in-flight window naturally
+        // produces: the SAME presence is still registered on its OLD map (izlude) because
+        // FinalizeOutgoingTransferAsync has not yet run on the source partition, while
+        // CommitIncomingTransferAsync legitimately commits that SAME presence onto the
+        // destination map (geffen) as part of completing the same logical transfer.
+        var rest = Partition("world-rest");
+        var presenceId = Guid.NewGuid();
+        var oldMapId = "izlude";
+        var oldLoad = await rest.LoadMonsterSpawnsAsync(SingleMonsterBatch(oldMapId));
+        var oldBootstrap = await rest.PollMonsterFeedAsync(cursor: null, oldMapId);
+        var oldActorId = oldBootstrap.Snapshot!.Single().ActorId;
+        var oldLife = new WorldMonsterLifeReference(oldMapId, oldLoad.SimulationEpoch, oldActorId, WorldMonsterIncarnationId.First);
+        await rest.RegisterPresenceAsync(Presence(presenceId, AttackerCharacterId, oldMapId, x: MonsterX, y: MonsterY));
+        var oldCommand = DamageCommand(oldLife, presenceId, sequence: 1, damage: 5);
+        var original = await rest.ApplyMonsterDamageAsync(oldCommand);
+        Assert.Equal(WorldMonsterDamageStatus.Applied, original.Status);
+
+        // Prepare+commit an incoming transfer for the SAME PresenceId onto a DIFFERENT map
+        // (geffen), while the izlude registration above is still live - PrepareIncomingTransferAsync
+        // + CommitIncomingTransferAsync directly (never weakening the transfer protocol itself,
+        // matching WorldPartitionGrainTests' own existing "manual stage" idiom for exercising these
+        // two RPCs without a full TransferPlayerAsync).
+        var incomingTransferId = Guid.NewGuid();
+        var newPresence = new WorldPlayerPresence(presenceId, AttackerCharacterId + 1_000_000, AttackerCharacterId, "geffen", 10, 10);
+        var incoming = new IncomingWorldTransfer(incomingTransferId, newPresence, "prontera-region", "prontera", "geffen", 10, 10);
+        var prepareResult = await rest.PrepareIncomingTransferAsync(incoming);
+        Assert.Equal(IncomingTransferStatus.Prepared, prepareResult.Status);
+        var commitResult = await rest.CommitIncomingTransferAsync(incomingTransferId);
+        Assert.Equal(IncomingTransferStatus.Committed, commitResult.Status);
+
+        // This SAME presence now owns its CharacterId on "geffen" - its OLD registration on
+        // "izlude" is gone (Remove(owner) already fired as part of the commit above).
+        var geffenSnapshot = await rest.GetMapSnapshotAsync("geffen");
+        Assert.Contains(geffenSnapshot.Players, p => p.PresenceId == presenceId);
+        var izludeSnapshot = await rest.GetMapSnapshotAsync(oldMapId);
+        Assert.DoesNotContain(izludeSnapshot.Players, p => p.CharacterId == AttackerCharacterId);
+
+        // The presence's ledger entry on its OLD map (izlude) is gone - move it back to izlude
+        // (unregister from geffen first, since RegisterPresenceAsync refuses to silently relocate
+        // an already-registered PresenceId to a different map) and resend the exact same
+        // command: it must be treated as brand-new, never replayed.
+        await rest.UnregisterPresenceAsync("geffen", AttackerCharacterId, presenceId);
+        await rest.RegisterPresenceAsync(Presence(presenceId, AttackerCharacterId, oldMapId, x: MonsterX, y: MonsterY));
+        var afterCommit = await rest.ApplyMonsterDamageAsync(oldCommand);
+        Assert.Equal(WorldMonsterDamageStatus.Applied, afterCommit.Status);
+        Assert.Equal(original.HpAfter, afterCommit.HpBefore);
+    }
+
+    [Fact]
+    public async Task Remove_MapWithNoLoadedMonsterSimulation_SucceedsAsSilentNoOp_NoSimulationCreated()
+    {
+        var grain = Partition("world-rest");
+        var mapId = "geffen"; // Deliberately NEVER LoadMonsterSpawnsAsync'd in this test.
+        var presenceId = Guid.NewGuid();
+        await grain.RegisterPresenceAsync(Presence(presenceId, AttackerCharacterId, mapId));
+
+        var result = await grain.UnregisterPresenceAsync(mapId, AttackerCharacterId, presenceId);
+
+        Assert.Equal(WorldPresenceUnregistrationStatus.Removed, result.Status);
+        // No monster simulation was created as a side effect of the cleanup lookup - the map's own
+        // feed poll still correctly reports SpawnInitializationRequired (never Ready), proving
+        // Remove's guarded lookup never lazily created a simulation record for this map.
+        var page = await grain.PollMonsterFeedAsync(cursor: null, mapId);
+        Assert.Equal(WorldMonsterFeedStatus.SpawnInitializationRequired, page.Status);
+    }
+
+    [Fact]
+    public async Task ApplyMonsterDamage_AcceptedAttackThenRemove_LedgerCleanedAfterLegitimateCommit()
+    {
+        var (grain, mapId, life, presenceId) = await SetupAttackerAsync("izlude");
+        var command = DamageCommand(life, presenceId, sequence: 1, damage: 5);
+
+        // Ordering A: the attack turn happens FIRST - it may legitimately commit.
+        var committed = await grain.ApplyMonsterDamageAsync(command);
+        Assert.Equal(WorldMonsterDamageStatus.Applied, committed.Status);
+
+        // The LATER Remove cleans its ledger entry.
+        await grain.UnregisterPresenceAsync(mapId, AttackerCharacterId, presenceId);
+
+        // Re-registering and resending the exact same command proves the ledger entry is gone -
+        // it is treated as brand-new, not replayed.
+        await grain.RegisterPresenceAsync(Presence(presenceId, AttackerCharacterId, mapId, x: MonsterX, y: MonsterY));
+        var afterRemoval = await grain.ApplyMonsterDamageAsync(command);
+        Assert.Equal(WorldMonsterDamageStatus.Applied, afterRemoval.Status);
+        Assert.Equal(committed.HpAfter, afterRemoval.HpBefore);
+    }
+
+    [Fact]
+    public async Task ApplyMonsterDamage_RemoveThenStaleAttack_ReturnsStaleAttackerPresence_NoHpOrFeedMutation()
+    {
+        var (grain, mapId, life, presenceId) = await SetupAttackerAsync("izlude");
+        var bootstrap = await grain.PollMonsterFeedAsync(cursor: null, mapId);
+
+        // Ordering B: Remove happens FIRST.
+        await grain.UnregisterPresenceAsync(mapId, AttackerCharacterId, presenceId);
+
+        // The OLD presence's command, submitted after removal, must be rejected at the
+        // presence-validation step - BEFORE the ledger is ever consulted - regardless of whether
+        // RemoveAttackSequencesForPresence has already run.
+        var staleAttempt = await grain.ApplyMonsterDamageAsync(DamageCommand(life, presenceId, sequence: 1, damage: 999));
+        Assert.Equal(WorldMonsterDamageStatus.StaleAttackerPresence, staleAttempt.Status);
+
+        var page = await grain.PollMonsterFeedAsync(new WorldMonsterFeedCursor(bootstrap.SimulationEpoch, bootstrap.AsOfSequence), mapId);
+        Assert.Empty(page.Entries ?? []);
+        var freshSnapshot = await grain.PollMonsterFeedAsync(cursor: null, mapId);
+        Assert.Equal(55u, freshSnapshot.Snapshot!.Single().CurrentHp);
+    }
+
+    // Boss-survives-many-disconnects memory-bound scenario: ONE long-lived monster life, repeatedly
+    // attacked by a NEW presence that registers, attacks once (non-lethal, Damage=0 so the monster
+    // is never killed/respawned - the point is proving presence cleanup ALONE bounds memory while
+    // the SAME life stays alive), then unregisters. Proven behaviorally through the public RPC
+    // surface (World.Tests has no internals-visibility into the Orleans silo's own in-process
+    // WorldMonsterMapSimulation state - a real distributed TestCluster, not a reflection target):
+    // after every historical presence has departed, a BRAND NEW presence reusing a fresh Guid must
+    // still be treated as a genuinely first-ever attempt (Applied, never spuriously colliding with
+    // any of the ~200 historical, now-unreachable ledger entries) - which is exactly the property
+    // "memory does not grow with historical disconnect count" implies: a bounded structure has
+    // nothing left over from history to collide with, at any point in the sequence.
+    [Fact]
+    public async Task ApplyMonsterDamage_ManySequentialPresenceRegisterAttackUnregisterCycles_NeverAccumulateInterference()
+    {
+        var (grain, mapId, life, _) = await SetupAttackerAsync("izlude");
+        // The original SetupAttackerAsync presence/registration is unused below - each iteration
+        // registers and removes its OWN fresh presence against the SAME still-alive monster life.
+        await grain.UnregisterPresenceAsync(mapId, AttackerCharacterId, (await grain.GetMapSnapshotAsync(mapId)).Players.Single(p => p.CharacterId == AttackerCharacterId).PresenceId);
+
+        const int iterations = 200;
+        for (var i = 0; i < iterations; i++)
+        {
+            var characterId = AttackerCharacterId + 1 + (uint)i;
+            var presenceId = Guid.NewGuid();
+            await grain.RegisterPresenceAsync(Presence(presenceId, characterId, mapId, x: MonsterX, y: MonsterY));
+
+            var result = await grain.ApplyMonsterDamageAsync(new WorldMonsterDamageCommand(life, characterId, presenceId, AttackSequence: 1, Damage: 0, AcquireEngagement: false));
+            Assert.Equal(WorldMonsterDamageStatus.Applied, result.Status);
+            Assert.False(result.KilledByThisHit);
+
+            Assert.Equal(WorldPresenceUnregistrationStatus.Removed, (await grain.UnregisterPresenceAsync(mapId, characterId, presenceId)).Status);
+        }
+
+        // The monster is still alive and at full HP throughout (Damage=0 the whole time) - it was
+        // never killed/respawned, so this genuinely isolates presence-departure cleanup as the
+        // only mechanism keeping the ledger bounded across 200 historical connect/disconnect cycles.
+        var finalPage = await grain.PollMonsterFeedAsync(cursor: null, mapId);
+        Assert.Equal(55u, finalPage.Snapshot!.Single().CurrentHp);
+        Assert.Equal(WorldMonsterLifecycleState.Alive, finalPage.Snapshot![0].Lifecycle);
+
+        // A brand-new (201st) presence, never seen before, still gets ordinary first-attempt
+        // treatment - proving no stale historical entry from any of the 200 prior cycles remains
+        // reachable to interfere with a fresh attacker's own sequence numbering.
+        var freshCharacterId = AttackerCharacterId + 1 + iterations;
+        var freshPresenceId = Guid.NewGuid();
+        await grain.RegisterPresenceAsync(Presence(freshPresenceId, freshCharacterId, mapId, x: MonsterX, y: MonsterY));
+        var freshResult = await grain.ApplyMonsterDamageAsync(new WorldMonsterDamageCommand(life, freshCharacterId, freshPresenceId, AttackSequence: 1, Damage: 10, AcquireEngagement: false));
+        Assert.Equal(WorldMonsterDamageStatus.Applied, freshResult.Status);
+        Assert.Equal(55u, freshResult.HpBefore);
+    }
+
     // Regression: a monster's Target and its authoritative range State must be tracked
     // independently - a monster can have a just-acquired target that is clearly farther away than
     // AttackRange (no chase has started/progressed yet), and the acquisition itself must correctly
@@ -1648,7 +1944,13 @@ public sealed class WorldMonsterSimulationTests : IAsyncLifetime
             siloBuilder.Services
                 .AddSingleton<IWorldPartitionResolver>(WorldPartitionTopologyLoader.Load(TestWorldPartitionsPath.Resolve(), ["izlude", "geffen"]))
                 .AddSingleton<IMovementPathProvider>(new UnverifiedGridLineMovementPathProvider())
-                .AddSingleton<IMapCollisionProvider>(new MapCollisionProvider([MakeAllWalkableMap("izlude"), MakeAllWalkableMap("geffen")]))
+                // "prontera" added for Step 7 substep 3's cross-partition transfer test (proving
+                // FinalizeOutgoingTransferAsync's own Remove(presence) cleanup) - prontera-region
+                // is a genuinely different partition than world-rest per conf/world_partitions.json,
+                // so a real cross-partition spawn+attack+transfer scenario needs collision data for
+                // it too. Purely additive - no existing test in this class spawns monsters on
+                // prontera today.
+                .AddSingleton<IMapCollisionProvider>(new MapCollisionProvider([MakeAllWalkableMap("izlude"), MakeAllWalkableMap("geffen"), MakeAllWalkableMap("prontera")]))
                 .AddSingleton(TimeProvider.System);
         }
     }

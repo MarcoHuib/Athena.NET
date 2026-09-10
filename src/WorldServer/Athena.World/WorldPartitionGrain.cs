@@ -563,7 +563,34 @@ public sealed class WorldPartitionGrain(IWorldPartitionResolver resolver, IMovem
     private void Add(WorldPlayerPresence presence) { Map(presence.MapId).Players[presence.CharacterId] = presence; _mapByCharacter[presence.CharacterId] = presence.MapId; }
     private bool TryFind(uint characterId, [NotNullWhen(true)] out WorldPlayerPresence? presence)
     { if (_mapByCharacter.TryGetValue(characterId, out var mapId) && Map(mapId).Players.TryGetValue(characterId, out var found)) { presence = found; return true; } presence = null; return false; }
-    private void Remove(WorldPlayerPresence presence) { Map(presence.MapId).Players.Remove(presence.CharacterId); _mapByCharacter.Remove(presence.CharacterId); _movements.Remove(presence.CharacterId); }
+    // Step 7 substep 3: the single chokepoint every presence-departure path (UnregisterPresenceAsync,
+    // TransferPlayerAsync's same-partition branch, CommitIncomingTransferAsync's owner-replacement
+    // branch, FinalizeOutgoingTransferAsync) already funnels through - eagerly cleaning that
+    // presence's AttackSequence ledger entries HERE, in one place, makes it structurally impossible
+    // for a future fifth removal path to forget the cleanup (it would have to bypass Remove entirely,
+    // which would already break the existing dictionary maintenance below too).
+    //
+    // Deliberately uses a bare _monsterSimulations.TryGetValue, NEVER MonsterSimulation(mapId) or
+    // FindOrCreateMonsterSimulation(mapId) - presence removal from a map with no loaded monster
+    // simulation must remain a silent no-op for monster state: no lazy creation, no LastTouchedUtc
+    // extension, no TouchActivationLifetime call, no epoch rotation, no spawn load. This is purely
+    // memory-bounding cleanup of an EXISTING simulation's own ledger, never a touch in its own right.
+    //
+    // Correctness never depends on this cleanup's timing (see ApplyMonsterDamageAsync's own
+    // validation-order proof) - a departed presence's stale ledger entry is already inert the
+    // instant its presence registration is gone, because step 2 of that validation (current
+    // CharacterId+PresenceId) rejects it as StaleAttackerPresence BEFORE the ledger (step 4) is
+    // ever consulted, regardless of whether this cleanup has run yet. This is purely a
+    // memory-bounding optimization: it converges _attackSequences/_attackSequencesByPresence to
+    // being bounded by CURRENTLY-live attacker namespaces rather than historical reconnect count.
+    private void Remove(WorldPlayerPresence presence)
+    {
+        if (_monsterSimulations.TryGetValue(presence.MapId, out var simulation))
+            simulation.RemoveAttackSequencesForPresence(presence.CharacterId, presence.PresenceId);
+        Map(presence.MapId).Players.Remove(presence.CharacterId);
+        _mapByCharacter.Remove(presence.CharacterId);
+        _movements.Remove(presence.CharacterId);
+    }
     private int Count => _mapByCharacter.Count;
     private WorldPresenceRegistration Registration(string mapId, WorldPresenceRegistrationStatus status) => new(PartitionId, mapId, status, Count);
     private WorldPresenceUnregistration Unregistration(string mapId, WorldPresenceUnregistrationStatus status) => new(PartitionId, mapId, status, Count);
