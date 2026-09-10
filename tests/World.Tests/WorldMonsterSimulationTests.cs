@@ -1058,42 +1058,59 @@ public sealed class WorldMonsterSimulationTests : IAsyncLifetime
         const uint characterB = 951;
         await grain.UnregisterPresenceAsync(mapId, AttackerCharacterId, (await grain.GetMapSnapshotAsync(mapId)).Players.Single(p => p.CharacterId == AttackerCharacterId).PresenceId);
 
-        // Two DIFFERENT CharacterIds, deliberately sharing the SAME PresenceId Guid - accepted by
-        // the current presence contract since RegisterPresenceAsync's own conflict check never
-        // examines PresenceId uniqueness across CharacterIds.
+        // Two DIFFERENT CharacterIds, deliberately sharing the SAME PresenceId Guid, registered and
+        // BOTH REMAINING REGISTERED SIMULTANEOUSLY - accepted by the current presence contract
+        // since RegisterPresenceAsync's own conflict check (TryFind keyed by CharacterId alone)
+        // never examines PresenceId uniqueness across CharacterIds. This simultaneity is essential:
+        // if B only registered AFTER A had already unregistered, A's and B's AttackSequence entries
+        // would never coexist in the SAME _attackSequencesByPresence[sharedPresenceId] bucket, and
+        // the whole scenario this test exists to catch could never occur.
         await grain.RegisterPresenceAsync(Presence(sharedPresenceId, characterA, mapId, x: MonsterX, y: MonsterY));
-        var commandA = new WorldMonsterDamageCommand(life, characterA, sharedPresenceId, AttackSequence: 1, Damage: 0, AcquireEngagement: false);
-        Assert.Equal(WorldMonsterDamageStatus.Applied, (await grain.ApplyMonsterDamageAsync(commandA)).Status);
-        await grain.UnregisterPresenceAsync(mapId, characterA, sharedPresenceId);
         await grain.RegisterPresenceAsync(Presence(sharedPresenceId, characterB, mapId, x: MonsterX, y: MonsterY));
+
+        var commandA = new WorldMonsterDamageCommand(life, characterA, sharedPresenceId, AttackSequence: 1, Damage: 0, AcquireEngagement: false);
         var commandB = new WorldMonsterDamageCommand(life, characterB, sharedPresenceId, AttackSequence: 1, Damage: 0, AcquireEngagement: false);
+        Assert.Equal(WorldMonsterDamageStatus.Applied, (await grain.ApplyMonsterDamageAsync(commandA)).Status);
         Assert.Equal(WorldMonsterDamageStatus.Applied, (await grain.ApplyMonsterDamageAsync(commandB)).Status);
 
-        // Unregister A. If cleanup had removed the ENTIRE PresenceId bucket (the pre-fix bug),
-        // B's own entry would still exist in _attackSequences but become unreachable through the
-        // secondary index for any FUTURE cleanup call - not observable from THIS replay alone, so
-        // this call's own success is establishing the scenario, not yet the proof.
-        await grain.UnregisterPresenceAsync(mapId, characterA, sharedPresenceId);
+        // At this point _attackSequencesByPresence[sharedPresenceId] must logically contain BOTH
+        // (characterA, life) and (characterB, life) - the exact shared-bucket state the original
+        // bug required and the fixed-only-after-B-departed prior version of this test never
+        // actually constructed.
+        Assert.Equal(WorldPresenceUnregistrationStatus.Removed, (await grain.UnregisterPresenceAsync(mapId, characterA, sharedPresenceId)).Status);
 
-        // B's exact command must still return ReplayedSequence - proving A's cleanup did not
-        // corrupt B's own ledger entry (this alone would already have failed under the pre-fix
-        // bug ONLY if A's removal had also deleted B's _attackSequences entry directly, which it
-        // did not - the bug was specifically about the SECONDARY index losing track of B, not the
-        // primary entry being deleted outright).
+        // With the OLD BROKEN helper, unregistering A would have deleted the ENTIRE
+        // sharedPresenceId bucket (including B's entry) from the secondary index, while B's
+        // primary _attackSequences entry survives untouched - not yet observable from a replay
+        // alone (the primary entry is intact either way), so this assertion establishes that A's
+        // cleanup did not corrupt B's own primary ledger entry, without yet proving the secondary
+        // index is still healthy.
         var replayB = await grain.ApplyMonsterDamageAsync(commandB);
         Assert.Equal(WorldMonsterDamageStatus.ReplayedSequence, replayB.Status);
 
-        // Now unregister B, then re-register B under the SAME CharacterId+PresenceId and resend
-        // the SAME command. This is the actual proof: if B's entry were still discoverable through
-        // the secondary index, THIS unregister call correctly finds and removes it - the resend is
-        // then treated as brand-new (Applied). Under the pre-fix bug, B's secondary-index bucket
-        // was already gone (deleted wholesale when A's cleanup ran), so THIS unregister call would
-        // silently no-op (TryGetValue on an already-missing bucket), B's stale primary-dictionary
-        // entry would survive, and the resend would incorrectly return ReplayedSequence again.
+        // THE LOAD-BEARING ACTION: unregister B. With the FIXED helper, B's entry is still present
+        // in the (still-existing, A-only-trimmed) sharedPresenceId secondary bucket, so this call
+        // discovers and removes B's primary AttackSequence state. With the OLD BROKEN helper, the
+        // entire bucket was already destroyed when A left, so this call's TryGetValue on the
+        // (already-missing) bucket silently no-ops, and B's primary ledger entry leaks forever.
         Assert.Equal(WorldPresenceUnregistrationStatus.Removed, (await grain.UnregisterPresenceAsync(mapId, characterB, sharedPresenceId)).Status);
+
+        // FINAL PROOF: re-register B under the SAME CharacterId+PresenceId against the SAME
+        // still-living monster life, and resend B's EXACT original command. Under the fixed
+        // helper, B's cleanup above genuinely removed the ledger entry, so this is treated as a
+        // brand-new attempt: Applied. Under the old broken helper, B's stale primary entry would
+        // still be present (never reachable for cleanup because its secondary-index bucket was
+        // gone), and this would incorrectly return ReplayedSequence again.
         await grain.RegisterPresenceAsync(Presence(sharedPresenceId, characterB, mapId, x: MonsterX, y: MonsterY));
         var afterBsOwnCleanup = await grain.ApplyMonsterDamageAsync(commandB);
         Assert.Equal(WorldMonsterDamageStatus.Applied, afterBsOwnCleanup.Status);
+
+        // The monster stayed alive/full-HP throughout (Damage=0 on every hit) - no
+        // respawn/epoch-reminting cleanup could have masked or substituted for the
+        // presence-cleanup behavior under test.
+        var finalPage = await grain.PollMonsterFeedAsync(cursor: null, mapId);
+        Assert.Equal(WorldMonsterLifecycleState.Alive, finalPage.Snapshot![0].Lifecycle);
+        Assert.Equal(finalPage.Snapshot![0].MaxHp, finalPage.Snapshot![0].CurrentHp);
     }
 
     // Boss-survives-many-disconnects memory-bound scenario: ONE long-lived monster life, repeatedly
