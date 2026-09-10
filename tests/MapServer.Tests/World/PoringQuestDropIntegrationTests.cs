@@ -87,7 +87,8 @@ public sealed class PoringQuestDropIntegrationTests
             X: position.X, Y: position.Y,
             Lifecycle: instance.IsAlive ? WorldMonsterLifecycleState.Alive : WorldMonsterLifecycleState.Dead,
             IsWalking: instance.IsWalking, DestinationX: instance.MovementDestination.X, DestinationY: instance.MovementDestination.Y,
-            Engagement: WorldMonsterEngagementState.Unengaged, EngagedTarget: null);
+            Engagement: WorldMonsterEngagementState.Unengaged, EngagedTarget: null,
+            CurrentHp: instance.CurrentHp, MaxHp: instance.Spawn.Mob.MaxHp);
         var life = new WorldMonsterLifeReference(instance.Map, epoch, instance.ActorId, incarnationId);
         return (new WorldMonsterActorView(wireInstance), life);
     }

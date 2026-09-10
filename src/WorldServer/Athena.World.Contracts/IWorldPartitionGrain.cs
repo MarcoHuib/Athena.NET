@@ -257,14 +257,12 @@ public sealed record WorldPlayerTargetReference(
 // state-holding counterpart to that decision, not a duplicate of its own logic.
 public enum WorldMonsterEngagementState { Unengaged, Chasing, InAttackRange }
 
-// A monster's full World-authoritative state, EXCLUDING current HP (see this record's own field
-// list - there is deliberately no CurrentHp here). Player -> monster damage stays MapServer-local
-// for Phase 2B (see the interface's own doc comment); a MapServer instance keeps its own local
-// combat-relevant state (CurrentHp, NextAttackAt, static combat inputs) keyed by the SAME
-// (MapId, SimulationEpoch, ActorId, IncarnationId) tuple this record's own fields identify,
-// distinct from this type so the authority boundary between "World-projected" and
-// "MapServer-combat-local" state is mechanically obvious at every call site, never merely a
-// convention a reviewer has to remember.
+// A monster's full World-authoritative state. As of Step 7, this INCLUDES CurrentHp/MaxHp -
+// World is the sole authority for both (see IWorldPartitionGrain's own Step 7 doc comment and
+// ApplyMonsterDamageAsync) - a MapServer instance reads HP directly from this projection (via the
+// feed) for any display/discovery purpose; it no longer stores authoritative HP itself. Damage
+// calculation (weapon/ATK/DEF formula) and quest-drop orchestration remain MapServer-local; only
+// the atomic mutation of these two fields lives in World.
 //
 // Deliberately has NO per-instance sequence field: the feed protocol already has
 // WorldMonsterFeedEntry.Sequence (one incremental transition's own position) and
@@ -284,7 +282,9 @@ public sealed record WorldMonsterInstance(
     [property: Id(8)] ushort DestinationX,
     [property: Id(9)] ushort DestinationY,
     [property: Id(10)] WorldMonsterEngagementState Engagement,
-    [property: Id(11)] WorldPlayerTargetReference? EngagedTarget);
+    [property: Id(11)] WorldPlayerTargetReference? EngagedTarget,
+    [property: Id(12)] uint CurrentHp,
+    [property: Id(13)] uint MaxHp);
 
 // A serializable PROJECTION of a spawn declaration - not MobSpawnDefinition/MobDefinition
 // themselves, which live in MapServer's/Athena.World.Monsters' file-linked source and reference

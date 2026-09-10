@@ -66,7 +66,7 @@ public sealed class MapClientSessionVisibilityFailClosedTests
         var instance = new WorldMonsterInstance(
             actorId, WorldMonsterIncarnationId.First, MapId, PoringMobId, X: 75, Y: 51,
             WorldMonsterLifecycleState.Alive, IsWalking: false, DestinationX: 75, DestinationY: 51,
-            WorldMonsterEngagementState.Unengaged, EngagedTarget: null);
+            WorldMonsterEngagementState.Unengaged, EngagedTarget: null, CurrentHp: 55, MaxHp: 55);
         projection.ApplySnapshot([instance], epoch, combatState);
         // Directly undo the registration ApplySnapshot itself would normally perform, to construct
         // the exact reconciliation-invariant-violation state this test targets: a projection that

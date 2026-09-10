@@ -254,7 +254,7 @@ public sealed class MapTcpServerMonsterTickHardeningTests
         var monsterInstance = new WorldMonsterInstance(
             monsterActorId, monsterIncarnation, mapId, MobId: 1002, X: 100, Y: 100,
             WorldMonsterLifecycleState.Alive, IsWalking: false, DestinationX: 100, DestinationY: 100,
-            WorldMonsterEngagementState.InAttackRange, target);
+            WorldMonsterEngagementState.InAttackRange, target, CurrentHp: 55, MaxHp: 55);
 
         // The scripted PollMonsterFeedAsync always reports the SAME fixed epoch/snapshot - a first
         // poll (cursor null) bootstraps it; every later poll (this test drives only one tick, so

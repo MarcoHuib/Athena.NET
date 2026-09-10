@@ -19,17 +19,33 @@ public sealed record WorldMonsterTouchedWindowOptions(TimeSpan Window);
 // copy" of monster simulation state, not a duplicate implementation of pinned spawn/movement
 // logic (see MobSpawnCellSelector.cs's own doc comment for that logic's pinned trace).
 //
-// Deliberately does NOT track CurrentHp for combat purposes - MobInstance's own CurrentHp field
-// exists (MonsterRegistry constructs real MobInstance objects, which always have one), but nothing
-// in this type ever mutates it via ApplyDamage, and WorldMonsterInstance (the wire-facing
-// projection) never exposes it - see that record's own doc comment for why player -> monster
-// damage stays entirely MapServer-local for this phase.
+// Step 7: World IS the sole authority for CurrentHp/MaxHp and the Alive->Dead transition -
+// ApplyDamage (below) performs the clamped subtract, the atomic Alive->Dead compare (via
+// MobInstance.ApplyDamage's own single-lock critical section), and the AttackSequence
+// idempotency ledger that guards it, all in one non-async, zero-await grain turn. Damage
+// calculation (weapon/ATK/DEF formula) and quest-drop orchestration remain MapServer-local -
+// only the atomic mutation itself lives here. WorldMonsterInstance (the wire-facing projection)
+// now carries CurrentHp/MaxHp so MapServer processes can read authoritative HP from the feed
+// instead of a local store - see that record's own doc comment.
 internal sealed class WorldMonsterMapSimulation
 {
     private readonly Dictionary<uint, EngagementState> _engagementByActorId = [];
     private readonly List<WorldMonsterFeedEntry> _entries = [];
     private long _nextSequence = 1;
     private string? _spawnFingerprint;
+
+    // AttackSequence idempotency ledger (Step 7). Keyed by the full attacker+life identity so a
+    // reconnect (fresh PresenceId) or a respawn (fresh IncarnationId embedded in Life) naturally
+    // starts an empty sequence namespace with no explicit reset needed. NOT a Guid/TTL dedup cache
+    // - a time-evicted key is unsound for a non-lethal command (a delayed replay after eviction
+    // would re-apply real damage a second time); safety here comes from identity+monotonic
+    // ordering, so an entry never needs to expire on a timer. Cleared only when its key becomes
+    // structurally unreachable (epoch change, respawn - see Unload/Rebuild/OnRespawnObserved).
+    private readonly Dictionary<(uint CharacterId, Guid PresenceId, WorldMonsterLifeReference Life), AttackSequenceState> _attackSequences = [];
+    // Secondary index for O(entries-for-that-presence) cleanup keyed purely by PresenceId (eager
+    // presence-departure cleanup from WorldPartitionGrain.Remove(presence) is wired in the next
+    // substep - this index exists now so that wiring is a pure lookup, not a full-table scan).
+    private readonly Dictionary<Guid, HashSet<(uint CharacterId, WorldMonsterLifeReference Life)>> _attackSequencesByPresence = [];
 
     public string MapId { get; }
     public WorldSimulationEpoch SimulationEpoch { get; private set; }
@@ -89,6 +105,8 @@ internal sealed class WorldMonsterMapSimulation
         _engagementByActorId.Clear();
         _entries.Clear();
         _nextSequence = 1;
+        _attackSequences.Clear();
+        _attackSequencesByPresence.Clear();
     }
 
     // A monster's engagement target needs BOTH CharacterId and PresenceId (see
@@ -110,6 +128,60 @@ internal sealed class WorldMonsterMapSimulation
     {
         public WorldPlayerTargetReference? Target;
         public WorldMonsterEngagementState State = WorldMonsterEngagementState.Unengaged;
+    }
+
+    // Step 7 AttackSequence ledger entry - Sequence is the highest AttackSequence this exact
+    // (CharacterId, PresenceId, Life) key has committed; OriginalCommand/Result are the FULL
+    // original values from that commit, stored once and never mutated afterward - a later exact
+    // replay returns a COPY of Result with only Status rewritten to ReplayedSequence (see
+    // TryAcceptAttackSequence), so a third, fourth, ... identical replay still returns the exact
+    // same authoritative outcome deterministically.
+    private sealed record AttackSequenceState(long Sequence, WorldMonsterDamageCommand OriginalCommand, WorldMonsterDamageResult Result);
+
+    // Step 7: the sole authority on whether `command`'s AttackSequence may proceed to mutate HP.
+    // Called ONLY after life/presence/liveness validation has already succeeded (see
+    // WorldPartitionGrain.ApplyMonsterDamageAsync's own validation order) - this method's caller
+    // is responsible for that ordering; this method itself only ever consults/updates the ledger.
+    //
+    // Returns null when the command should proceed to a genuinely new mutation (either the very
+    // first sequence ever seen for this key, or a strictly higher sequence than one already
+    // accepted) - the caller commits the real ApplyDamage call and then MUST call
+    // RecordAttackSequenceResult to store the outcome under the SAME key before returning.
+    //
+    // Returns a non-null WorldMonsterDamageResult when no mutation may occur: an exact replay
+    // (ReplayedSequence, carrying the ORIGINAL commit's authoritative HpBefore/HpAfter/MaxHp/
+    // KilledByThisHit/Engagement, with only Status changed - the stored record itself is never
+    // mutated), a payload mismatch at the same sequence (Conflict, a caller-bug signal), or a
+    // stale/reordered lower sequence (StaleSequence). All three are HP-untouched, feed-untouched,
+    // engagement-untouched, sequence-ledger-untouched fail-closed responses.
+    public WorldMonsterDamageResult? TryAcceptAttackSequence(WorldMonsterDamageCommand command)
+    {
+        var key = (command.AttackerCharacterId, command.AttackerPresenceId, command.Life);
+        if (!_attackSequences.TryGetValue(key, out var state)) return null; // first sequence ever seen for this key
+        if (command.AttackSequence == state.Sequence)
+        {
+            return command.Damage == state.OriginalCommand.Damage && command.AcquireEngagement == state.OriginalCommand.AcquireEngagement
+                ? state.Result with { Status = WorldMonsterDamageStatus.ReplayedSequence }
+                : new WorldMonsterDamageResult(WorldMonsterDamageStatus.Conflict, 0, 0, 0, false, null);
+        }
+        return command.AttackSequence < state.Sequence
+            ? new WorldMonsterDamageResult(WorldMonsterDamageStatus.StaleSequence, 0, 0, 0, false, null)
+            : null; // strictly higher sequence -> a genuinely new attack
+    }
+
+    // Records the authoritative outcome of a genuinely new AttackSequence acceptance (a
+    // TryAcceptAttackSequence call that returned null) under the same key, maintaining the
+    // PresenceId secondary index alongside the primary ledger. Must be called with `result.Status`
+    // already the REAL outcome status (e.g. Applied, AlreadyDead) - never ReplayedSequence, which
+    // is synthesized only on replay, never stored.
+    public void RecordAttackSequenceResult(WorldMonsterDamageCommand command, WorldMonsterDamageResult result)
+    {
+        var key = (command.AttackerCharacterId, command.AttackerPresenceId, command.Life);
+        _attackSequences[key] = new AttackSequenceState(command.AttackSequence, command, result);
+        var presenceSet = _attackSequencesByPresence.TryGetValue(command.AttackerPresenceId, out var existing)
+            ? existing
+            : _attackSequencesByPresence[command.AttackerPresenceId] = [];
+        presenceSet.Add((command.AttackerCharacterId, command.Life));
     }
 
     // Deterministic, order-independent canonical fingerprint over a batch's actual spawn content -
@@ -169,6 +241,8 @@ internal sealed class WorldMonsterMapSimulation
         _engagementByActorId.Clear();
         _entries.Clear();
         _nextSequence = 1;
+        _attackSequences.Clear();
+        _attackSequencesByPresence.Clear();
     }
 
     // One WorldMonsterSpawnDefinition -> one MobSpawnDefinition PER instance is NOT how
@@ -210,7 +284,9 @@ internal sealed class WorldMonsterMapSimulation
             instance.IsWalking,
             instance.MovementDestination.X, instance.MovementDestination.Y,
             engagementWireState,
-            engagement?.Target);
+            engagement?.Target,
+            instance.CurrentHp,
+            instance.Spawn.Mob.MaxHp);
     }
 
     public bool TryFind(uint actorId, out MobInstance instance)
@@ -240,12 +316,48 @@ internal sealed class WorldMonsterMapSimulation
         // was. The (HpBefore, HpAfter, killed) return is intentionally discarded - a wire-facing
         // WorldMonsterInstance never carries HP at all.
         instance.ApplyDamage(instance.CurrentHp);
+        AppendDeathTail(instance);
+        return WorldMonsterDeathStatus.MarkedDead;
+    }
+
+    // Step 7: the shared death tail every lethal transition performs, regardless of which caller
+    // (this TEMPORARY MarkDead, or ApplyDamage's own lethal branch below) triggered it - schedule
+    // respawn exactly once, remove engagement, append Died exactly once. Extracted here so
+    // ApplyDamage's authoritative lethal path and MarkDead's own (temporary, HP-agnostic) path
+    // never diverge and there is never a second independent lethal-mutation code path.
+    private void AppendDeathTail(MobInstance instance)
+    {
         // World owns respawn TIMING (per the approved scope boundary) - reuse MonsterRegistry's
         // own existing, pinned-delay-backed scheduling rather than re-deriving it here.
-        Registry.ScheduleRespawnIfNeeded(instance);
+        Registry!.ScheduleRespawnIfNeeded(instance);
         _engagementByActorId.Remove(instance.ActorId);
         Append(WorldMonsterFeedEntryKind.Died, instance);
-        return WorldMonsterDeathStatus.MarkedDead;
+    }
+
+    // Step 7: the sole atomic HP-mutation entry point. Non-async, zero-await, matching
+    // TryMarkMonsterDeadAsync/NotifyMonsterAttackedAsync's own zero-await pattern above - the
+    // entire clamped-subtract -> Alive/Dead compare -> feed-append -> engagement-fold sequence is
+    // one uninterruptible call, relying on the SAME Orleans per-activation turn-serialization
+    // guarantee those two methods already document and rely on (no [Reentrant] attribute on the
+    // grain, and no await here to yield control mid-mutation). Returns the (HpBefore, HpAfter,
+    // KilledByThisHit) triple the caller (WorldPartitionGrain.ApplyMonsterDamageAsync) folds into
+    // the final WorldMonsterDamageResult, alongside MaxHp read from the same instance.
+    public (uint HpBefore, uint HpAfter, bool KilledByThisHit, uint MaxHp) ApplyDamage(MobInstance instance, uint damage)
+    {
+        var maxHp = instance.Spawn.Mob.MaxHp;
+        var (hpBefore, hpAfter, killed) = instance.ApplyDamage(damage);
+        if (killed)
+        {
+            AppendDeathTail(instance);
+        }
+        else if (hpAfter != hpBefore)
+        {
+            // Non-lethal HP reduction only - a miss (damage=0, hpAfter==hpBefore) never appends
+            // this; a lethal hit never appends this either (Died's own snapshot already carries
+            // CurrentHp=0, so a redundant HealthChanged(0) immediately before it is never sent).
+            Append(WorldMonsterFeedEntryKind.HealthChanged, instance);
+        }
+        return (hpBefore, hpAfter, killed, maxHp);
     }
 
     // Called once per tick after MonsterRegistry.ProcessDueRespawns reports a respawned instance -
@@ -256,7 +368,62 @@ internal sealed class WorldMonsterMapSimulation
     // this method only reads the instance's already-current IncarnationId (via Append/ToWireInstance)
     // and reports it. MobInstance is the single source of truth for incarnation - see
     // MonsterIncarnationId's own doc comment.
-    public void OnRespawnObserved(MobInstance instance) => Append(WorldMonsterFeedEntryKind.Respawned, instance);
+    //
+    // Step 7: this is also the structural cleanup point for stale AttackSequence state - every
+    // outstanding _attackSequences/_attackSequencesByPresence entry keyed by this ActorId's OLD
+    // (pre-respawn) Life is now permanently unreachable (its IncarnationId can never be presented
+    // again), so remove them here rather than waiting for the epoch-wide Unload/Rebuild clear.
+    public void OnRespawnObserved(MobInstance instance)
+    {
+        Append(WorldMonsterFeedEntryKind.Respawned, instance);
+        RemoveAttackSequencesForActor(instance.ActorId, instance.IncarnationId.Value);
+    }
+
+    // Removes every _attackSequences entry for `actorId` whose Life carries an IncarnationId other
+    // than `currentIncarnationValue` - i.e. every entry keyed by a now-permanently-unreachable Life
+    // (a respawn just happened, or - defensively - more than one respawn happened since this was
+    // last swept). Never needs to know or guess the specific old IncarnationId value.
+    private void RemoveAttackSequencesForActor(uint actorId, long currentIncarnationValue)
+    {
+        List<(uint CharacterId, Guid PresenceId, WorldMonsterLifeReference Life)>? stale = null;
+        foreach (var key in _attackSequences.Keys)
+        {
+            if (key.Life.ActorId != actorId || key.Life.IncarnationId.Value == currentIncarnationValue) continue;
+            (stale ??= []).Add(key);
+        }
+        if (stale is null) return;
+        foreach (var key in stale)
+        {
+            _attackSequences.Remove(key);
+            if (_attackSequencesByPresence.TryGetValue(key.PresenceId, out var set))
+            {
+                set.Remove((key.CharacterId, key.Life));
+                if (set.Count == 0) _attackSequencesByPresence.Remove(key.PresenceId);
+            }
+        }
+    }
+
+    // Step 7 (wired from WorldPartitionGrain.Remove(presence) in the NEXT substep - not yet
+    // called from production as of this substep): removes exactly this presence's entries across
+    // every Life it has attacked on this map, in O(entries for that one presence), via the
+    // secondary index. Eager, chokepoint-triggered cleanup bounds _attackSequences memory by
+    // CURRENTLY-live attackers rather than historical reconnect count - see that wiring's own doc
+    // comment for the full proof this does not affect correctness (validation order already makes
+    // a departed presence's stale entry inert regardless of whether/when it is swept).
+    public void RemoveAttackSequencesForPresence(uint characterId, Guid presenceId)
+    {
+        if (!_attackSequencesByPresence.TryGetValue(presenceId, out var set)) return;
+        foreach (var (entryCharacterId, life) in set)
+        {
+            if (entryCharacterId != characterId) continue; // defense-in-depth: the index is keyed
+                                                             // by PresenceId alone, so every entry
+                                                             // in `set` already belongs to this one
+                                                             // presence - this guard just makes that
+                                                             // invariant explicit rather than trusted.
+            _attackSequences.Remove((entryCharacterId, presenceId, life));
+        }
+        _attackSequencesByPresence.Remove(presenceId);
+    }
 
     // `targetPresence`/`targetIsWalking` let this compute the CORRECT initial engagement state
     // (Unlock/Chase/InAttackRange) at the exact moment of acquisition via WorldMonsterEngagementRules

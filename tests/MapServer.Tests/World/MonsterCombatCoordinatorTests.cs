@@ -40,7 +40,8 @@ public sealed class MonsterCombatCoordinatorTests
         var instance = new WorldMonsterInstance(
             ActorId: actorId, IncarnationId: incarnationId, MapId: mapId, MobId: GPoringMobId,
             X: 50, Y: 50, Lifecycle: WorldMonsterLifecycleState.Alive, IsWalking: false,
-            DestinationX: 50, DestinationY: 50, Engagement: WorldMonsterEngagementState.Unengaged, EngagedTarget: null);
+            DestinationX: 50, DestinationY: 50, Engagement: WorldMonsterEngagementState.Unengaged, EngagedTarget: null,
+            CurrentHp: 55, MaxHp: 55);
 
         var combatState = new MonsterCombatStateStore();
         combatState.Register(mapId, epoch, actorId, incarnationId, maxHp);

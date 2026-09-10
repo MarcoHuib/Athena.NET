@@ -13,7 +13,7 @@ public sealed class MonsterFeedProjectionTests
     private const int PoringMobId = 1002; // GeneratedMobs.Poring - a real generated static mob entry.
 
     private static WorldMonsterInstance Alive(uint actorId, WorldMonsterIncarnationId incarnation, ushort x = 10, ushort y = 10, WorldMonsterLifecycleState lifecycle = WorldMonsterLifecycleState.Alive) =>
-        new(actorId, incarnation, MapId, PoringMobId, x, y, lifecycle, IsWalking: false, DestinationX: x, DestinationY: y, WorldMonsterEngagementState.Unengaged, EngagedTarget: null);
+        new(actorId, incarnation, MapId, PoringMobId, x, y, lifecycle, IsWalking: false, DestinationX: x, DestinationY: y, WorldMonsterEngagementState.Unengaged, EngagedTarget: null, CurrentHp: 55, MaxHp: 55);
 
     // Mirrors MonsterCombatStateStoreTests' own Barrier-synchronized concurrency-test idiom exactly:
     // one writer thread hammering ApplySnapshot/ApplyEntry while several reader threads concurrently

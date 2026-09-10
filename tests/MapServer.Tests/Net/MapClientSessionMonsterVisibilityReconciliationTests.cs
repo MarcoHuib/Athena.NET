@@ -23,7 +23,7 @@ public sealed class MapClientSessionMonsterVisibilityReconciliationTests
     private const ushort ViewerY = 100;
 
     private static WorldMonsterInstance Alive(uint actorId, WorldMonsterIncarnationId incarnation, ushort x, ushort y) =>
-        new(actorId, incarnation, MapId, PoringMobId, x, y, WorldMonsterLifecycleState.Alive, IsWalking: false, DestinationX: x, DestinationY: y, WorldMonsterEngagementState.Unengaged, EngagedTarget: null);
+        new(actorId, incarnation, MapId, PoringMobId, x, y, WorldMonsterLifecycleState.Alive, IsWalking: false, DestinationX: x, DestinationY: y, WorldMonsterEngagementState.Unengaged, EngagedTarget: null, CurrentHp: 55, MaxHp: 55);
 
     private static async Task<(TcpClient Client, NetworkStream Stream, MapClientSession Session, Task RunTask)> SetupViewerAsync()
     {

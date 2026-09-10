@@ -150,7 +150,7 @@ public sealed class MapTcpServerRunAsyncSupervisionTests
         var instance = new WorldMonsterInstance(
             actorId, incarnation, MapId, PoringMobId, X: 100, Y: 100,
             WorldMonsterLifecycleState.Alive, IsWalking: false, DestinationX: 100, DestinationY: 100,
-            WorldMonsterEngagementState.InAttackRange, target);
+            WorldMonsterEngagementState.InAttackRange, target, CurrentHp: 55, MaxHp: 55);
         var projection = world.MonsterProjections.GetOrCreate(MapId);
         projection.ApplySnapshot([instance], epoch, world.CombatState);
         world.CombatState.ScheduleNextAttack(new MonsterCombatKey(MapId, epoch, actorId, incarnation), DateTimeOffset.UnixEpoch); // Already due.

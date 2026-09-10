@@ -300,7 +300,7 @@ public sealed class MapClientSessionDueNowFixposTests
             ActorId: target.ActorId, IncarnationId: new WorldMonsterIncarnationId(target.IncarnationId.Value), MapId: target.Map,
             MobId: target.Spawn.Mob.Id, X: target.GetPosition().X, Y: target.GetPosition().Y, Lifecycle: WorldMonsterLifecycleState.Alive,
             IsWalking: true, DestinationX: (ushort)(target.GetPosition().X + 1), DestinationY: target.GetPosition().Y,
-            Engagement: WorldMonsterEngagementState.Unengaged, EngagedTarget: null);
+            Engagement: WorldMonsterEngagementState.Unengaged, EngagedTarget: null, CurrentHp: target.CurrentHp, MaxHp: target.Spawn.Mob.MaxHp);
         monsterProjections.GetOrCreate(target.Map).ApplySnapshot([walkingInstance], _lastEpoch, combatState);
 
         await stream.WriteAsync(AttackPacket(target.ActorId));

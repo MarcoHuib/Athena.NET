@@ -205,7 +205,7 @@ public sealed class MapClientSessionAttackerIdentityTests
         var monsterInstance = new WorldMonsterInstance(
             monsterActorId, incarnation, mapId, MobId: 1002, X: 100, Y: 100,
             WorldMonsterLifecycleState.Alive, IsWalking: false, DestinationX: 100, DestinationY: 100,
-            WorldMonsterEngagementState.InAttackRange, target);
+            WorldMonsterEngagementState.InAttackRange, target, CurrentHp: 55, MaxHp: 55);
 
         var validateCalls = 0;
         var scripted = new ScriptedWorldRuntime

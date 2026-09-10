@@ -422,14 +422,61 @@ public sealed class WorldPartitionGrain(IWorldPartitionResolver resolver, IMovem
         return Task.FromResult(new WorldMonsterDeathResult(simulation.MarkDead(instance)));
     }
 
-    // STUB (Step 7 substep 1): contract wiring only. The real clamped-subtract/Alive->Dead/
-    // AttackSequence-idempotency logic lands in WorldMonsterMapSimulation.ApplyDamage in the next
-    // substep - this stub exists solely so the contract/runtime/fake plumbing compiles and has a
-    // deterministic (rejecting) behavior before that logic exists.
+    // Step 7: the sole atomic HP-mutation RPC. Non-async, zero-await - the entire chain (validate
+    // -> sequence decision -> HP mutation -> Alive/Dead transition -> feed/death/engagement
+    // updates -> store AttackSequence result -> return) is one uninterruptible grain turn, relying
+    // on the same per-activation Orleans turn-serialization guarantee TryMarkMonsterDeadAsync/
+    // NotifyMonsterAttackedAsync above already document (no [Reentrant] attribute on this grain).
+    //
+    // Validation order is load-bearing, not incidental - each step's rejection is checked BEFORE
+    // the next, and the AttackSequence ledger is consulted ONLY after presence/liveness pass:
+    //   1. exact Life (epoch/actor/incarnation)      -> StaleLifeReference
+    //   2. current CharacterId+PresenceId             -> StaleAttackerPresence
+    //   3. attacker IsAlive + same map                -> AttackerNotEngageable
+    //   4. AttackSequence ledger (replay/conflict/stale/proceed)
+    //   5. monster already dead (post-life, pre-mutation) -> AlreadyDead
+    //   6. commit: WorldMonsterMapSimulation.ApplyDamage
+    // This ordering is what makes a departed/superseded presence's stale request inert regardless
+    // of AttackSequence cleanup timing (see RemoveAttackSequencesForPresence's own doc comment) -
+    // a stale presence is rejected at step 2, before the ledger (step 4) is ever consulted.
     public Task<WorldMonsterDamageResult> ApplyMonsterDamageAsync(WorldMonsterDamageCommand command)
     {
-        _ = RequireOwnedMap(command.Life.MapId);
-        return Task.FromResult(new WorldMonsterDamageResult(WorldMonsterDamageStatus.StaleLifeReference, 0, 0, 0, false, null));
+        var reference = command.Life;
+        var mapId = RequireOwnedMap(reference.MapId);
+        var simulation = MonsterSimulation(mapId);
+        if (!simulation.SimulationEpoch.Equals(reference.SimulationEpoch) || !simulation.TryFind(reference.ActorId, out var instance) || !simulation.MatchesLife(instance, reference))
+            return Task.FromResult(new WorldMonsterDamageResult(WorldMonsterDamageStatus.StaleLifeReference, 0, 0, 0, false, null));
+        if (!TryFind(command.AttackerCharacterId, out var attackerPresence) || attackerPresence.PresenceId != command.AttackerPresenceId)
+            return Task.FromResult(new WorldMonsterDamageResult(WorldMonsterDamageStatus.StaleAttackerPresence, 0, 0, 0, false, null));
+        if (!attackerPresence.IsAlive || !string.Equals(attackerPresence.MapId, mapId, StringComparison.OrdinalIgnoreCase))
+            return Task.FromResult(new WorldMonsterDamageResult(WorldMonsterDamageStatus.AttackerNotEngageable, 0, 0, 0, false, null));
+
+        if (simulation.TryAcceptAttackSequence(command) is { } sequenceRejection)
+            return Task.FromResult(sequenceRejection);
+
+        if (!instance.IsAlive)
+        {
+            var alreadyDead = new WorldMonsterDamageResult(WorldMonsterDamageStatus.AlreadyDead, 0, 0, instance.Spawn.Mob.MaxHp, false, null);
+            simulation.RecordAttackSequenceResult(command, alreadyDead);
+            return Task.FromResult(alreadyDead);
+        }
+
+        var (hpBefore, hpAfter, killed, maxHp) = simulation.ApplyDamage(instance, command.Damage);
+
+        WorldMonsterAttackedStatus? engagement = null;
+        if (command.AcquireEngagement)
+        {
+            // AcquireEngagement is caller INTENT only, never trusted as authority - the existing
+            // engagement rules (TryAcquireEngagement -> WorldMonsterEngagementRules.Evaluate) are
+            // still the sole decision-maker on whether engagement is actually acquired/refreshed,
+            // exactly as NotifyMonsterAttackedAsync above already applies them.
+            var target = new WorldPlayerTargetReference(command.AttackerCharacterId, command.AttackerPresenceId);
+            engagement = simulation.TryAcquireEngagement(instance, target, attackerPresence, IsWalking(command.AttackerCharacterId));
+        }
+
+        var result = new WorldMonsterDamageResult(WorldMonsterDamageStatus.Applied, hpBefore, hpAfter, maxHp, killed, engagement);
+        simulation.RecordAttackSequenceResult(command, result);
+        return Task.FromResult(result);
     }
 
     public Task<WorldMonsterAttackedResult> NotifyMonsterAttackedAsync(WorldMonsterAttackedCommand command)

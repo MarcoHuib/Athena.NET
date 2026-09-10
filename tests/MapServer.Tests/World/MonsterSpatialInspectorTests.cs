@@ -56,7 +56,9 @@ public sealed class MonsterSpatialInspectorTests
             DestinationX: instance.MovementDestination.X,
             DestinationY: instance.MovementDestination.Y,
             Engagement: WorldMonsterEngagementState.Unengaged,
-            EngagedTarget: null);
+            EngagedTarget: null,
+            CurrentHp: instance.CurrentHp,
+            MaxHp: instance.Spawn.Mob.MaxHp);
 
         var projections = new MonsterFeedProjectionRegistry();
         var projection = projections.GetOrCreate(instance.Map);

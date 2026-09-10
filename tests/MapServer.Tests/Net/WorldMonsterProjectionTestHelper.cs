@@ -32,7 +32,9 @@ internal static class WorldMonsterProjectionTestHelper
             DestinationX: instance.MovementDestination.X,
             DestinationY: instance.MovementDestination.Y,
             Engagement: WorldMonsterEngagementState.Unengaged,
-            EngagedTarget: null);
+            EngagedTarget: null,
+            CurrentHp: instance.CurrentHp,
+            MaxHp: instance.Spawn.Mob.MaxHp);
     }
 
     // Seeds a fresh MonsterFeedProjectionRegistry with the given instances' CURRENT state, one

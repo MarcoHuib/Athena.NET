@@ -307,6 +307,407 @@ public sealed class WorldMonsterSimulationTests : IAsyncLifetime
         Assert.Contains(page.Entries!, entry => entry.Kind == WorldMonsterFeedEntryKind.Died && entry.ActorId == actorId);
     }
 
+    // Step 7: World-side HP authority + AttackSequence idempotency ledger. Every test below
+    // exercises the real ApplyMonsterDamageAsync RPC through the real Orleans grain boundary -
+    // matching this file's existing "no fakes, real grain" convention.
+
+    private const uint AttackerCharacterId = 900;
+    private static WorldMonsterDamageCommand DamageCommand(WorldMonsterLifeReference life, Guid presenceId, long sequence, uint damage, bool acquireEngagement = false) =>
+        new(life, AttackerCharacterId, presenceId, sequence, damage, acquireEngagement);
+
+    private async Task<(IWorldPartitionGrain Grain, string MapId, WorldMonsterLifeReference Life, Guid PresenceId)> SetupAttackerAsync(string mapId)
+    {
+        var grain = Partition("world-rest");
+        var load = await grain.LoadMonsterSpawnsAsync(SingleMonsterBatch(mapId));
+        var bootstrap = await grain.PollMonsterFeedAsync(cursor: null, mapId);
+        var actorId = bootstrap.Snapshot!.Single().ActorId;
+        var life = new WorldMonsterLifeReference(mapId, load.SimulationEpoch, actorId, WorldMonsterIncarnationId.First);
+        var presenceId = Guid.NewGuid();
+        await grain.RegisterPresenceAsync(Presence(presenceId, AttackerCharacterId, mapId, x: MonsterX, y: MonsterY));
+        return (grain, mapId, life, presenceId);
+    }
+
+    [Fact]
+    public async Task ApplyMonsterDamage_ClampedSubtract_NeverUnderflows()
+    {
+        var (grain, _, life, presenceId) = await SetupAttackerAsync("izlude");
+
+        // Spawn's own MaxHp is 55 - a single hit far exceeding it must clamp to exactly 0, never wrap.
+        var result = await grain.ApplyMonsterDamageAsync(DamageCommand(life, presenceId, sequence: 1, damage: 10_000));
+
+        Assert.Equal(WorldMonsterDamageStatus.Applied, result.Status);
+        Assert.Equal(55u, result.HpBefore);
+        Assert.Equal(0u, result.HpAfter);
+        Assert.True(result.KilledByThisHit);
+        Assert.Equal(55u, result.MaxHp);
+    }
+
+    [Fact]
+    public async Task ApplyMonsterDamage_NonLethal_ReducesAuthoritativeHpCorrectly()
+    {
+        var (grain, mapId, life, presenceId) = await SetupAttackerAsync("izlude");
+
+        var result = await grain.ApplyMonsterDamageAsync(DamageCommand(life, presenceId, sequence: 1, damage: 20));
+
+        Assert.Equal(WorldMonsterDamageStatus.Applied, result.Status);
+        Assert.Equal(55u, result.HpBefore);
+        Assert.Equal(35u, result.HpAfter);
+        Assert.False(result.KilledByThisHit);
+
+        // The feed's own snapshot must agree - this IS the authority, not merely the RPC's own echo.
+        var page = await grain.PollMonsterFeedAsync(cursor: null, mapId);
+        Assert.Equal(35u, page.Snapshot!.Single().CurrentHp);
+        Assert.Equal(55u, page.Snapshot![0].MaxHp);
+    }
+
+    [Fact]
+    public async Task ApplyMonsterDamage_ExactlyOneOfTwoRacingLogicalAttacksOwnsTheKill_SecondReturnsAlreadyDead()
+    {
+        var (grain, _, life, presenceIdA) = await SetupAttackerAsync("izlude");
+        var presenceIdB = Guid.NewGuid();
+        const uint attackerB = 901;
+        await grain.RegisterPresenceAsync(Presence(presenceIdB, attackerB, "izlude", x: MonsterX, y: MonsterY));
+
+        // Two independent logical attackers, each dealing enough damage ALONE (Spawn's own MaxHp
+        // is 55) to be lethal against the same still-alive monster - simulates two MapServer
+        // processes racing the same kill.
+        var resultA = await grain.ApplyMonsterDamageAsync(new WorldMonsterDamageCommand(life, AttackerCharacterId, presenceIdA, AttackSequence: 1, Damage: 60, AcquireEngagement: false));
+        var resultB = await grain.ApplyMonsterDamageAsync(new WorldMonsterDamageCommand(life, attackerB, presenceIdB, AttackSequence: 1, Damage: 60, AcquireEngagement: false));
+
+        Assert.Equal(WorldMonsterDamageStatus.Applied, resultA.Status);
+        Assert.True(resultA.KilledByThisHit);
+        Assert.Equal(0u, resultA.HpAfter);
+
+        Assert.Equal(WorldMonsterDamageStatus.AlreadyDead, resultB.Status);
+        Assert.False(resultB.KilledByThisHit);
+    }
+
+    [Fact]
+    public async Task ApplyMonsterDamage_SecondAttackAfterLethalTransition_ReturnsAlreadyDead()
+    {
+        var (grain, _, life, presenceId) = await SetupAttackerAsync("izlude");
+        var lethal = await grain.ApplyMonsterDamageAsync(DamageCommand(life, presenceId, sequence: 1, damage: 100));
+        Assert.True(lethal.KilledByThisHit);
+
+        var again = await grain.ApplyMonsterDamageAsync(DamageCommand(life, presenceId, sequence: 2, damage: 5));
+
+        Assert.Equal(WorldMonsterDamageStatus.AlreadyDead, again.Status);
+        Assert.False(again.KilledByThisHit);
+    }
+
+    [Fact]
+    public async Task ApplyMonsterDamage_LethalHit_AppendsDiedExactlyOnce_NeverHealthChanged()
+    {
+        var (grain, mapId, life, presenceId) = await SetupAttackerAsync("izlude");
+        var bootstrap = await grain.PollMonsterFeedAsync(cursor: null, mapId);
+
+        var result = await grain.ApplyMonsterDamageAsync(DamageCommand(life, presenceId, sequence: 1, damage: 100));
+        Assert.True(result.KilledByThisHit);
+
+        var page = await grain.PollMonsterFeedAsync(new WorldMonsterFeedCursor(bootstrap.SimulationEpoch, bootstrap.AsOfSequence), mapId);
+        Assert.Single(page.Entries!, entry => entry.Kind == WorldMonsterFeedEntryKind.Died);
+        Assert.DoesNotContain(page.Entries!, entry => entry.Kind == WorldMonsterFeedEntryKind.HealthChanged);
+        var diedEntry = Assert.Single(page.Entries!, entry => entry.Kind == WorldMonsterFeedEntryKind.Died);
+        Assert.Equal(0u, diedEntry.Instance.CurrentHp);
+    }
+
+    [Fact]
+    public async Task ApplyMonsterDamage_NonLethalHit_AppendsExactlyOneHealthChanged()
+    {
+        var (grain, mapId, life, presenceId) = await SetupAttackerAsync("izlude");
+        var bootstrap = await grain.PollMonsterFeedAsync(cursor: null, mapId);
+
+        var result = await grain.ApplyMonsterDamageAsync(DamageCommand(life, presenceId, sequence: 1, damage: 20));
+        Assert.False(result.KilledByThisHit);
+
+        var page = await grain.PollMonsterFeedAsync(new WorldMonsterFeedCursor(bootstrap.SimulationEpoch, bootstrap.AsOfSequence), mapId);
+        var healthChangedEntry = Assert.Single(page.Entries!, entry => entry.Kind == WorldMonsterFeedEntryKind.HealthChanged);
+        Assert.Equal(35u, healthChangedEntry.Instance.CurrentHp);
+        Assert.DoesNotContain(page.Entries!, entry => entry.Kind == WorldMonsterFeedEntryKind.Died);
+    }
+
+    [Fact]
+    public async Task ApplyMonsterDamage_MissDamageZero_AppendsNoHealthChanged()
+    {
+        var (grain, mapId, life, presenceId) = await SetupAttackerAsync("izlude");
+        var bootstrap = await grain.PollMonsterFeedAsync(cursor: null, mapId);
+
+        var result = await grain.ApplyMonsterDamageAsync(DamageCommand(life, presenceId, sequence: 1, damage: 0));
+
+        Assert.Equal(WorldMonsterDamageStatus.Applied, result.Status);
+        Assert.Equal(55u, result.HpBefore);
+        Assert.Equal(55u, result.HpAfter);
+        Assert.False(result.KilledByThisHit);
+        var page = await grain.PollMonsterFeedAsync(new WorldMonsterFeedCursor(bootstrap.SimulationEpoch, bootstrap.AsOfSequence), mapId);
+        Assert.DoesNotContain(page.Entries ?? [], entry => entry.Kind == WorldMonsterFeedEntryKind.HealthChanged);
+    }
+
+    [Fact]
+    public async Task ApplyMonsterDamage_FirstAcceptedCommand_ReturnsApplied()
+    {
+        var (grain, _, life, presenceId) = await SetupAttackerAsync("izlude");
+
+        var result = await grain.ApplyMonsterDamageAsync(DamageCommand(life, presenceId, sequence: 1, damage: 10));
+
+        Assert.Equal(WorldMonsterDamageStatus.Applied, result.Status);
+    }
+
+    [Fact]
+    public async Task ApplyMonsterDamage_ExactSameSequenceSamePayloadReplay_ReturnsReplayedSequence_WithIdenticalOutcomeFields_AndNoMutation()
+    {
+        var (grain, mapId, life, presenceId) = await SetupAttackerAsync("izlude");
+        var bootstrap = await grain.PollMonsterFeedAsync(cursor: null, mapId);
+        var command = DamageCommand(life, presenceId, sequence: 1, damage: 20);
+
+        var original = await grain.ApplyMonsterDamageAsync(command);
+        Assert.Equal(WorldMonsterDamageStatus.Applied, original.Status);
+
+        // No real time-based dedup exists (no TTL) - correctness does not depend on elapsed time,
+        // so a plain immediate re-send already proves the replay path; this repo's own World.Tests
+        // convention uses TimeProvider.System (Orleans grain timers are not TimeProvider-injectable),
+        // so there is no FakeTimeProvider to advance here - the ledger's own design has no clock
+        // dependency to exercise in the first place.
+        var replay = await grain.ApplyMonsterDamageAsync(command);
+
+        Assert.Equal(WorldMonsterDamageStatus.ReplayedSequence, replay.Status);
+        Assert.Equal(original.HpBefore, replay.HpBefore);
+        Assert.Equal(original.HpAfter, replay.HpAfter);
+        Assert.Equal(original.MaxHp, replay.MaxHp);
+        Assert.Equal(original.KilledByThisHit, replay.KilledByThisHit);
+        Assert.Equal(original.Engagement, replay.Engagement);
+
+        // Zero mutation: HP must still read exactly what the FIRST (only) real application left it
+        // at - a second silent application of the same 20 damage would have produced 15, not 35.
+        var page = await grain.PollMonsterFeedAsync(cursor: null, mapId);
+        Assert.Equal(35u, page.Snapshot!.Single().CurrentHp);
+
+        // Zero feed mutation: exactly one HealthChanged entry total, from the original commit only.
+        var incremental = await grain.PollMonsterFeedAsync(new WorldMonsterFeedCursor(bootstrap.SimulationEpoch, bootstrap.AsOfSequence), mapId);
+        Assert.Single(incremental.Entries!, entry => entry.Kind == WorldMonsterFeedEntryKind.HealthChanged);
+
+        // A THIRD identical replay remains deterministic - the stored ledger record was never
+        // mutated by the second replay either.
+        var secondReplay = await grain.ApplyMonsterDamageAsync(command);
+        Assert.Equal(WorldMonsterDamageStatus.ReplayedSequence, secondReplay.Status);
+        Assert.Equal(original.HpBefore, secondReplay.HpBefore);
+        Assert.Equal(original.HpAfter, secondReplay.HpAfter);
+        var pageAfterThirdCall = await grain.PollMonsterFeedAsync(cursor: null, mapId);
+        Assert.Equal(35u, pageAfterThirdCall.Snapshot!.Single().CurrentHp);
+    }
+
+    [Fact]
+    public async Task ApplyMonsterDamage_LethalReplay_KeepsKilledByThisHitTrue_NoSecondDiedEntry()
+    {
+        var (grain, mapId, life, presenceId) = await SetupAttackerAsync("izlude");
+        var bootstrap = await grain.PollMonsterFeedAsync(cursor: null, mapId);
+        var command = DamageCommand(life, presenceId, sequence: 1, damage: 100);
+
+        var original = await grain.ApplyMonsterDamageAsync(command);
+        Assert.True(original.KilledByThisHit);
+
+        var replay = await grain.ApplyMonsterDamageAsync(command);
+        Assert.Equal(WorldMonsterDamageStatus.ReplayedSequence, replay.Status);
+        Assert.True(replay.KilledByThisHit);
+        Assert.Equal(0u, replay.HpAfter);
+
+        var page = await grain.PollMonsterFeedAsync(new WorldMonsterFeedCursor(bootstrap.SimulationEpoch, bootstrap.AsOfSequence), mapId);
+        Assert.Single(page.Entries!, entry => entry.Kind == WorldMonsterFeedEntryKind.Died);
+    }
+
+    [Fact]
+    public async Task ApplyMonsterDamage_SameSequenceDifferentPayload_ReturnsConflict_HpUntouched()
+    {
+        var (grain, mapId, life, presenceId) = await SetupAttackerAsync("izlude");
+        await grain.ApplyMonsterDamageAsync(DamageCommand(life, presenceId, sequence: 1, damage: 20));
+
+        var conflict = await grain.ApplyMonsterDamageAsync(DamageCommand(life, presenceId, sequence: 1, damage: 21));
+
+        Assert.Equal(WorldMonsterDamageStatus.Conflict, conflict.Status);
+        var page = await grain.PollMonsterFeedAsync(cursor: null, mapId);
+        Assert.Equal(35u, page.Snapshot!.Single().CurrentHp);
+    }
+
+    [Fact]
+    public async Task ApplyMonsterDamage_SameSequenceDifferentAcquireEngagement_ReturnsConflict()
+    {
+        var (grain, _, life, presenceId) = await SetupAttackerAsync("izlude");
+        await grain.ApplyMonsterDamageAsync(DamageCommand(life, presenceId, sequence: 1, damage: 20, acquireEngagement: false));
+
+        var conflict = await grain.ApplyMonsterDamageAsync(DamageCommand(life, presenceId, sequence: 1, damage: 20, acquireEngagement: true));
+
+        Assert.Equal(WorldMonsterDamageStatus.Conflict, conflict.Status);
+    }
+
+    [Fact]
+    public async Task ApplyMonsterDamage_LowerSequence_ReturnsStaleSequence_HpUntouched()
+    {
+        var (grain, mapId, life, presenceId) = await SetupAttackerAsync("izlude");
+        await grain.ApplyMonsterDamageAsync(DamageCommand(life, presenceId, sequence: 5, damage: 20));
+
+        var stale = await grain.ApplyMonsterDamageAsync(DamageCommand(life, presenceId, sequence: 3, damage: 999));
+
+        Assert.Equal(WorldMonsterDamageStatus.StaleSequence, stale.Status);
+        var page = await grain.PollMonsterFeedAsync(cursor: null, mapId);
+        Assert.Equal(35u, page.Snapshot!.Single().CurrentHp);
+    }
+
+    [Fact]
+    public async Task ApplyMonsterDamage_HigherSequence_IsTreatedAsGenuinelyNewAttack()
+    {
+        var (grain, _, life, presenceId) = await SetupAttackerAsync("izlude");
+        await grain.ApplyMonsterDamageAsync(DamageCommand(life, presenceId, sequence: 1, damage: 20));
+
+        var next = await grain.ApplyMonsterDamageAsync(DamageCommand(life, presenceId, sequence: 2, damage: 10));
+
+        Assert.Equal(WorldMonsterDamageStatus.Applied, next.Status);
+        Assert.Equal(35u, next.HpBefore);
+        Assert.Equal(25u, next.HpAfter);
+    }
+
+    [Fact]
+    public async Task ApplyMonsterDamage_StaleLifeReference_WrongEpoch_IsRejected()
+    {
+        var (grain, mapId, life, presenceId) = await SetupAttackerAsync("izlude");
+        var staleLife = life with { SimulationEpoch = new WorldSimulationEpoch(Guid.NewGuid()) };
+
+        var result = await grain.ApplyMonsterDamageAsync(DamageCommand(staleLife, presenceId, sequence: 1, damage: 20));
+
+        Assert.Equal(WorldMonsterDamageStatus.StaleLifeReference, result.Status);
+        var page = await grain.PollMonsterFeedAsync(cursor: null, mapId);
+        Assert.Equal(55u, page.Snapshot!.Single().CurrentHp);
+    }
+
+    [Fact]
+    public async Task ApplyMonsterDamage_StaleLifeReference_WrongIncarnation_IsRejected()
+    {
+        var (grain, _, life, presenceId) = await SetupAttackerAsync("izlude");
+        var staleLife = life with { IncarnationId = WorldMonsterIncarnationId.First.Next() };
+
+        var result = await grain.ApplyMonsterDamageAsync(DamageCommand(staleLife, presenceId, sequence: 1, damage: 20));
+
+        Assert.Equal(WorldMonsterDamageStatus.StaleLifeReference, result.Status);
+    }
+
+    [Fact]
+    public async Task ApplyMonsterDamage_StalePresence_IsRejectedBeforeSequenceLookup()
+    {
+        var (grain, _, life, presenceId) = await SetupAttackerAsync("izlude");
+        // Commit a real sequence 1 for the genuine presence first.
+        await grain.ApplyMonsterDamageAsync(DamageCommand(life, presenceId, sequence: 1, damage: 20));
+
+        // A different (unregistered) PresenceId presenting the SAME sequence number must be
+        // rejected as StaleAttackerPresence, never treated as a StaleSequence/Conflict/replay of
+        // the genuine presence's own ledger entry - the ledger for a DIFFERENT (CharacterId,
+        // PresenceId, Life) key does not even exist yet, so if presence validation were skipped
+        // this would incorrectly fall through to "first sequence ever seen" and mutate HP again.
+        var staleAttempt = await grain.ApplyMonsterDamageAsync(DamageCommand(life, Guid.NewGuid(), sequence: 1, damage: 999));
+
+        Assert.Equal(WorldMonsterDamageStatus.StaleAttackerPresence, staleAttempt.Status);
+        var page = await grain.PollMonsterFeedAsync(cursor: null, "izlude");
+        Assert.Equal(35u, page.Snapshot!.Single().CurrentHp);
+    }
+
+    [Fact]
+    public async Task ApplyMonsterDamage_AttackerDead_ReturnsAttackerNotEngageable()
+    {
+        var (grain, mapId, life, presenceId) = await SetupAttackerAsync("izlude");
+        await grain.UpdatePresenceLifeStateAsync(new WorldPresenceLifeStateUpdate(AttackerCharacterId, presenceId, IsAlive: false));
+
+        var result = await grain.ApplyMonsterDamageAsync(DamageCommand(life, presenceId, sequence: 1, damage: 20));
+
+        Assert.Equal(WorldMonsterDamageStatus.AttackerNotEngageable, result.Status);
+        var page = await grain.PollMonsterFeedAsync(cursor: null, mapId);
+        Assert.Equal(55u, page.Snapshot!.Single().CurrentHp);
+    }
+
+    [Fact]
+    public async Task ApplyMonsterDamage_AttackerOnWrongMap_ReturnsAttackerNotEngageable()
+    {
+        var grain = Partition("world-rest");
+        var load = await grain.LoadMonsterSpawnsAsync(SingleMonsterBatch("izlude"));
+        var bootstrap = await grain.PollMonsterFeedAsync(cursor: null, "izlude");
+        var actorId = bootstrap.Snapshot!.Single().ActorId;
+        var life = new WorldMonsterLifeReference("izlude", load.SimulationEpoch, actorId, WorldMonsterIncarnationId.First);
+        var presenceId = Guid.NewGuid();
+        // Registered on a DIFFERENT map than the monster's own map.
+        await grain.RegisterPresenceAsync(Presence(presenceId, AttackerCharacterId, "geffen"));
+
+        var result = await grain.ApplyMonsterDamageAsync(DamageCommand(life, presenceId, sequence: 1, damage: 20));
+
+        Assert.Equal(WorldMonsterDamageStatus.AttackerNotEngageable, result.Status);
+    }
+
+    [Fact]
+    public async Task ApplyMonsterDamage_AcquireEngagementTrue_FoldsRealEngagementRulesAsAuthority_NotBlindlyTrusted()
+    {
+        var (grain, mapId, life, presenceId) = await SetupAttackerAsync("izlude");
+
+        // The attacker is registered exactly at the monster's own position (distance 0) - well
+        // within AttackRange, so the real WorldMonsterEngagementRules should accept this as
+        // InAttackRange, proving AcquireEngagement=true actually invokes the real rules rather
+        // than being trusted verbatim as a "yes, engaged" flag.
+        var result = await grain.ApplyMonsterDamageAsync(DamageCommand(life, presenceId, sequence: 1, damage: 10, acquireEngagement: true));
+
+        Assert.Equal(WorldMonsterAttackedStatus.Acquired, result.Engagement);
+        var page = await grain.PollMonsterFeedAsync(cursor: null, mapId);
+        Assert.Equal(WorldMonsterEngagementState.InAttackRange, page.Snapshot!.Single().Engagement);
+    }
+
+    [Fact]
+    public async Task ApplyMonsterDamage_AcquireEngagementFalse_NeverAcquiresEngagement()
+    {
+        var (grain, mapId, life, presenceId) = await SetupAttackerAsync("izlude");
+
+        var result = await grain.ApplyMonsterDamageAsync(DamageCommand(life, presenceId, sequence: 1, damage: 10, acquireEngagement: false));
+
+        Assert.Null(result.Engagement);
+        var page = await grain.PollMonsterFeedAsync(cursor: null, mapId);
+        Assert.Equal(WorldMonsterEngagementState.Unengaged, page.Snapshot!.Single().Engagement);
+    }
+
+    // Epoch-rebuild-clears-attack-sequence-state coverage lives in
+    // WorldMonsterSimulationTouchedWindowTests.ApplyMonsterDamage_AfterTouchedWindowExpiryRebuild_NewEpochAcceptsSameSequenceValue
+    // below, which has the short-touched-window infrastructure needed to force a genuine
+    // Unload+Rebuild cycle (a same-map reload with different content while still loaded returns
+    // ContentMismatch, not a rebuild - see WorldMonsterSpawnLoadStatus's own doc comment).
+
+    [Fact]
+    public async Task ApplyMonsterDamage_Respawn_ClearsStaleAttackSequenceState_NewIncarnationAcceptsSameSequenceValue()
+    {
+        var grain = Partition("world-rest");
+        var mapId = "izlude";
+        var quickRespawnSpawn = Spawn(mapId) with { RespawnDelayMs = 500, RespawnRandomDelayMs = 0 };
+        var load = await grain.LoadMonsterSpawnsAsync(Batch(mapId, [quickRespawnSpawn]));
+        var bootstrap = await grain.PollMonsterFeedAsync(cursor: null, mapId);
+        var actorId = bootstrap.Snapshot!.Single().ActorId;
+        var presenceId = Guid.NewGuid();
+        await grain.RegisterPresenceAsync(Presence(presenceId, AttackerCharacterId, mapId, x: MonsterX, y: MonsterY));
+        var originalLife = new WorldMonsterLifeReference(mapId, load.SimulationEpoch, actorId, WorldMonsterIncarnationId.First);
+
+        var lethal = await grain.ApplyMonsterDamageAsync(DamageCommand(originalLife, presenceId, sequence: 7, damage: 100));
+        Assert.True(lethal.KilledByThisHit);
+
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        WorldMonsterInstance? respawned = null;
+        while (DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(200);
+            var page = await grain.PollMonsterFeedAsync(cursor: null, mapId);
+            var instance = page.Snapshot!.Single();
+            if (instance.Lifecycle == WorldMonsterLifecycleState.Alive) { respawned = instance; break; }
+        }
+        Assert.NotNull(respawned);
+        Assert.Equal(55u, respawned!.CurrentHp);
+
+        var newLife = originalLife with { IncarnationId = respawned.IncarnationId };
+        // Same numeric AttackSequence (7) as the pre-respawn kill - must be accepted as a
+        // genuinely new attempt against the new incarnation, not rejected/replayed against the
+        // old (now-unreachable) ledger entry.
+        var result = await grain.ApplyMonsterDamageAsync(DamageCommand(newLife, presenceId, sequence: 7, damage: 10));
+        Assert.Equal(WorldMonsterDamageStatus.Applied, result.Status);
+        Assert.Equal(55u, result.HpBefore);
+    }
+
     // Regression: a monster's Target and its authoritative range State must be tracked
     // independently - a monster can have a just-acquired target that is clearly farther away than
     // AttackRange (no chase has started/progressed yet), and the acquisition itself must correctly
@@ -1215,6 +1616,43 @@ public sealed class WorldMonsterSimulationTouchedWindowTests : IAsyncLifetime
         var page = await grain.PollMonsterFeedAsync(staleCursor, mapId);
         Assert.True(page.ResyncRequired);
         Assert.Equal(secondLoad.SimulationEpoch, page.SimulationEpoch);
+    }
+
+    // Step 7: a genuine Unload+Rebuild epoch remint (via touched-window expiry, the only way to
+    // force this deterministically - see the class-level test above's own doc comment for why a
+    // same-map reload with different content while still loaded does NOT rebuild) must clear the
+    // OLD epoch's AttackSequence ledger state - proven here by using the SAME numeric
+    // AttackSequence value against the NEW epoch's life and asserting it is accepted as a
+    // genuinely fresh attempt, never spuriously colliding with unrelated stale ledger state.
+    [Fact]
+    public async Task ApplyMonsterDamage_AfterTouchedWindowExpiryRebuild_NewEpochAcceptsSameSequenceValue()
+    {
+        var grain = Partition("world-rest");
+        var mapId = "izlude";
+        var load = await grain.LoadMonsterSpawnsAsync(SingleMonsterBatch(mapId));
+        var bootstrap = await grain.PollMonsterFeedAsync(cursor: null, mapId);
+        var actorId = bootstrap.Snapshot!.Single().ActorId;
+        var life = new WorldMonsterLifeReference(mapId, load.SimulationEpoch, actorId, WorldMonsterIncarnationId.First);
+        const uint attackerCharacterId = 900;
+        var presenceId = Guid.NewGuid();
+        await grain.RegisterPresenceAsync(new WorldPlayerPresence(presenceId, attackerCharacterId + 1_000_000, attackerCharacterId, mapId, 100, 100));
+
+        var original = await grain.ApplyMonsterDamageAsync(new WorldMonsterDamageCommand(life, attackerCharacterId, presenceId, AttackSequence: 5, Damage: 10, AcquireEngagement: false));
+        Assert.Equal(WorldMonsterDamageStatus.Applied, original.Status);
+
+        // Let the touched window expire with NO further touch of this map - genuinely unloads it.
+        await Task.Delay(ShortTouchedWindow + ShortTouchedWindow + TimeSpan.FromMilliseconds(500));
+        var reload = await grain.LoadMonsterSpawnsAsync(SingleMonsterBatch(mapId));
+        Assert.NotEqual(load.SimulationEpoch, reload.SimulationEpoch);
+
+        var reboot = await grain.PollMonsterFeedAsync(cursor: null, mapId);
+        var newActorId = reboot.Snapshot!.Single().ActorId;
+        var newLife = new WorldMonsterLifeReference(mapId, reload.SimulationEpoch, newActorId, WorldMonsterIncarnationId.First);
+        await grain.RegisterPresenceAsync(new WorldPlayerPresence(presenceId, attackerCharacterId + 1_000_000, attackerCharacterId, mapId, 100, 100));
+
+        var result = await grain.ApplyMonsterDamageAsync(new WorldMonsterDamageCommand(newLife, attackerCharacterId, presenceId, AttackSequence: 5, Damage: 10, AcquireEngagement: false));
+        Assert.Equal(WorldMonsterDamageStatus.Applied, result.Status);
+        Assert.Equal(55u, result.HpBefore);
     }
 
     // While a map keeps being touched within its window (here, via repeated feed polls - a
