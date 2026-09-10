@@ -1041,55 +1041,119 @@ public sealed class WorldMonsterSimulationTests : IAsyncLifetime
         Assert.Equal(55u, freshSnapshot.Snapshot!.Single().CurrentHp);
     }
 
-    // Boss-survives-many-disconnects memory-bound scenario: ONE long-lived monster life, repeatedly
-    // attacked by a NEW presence that registers, attacks once (non-lethal, Damage=0 so the monster
-    // is never killed/respawned - the point is proving presence cleanup ALONE bounds memory while
-    // the SAME life stays alive), then unregisters. Proven behaviorally through the public RPC
-    // surface (World.Tests has no internals-visibility into the Orleans silo's own in-process
-    // WorldMonsterMapSimulation state - a real distributed TestCluster, not a reflection target):
-    // after every historical presence has departed, a BRAND NEW presence reusing a fresh Guid must
-    // still be treated as a genuinely first-ever attempt (Applied, never spuriously colliding with
-    // any of the ~200 historical, now-unreachable ledger entries) - which is exactly the property
-    // "memory does not grow with historical disconnect count" implies: a bounded structure has
-    // nothing left over from history to collide with, at any point in the sequence.
+    // Regression for the secondary-index desync fix: RegisterPresenceAsync's own uniqueness check
+    // is keyed by CharacterId ONLY - it never rejects two DIFFERENT CharacterIds sharing the SAME
+    // PresenceId Guid (confirmed by direct code reading: WorldPartitionGrain.RegisterPresenceAsync's
+    // conflict check is `TryFind(presence.CharacterId, ...)`, with no corresponding PresenceId
+    // uniqueness check anywhere). RemoveAttackSequencesForPresence's secondary index is keyed by
+    // PresenceId alone, so this shape is exactly the one that could desynchronize the two
+    // dictionaries if cleanup removed a shared PresenceId bucket wholesale instead of only the
+    // entries actually owned by the departing CharacterId.
     [Fact]
-    public async Task ApplyMonsterDamage_ManySequentialPresenceRegisterAttackUnregisterCycles_NeverAccumulateInterference()
+    public async Task RemoveAttackSequencesForPresence_SharedPresenceIdAcrossDifferentCharacterIds_OnlyRemovesOwnEntries_OtherCharacterStillDiscoverable()
     {
         var (grain, mapId, life, _) = await SetupAttackerAsync("izlude");
-        // The original SetupAttackerAsync presence/registration is unused below - each iteration
-        // registers and removes its OWN fresh presence against the SAME still-alive monster life.
+        var sharedPresenceId = Guid.NewGuid();
+        const uint characterA = 950;
+        const uint characterB = 951;
         await grain.UnregisterPresenceAsync(mapId, AttackerCharacterId, (await grain.GetMapSnapshotAsync(mapId)).Players.Single(p => p.CharacterId == AttackerCharacterId).PresenceId);
 
-        const int iterations = 200;
-        for (var i = 0; i < iterations; i++)
+        // Two DIFFERENT CharacterIds, deliberately sharing the SAME PresenceId Guid - accepted by
+        // the current presence contract since RegisterPresenceAsync's own conflict check never
+        // examines PresenceId uniqueness across CharacterIds.
+        await grain.RegisterPresenceAsync(Presence(sharedPresenceId, characterA, mapId, x: MonsterX, y: MonsterY));
+        var commandA = new WorldMonsterDamageCommand(life, characterA, sharedPresenceId, AttackSequence: 1, Damage: 0, AcquireEngagement: false);
+        Assert.Equal(WorldMonsterDamageStatus.Applied, (await grain.ApplyMonsterDamageAsync(commandA)).Status);
+        await grain.UnregisterPresenceAsync(mapId, characterA, sharedPresenceId);
+        await grain.RegisterPresenceAsync(Presence(sharedPresenceId, characterB, mapId, x: MonsterX, y: MonsterY));
+        var commandB = new WorldMonsterDamageCommand(life, characterB, sharedPresenceId, AttackSequence: 1, Damage: 0, AcquireEngagement: false);
+        Assert.Equal(WorldMonsterDamageStatus.Applied, (await grain.ApplyMonsterDamageAsync(commandB)).Status);
+
+        // Unregister A. If cleanup had removed the ENTIRE PresenceId bucket (the pre-fix bug),
+        // B's own entry would still exist in _attackSequences but become unreachable through the
+        // secondary index for any FUTURE cleanup call - not observable from THIS replay alone, so
+        // this call's own success is establishing the scenario, not yet the proof.
+        await grain.UnregisterPresenceAsync(mapId, characterA, sharedPresenceId);
+
+        // B's exact command must still return ReplayedSequence - proving A's cleanup did not
+        // corrupt B's own ledger entry (this alone would already have failed under the pre-fix
+        // bug ONLY if A's removal had also deleted B's _attackSequences entry directly, which it
+        // did not - the bug was specifically about the SECONDARY index losing track of B, not the
+        // primary entry being deleted outright).
+        var replayB = await grain.ApplyMonsterDamageAsync(commandB);
+        Assert.Equal(WorldMonsterDamageStatus.ReplayedSequence, replayB.Status);
+
+        // Now unregister B, then re-register B under the SAME CharacterId+PresenceId and resend
+        // the SAME command. This is the actual proof: if B's entry were still discoverable through
+        // the secondary index, THIS unregister call correctly finds and removes it - the resend is
+        // then treated as brand-new (Applied). Under the pre-fix bug, B's secondary-index bucket
+        // was already gone (deleted wholesale when A's cleanup ran), so THIS unregister call would
+        // silently no-op (TryGetValue on an already-missing bucket), B's stale primary-dictionary
+        // entry would survive, and the resend would incorrectly return ReplayedSequence again.
+        Assert.Equal(WorldPresenceUnregistrationStatus.Removed, (await grain.UnregisterPresenceAsync(mapId, characterB, sharedPresenceId)).Status);
+        await grain.RegisterPresenceAsync(Presence(sharedPresenceId, characterB, mapId, x: MonsterX, y: MonsterY));
+        var afterBsOwnCleanup = await grain.ApplyMonsterDamageAsync(commandB);
+        Assert.Equal(WorldMonsterDamageStatus.Applied, afterBsOwnCleanup.Status);
+    }
+
+    // Boss-survives-many-disconnects memory-bound scenario: ONE long-lived monster life, repeatedly
+    // attacked by a NEW (CharacterId, PresenceId) identity that registers, attacks once (non-lethal,
+    // Damage=0 so the monster is never killed/respawned - the point is proving presence cleanup
+    // ALONE bounds memory while the SAME life stays alive), then unregisters.
+    //
+    // This is a GENUINE behavioral proof that historical entries are actually removed, not merely
+    // that new identities avoid colliding with them (a brand-new identity can never collide with
+    // any prior one regardless of whether old entries were cleaned up, since the ledger key is the
+    // full (CharacterId, PresenceId, Life) tuple - a test that only checked a fresh 201st identity
+    // would pass even if all 200 historical entries were leaked forever). Instead, this test
+    // RE-USES each historical identity's EXACT (CharacterId, PresenceId) pair and resends the EXACT
+    // same (AttackSequence, Damage, AcquireEngagement) payload after that identity's own second
+    // departure: if its original ledger entry had survived the FIRST unregister, this exact replay
+    // would return ReplayedSequence; if cleanup genuinely removed it, World has no ledger entry for
+    // that key at all and the command is accepted fresh as Applied.
+    [Fact]
+    public async Task ApplyMonsterDamage_ManySequentialPresenceRegisterAttackUnregisterCycles_HistoricalIdentitiesAreActuallyRemoved()
+    {
+        var (grain, mapId, life, _) = await SetupAttackerAsync("izlude");
+        // The original SetupAttackerAsync presence/registration is unused below - each historical
+        // identity registers and removes its OWN fresh presence against the SAME still-alive
+        // monster life.
+        await grain.UnregisterPresenceAsync(mapId, AttackerCharacterId, (await grain.GetMapSnapshotAsync(mapId)).Players.Single(p => p.CharacterId == AttackerCharacterId).PresenceId);
+
+        const int historicalIdentityCount = 50;
+        var historicalIdentities = new List<(uint CharacterId, Guid PresenceId)>();
+        for (var i = 0; i < historicalIdentityCount; i++)
         {
             var characterId = AttackerCharacterId + 1 + (uint)i;
             var presenceId = Guid.NewGuid();
-            await grain.RegisterPresenceAsync(Presence(presenceId, characterId, mapId, x: MonsterX, y: MonsterY));
+            historicalIdentities.Add((characterId, presenceId));
 
+            await grain.RegisterPresenceAsync(Presence(presenceId, characterId, mapId, x: MonsterX, y: MonsterY));
             var result = await grain.ApplyMonsterDamageAsync(new WorldMonsterDamageCommand(life, characterId, presenceId, AttackSequence: 1, Damage: 0, AcquireEngagement: false));
             Assert.Equal(WorldMonsterDamageStatus.Applied, result.Status);
             Assert.False(result.KilledByThisHit);
-
             Assert.Equal(WorldPresenceUnregistrationStatus.Removed, (await grain.UnregisterPresenceAsync(mapId, characterId, presenceId)).Status);
         }
 
         // The monster is still alive and at full HP throughout (Damage=0 the whole time) - it was
         // never killed/respawned, so this genuinely isolates presence-departure cleanup as the
-        // only mechanism keeping the ledger bounded across 200 historical connect/disconnect cycles.
+        // only mechanism that could keep the ledger bounded across these historical cycles.
         var finalPage = await grain.PollMonsterFeedAsync(cursor: null, mapId);
         Assert.Equal(55u, finalPage.Snapshot!.Single().CurrentHp);
         Assert.Equal(WorldMonsterLifecycleState.Alive, finalPage.Snapshot![0].Lifecycle);
 
-        // A brand-new (201st) presence, never seen before, still gets ordinary first-attempt
-        // treatment - proving no stale historical entry from any of the 200 prior cycles remains
-        // reachable to interfere with a fresh attacker's own sequence numbering.
-        var freshCharacterId = AttackerCharacterId + 1 + iterations;
-        var freshPresenceId = Guid.NewGuid();
-        await grain.RegisterPresenceAsync(Presence(freshPresenceId, freshCharacterId, mapId, x: MonsterX, y: MonsterY));
-        var freshResult = await grain.ApplyMonsterDamageAsync(new WorldMonsterDamageCommand(life, freshCharacterId, freshPresenceId, AttackSequence: 1, Damage: 10, AcquireEngagement: false));
-        Assert.Equal(WorldMonsterDamageStatus.Applied, freshResult.Status);
-        Assert.Equal(55u, freshResult.HpBefore);
+        // The actual proof: re-register EACH historical identity under its OWN exact
+        // (CharacterId, PresenceId) pair and resend its OWN exact original payload. Each must be
+        // accepted as Applied (a genuinely new ledger entry), never ReplayedSequence (which would
+        // mean that identity's original entry from the loop above had survived its first
+        // unregister, i.e. cleanup failed to remove it).
+        foreach (var (characterId, presenceId) in historicalIdentities)
+        {
+            await grain.RegisterPresenceAsync(Presence(presenceId, characterId, mapId, x: MonsterX, y: MonsterY));
+            var replayAttempt = await grain.ApplyMonsterDamageAsync(new WorldMonsterDamageCommand(life, characterId, presenceId, AttackSequence: 1, Damage: 0, AcquireEngagement: false));
+            Assert.Equal(WorldMonsterDamageStatus.Applied, replayAttempt.Status);
+            await grain.UnregisterPresenceAsync(mapId, characterId, presenceId);
+        }
     }
 
     // Regression: a monster's Target and its authoritative range State must be tracked

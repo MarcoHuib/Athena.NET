@@ -403,26 +403,34 @@ internal sealed class WorldMonsterMapSimulation
         }
     }
 
-    // Step 7 (wired from WorldPartitionGrain.Remove(presence) in the NEXT substep - not yet
-    // called from production as of this substep): removes exactly this presence's entries across
-    // every Life it has attacked on this map, in O(entries for that one presence), via the
-    // secondary index. Eager, chokepoint-triggered cleanup bounds _attackSequences memory by
-    // CURRENTLY-live attackers rather than historical reconnect count - see that wiring's own doc
-    // comment for the full proof this does not affect correctness (validation order already makes
-    // a departed presence's stale entry inert regardless of whether/when it is swept).
+    // Wired from WorldPartitionGrain.Remove(presence): removes exactly this (CharacterId,
+    // PresenceId) pair's entries across every Life it has attacked on this map, in O(entries for
+    // that one presence), via the secondary index. Eager, chokepoint-triggered cleanup bounds
+    // _attackSequences memory by CURRENTLY-live attackers rather than historical reconnect count -
+    // see that wiring's own doc comment for the full proof this does not affect correctness
+    // (validation order already makes a departed presence's stale entry inert regardless of
+    // whether/when it is swept).
+    //
+    // The secondary index is keyed by PresenceId ALONE (not (CharacterId, PresenceId)) - Guid
+    // reuse across two DIFFERENT CharacterIds is not rejected by RegisterPresenceAsync's own
+    // uniqueness check (it only guards CharacterId, never PresenceId), so this method must NEVER
+    // assume every entry under a given PresenceId bucket belongs to the SAME CharacterId. Only the
+    // entries actually owned by `characterId` are removed from BOTH the primary dictionary and the
+    // bucket itself; the bucket is deleted only once it is genuinely empty. Removing the whole
+    // bucket unconditionally (the prior implementation) would desynchronize the two structures -
+    // a different CharacterId's still-live entries would become unreachable through this index for
+    // any FUTURE cleanup call, even though they would remain (correctly, but now unswept) in
+    // _attackSequences until an unrelated epoch/respawn clear eventually caught them.
     public void RemoveAttackSequencesForPresence(uint characterId, Guid presenceId)
     {
         if (!_attackSequencesByPresence.TryGetValue(presenceId, out var set)) return;
-        foreach (var (entryCharacterId, life) in set)
+        set.RemoveWhere(entry =>
         {
-            if (entryCharacterId != characterId) continue; // defense-in-depth: the index is keyed
-                                                             // by PresenceId alone, so every entry
-                                                             // in `set` already belongs to this one
-                                                             // presence - this guard just makes that
-                                                             // invariant explicit rather than trusted.
-            _attackSequences.Remove((entryCharacterId, presenceId, life));
-        }
-        _attackSequencesByPresence.Remove(presenceId);
+            if (entry.CharacterId != characterId) return false;
+            _attackSequences.Remove((entry.CharacterId, presenceId, entry.Life));
+            return true;
+        });
+        if (set.Count == 0) _attackSequencesByPresence.Remove(presenceId);
     }
 
     // `targetPresence`/`targetIsWalking` let this compute the CORRECT initial engagement state
