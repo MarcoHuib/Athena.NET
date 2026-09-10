@@ -514,6 +514,68 @@ public sealed class WorldMonsterSimulationTests : IAsyncLifetime
         Assert.DoesNotContain(page.Entries!, entry => entry.Kind == WorldMonsterFeedEntryKind.Died);
     }
 
+    // Step 7 substep 4 (§9.5): the cross-consumer HealthChanged convergence proof. Two INDEPENDENT
+    // feed consumers - P1 (the attacker, whose own RPC result is the first thing to learn the new
+    // HP) and P2 (an unrelated poller with its OWN, separately-established cursor, representing a
+    // second MapServer process's PollAndReconcileMapAsync loop) - observe the SAME map/epoch/actor/
+    // incarnation. P2 baselines BEFORE P1's mutation, then P1 mutates, then P2 advances from its OWN
+    // old cursor and must observe the authoritative post-damage HP - never a stale value, and never
+    // by virtue of a fresh bootstrap performed after the fact (which would prove nothing about
+    // convergence from OLD knowledge). AcquireEngagement=false and Damage is chosen to be strictly
+    // non-lethal, so the only feed traffic this produces is the single HealthChanged entry itself -
+    // no engagement-transition entry could be mistaken for the convergence signal under test.
+    [Fact]
+    public async Task ApplyMonsterDamage_NonLethalHit_IndependentPollerConvergesFromStaleCursorToAuthoritativeHp()
+    {
+        var (grain, mapId, life, presenceId) = await SetupAttackerAsync("izlude");
+
+        // P2's OWN baseline, established strictly BEFORE P1's mutation - this is what makes the
+        // later assertion a genuine "old cursor learns new state" proof rather than a fresh
+        // bootstrap that would trivially see current state regardless of convergence correctness.
+        var p2Baseline = await grain.PollMonsterFeedAsync(cursor: null, mapId);
+        var p2Cursor = new WorldMonsterFeedCursor(p2Baseline.SimulationEpoch, p2Baseline.AsOfSequence);
+        var originalInstance = p2Baseline.Snapshot!.Single(i => i.ActorId == life.ActorId);
+        Assert.Equal(55u, originalInstance.CurrentHp);
+        Assert.Equal(55u, originalInstance.MaxHp);
+
+        // P1 performs the authoritative mutation: non-lethal, no engagement, same incarnation.
+        var p1Result = await grain.ApplyMonsterDamageAsync(DamageCommand(life, presenceId, sequence: 1, damage: 20, acquireEngagement: false));
+        Assert.Equal(WorldMonsterDamageStatus.Applied, p1Result.Status);
+        Assert.Equal(55u, p1Result.HpBefore);
+        Assert.Equal(35u, p1Result.HpAfter);
+        Assert.False(p1Result.KilledByThisHit);
+        Assert.Equal(55u, p1Result.MaxHp);
+
+        // P2 advances from its OWN previously-established (now stale) cursor - never a fresh
+        // bootstrap - proving the atomicity guarantee of §8/§9.5: by the time P1's RPC returned,
+        // World's grain turn had already committed both the HP mutation AND the HealthChanged
+        // append in the same uninterruptible turn, so P2's very next poll from its old position
+        // must see it, deterministically, with no possible window where the RPC result is ahead
+        // of what the feed itself reports for the same completed turn.
+        var p2Page = await grain.PollMonsterFeedAsync(p2Cursor, mapId);
+        Assert.Equal(WorldMonsterFeedStatus.Ready, p2Page.Status);
+        Assert.False(p2Page.ResyncRequired);
+        Assert.Equal(p2Baseline.SimulationEpoch, p2Page.SimulationEpoch);
+
+        var healthChangedForThisLife = Assert.Single(p2Page.Entries!, entry =>
+            entry.Kind == WorldMonsterFeedEntryKind.HealthChanged &&
+            entry.ActorId == life.ActorId &&
+            entry.IncarnationId.Equals(life.IncarnationId));
+
+        // The load-bearing assertions: P2's incremental feed entry reports EXACTLY the same
+        // authoritative HpAfter/MaxHp that P1's own RPC result carried - never a stale HP=55, and
+        // never a value diverging from the RPC's own authoritative result for that same grain turn.
+        Assert.Equal(p1Result.HpAfter, healthChangedForThisLife.Instance.CurrentHp);
+        Assert.Equal(p1Result.MaxHp, healthChangedForThisLife.Instance.MaxHp);
+        Assert.Equal(life.IncarnationId, healthChangedForThisLife.Instance.IncarnationId);
+        Assert.Equal(WorldMonsterLifecycleState.Alive, healthChangedForThisLife.Instance.Lifecycle);
+
+        // No Died entry, and no OTHER HealthChanged entry, could be present in this incremental
+        // window - this was a single non-lethal hit and nothing else touched the simulation.
+        Assert.DoesNotContain(p2Page.Entries!, entry => entry.Kind == WorldMonsterFeedEntryKind.Died);
+        Assert.Single(p2Page.Entries!, entry => entry.Kind == WorldMonsterFeedEntryKind.HealthChanged);
+    }
+
     [Fact]
     public async Task ApplyMonsterDamage_MissDamageZero_AppendsNoHealthChanged()
     {
