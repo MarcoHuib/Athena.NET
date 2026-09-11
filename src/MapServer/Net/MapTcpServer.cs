@@ -603,14 +603,16 @@ public sealed class MapTcpServer
     // vanish-on-vanished/dead/old-incarnation/new-epoch actors, then rediscovery of everything
     // currently Alive and in-AOI) to MapClientSession.ReconcileMonsterVisibilityAsync - see that
     // method's own doc comment for the exact diff rules; MapTcpServer only owns session enumeration
-    // (it has no socket/visibility state of its own to reconcile).
+    // (it has no socket/visibility state of its own to reconcile). Step 7 substep 5: no longer passes
+    // _world.CombatState - HP for client projection now comes exclusively from the World-authoritative
+    // WorldMonsterInstance already carried by `projection`.
     private async Task ReconcileSessionsFullyAsync(MonsterFeedProjection projection, IReadOnlyCollection<MapClientSession> mapSessions, CancellationToken cancellationToken)
     {
         foreach (var session in mapSessions)
         {
             try
             {
-                await session.ReconcileMonsterVisibilityAsync(projection, _world.CombatState, cancellationToken);
+                await session.ReconcileMonsterVisibilityAsync(projection, cancellationToken);
             }
             catch (IOException) { /* Client disconnected; HandleClientAsync's own cleanup removes it from _sessions. */ }
             catch (OperationCanceledException) { /* Server shutdown. */ }
@@ -650,14 +652,17 @@ public sealed class MapTcpServer
             return;
         }
 
+        // Step 7 substep 5: entry.Instance (World-authoritative, includes CurrentHp/MaxHp) is the
+        // sole HP source for this fan-out - the prior _world.CombatState.TryGet lookup here was a
+        // redundant second read purely to obtain HP that already sits in entry.Instance. A missing
+        // transitional local combat-state entry must no longer suppress this projection.
         var actor = new WorldMonsterActorView(entry.Instance);
         var movementKind = entry.Kind == WorldMonsterFeedEntryKind.Respawned ? null : entry.MovementKind;
-        if (!_world.CombatState.TryGet(new MonsterCombatKey(entry.Instance.MapId, epoch, entry.ActorId, entry.IncarnationId), out var combat)) return;
         foreach (var session in mapSessions)
         {
             try
             {
-                await session.NotifyMonsterMovedAsync(actor, movementKind, combat, cancellationToken);
+                await session.NotifyMonsterMovedAsync(actor, movementKind, entry.Instance, cancellationToken);
             }
             catch (IOException) { /* Client disconnected; HandleClientAsync's own cleanup removes it from _sessions. */ }
             catch (OperationCanceledException) { /* Server shutdown. */ }

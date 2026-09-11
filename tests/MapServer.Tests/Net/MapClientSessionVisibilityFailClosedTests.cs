@@ -9,10 +9,19 @@ using Athena.Net.World.Contracts;
 
 namespace Athena.Net.MapServer.Tests.Net;
 
-// Step 6 hardening, item 4: a live World-projected monster with NO matching local combat-state
-// entry is a reconciliation/invariant condition, never a legitimate zero-HP actor - MapClientSession
-// must fail closed (never mark/send it as visible with a fabricated HP=0), not paper over the gap
-// by inventing a sentinel value.
+// Step 6 hardening, item 4 established a fail-closed guard: a live World-projected monster with NO
+// matching local combat-state entry was treated as a reconciliation/invariant violation and
+// suppressed from discovery entirely, to avoid ever fabricating a sentinel HP value.
+//
+// Step 7 substep 5 SUPERSEDES that guard: CurrentHp/MaxHp packet projection now reads exclusively
+// from the World-authoritative WorldMonsterInstance already carried by the projection snapshot/feed
+// entry - it never needs (and never reads) the transitional local MonsterCombatStateStore for HP at
+// all. There is therefore no fabricated-HP risk left to guard against, and gating discovery on a
+// local store entry existing would incorrectly suppress a genuinely valid, Alive, World-projected
+// monster merely because MapServer's OWN transitional bookkeeping (still required only for the
+// still-live pre-substep9 player->monster attack path, see MonsterCombatCoordinator's own Step 7
+// staging comment) happens to lack a corresponding entry. This test now proves the OPPOSITE of its
+// original intent: packet visibility must no longer be gated on local combat-state existence.
 public sealed class MapClientSessionVisibilityFailClosedTests
 {
     private const uint AccountId = 31;
@@ -46,7 +55,7 @@ public sealed class MapClientSessionVisibilityFailClosedTests
     }
 
     [Fact]
-    public async Task SendVisibleMonsterActorsAsync_AliveMonsterWithNoCombatStateEntry_NeverSentAsVisible()
+    public async Task SendVisibleMonsterActorsAsync_AliveMonsterWithNoCombatStateEntry_StillDiscoveredUsingWorldInstanceHp()
     {
         var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
@@ -63,16 +72,20 @@ public sealed class MapClientSessionVisibilityFailClosedTests
         var projection = projections.GetOrCreate(MapId);
         var epoch = WorldSimulationEpoch.NewEpoch();
         const uint actorId = 1;
+        // Deliberately damaged (35/55) World-authoritative HP - distinct from what a legacy
+        // combat-state entry would ever have reported (there is none here at all), so a passing
+        // assertion on 35/55 below can only be explained by the packet reading WorldMonsterInstance,
+        // never any local store.
         var instance = new WorldMonsterInstance(
             actorId, WorldMonsterIncarnationId.First, MapId, PoringMobId, X: 75, Y: 51,
             WorldMonsterLifecycleState.Alive, IsWalking: false, DestinationX: 75, DestinationY: 51,
-            WorldMonsterEngagementState.Unengaged, EngagedTarget: null, CurrentHp: 55, MaxHp: 55);
+            WorldMonsterEngagementState.Unengaged, EngagedTarget: null, CurrentHp: 35, MaxHp: 55);
         projection.ApplySnapshot([instance], epoch, combatState);
-        // Directly undo the registration ApplySnapshot itself would normally perform, to construct
-        // the exact reconciliation-invariant-violation state this test targets: a projection that
-        // reports an Alive monster with genuinely NO corresponding combat-state entry (simulating a
-        // bug/race elsewhere that this fail-closed guard exists specifically to catch, not a
-        // scenario ApplySnapshot's own correct behavior would ever produce on its own).
+        // Directly undo the registration ApplySnapshot itself would normally perform - constructing
+        // a projection that reports an Alive monster with genuinely NO corresponding transitional
+        // combat-state entry. Pre-Step-7-substep-5 this was a reconciliation-invariant-violation
+        // guard target (discovery was suppressed); post-substep-5 this must have NO effect on
+        // discovery at all, since packet projection no longer consults this store for HP.
         combatState.Remove(new MonsterCombatKey(MapId, epoch, actorId, WorldMonsterIncarnationId.First));
 
         var gameplayPersistence = new FixedGameplayStatePersistence(FreshNovice());
@@ -94,11 +107,15 @@ public sealed class MapClientSessionVisibilityFailClosedTests
         await ReadExact(stream, 6);  // 0x0B08 inventoryStart
         await ReadExact(stream, 4);  // 0x0B0B inventoryEnd
 
-        // No monster spawn packet must arrive at all - confirmed by observing a harmless ping
-        // response land next instead of a 0x09FF/0x09FD monster actor packet.
-        await stream.WriteAsync(new byte[] { 0x1c, 0x0b });
-        var next = await ReadExact(stream, 2);
-        Assert.Equal((short)PacketConstants.ZcPingLive, BinaryPrimitives.ReadInt16LittleEndian(next));
+        // The monster spawn packet MUST still arrive - a missing local combat-state entry no longer
+        // suppresses valid World-projected discovery - and its HP fields must be World's own 35/55,
+        // never a fabricated/sentinel value and never anything read from the (deliberately empty)
+        // local store.
+        var standPacket = await ReadDynamic(stream);
+        Assert.Equal((short)PacketConstants.ZcNotifyStandEntry, BinaryPrimitives.ReadInt16LittleEndian(standPacket));
+        Assert.Equal(actorId, BinaryPrimitives.ReadUInt32LittleEndian(standPacket.AsSpan(5)));
+        Assert.Equal(55, BinaryPrimitives.ReadInt32LittleEndian(standPacket.AsSpan(73))); // maxHp
+        Assert.Equal(35, BinaryPrimitives.ReadInt32LittleEndian(standPacket.AsSpan(77))); // currentHp
 
         client.Close();
         await run.WaitAsync(TimeSpan.FromSeconds(5));

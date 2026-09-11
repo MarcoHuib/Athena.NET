@@ -4098,12 +4098,12 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     // path (NotifyMonsterMovedAsync) is what actually announces monsters once bootstrap completes.
     private async Task SendVisibleMonsterActorsAsync(CancellationToken cancellationToken)
     {
-        if (_monsterProjections is null || _combatState is null) return;
+        if (_monsterProjections is null) return;
         // Item 4 of the Step 6 correctness-hardening pass: epoch + the instance list are captured
         // from ONE MonsterFeedProjection lock acquisition (SnapshotForProjection), never as two
         // separate property reads (the old CurrentEpoch-then-AllInstances shape) - a resync landing
         // between those two reads could otherwise pair a STALE epoch with a FRESH instance list (or
-        // vice versa), producing MonsterCombatKey lookups below that never match anything real.
+        // vice versa).
         if (!_monsterProjections.TryGet(_mapName, out var projection) || !projection.SnapshotForProjection(out var epoch, out var instances)) return;
 
         foreach (var instance in instances)
@@ -4111,21 +4111,14 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
             if (instance.Lifecycle != WorldMonsterLifecycleState.Alive) continue;
             if (Math.Abs(instance.X - _x) > WorldVisibilityOptions.DefaultAreaSize || Math.Abs(instance.Y - _y) > WorldVisibilityOptions.DefaultAreaSize) continue;
 
-            // A live World-projected monster with NO matching local combat-state entry is a
-            // reconciliation/invariant condition (item 4) - never a legitimate zero-HP actor. Fail
-            // closed: do not mark it visible, do not send anything for it. This should self-correct
-            // on this map's own next feed poll (MonsterFeedProjection.ApplySnapshot/ApplyEntry are
-            // what register a life's combat-state entry in the first place); logging here gives an
-            // operator a signal if it does not.
-            if (!_combatState.TryGet(new MonsterCombatKey(_mapName, epoch, instance.ActorId, instance.IncarnationId), out var visibleCombat))
-            {
-                MapLogger.Warning($"[iRO MAP DEBUG] Alive projected monster actorId={instance.ActorId} map='{_mapName}' epoch={epoch.Value} has no local combat-state entry - reconciliation invariant violation, not sending as visible.");
-                continue;
-            }
-
             if (!_visibleActorIds.TryMarkVisible(instance.ActorId)) continue;
             _monsterVisibility.MarkVisible(instance.ActorId, instance.IncarnationId);
 
+            // Step 7 substep 5: HP read-model conversion - CurrentHp/MaxHp now come exclusively from
+            // the World-authoritative WorldMonsterInstance already in hand (instance.CurrentHp/
+            // MaxHp), never from the transitional local MonsterCombatStateStore. A live World-
+            // projected Alive monster is discoverable regardless of whether a local combat-state
+            // entry exists for it - packet visibility is no longer gated on local HP-state existence.
             var actor = new WorldMonsterActorView(instance);
             var packet = IroMonsterActorPackets.BuildStandEntry(
                 instance.ActorId,
@@ -4135,10 +4128,10 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
                 instance.X,
                 instance.Y,
                 direction: 0,
-                currentHp: visibleCombat.CurrentHp,
-                maxHp: actor.StaticMob.MaxHp);
+                currentHp: instance.CurrentHp,
+                maxHp: instance.MaxHp);
             MapLogger.Info(
-                $"[iRO MAP DEBUG] Sending monster actor id={instance.ActorId} name='{actor.Name}' class={actor.MobId} map='{instance.MapId}' x={instance.X} y={instance.Y} hp={visibleCombat.CurrentHp}/{actor.StaticMob.MaxHp}");
+                $"[iRO MAP DEBUG] Sending monster actor id={instance.ActorId} name='{actor.Name}' class={actor.MobId} map='{instance.MapId}' x={instance.X} y={instance.Y} hp={instance.CurrentHp}/{instance.MaxHp}");
             await WriteAsync(packet, cancellationToken);
         }
     }
@@ -4203,15 +4196,18 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     //     implemented in this slice; a monster that walks out of a stationary player's visibility
     //     range will incorrectly continue to appear to that client. This is a known, documented gap
     //     (see this task's own report), not a silent omission.
-    // `combat` is supplied by the caller (MapTcpServer's fan-out loop) as a FRESH MonsterCombatState
-    // read immediately before THIS call - never a value captured earlier this same tick. HP
-    // captured at an earlier point can already be stale by the time an individual session's packet
-    // is actually built (e.g. a player's hit landed and correctly published fresh HP via 0x0977 in
-    // between) - projecting that stale captured HP here could regress the client's already-correct
-    // HP knowledge, or even re-show the full-HP -1/-1 sentinel for a monster that was just damaged.
+    // Step 7 substep 5: `instance` is the World-authoritative WorldMonsterInstance supplied by the
+    // caller (MapTcpServer's fan-out loop, or a discovery/reconciliation call site) as a FRESH read
+    // immediately before THIS call - never a value captured earlier this same tick. HP captured at
+    // an earlier point can already be stale by the time an individual session's packet is actually
+    // built (e.g. a player's hit landed and correctly published fresh HP via 0x0977 in between) -
+    // projecting that stale captured HP here could regress the client's already-correct HP
+    // knowledge, or even re-show the full-HP -1/-1 sentinel for a monster that was just damaged.
+    // World is the sole authority for CurrentHp/MaxHp (see WorldMonsterInstance's own doc comment) -
+    // this method no longer consults the transitional local MonsterCombatStateStore for HP at all.
     //
     // Validated against `actor` before any packet is built: a caller that accidentally supplies
-    // combat state for a DIFFERENT actor or a DIFFERENT life (stale IncarnationId spanning a
+    // an instance for a DIFFERENT actor or a DIFFERENT life (stale IncarnationId spanning a
     // respawn) must never have its mismatched data projected onto this actor - that is an
     // invariant violation in the caller, not a recoverable case, so this throws rather than
     // silently projecting mixed-life data.
@@ -4225,11 +4221,11 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     // below still needs to run for a not-yet-visible actor regardless of whether this particular
     // call happens to carry a movement transition, since discovery is triggered by proximity, not
     // by the specific entry kind that happened to be processed.
-    public async Task NotifyMonsterMovedAsync(IMonsterActorView actor, WorldMonsterMovementKind? movementKind, MonsterCombatState combat, CancellationToken cancellationToken)
+    public async Task NotifyMonsterMovedAsync(IMonsterActorView actor, WorldMonsterMovementKind? movementKind, WorldMonsterInstance instance, CancellationToken cancellationToken)
     {
-        if (combat.ActorId != actor.ActorId || !combat.IncarnationId.Value.Equals(actor.IncarnationId.Value))
+        if (instance.ActorId != actor.ActorId || !instance.IncarnationId.Value.Equals(actor.IncarnationId.Value))
             throw new InvalidOperationException(
-                $"MonsterCombatState (ActorId={combat.ActorId}, IncarnationId={combat.IncarnationId.Value}) does not match the projected actor (ActorId={actor.ActorId}, IncarnationId={actor.IncarnationId.Value}) - refusing to project mixed-life actor/combat data.");
+                $"WorldMonsterInstance (ActorId={instance.ActorId}, IncarnationId={instance.IncarnationId.Value}) does not match the projected actor (ActorId={actor.ActorId}, IncarnationId={actor.IncarnationId.Value}) - refusing to project mixed-life actor/instance data.");
         if (!string.Equals(actor.Map, _mapName, StringComparison.OrdinalIgnoreCase)) return;
 
         var position = actor.GetPosition();
@@ -4239,11 +4235,11 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
             if (!_visibilityOptions.IsVisible(_mapName, _x, _y, actor.Map, position.X, position.Y)) return;
             if (!_visibleActorIds.TryMarkVisible(actor.ActorId)) return;
             // Item 3: every path that actually exposes a life to the client - not only the full
-            // reconciliation/resync path - must record the incarnation it exposed. combat.IncarnationId
+            // reconciliation/resync path - must record the incarnation it exposed. instance.IncarnationId
             // (already validated equal to actor.IncarnationId.Value above) is the WorldMonsterIncarnationId
             // shape MonsterVisibilityState needs - actor.IncarnationId itself is IMonsterActorView's
             // own local MonsterIncarnationId domain type, a different type entirely.
-            _monsterVisibility.MarkVisible(actor.ActorId, combat.IncarnationId);
+            _monsterVisibility.MarkVisible(actor.ActorId, instance.IncarnationId);
 
             if (actor.IsWalking)
             {
@@ -4258,8 +4254,8 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
                     walkingDiscoveryDestination.X,
                     walkingDiscoveryDestination.Y,
                     moveStartTime: (uint)Environment.TickCount,
-                    currentHp: combat.CurrentHp,
-                    maxHp: combat.MaxHp);
+                    currentHp: instance.CurrentHp,
+                    maxHp: instance.MaxHp);
                 await WriteAsync(walkingDiscoveryPacket, cancellationToken);
                 return;
             }
@@ -4272,8 +4268,8 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
                 position.X,
                 position.Y,
                 direction: 0,
-                currentHp: combat.CurrentHp,
-                maxHp: combat.MaxHp);
+                currentHp: instance.CurrentHp,
+                maxHp: instance.MaxHp);
             await WriteAsync(standPacket, cancellationToken);
             return;
         }
@@ -4325,8 +4321,8 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
                     destination.X,
                     destination.Y,
                     moveStartTime: (uint)Environment.TickCount,
-                    currentHp: combat.CurrentHp,
-                    maxHp: combat.MaxHp);
+                    currentHp: instance.CurrentHp,
+                    maxHp: instance.MaxHp);
                 await WriteAsync(walkPacket, cancellationToken);
                 MapLogger.Info($"[iRO MAP DEBUG] Sent 0x09FD walk-entry mobActorId={actor.ActorId} accountId={_accountId} from=({position.X},{position.Y}) to=({destination.X},{destination.Y})");
                 return;
@@ -4406,11 +4402,11 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     //   - Still Alive in the fresh snapshot but now outside this session's own AOI -> vanish it.
     //   - Newly in-AOI/not previously visible -> discovered via the existing NotifyMonsterMovedAsync
     //     discovery path (movementKind: null), unchanged.
-    // Combat-state lookups mirror ReconcileSessionsFullyAsync's own existing per-instance
-    // MonsterCombatKey construction exactly (MapId, epoch, ActorId, IncarnationId). Epoch + the
-    // instance list are captured from ONE MonsterFeedProjection lock acquisition
-    // (SnapshotForProjection, item 4) rather than as two separate property reads.
-    public async Task ReconcileMonsterVisibilityAsync(MonsterFeedProjection projection, MonsterCombatStateStore combatState, CancellationToken cancellationToken)
+    // Step 7 substep 5: HP is no longer sourced from the transitional local MonsterCombatStateStore
+    // here - each instance's own CurrentHp/MaxHp (World-authoritative) is passed straight through to
+    // NotifyMonsterMovedAsync. Epoch + the instance list are captured from ONE MonsterFeedProjection
+    // lock acquisition (SnapshotForProjection, item 4) rather than as two separate property reads.
+    public async Task ReconcileMonsterVisibilityAsync(MonsterFeedProjection projection, CancellationToken cancellationToken)
     {
         if (!projection.SnapshotForProjection(out var epoch, out var instances)) return;
         // CompareAndUpdateReconciledEpoch atomically compares AND records in one call - see
@@ -4460,10 +4456,9 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         // overwrite) - kept explicit so a reader does not have to trust the callee alone.
         foreach (var instance in freshByActorId.Values)
         {
-            if (!combatState.TryGet(new MonsterCombatKey(projection.MapId, epoch, instance.ActorId, instance.IncarnationId), out var combat)) continue;
             try
             {
-                await NotifyMonsterMovedAsync(new WorldMonsterActorView(instance), movementKind: null, combat, cancellationToken);
+                await NotifyMonsterMovedAsync(new WorldMonsterActorView(instance), movementKind: null, instance, cancellationToken);
             }
             catch (IOException) { /* Client disconnected; HandleClientAsync's own cleanup removes it from _sessions. */ }
             catch (OperationCanceledException) { /* Server shutdown. */ }

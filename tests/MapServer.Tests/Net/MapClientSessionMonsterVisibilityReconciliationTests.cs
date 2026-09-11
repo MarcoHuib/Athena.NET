@@ -25,6 +25,9 @@ public sealed class MapClientSessionMonsterVisibilityReconciliationTests
     private static WorldMonsterInstance Alive(uint actorId, WorldMonsterIncarnationId incarnation, ushort x, ushort y) =>
         new(actorId, incarnation, MapId, PoringMobId, x, y, WorldMonsterLifecycleState.Alive, IsWalking: false, DestinationX: x, DestinationY: y, WorldMonsterEngagementState.Unengaged, EngagedTarget: null, CurrentHp: 55, MaxHp: 55);
 
+    private static WorldMonsterInstance AliveWithHp(uint actorId, WorldMonsterIncarnationId incarnation, ushort x, ushort y, uint currentHp, uint maxHp, bool isWalking = false, ushort destinationX = 0, ushort destinationY = 0) =>
+        new(actorId, incarnation, MapId, PoringMobId, x, y, WorldMonsterLifecycleState.Alive, isWalking, DestinationX: isWalking ? destinationX : x, DestinationY: isWalking ? destinationY : y, WorldMonsterEngagementState.Unengaged, EngagedTarget: null, CurrentHp: currentHp, MaxHp: maxHp);
+
     private static async Task<(TcpClient Client, NetworkStream Stream, MapClientSession Session, Task RunTask)> SetupViewerAsync()
     {
         var listener = new TcpListener(IPAddress.Loopback, 0);
@@ -60,27 +63,18 @@ public sealed class MapClientSessionMonsterVisibilityReconciliationTests
         return [.. header, .. await ReadExact(stream, length - 4)];
     }
 
-    private static MonsterCombatState CombatFor(MonsterCombatStateStore store, string mapId, WorldSimulationEpoch epoch, WorldMonsterInstance instance)
-    {
-        Assert.True(store.TryGet(new MonsterCombatKey(mapId, epoch, instance.ActorId, instance.IncarnationId), out var combat));
-        return combat;
-    }
-
     [Fact]
     public async Task NotifyMonsterMovedAsync_ActorWalksOutOfAoi_SendsVanish()
     {
         var (client, stream, session, run) = await SetupViewerAsync();
         using var _ = client;
 
-        var combatState = new MonsterCombatStateStore();
-        var epoch = WorldSimulationEpoch.NewEpoch();
         var incarnation = WorldMonsterIncarnationId.First;
         const uint actorId = 1;
         var nearby = Alive(actorId, incarnation, x: (ushort)(ViewerX + 1), y: ViewerY);
-        combatState.Register(MapId, epoch, actorId, incarnation, maxHp: 55);
 
         // Discover it first (within AOI) - the standard discovery path.
-        await session.NotifyMonsterMovedAsync(new WorldMonsterActorView(nearby), movementKind: null, CombatFor(combatState, MapId, epoch, nearby), CancellationToken.None);
+        await session.NotifyMonsterMovedAsync(new WorldMonsterActorView(nearby), movementKind: null, nearby, CancellationToken.None);
         var discoveryPacket = await ReadDynamic(stream);
         Assert.Equal((short)PacketConstants.ZcNotifyStandEntry, BinaryPrimitives.ReadInt16LittleEndian(discoveryPacket));
 
@@ -88,7 +82,7 @@ public sealed class MapClientSessionMonsterVisibilityReconciliationTests
         // incremental movement, e.g. a Moved/CellCrossed feed entry) - must vanish it for this
         // session, not continue projecting movement for an actor the client can no longer see.
         var farAway = nearby with { X = (ushort)(ViewerX + WorldVisibilityOptions.DefaultAreaSize + 5) };
-        await session.NotifyMonsterMovedAsync(new WorldMonsterActorView(farAway), WorldMonsterMovementKind.CellCrossed, CombatFor(combatState, MapId, epoch, farAway), CancellationToken.None);
+        await session.NotifyMonsterMovedAsync(new WorldMonsterActorView(farAway), WorldMonsterMovementKind.CellCrossed, farAway, CancellationToken.None);
 
         var vanishPacket = await ReadExact(stream, PacketConstants.ZcNotifyVanishLength);
         Assert.Equal((short)PacketConstants.ZcNotifyVanish, BinaryPrimitives.ReadInt16LittleEndian(vanishPacket));
@@ -116,14 +110,14 @@ public sealed class MapClientSessionMonsterVisibilityReconciliationTests
         projection.ApplySnapshot([instance], epoch, combatState);
 
         // First reconciliation discovers it.
-        await session.ReconcileMonsterVisibilityAsync(projection, combatState, CancellationToken.None);
+        await session.ReconcileMonsterVisibilityAsync(projection, CancellationToken.None);
         var discoveryPacket = await ReadDynamic(stream);
         Assert.Equal((short)PacketConstants.ZcNotifyStandEntry, BinaryPrimitives.ReadInt16LittleEndian(discoveryPacket));
 
         // A fresh snapshot that no longer contains this ActorId at all (vanished/reaped) - a second
         // reconciliation must vanish it for this session.
         projection.ApplySnapshot([], epoch, combatState);
-        await session.ReconcileMonsterVisibilityAsync(projection, combatState, CancellationToken.None);
+        await session.ReconcileMonsterVisibilityAsync(projection, CancellationToken.None);
 
         var vanishPacket = await ReadExact(stream, PacketConstants.ZcNotifyVanishLength);
         Assert.Equal((short)PacketConstants.ZcNotifyVanish, BinaryPrimitives.ReadInt16LittleEndian(vanishPacket));
@@ -148,7 +142,7 @@ public sealed class MapClientSessionMonsterVisibilityReconciliationTests
         var projections = new MonsterFeedProjectionRegistry();
         var projection = projections.GetOrCreate(MapId);
         projection.ApplySnapshot([oldInstance], epoch, combatState);
-        await session.ReconcileMonsterVisibilityAsync(projection, combatState, CancellationToken.None);
+        await session.ReconcileMonsterVisibilityAsync(projection, CancellationToken.None);
         await ReadDynamic(stream); // Discovery of the old life.
 
         // A fresh snapshot with the SAME ActorId but a DIFFERENT (new) IncarnationId - the old life
@@ -156,7 +150,7 @@ public sealed class MapClientSessionMonsterVisibilityReconciliationTests
         var newIncarnation = oldIncarnation.Next();
         var newInstance = Alive(actorId, newIncarnation, x: ViewerX, y: ViewerY);
         projection.ApplySnapshot([newInstance], epoch, combatState);
-        await session.ReconcileMonsterVisibilityAsync(projection, combatState, CancellationToken.None);
+        await session.ReconcileMonsterVisibilityAsync(projection, CancellationToken.None);
 
         var vanishPacket = await ReadExact(stream, PacketConstants.ZcNotifyVanishLength);
         Assert.Equal((short)PacketConstants.ZcNotifyVanish, BinaryPrimitives.ReadInt16LittleEndian(vanishPacket));
@@ -185,7 +179,7 @@ public sealed class MapClientSessionMonsterVisibilityReconciliationTests
         var projections = new MonsterFeedProjectionRegistry();
         var projection = projections.GetOrCreate(MapId);
         projection.ApplySnapshot([instance], oldEpoch, combatState);
-        await session.ReconcileMonsterVisibilityAsync(projection, combatState, CancellationToken.None);
+        await session.ReconcileMonsterVisibilityAsync(projection, CancellationToken.None);
         await ReadDynamic(stream);
 
         // The map's own SimulationEpoch changed (World simulation rebuilt) - even though the SAME
@@ -193,7 +187,7 @@ public sealed class MapClientSessionMonsterVisibilityReconciliationTests
         // stale and must be vanished before being rediscovered under the new epoch.
         var newEpoch = WorldSimulationEpoch.NewEpoch();
         projection.ApplySnapshot([instance], newEpoch, combatState);
-        await session.ReconcileMonsterVisibilityAsync(projection, combatState, CancellationToken.None);
+        await session.ReconcileMonsterVisibilityAsync(projection, CancellationToken.None);
 
         var vanishPacket = await ReadExact(stream, PacketConstants.ZcNotifyVanishLength);
         Assert.Equal((short)PacketConstants.ZcNotifyVanish, BinaryPrimitives.ReadInt16LittleEndian(vanishPacket));
@@ -218,18 +212,15 @@ public sealed class MapClientSessionMonsterVisibilityReconciliationTests
         using var _a = attackerClient;
         using var _b = bystanderClient;
 
-        var combatState = new MonsterCombatStateStore();
         var epoch = WorldSimulationEpoch.NewEpoch();
         var incarnation = WorldMonsterIncarnationId.First;
         const uint actorId = 1;
         var instance = Alive(actorId, incarnation, x: ViewerX, y: ViewerY);
-        combatState.Register(MapId, epoch, actorId, incarnation, maxHp: 55);
-        var combat = CombatFor(combatState, MapId, epoch, instance);
 
         // Both sessions discover the monster first.
-        await attackerSession.NotifyMonsterMovedAsync(new WorldMonsterActorView(instance), movementKind: null, combat, CancellationToken.None);
+        await attackerSession.NotifyMonsterMovedAsync(new WorldMonsterActorView(instance), movementKind: null, instance, CancellationToken.None);
         await ReadDynamic(attackerStream);
-        await bystanderSession.NotifyMonsterMovedAsync(new WorldMonsterActorView(instance), movementKind: null, combat, CancellationToken.None);
+        await bystanderSession.NotifyMonsterMovedAsync(new WorldMonsterActorView(instance), movementKind: null, instance, CancellationToken.None);
         await ReadDynamic(bystanderStream);
 
         // Simulate the attacker's own local confirmed-kill path having ALREADY run synchronously
@@ -282,10 +273,8 @@ public sealed class MapClientSessionMonsterVisibilityReconciliationTests
         var oldIncarnation = WorldMonsterIncarnationId.First;
         const uint actorId = 1;
         var instance = Alive(actorId, oldIncarnation, x: ViewerX, y: ViewerY);
-        combatState.Register(MapId, epoch, actorId, oldIncarnation, maxHp: 55);
-        var combat = CombatFor(combatState, MapId, epoch, instance);
 
-        await session.NotifyMonsterMovedAsync(new WorldMonsterActorView(instance), movementKind: null, combat, CancellationToken.None);
+        await session.NotifyMonsterMovedAsync(new WorldMonsterActorView(instance), movementKind: null, instance, CancellationToken.None);
         await ReadDynamic(stream);
 
         // This session's own generic tracker already says the actor is invisible (mirroring the
@@ -302,11 +291,176 @@ public sealed class MapClientSessionMonsterVisibilityReconciliationTests
         var projections = new MonsterFeedProjectionRegistry();
         var projection = projections.GetOrCreate(MapId);
         projection.ApplySnapshot([respawned], epoch, combatState);
-        await session.ReconcileMonsterVisibilityAsync(projection, combatState, CancellationToken.None);
+        await session.ReconcileMonsterVisibilityAsync(projection, CancellationToken.None);
 
         var rediscoveryPacket = await ReadDynamic(stream);
         Assert.Equal((short)PacketConstants.ZcNotifyStandEntry, BinaryPrimitives.ReadInt16LittleEndian(rediscoveryPacket));
         Assert.Equal(actorId, BinaryPrimitives.ReadUInt32LittleEndian(rediscoveryPacket.AsSpan(5)));
+
+        client.Close();
+        await run.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    // Step 7 substep 5, required test 2: walking discovery must use WorldMonsterInstance HP, not
+    // any legacy local combat-state value - proven via deliberate divergence (World says 20/55,
+    // there is no local combat-state entry at all, so any HP reaching the wire can only have come
+    // from the WorldMonsterInstance itself).
+    [Fact]
+    public async Task NotifyMonsterMovedAsync_WalkingDiscovery_UsesWorldInstanceHp_NotLegacyLocalValue()
+    {
+        var (client, stream, session, run) = await SetupViewerAsync();
+        using var _ = client;
+
+        var incarnation = WorldMonsterIncarnationId.First;
+        const uint actorId = 1;
+        var walking = AliveWithHp(actorId, incarnation, x: ViewerX, y: ViewerY, currentHp: 20, maxHp: 55, isWalking: true, destinationX: (ushort)(ViewerX + 1), destinationY: ViewerY);
+
+        await session.NotifyMonsterMovedAsync(new WorldMonsterActorView(walking), movementKind: null, walking, CancellationToken.None);
+
+        var walkPacket = await ReadDynamic(stream);
+        Assert.Equal((short)PacketConstants.ZcNotifyMoveEntry, BinaryPrimitives.ReadInt16LittleEndian(walkPacket));
+        Assert.Equal(actorId, BinaryPrimitives.ReadUInt32LittleEndian(walkPacket.AsSpan(5)));
+        Assert.Equal(55, BinaryPrimitives.ReadInt32LittleEndian(walkPacket.AsSpan(79))); // maxHp
+        Assert.Equal(20, BinaryPrimitives.ReadInt32LittleEndian(walkPacket.AsSpan(83))); // currentHp
+
+        client.Close();
+        await run.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    // Step 7 substep 5, required test 3: an already-visible actor's WalkStarted movement projection
+    // must also use WorldMonsterInstance HP.
+    [Fact]
+    public async Task NotifyMonsterMovedAsync_WalkStarted_AlreadyVisible_UsesWorldInstanceHp()
+    {
+        var (client, stream, session, run) = await SetupViewerAsync();
+        using var _ = client;
+
+        var incarnation = WorldMonsterIncarnationId.First;
+        const uint actorId = 1;
+        var standing = Alive(actorId, incarnation, x: ViewerX, y: ViewerY);
+        await session.NotifyMonsterMovedAsync(new WorldMonsterActorView(standing), movementKind: null, standing, CancellationToken.None);
+        await ReadDynamic(stream); // Initial discovery.
+
+        var walking = AliveWithHp(actorId, incarnation, x: ViewerX, y: ViewerY, currentHp: 12, maxHp: 55, isWalking: true, destinationX: (ushort)(ViewerX + 1), destinationY: ViewerY);
+        await session.NotifyMonsterMovedAsync(new WorldMonsterActorView(walking), WorldMonsterMovementKind.WalkStarted, walking, CancellationToken.None);
+
+        var walkPacket = await ReadDynamic(stream);
+        Assert.Equal((short)PacketConstants.ZcNotifyMoveEntry, BinaryPrimitives.ReadInt16LittleEndian(walkPacket));
+        Assert.Equal(55, BinaryPrimitives.ReadInt32LittleEndian(walkPacket.AsSpan(79))); // maxHp
+        Assert.Equal(12, BinaryPrimitives.ReadInt32LittleEndian(walkPacket.AsSpan(83))); // currentHp
+
+        client.Close();
+        await run.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    // Step 7 substep 5, required test 4: ReconcileMonsterVisibilityAsync's own full-snapshot
+    // (re-)discovery path must use WorldMonsterInstance HP as well, never any stale local value -
+    // proven by seeding a combat-state entry with a DIFFERENT (stale) HP than the fresh snapshot's
+    // own instance carries, and asserting the resulting discovery packet encodes the fresh value.
+    [Fact]
+    public async Task ReconcileMonsterVisibilityAsync_Discovery_UsesWorldInstanceHp_NotStaleLegacyValue()
+    {
+        var (client, stream, session, run) = await SetupViewerAsync();
+        using var _ = client;
+
+        var combatState = new MonsterCombatStateStore();
+        var epoch = WorldSimulationEpoch.NewEpoch();
+        var incarnation = WorldMonsterIncarnationId.First;
+        const uint actorId = 1;
+        // Legacy local store deliberately registered at FULL hp (55/55) - genuinely different from
+        // the fresh World snapshot's own damaged value (28/55) below.
+        combatState.Register(MapId, epoch, actorId, incarnation, maxHp: 55);
+        var instance = AliveWithHp(actorId, incarnation, x: ViewerX, y: ViewerY, currentHp: 28, maxHp: 55);
+
+        var projections = new MonsterFeedProjectionRegistry();
+        var projection = projections.GetOrCreate(MapId);
+        projection.ApplySnapshot([instance], epoch, combatState);
+        await session.ReconcileMonsterVisibilityAsync(projection, CancellationToken.None);
+
+        var standPacket = await ReadDynamic(stream);
+        Assert.Equal((short)PacketConstants.ZcNotifyStandEntry, BinaryPrimitives.ReadInt16LittleEndian(standPacket));
+        Assert.Equal(55, BinaryPrimitives.ReadInt32LittleEndian(standPacket.AsSpan(73))); // maxHp
+        Assert.Equal(28, BinaryPrimitives.ReadInt32LittleEndian(standPacket.AsSpan(77))); // currentHp - the FRESH World value, never the stale local 55.
+
+        client.Close();
+        await run.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    // Step 7 substep 5, required test 6: a HealthChanged transition on an ALREADY-VISIBLE actor
+    // (movementKind: null, exactly what FanOutEntryAsync's generic non-Died tail passes for a
+    // HealthChanged entry) must not synthesize any new discovery/HP packet - the local projection
+    // is updated (proven separately below in test 7), but nothing is sent to the wire solely
+    // because HP changed for an actor the client can already see.
+    [Fact]
+    public async Task NotifyMonsterMovedAsync_HealthChangedOnAlreadyVisibleActor_SendsNoUnsolicitedPacket()
+    {
+        var (client, stream, session, run) = await SetupViewerAsync();
+        using var _ = client;
+
+        var incarnation = WorldMonsterIncarnationId.First;
+        const uint actorId = 1;
+        var full = Alive(actorId, incarnation, x: ViewerX, y: ViewerY);
+        await session.NotifyMonsterMovedAsync(new WorldMonsterActorView(full), movementKind: null, full, CancellationToken.None);
+        await ReadDynamic(stream); // Initial discovery.
+
+        // The HP transition itself, projected exactly as FanOutEntryAsync's generic tail would for
+        // a HealthChanged entry: same position, movementKind: null, only CurrentHp differs.
+        var damaged = full with { CurrentHp = 30 };
+        await session.NotifyMonsterMovedAsync(new WorldMonsterActorView(damaged), movementKind: null, damaged, CancellationToken.None);
+
+        // Confirmed via a harmless ping round-trip landing next instead of any HP/discovery packet.
+        await stream.WriteAsync(new byte[] { 0x1c, 0x0b });
+        var pingReply = await ReadExact(stream, 2);
+        Assert.Equal((short)PacketConstants.ZcPingLive, BinaryPrimitives.ReadInt16LittleEndian(pingReply));
+
+        client.Close();
+        await run.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    // Step 7 substep 5, required test 7: after a HealthChanged transition moves CurrentHp X -> Y for
+    // an already-visible actor (no packet sent, per the previous test), a LATER natural
+    // discovery/movement packet path must project Y, not the stale X - proven here via
+    // ReconcileMonsterVisibilityAsync's own AOI-exit-then-rediscovery path, which is a genuine,
+    // already-existing discovery trigger (never a fabricated one invented merely to make this test
+    // easy).
+    [Fact]
+    public async Task NotifyMonsterMovedAsync_LaterDiscoveryAfterHealthChanged_ProjectsPostDamageHp()
+    {
+        var (client, stream, session, run) = await SetupViewerAsync();
+        using var _ = client;
+
+        var combatState = new MonsterCombatStateStore();
+        var epoch = WorldSimulationEpoch.NewEpoch();
+        var incarnation = WorldMonsterIncarnationId.First;
+        const uint actorId = 1;
+        var full = Alive(actorId, incarnation, x: ViewerX, y: ViewerY);
+        await session.NotifyMonsterMovedAsync(new WorldMonsterActorView(full), movementKind: null, full, CancellationToken.None);
+        await ReadDynamic(stream); // Initial discovery at full HP.
+
+        // HealthChanged: HP moves 55 -> 22 while already visible - no packet, per the previous test.
+        var damaged = full with { CurrentHp = 22 };
+        await session.NotifyMonsterMovedAsync(new WorldMonsterActorView(damaged), movementKind: null, damaged, CancellationToken.None);
+        await stream.WriteAsync(new byte[] { 0x1c, 0x0b });
+        await ReadExact(stream, 2); // Drain the ping reply confirming no packet was sent for the HealthChanged itself.
+
+        // Now the actor walks out of AOI and back in (a genuine, ordinary discovery trigger) -
+        // ReconcileMonsterVisibilityAsync's own vanish-then-rediscover path.
+        var outOfAoi = damaged with { X = (ushort)(ViewerX + WorldVisibilityOptions.DefaultAreaSize + 5) };
+        var projections = new MonsterFeedProjectionRegistry();
+        var projection = projections.GetOrCreate(MapId);
+        projection.ApplySnapshot([outOfAoi], epoch, combatState);
+        await session.ReconcileMonsterVisibilityAsync(projection, CancellationToken.None);
+        var vanishPacket = await ReadExact(stream, PacketConstants.ZcNotifyVanishLength);
+        Assert.Equal((short)PacketConstants.ZcNotifyVanish, BinaryPrimitives.ReadInt16LittleEndian(vanishPacket));
+
+        var backInAoi = damaged; // Same damaged (22/55) instance, back within AOI.
+        projection.ApplySnapshot([backInAoi], epoch, combatState);
+        await session.ReconcileMonsterVisibilityAsync(projection, CancellationToken.None);
+
+        var rediscoveryPacket = await ReadDynamic(stream);
+        Assert.Equal((short)PacketConstants.ZcNotifyStandEntry, BinaryPrimitives.ReadInt16LittleEndian(rediscoveryPacket));
+        Assert.Equal(55, BinaryPrimitives.ReadInt32LittleEndian(rediscoveryPacket.AsSpan(73))); // maxHp
+        Assert.Equal(22, BinaryPrimitives.ReadInt32LittleEndian(rediscoveryPacket.AsSpan(77))); // currentHp - the post-HealthChanged value, never the stale full 55.
 
         client.Close();
         await run.WaitAsync(TimeSpan.FromSeconds(5));

@@ -49,6 +49,20 @@ public readonly record struct MonsterAttackCandidate(
 //
 // Depends only on IBasicAttackRules - this class never knows or asks which gameplay ruleset
 // (Renewal/PreRenewal) is active.
+//
+// *** TEMPORARY Step 7 STAGING (substep 5 of the World-monster-authority migration) ***
+// World is now the sole authority for monster CurrentHp/MaxHp (see WorldMonsterInstance's own doc
+// comment and ApplyMonsterDamageAsync) - this coordinator's own local-HP-mutating methods
+// (CalculateAttack's Peek-based lethality guess, CommitAttack, CommitAttackAsync,
+// CommitConfirmedDeath, Attack/AttackAsync) are kept ONLY because MapClientSession's still-live
+// pre-substep9 player->monster attack path currently requires them - see that class's own
+// PerformDueRepeatAttackCoreAsync, which this substep deliberately does NOT touch. Read-model/
+// packet-projection code (SendVisibleMonsterActorsAsync, NotifyMonsterMovedAsync,
+// ReconcileMonsterVisibilityAsync, MapTcpServer's fan-out) no longer consults this coordinator or
+// MonsterCombatStateStore for HP at all. These local-HP APIs are SCHEDULED FOR DELETION in substep
+// 9, atomically with cutting MapClientSession's live attack path over to ApplyMonsterDamageAsync -
+// do not add any NEW caller of them, and do not mistake their continued presence here for
+// permanent design.
 public sealed class MonsterCombatCoordinator(QuestDropResolver questDrops, IBasicAttackRules basicAttackRules, MonsterCombatStateStore combatState)
 {
     // Item 2 of the Step 6 correctness-hardening pass: "the local HP mutation must not happen

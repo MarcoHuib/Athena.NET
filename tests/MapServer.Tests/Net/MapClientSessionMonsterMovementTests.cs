@@ -105,8 +105,12 @@ public sealed class MapClientSessionMonsterMovementTests
         _ => throw new ArgumentOutOfRangeException(nameof(kind)),
     };
 
-    private static Task NotifyMovedAsync(MapClientSession session, IMonsterActorView actor, MonsterMovementChangeKind kind, MonsterCombatState combat, CancellationToken cancellationToken) =>
-        session.NotifyMonsterMovedAsync(actor, ToWorldMovementKind(kind), combat, cancellationToken);
+    // Step 7 substep 5: NotifyMonsterMovedAsync now takes the authoritative WorldMonsterInstance
+    // directly (never MonsterCombatState) as its HP/identity source. This overload keeps every
+    // existing call site in this file source-compatible by deriving that WorldMonsterInstance from
+    // the same MobInstance the tests already drive - see WorldMonsterProjectionTestHelper.ToWorldMonsterInstance.
+    private static Task NotifyMovedAsync(MapClientSession session, IMonsterActorView actor, MonsterMovementChangeKind kind, MobInstance instanceForHp, CancellationToken cancellationToken) =>
+        session.NotifyMonsterMovedAsync(actor, ToWorldMovementKind(kind), instanceForHp.ToWorldMonsterInstance(), cancellationToken);
 
     private async Task<(TcpClient Client, NetworkStream Stream, MapClientSession Session, Task RunTask, MobInstance Target)> SetupAsync(MobInstance? sharedTarget = null, MonsterRegistry? sharedRegistry = null)
     {
@@ -193,7 +197,7 @@ public sealed class MapClientSessionMonsterMovementTests
 
         Assert.True(target.TryStartIdleWalk([(75, 51), (76, 51)], orthogonalStepMs: 400, now: DateTimeOffset.UnixEpoch, jitterMs: () => 0));
 
-        await NotifyMovedAsync(session, target, MonsterMovementChangeKind.WalkStarted, MonsterCombatState.FromInstance(target), CancellationToken.None);
+        await NotifyMovedAsync(session, target, MonsterMovementChangeKind.WalkStarted, target, CancellationToken.None);
 
         var walkPacket = await ReadDynamic(stream);
         Assert.Equal((short)0x09fd, BinaryPrimitives.ReadInt16LittleEndian(walkPacket));
@@ -216,7 +220,7 @@ public sealed class MapClientSessionMonsterMovementTests
 
         Assert.True(target.TryStartIdleWalk([(75, 51), (76, 51)], orthogonalStepMs: 400, now: DateTimeOffset.UnixEpoch, jitterMs: () => 0));
 
-        await NotifyMovedAsync(session, target, MonsterMovementChangeKind.CellCrossed, MonsterCombatState.FromInstance(target), CancellationToken.None);
+        await NotifyMovedAsync(session, target, MonsterMovementChangeKind.CellCrossed, target, CancellationToken.None);
 
         await AssertNothingArrivesAsync(stream);
 
@@ -240,7 +244,7 @@ public sealed class MapClientSessionMonsterMovementTests
         target.AdvanceMovement(DateTimeOffset.UnixEpoch.AddMilliseconds(400));
         Assert.False(target.IsWalking);
 
-        await NotifyMovedAsync(session, target, MonsterMovementChangeKind.WalkFinished, MonsterCombatState.FromInstance(target), CancellationToken.None);
+        await NotifyMovedAsync(session, target, MonsterMovementChangeKind.WalkFinished, target, CancellationToken.None);
 
         await AssertNothingArrivesAsync(stream);
 
@@ -248,12 +252,11 @@ public sealed class MapClientSessionMonsterMovementTests
         await run.WaitAsync(TimeSpan.FromSeconds(5));
     }
 
-    // Step 4 (IMonsterActorView/MonsterCombatState split) regression coverage: NotifyMonsterMovedAsync
-    // now takes MonsterMovementChange.Instance as IMonsterActorView (not MobInstance directly) and
-    // reads HP from the separately-supplied MonsterCombatState, never by casting Instance back to
-    // MobInstance - these tests prove that plumbing actually reaches the wire packet correctly,
-    // both for the full-HP sentinel and a damaged monster, using the SAME production construction
-    // path (MonsterCombatState.FromInstance) every real call site uses.
+    // Step 4 (IMonsterActorView/MonsterCombatState split) regression coverage, updated for Step 7
+    // substep 5: NotifyMonsterMovedAsync takes MonsterMovementChange.Instance as IMonsterActorView
+    // (not MobInstance directly) for identity/position, and now reads HP from the separately-supplied
+    // WorldMonsterInstance (never MonsterCombatState) - these tests prove that plumbing actually
+    // reaches the wire packet correctly, both for the full-HP sentinel and a damaged monster.
 
     [Fact]
     public void MobInstance_SatisfiesIMonsterActorView_ExposingRealIncarnationIdAndPositionData()
@@ -285,15 +288,14 @@ public sealed class MapClientSessionMonsterMovementTests
 
         Assert.True(target.TryStartIdleWalk([(75, 51), (76, 51)], orthogonalStepMs: 400, now: DateTimeOffset.UnixEpoch, jitterMs: () => 0));
 
-        var combat = MonsterCombatState.FromInstance(target);
-        Assert.Equal(55u, combat.CurrentHp);
-        Assert.Equal(55u, combat.MaxHp);
-        await NotifyMovedAsync(session, target, MonsterMovementChangeKind.WalkStarted, combat, CancellationToken.None);
+        Assert.Equal(55u, target.CurrentHp);
+        Assert.Equal(55u, target.Spawn.Mob.MaxHp);
+        await NotifyMovedAsync(session, target, MonsterMovementChangeKind.WalkStarted, target, CancellationToken.None);
 
         var walkPacket = await ReadDynamic(stream);
         Assert.Equal((short)0x09fd, BinaryPrimitives.ReadInt16LittleEndian(walkPacket));
         // Full-HP sentinel (0xFFFFFFFF/0xFFFFFFFF) at the same offsets IroMonsterActorPacketsTests
-        // proves for BuildWalkEntry directly - this confirms MonsterCombatState's own values
+        // proves for BuildWalkEntry directly - this confirms WorldMonsterInstance's own values
         // actually reach that builder unchanged through NotifyMonsterMovedAsync's plumbing.
         Assert.Equal(uint.MaxValue, BinaryPrimitives.ReadUInt32LittleEndian(walkPacket.AsSpan(79)));
         Assert.Equal(uint.MaxValue, BinaryPrimitives.ReadUInt32LittleEndian(walkPacket.AsSpan(83)));
@@ -312,10 +314,9 @@ public sealed class MapClientSessionMonsterMovementTests
         target.ApplyDamage(37); // 55 -> 18 current HP.
         Assert.True(target.TryStartIdleWalk([(75, 51), (76, 51)], orthogonalStepMs: 400, now: DateTimeOffset.UnixEpoch, jitterMs: () => 0));
 
-        var combat = MonsterCombatState.FromInstance(target);
-        Assert.Equal(18u, combat.CurrentHp);
-        Assert.Equal(55u, combat.MaxHp);
-        await NotifyMovedAsync(session, target, MonsterMovementChangeKind.WalkStarted, combat, CancellationToken.None);
+        Assert.Equal(18u, target.CurrentHp);
+        Assert.Equal(55u, target.Spawn.Mob.MaxHp);
+        await NotifyMovedAsync(session, target, MonsterMovementChangeKind.WalkStarted, target, CancellationToken.None);
 
         var walkPacket = await ReadDynamic(stream);
         Assert.Equal(55, BinaryPrimitives.ReadInt32LittleEndian(walkPacket.AsSpan(79)));
@@ -336,7 +337,7 @@ public sealed class MapClientSessionMonsterMovementTests
         using var _ = client;
         target.ApplyDamage(40); // 55 -> 15 current HP.
 
-        await NotifyMovedAsync(session, target, MonsterMovementChangeKind.CellCrossed, MonsterCombatState.FromInstance(target), CancellationToken.None);
+        await NotifyMovedAsync(session, target, MonsterMovementChangeKind.CellCrossed, target, CancellationToken.None);
 
         var standPacket = await ReadDynamic(stream);
         Assert.Equal((short)0x09ff, BinaryPrimitives.ReadInt16LittleEndian(standPacket));
@@ -390,13 +391,13 @@ public sealed class MapClientSessionMonsterMovementTests
                 if (change.Kind == MonsterMovementChangeKind.WalkStarted)
                 {
                     walkStartedCount++;
-                    await NotifyMovedAsync(session, change.Instance, change.Kind, MonsterCombatState.FromInstance(target), CancellationToken.None);
+                    await NotifyMovedAsync(session, change.Instance, change.Kind, target, CancellationToken.None);
                     var walkPacket = await ReadDynamic(stream);
                     Assert.Equal((short)0x09fd, BinaryPrimitives.ReadInt16LittleEndian(walkPacket));
                 }
                 else
                 {
-                    await NotifyMovedAsync(session, change.Instance, change.Kind, MonsterCombatState.FromInstance(target), CancellationToken.None);
+                    await NotifyMovedAsync(session, change.Instance, change.Kind, target, CancellationToken.None);
                 }
             }
         }
@@ -413,7 +414,7 @@ public sealed class MapClientSessionMonsterMovementTests
                 // observing the first one's own completion - not expected here, and would also
                 // desynchronize the dynamic-packet read count above.
                 Assert.NotEqual(MonsterMovementChangeKind.WalkStarted, change.Kind);
-                await NotifyMovedAsync(session, change.Instance, change.Kind, MonsterCombatState.FromInstance(target), CancellationToken.None);
+                await NotifyMovedAsync(session, change.Instance, change.Kind, target, CancellationToken.None);
             }
         }
         Assert.False(target.IsWalking);
@@ -435,7 +436,7 @@ public sealed class MapClientSessionMonsterMovementTests
         var (client, stream, session, run, target) = await SetupAsync();
         using var _ = client;
 
-        await NotifyMovedAsync(session, target, MonsterMovementChangeKind.CellCrossed, MonsterCombatState.FromInstance(target), CancellationToken.None);
+        await NotifyMovedAsync(session, target, MonsterMovementChangeKind.CellCrossed, target, CancellationToken.None);
 
         var standPacket = await ReadDynamic(stream);
         Assert.Equal((short)0x09ff, BinaryPrimitives.ReadInt16LittleEndian(standPacket));
@@ -444,7 +445,7 @@ public sealed class MapClientSessionMonsterMovementTests
 
         // A second notification for the SAME still-visible instance must not resend a duplicate
         // discovery packet - only the first crossing into visibility does.
-        await NotifyMovedAsync(session, target, MonsterMovementChangeKind.CellCrossed, MonsterCombatState.FromInstance(target), CancellationToken.None);
+        await NotifyMovedAsync(session, target, MonsterMovementChangeKind.CellCrossed, target, CancellationToken.None);
         await AssertNothingArrivesAsync(stream);
 
         client.Close();
@@ -463,7 +464,7 @@ public sealed class MapClientSessionMonsterMovementTests
 
         Assert.True(target.TryStartIdleWalk([(75, 51), (76, 51)], orthogonalStepMs: 400, now: DateTimeOffset.UnixEpoch, jitterMs: () => 0));
 
-        await NotifyMovedAsync(session, target, MonsterMovementChangeKind.WalkStarted, MonsterCombatState.FromInstance(target), CancellationToken.None);
+        await NotifyMovedAsync(session, target, MonsterMovementChangeKind.WalkStarted, target, CancellationToken.None);
 
         var discoveryPacket = await ReadDynamic(stream);
         Assert.Equal((short)0x09fd, BinaryPrimitives.ReadInt16LittleEndian(discoveryPacket));
@@ -487,7 +488,7 @@ public sealed class MapClientSessionMonsterMovementTests
         var (client, stream, session, run, _) = await SetupAsync(sharedTarget: farTarget, sharedRegistry: registry);
         using var _2 = client;
 
-        await NotifyMovedAsync(session, farTarget, MonsterMovementChangeKind.CellCrossed, MonsterCombatState.FromInstance(farTarget), CancellationToken.None);
+        await NotifyMovedAsync(session, farTarget, MonsterMovementChangeKind.CellCrossed, farTarget, CancellationToken.None);
 
         await AssertNothingArrivesAsync(stream);
 
@@ -594,7 +595,7 @@ public sealed class MapClientSessionMonsterMovementTests
         Assert.False(target.IsWalking); // Proves discovery isn't riding along on an idle walk.
 
         foreach (var instance in respawned)
-            await NotifyMovedAsync(session, instance, MonsterMovementChangeKind.CellCrossed, MonsterCombatState.FromInstance(instance), CancellationToken.None);
+            await NotifyMovedAsync(session, instance, MonsterMovementChangeKind.CellCrossed, instance, CancellationToken.None);
 
         var standPacket = await ReadDynamic(stream);
         Assert.Equal((short)0x09ff, BinaryPrimitives.ReadInt16LittleEndian(standPacket));
@@ -616,7 +617,7 @@ public sealed class MapClientSessionMonsterMovementTests
         var (client, stream, session, run, _) = await SetupAsync(sharedTarget: otherMapTarget, sharedRegistry: registry);
         using var _2 = client;
 
-        await NotifyMovedAsync(session, otherMapTarget, MonsterMovementChangeKind.CellCrossed, MonsterCombatState.FromInstance(otherMapTarget), CancellationToken.None);
+        await NotifyMovedAsync(session, otherMapTarget, MonsterMovementChangeKind.CellCrossed, otherMapTarget, CancellationToken.None);
 
         await AssertNothingArrivesAsync(stream);
 
@@ -689,7 +690,7 @@ public sealed class MapClientSessionMonsterMovementTests
         {
             foreach (var instance in instances)
             {
-                try { await NotifyMovedAsync(session, instance, MonsterMovementChangeKind.CellCrossed, MonsterCombatState.FromInstance(instance), CancellationToken.None); }
+                try { await NotifyMovedAsync(session, instance, MonsterMovementChangeKind.CellCrossed, instance, CancellationToken.None); }
                 catch (IOException) { }
                 catch (ObjectDisposedException) { }
             }

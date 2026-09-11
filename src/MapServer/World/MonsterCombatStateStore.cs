@@ -14,17 +14,24 @@ public readonly record struct MonsterCombatKey(string MapId, WorldSimulationEpoc
         new(reference.MapId, reference.SimulationEpoch, reference.ActorId, reference.IncarnationId);
 }
 
-// The authoritative MapServer-LOCAL owner of CurrentHp/NextAttackAt on the live combat path
-// (MonsterCombatCoordinator, the local attack-cadence executor, and every production call site
-// they depend on) - see this project's own Phase 2B plan for the full authority-boundary rationale
-// (position/movement/identity/lifecycle/engagement/chase/respawn timing are all World-authoritative,
-// read via IMonsterActorView/WorldMonsterInstance; combat cadence/HP/damage-calculation/quest-drop
-// stay MapServer-local, live here). Post-cutover, there is no local MobInstance for a production
-// monster at all - this store's own damage/cadence mutations never call into a MobInstance
-// lifecycle method; a lethal transition is reported back to the caller as a plain fact (HP reached
-// zero) and it is the ORCHESTRATION layer's job to then call World's TryMarkMonsterDeadAsync - see
-// that RPC's own doc comment for why World, not this store, owns the authoritative Alive->Dead
-// transition and its respawn scheduling.
+// *** TEMPORARY Step 7 STAGING (substep 5 of the World-monster-authority migration) ***
+// World is now the sole AUTHORITY for monster CurrentHp/MaxHp (see WorldMonsterInstance's own doc
+// comment) - this store's CurrentHp/MaxHp fields are kept ONLY as a compatibility bridge for
+// MapClientSession's still-live pre-substep9 player->monster attack path (MonsterCombatCoordinator,
+// the local attack-cadence executor). No packet/read-model projection code (SendVisibleMonsterActorsAsync,
+// NotifyMonsterMovedAsync, ReconcileMonsterVisibilityAsync, MapTcpServer's fan-out) reads HP from
+// this store any more - they all read WorldMonsterInstance.CurrentHp/MaxHp directly from the
+// projection/feed instead. In substep 9, when the live attack path cuts over to
+// ApplyMonsterDamageAsync, this type is renamed to MonsterAttackCadenceStore and its CurrentHp/MaxHp
+// fields (and every method that mutates them - ApplyDamage/TryCommitDamage/CommitConfirmedDeath/
+// Peek) are removed entirely, leaving only NextAttackAt cadence bookkeeping. Do not build any new
+// dependency on this store's HP fields.
+//
+// Post-cutover, there is no local MobInstance for a production monster at all - this store's own
+// damage/cadence mutations never call into a MobInstance lifecycle method; a lethal transition is
+// reported back to the caller as a plain fact (HP reached zero) and it is the ORCHESTRATION layer's
+// job to then call World's TryMarkMonsterDeadAsync - see that RPC's own doc comment for why World,
+// not this store, owns the authoritative Alive->Dead transition and its respawn scheduling.
 //
 // Per-key locking (a single `Lock` guarding the whole dictionary, not one lock per entry) is the
 // serialization point for "two simultaneous lethal hits -> exactly one HP==0 report" - see

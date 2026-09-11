@@ -1,16 +1,19 @@
 namespace Athena.Net.MapServer.World;
 
 // Narrow, position/identity-shaped projection of a runtime monster instance - deliberately
-// EXCLUDES CurrentHp/NextAttackAt (see MonsterCombatState's own doc comment for where those live
-// instead). This is the "actor/simulation-facing" half of the split the Phase 2B plan's own
-// "no second monster-position authority in MapServer" design decision calls for: once MapServer
-// starts consuming a World-authoritative position/movement projection (a later step - NOT this
-// one), every position-dependent read (packet building, range checks, visibility) goes through
-// THIS interface so it is mechanically obvious, at every call site, that it reads whichever
-// authority actually backs it (today: MobInstance directly; later: a World projection type),
-// while CurrentHp/NextAttackAt reads stay visibly routed through the separate MonsterCombatState
-// type instead. MobInstance implements this interface unmodified - see that type's own doc
-// comments for the full source trace behind each member.
+// EXCLUDES CurrentHp/NextAttackAt. This is the "actor/simulation-facing" half of the split the
+// Phase 2B plan's own "no second monster-position authority in MapServer" design decision calls
+// for: every position-dependent read (packet building, range checks, visibility) goes through THIS
+// interface so it is mechanically obvious, at every call site, that it reads whichever authority
+// actually backs it (MobInstance for the legacy live-attack path; WorldMonsterActorView,
+// World-authoritative, everywhere else). MobInstance implements this interface unmodified - see
+// that type's own doc comments for the full source trace behind each member.
+//
+// As of Step 7, CurrentHp/MaxHp are World-authoritative fields carried directly on
+// WorldMonsterInstance (see that type's own doc comment) - packet/read-model projection code reads
+// them from there directly, never through this interface. NextAttackAt remains a MapServer-local
+// cadence concern (MonsterCombatStateStore, staged for rename to MonsterAttackCadenceStore in
+// substep 9) and is likewise never exposed here.
 //
 // IncarnationId is the REAL MonsterIncarnationId MobInstance itself now tracks (see that type's
 // own doc comment) - never a stub/placeholder value.
