@@ -110,10 +110,70 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     // _attackGate) each time an attack actually executes, rather than replacing the record, so a
     // concurrent read of "is this still the active target" (TeleportTo/a replacing attack request)
     // keeps identity-comparing against the same instance.
+    //
+    // Step 7 substep 8 (§16): DueNowFixposPending is set true ONLY by HandleIroAttackRequestAsync,
+    // exactly once, when the newly-installed state it just created is computed due-now - never by
+    // any other call site, and never reset back to true once consumed. It is consumed (set back to
+    // false) exactly once, atomically with the decision to actually send 0x0088, entirely inside
+    // PerformDueRepeatAttackAsync's own fixpos prelude (see that method's own doc comment) - never
+    // by HandleIroAttackRequestAsync itself, which no longer sends 0x0088 directly at all. A pending
+    // damage attempt blocking the fresh-attack path leaves this flag untouched (still true) so the
+    // obligation survives to be honored on a later call, once that pending attempt has resolved.
     private sealed record RepeatAttackState(uint TargetActorId)
     {
         public DateTimeOffset NextAttackAt { get; set; }
+        public bool DueNowFixposPending { get; set; }
     }
+
+    // Step 7 substep 8 (§16-§22): the pending idempotency-carrying damage attempt mechanism, built
+    // and tested here entirely in ISOLATION against a scriptable test seam (DispatchPendingDamageAttemptAsync's
+    // own doc comment) - substep 9 wires this to the real World.ApplyMonsterDamageAsync RPC and
+    // replaces PerformDueRepeatAttackCoreAsync's legacy CalculateAttack/CommitAttack/CommitConfirmedDeath/
+    // TryMarkMonsterDeadAsync chain with it. That legacy chain remains the ONLY path that currently
+    // reaches a live monster hit; nothing here is wired into it yet.
+    //
+    // The governing invariant (§16, §18): a PendingMonsterDamageAttempt is not "attack intent that
+    // needs special retry handling" - it is a committed idempotency operation already past every
+    // fresh gameplay legality check (range, weapon, RNG), whose only remaining job is to learn its
+    // outcome from World. Its lifecycle is fully decoupled from RepeatAttackState, the current
+    // target, and player movement - see the pending-first control flow's own doc comment
+    // (DispatchPendingDamageAttemptAsync) for the exact priority rule this implies.
+    private sealed class PendingMonsterDamageAttempt
+    {
+        public required WorldMonsterLifeReference Life { get; init; }
+        public required long AttackSequence { get; init; }
+        public required uint Damage { get; init; }
+        public required bool AcquireEngagement { get; init; }
+        // Governs a POSSIBLE retry only - never the first send (§18/§17.1: creating this record does
+        // not itself schedule a send; the fresh-attempt turn that creates it performs the first
+        // dispatch call itself, synchronously, inline, as part of that same turn). Mutated in place,
+        // under _attackGate, exactly like RepeatAttackState.NextAttackAt above.
+        public DateTimeOffset NextRetryAt { get; set; }
+    }
+
+    // At most ONE unresolved logical damage attempt may exist per session at a time - a session can
+    // only ever be executing one attack turn, so a second concurrent pending attempt is structurally
+    // unnecessary (see the plan's own explicitly-deferred-scope note on this point).
+    private PendingMonsterDamageAttempt? _pendingDamageAttempt;
+
+    // Session-monotonic AttackSequence allocator (§4): a fresh logical attempt gets exactly one
+    // value, minted here, once, at allocation - a retry of that same attempt reuses the SAME value
+    // forever (see PendingMonsterDamageAttempt.AttackSequence's own doc comment: it is immutable
+    // once allocated). Never reset - even across a retargeted attack against a DIFFERENT monster,
+    // since the eventual real WorldMonsterDamageCommand's own idempotency ledger is keyed by
+    // (AttackerCharacterId, AttackerPresenceId, Life), not by this counter's value alone; a plain
+    // ever-increasing counter is sufficient and requires no per-life bookkeeping on this side.
+    private long _nextAttackSequence = 1;
+
+    // Step 7 substep 8 (§19): a wake-and-recompute signal for the pending-attempt scheduling path,
+    // distinct from _attackSignal (which wakes the loop for ordinary RepeatAttackState scheduling
+    // changes). Released whenever a PendingMonsterDamageAttempt is created, its NextRetryAt is
+    // advanced, or it is retired. Per the governing signal invariant (§17.1): a signal means ONLY
+    // "state changed; wake up and recompute the earliest due operation" - it NEVER means "send now".
+    // Only a fresh `now >= NextRetryAt` comparison, made immediately before dispatch, may authorize
+    // a resend - no code path anywhere treats a semaphore release, of any kind, as itself sufficient
+    // justification to dispatch a pending attempt.
+    private readonly SemaphoreSlim _pendingRetrySignal = new(0, 1);
     // Single-slot wake signal (same semantics as _statusExpirationSignal above): a new/retargeted
     // walk may need the loop to wake earlier than its current sleep, or wake it from indefinite
     // waiting when it starts moving from a standstill.
@@ -199,6 +259,19 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     // "TryMarkMonsterDeadAsync itself still in flight" window FakeCombatWorldRuntime's own
     // BeforeTryMarkMonsterDeadReturns hook already covers.
     internal Func<Task>? DebugBeforeCommitConfirmedDeathAsync { get; set; }
+
+    // Step 7 substep 8 (§22): the ISOLATED test seam standing in for the real World.ApplyMonsterDamageAsync
+    // RPC while the pending-damage-attempt mechanism is built and tested on its own, against a fake
+    // clock, before substep 9 wires it to the live combat path. Always null in production - never
+    // set by any production constructor/call site. Settable to a scriptable delegate that can
+    // simulate any WorldMonsterDamageStatus, a transient exception, a controllable suspension (a
+    // TaskCompletionSource the test itself completes), and can record every command it was actually
+    // invoked with - see DispatchPendingDamageAttemptAsync's own doc comment for exactly where this
+    // is called (both the first send and every internal retry funnel through the same call site).
+    // Distinct from DebugBeforeCommitConfirmedDeathAsync above (that hook is specific to the legacy
+    // lethal-death race window; this one exists purely to exercise the NEW pending-attempt machinery
+    // in isolation, with no live combat-authority call ever reaching it in production).
+    internal Func<WorldMonsterDamageCommand, CancellationToken, Task<WorldMonsterDamageResult>>? DebugApplyMonsterDamageDispatcher { get; set; }
     private ScriptExecutionSession? _scriptExecutionSession;
     private Task? _generatedScriptTask;
     private string? _generatedScriptEntityId;
@@ -1018,7 +1091,24 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         try { _statusExpirationSignal.Release(); } catch (ObjectDisposedException) { } catch (SemaphoreFullException) { }
         try { _movementSignal.Release(); } catch (ObjectDisposedException) { } catch (SemaphoreFullException) { }
         try { _attackSignal.Release(); } catch (ObjectDisposedException) { } catch (SemaphoreFullException) { }
+        try { _pendingRetrySignal.Release(); } catch (ObjectDisposedException) { } catch (SemaphoreFullException) { }
         _generatedContinuation?.Completion.TrySetCanceled();
+
+        // Step 7 substep 8 (§18/§23): disconnect follows the SAME principle as TeleportTo's own
+        // warp handling above - a pending attempt is not persisted across session lifetime. Retire
+        // it here (before joining the loops below, matching the existing _repeatAttack/wire-cleanup
+        // ordering already established for this method) and complete its arbiter registration with
+        // markProjected:false, discarding the return value: there is no session left to project a
+        // deferred vanish into once this session is closing.
+        WorldMonsterLifeReference? leakedPendingLifeOnDisconnect;
+        await _attackGate.WaitAsync(CancellationToken.None);
+        try
+        {
+            leakedPendingLifeOnDisconnect = _pendingDamageAttempt?.Life;
+            _pendingDamageAttempt = null;
+        }
+        finally { _attackGate.Release(); }
+        if (leakedPendingLifeOnDisconnect is { } disconnectLife) _lethalDeathArbiter.CompleteInFlight(disconnectLife, markProjected: false);
 
         // Join ALL runtime loops before touching anything they can still access. This is the
         // invariant the earlier lifecycle audit found missing: cancellation is only a request: it
@@ -1072,6 +1162,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
             _movementSignal.Dispose();
             _movementGate.Dispose();
             _attackSignal.Dispose();
+            _pendingRetrySignal.Dispose();
             _attackGate.Dispose();
             _attackExecutionGate.Dispose();
         }
@@ -1297,9 +1388,25 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         // in-memory reference is enough: RunRepeatAttackLoopAsync re-reads _repeatAttack fresh on
         // every iteration, so a loop iteration already in flight for the old target simply finds
         // nothing to do next time it wakes.
+        //
+        // Step 7 substep 8 (§18/§23): a warp also retires any UNRESOLVED _pendingDamageAttempt -
+        // the old map/session context this attempt's eventual outcome would have been projected
+        // into is now gone, so there is nothing left to defer a wire effect FOR (unlike an ordinary
+        // transient-failure retry, which stays alive because the SAME session/map context will
+        // still be there to receive its eventual result). The arbiter's own in-flight registration
+        // for that life (if any) is completed with markProjected:false, discarding its return value
+        // deliberately: this session's own wire state for the OLD map is about to be entirely
+        // superseded by the warp itself, so there is no deferred vanish left worth performing here.
         _attackGate.Wait();
-        try { _repeatAttack = null; }
+        WorldMonsterLifeReference? leakedPendingLife;
+        try
+        {
+            _repeatAttack = null;
+            leakedPendingLife = _pendingDamageAttempt?.Life;
+            _pendingDamageAttempt = null;
+        }
         finally { _attackGate.Release(); }
+        if (leakedPendingLife is { } life) _lethalDeathArbiter.CompleteInFlight(life, markProjected: false);
     }
 
     // Reconciles _x/_y against real elapsed walking time. Pinned rAthena's authoritative position
@@ -1473,6 +1580,17 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         // Pinned unit_walktoxy (unit.cpp:888) unconditionally calls unit_stop_attack REGARDLESS of
         // whether this becomes a fresh walk or a mid-walk retarget - a real client movement request
         // always cancels any active repeat attack.
+        //
+        // Step 7 substep 8 (§17): deliberately clears ONLY _repeatAttack, never _pendingDamageAttempt.
+        // A pending attempt is a committed idempotency operation fully decoupled from
+        // RepeatAttackState/the current target/player movement (see PendingMonsterDamageAttempt's
+        // own doc comment) - it survives movement and still retries when due, exactly as if
+        // movement had not happened. If a DIFFERENT, still-not-yet-executed RepeatAttackState was
+        // retained behind an unresolved pending attempt (the retarget-while-old-pending-exists
+        // scenario), clearing it here also discards its own DueNowFixposPending obligation along
+        // with it - no stray 0x0088 for that now-abandoned state can ever occur later, since nothing
+        // will ever call PerformDueRepeatAttackAsync for it again once _repeatAttack no longer
+        // references it.
         await _attackGate.WaitAsync(cancellationToken);
         try { _repeatAttack = null; }
         finally { _attackGate.Release(); }
@@ -1724,9 +1842,16 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
             // a brand-new repeat state (no prior NextAttackAt to inherit) is always "now", since
             // Athena has no cross-target attackabletime state to carry over otherwise.
             var nextAttackAt = _repeatAttack?.NextAttackAt ?? _timeProvider.GetUtcNow();
-            newState = new RepeatAttackState(targetActorId) { NextAttackAt = nextAttackAt };
-            _repeatAttack = newState;
             dueNow = nextAttackAt <= _timeProvider.GetUtcNow();
+            // Step 7 substep 8 (§12/§16): DueNowFixposPending is set true here, exactly once, when
+            // this newly-installed state is computed due-now - this method itself no longer decides
+            // WHETHER to send 0x0088, nor sends it directly at all. That decision (and the send
+            // itself) now belongs ENTIRELY to PerformDueRepeatAttackAsync's own fixpos prelude (see
+            // that method's own doc comment for exactly why: deciding it here, before
+            // _attackExecutionGate is even acquired, left a real race where a concurrent execution
+            // could create a PendingMonsterDamageAttempt between this decision and the actual send).
+            newState = new RepeatAttackState(targetActorId) { NextAttackAt = nextAttackAt, DueNowFixposPending = dueNow };
+            _repeatAttack = newState;
         }
         finally { _attackGate.Release(); }
 
@@ -1757,17 +1882,20 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
             // only let it race in and re-attempt the SAME already-failing call before that
             // cancellation lands, exactly the double-attempt this fix exists to prevent.
             //
-            // Live-acceptance wire-fidelity fix: pinned unit_attack's own due-now branch
-            // (unit.cpp:2971-2978) sends clif_fixpos(*src) - 0x0088 ZC_STOPMOVE for the ATTACKING
-            // PLAYER, not the target - unconditionally, BEFORE calling unit_attack_timer(INVALID_TIMER,
-            // ...) (the equivalent of PerformDueRepeatAttackAsync below), regardless of whether the
-            // range check inside unit_attack_timer_sub subsequently accepts or rejects the attack:
-            // "// We need to send fixpos before the attack so that we don't cancel the attack
-            // animation". This is sent EXACTLY ONCE per due-now request (never for the not-yet-due/
-            // retarget-only branch below, which pinned unit_attack's own "just change target/type"
-            // early return at unit.cpp:2951-2953 never reaches this fixpos at all) and never
-            // duplicated by PerformDueRepeatAttackCoreAsync itself (that method sends none of its
-            // own for this specific transition - see this fix's own doc comment there).
+            // Live-acceptance wire-fidelity fix, restructured by Step 7 substep 8 (§12): pinned
+            // unit_attack's own due-now branch (unit.cpp:2971-2978) sends clif_fixpos(*src) - 0x0088
+            // ZC_STOPMOVE for the ATTACKING PLAYER, not the target - unconditionally, BEFORE calling
+            // unit_attack_timer(INVALID_TIMER, ...) (the equivalent of PerformDueRepeatAttackAsync
+            // below), regardless of whether the range check subsequently accepts or rejects the
+            // attack: "// We need to send fixpos before the attack so that we don't cancel the attack
+            // animation". This handler no longer sends that packet itself, and no longer decides
+            // WHETHER to send it - it only sets DueNowFixposPending = true above and calls
+            // PerformDueRepeatAttackAsync exactly as before. The entire decision (check, consume,
+            // send) now happens inside THAT method's own fixpos prelude, under _attackExecutionGate -
+            // see its own doc comment for the adversarial-interleaving race this closes (a concurrent
+            // execution creating a PendingMonsterDamageAttempt between this handler's own decision
+            // and an out-of-gate send would otherwise let a stray 0x0088 reach the wire for an attack
+            // that never actually executed this turn).
             //
             // Fanout: pinned clif_fixpos sends to AREA (every nearby observer, self included) - this
             // codebase's existing player-visibility fanout (PlayerVisibilityCoordinator/
@@ -1779,9 +1907,6 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
             // ReconcileAfterGameplayRejectionAsync's own identical self-only BuildStopMove usage) -
             // full AREA-equivalent projection to nearby observers remains a known Phase 2B gap,
             // documented rather than silently approximated.
-            SyncPositionToNow();
-            await WriteAsync(IroMonsterActorPackets.BuildStopMove(_accountId, _x, _y), cancellationToken);
-
             await PerformDueRepeatAttackAsync(newState, cancellationToken);
             try { _attackSignal.Release(); } catch (SemaphoreFullException) { }
             return;
@@ -1797,6 +1922,21 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     // _repeatAttack.NextAttackAt via the shared TimeProvider, waking early whenever
     // HandleIroAttackRequestAsync registers or replaces the active target (which can move the
     // next deadline earlier, or wake the loop from indefinite waiting).
+    // Step 7 substep 8 (§19-§21 of the plan): scheduling priority is PENDING ATTEMPT FIRST, REPEAT
+    // STATE SECOND, otherwise wait. All scheduling-relevant state is snapshotted into plain
+    // immutable locals under ONE _attackGate acquisition per iteration - never read piecemeal, and
+    // never read from a live mutable reference after the gate is released (the mandatory snapshot
+    // pattern, §10/§21.1). Every wait races _pendingRetrySignal, _attackSignal, and (when something
+    // is actually due-later) a Task.Delay, ALL on one linked CancellationTokenSource that is
+    // cancelled unconditionally the instant Task.WhenAny resolves, before `continue` re-enters the
+    // loop (§20) - this is applied identically to the pending-delay branch, the ordinary-repeat
+    // branch, and the both-null branch below, so no losing waiter can ever remain registered to
+    // silently consume a future, unrelated Release() intended for the next iteration.
+    //
+    // A signal firing NEVER by itself dispatches anything (§17.1's governing invariant) - every
+    // branch that wakes always `continue`s and re-derives its decision from a FRESH snapshot and a
+    // fresh `now >= dueAt` comparison at the top of the next iteration, regardless of which
+    // awaitable actually completed.
     private async Task RunRepeatAttackLoopAsync(CancellationToken cancellationToken)
     {
         try
@@ -1804,13 +1944,50 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
             while (!cancellationToken.IsCancellationRequested)
             {
                 RepeatAttackState? active;
+                DateTimeOffset? pendingNextRetryAt;
                 await _attackGate.WaitAsync(cancellationToken);
-                try { active = _repeatAttack; }
+                try
+                {
+                    active = _repeatAttack;
+                    pendingNextRetryAt = _pendingDamageAttempt?.NextRetryAt;
+                }
                 finally { _attackGate.Release(); }
+
+                if (pendingNextRetryAt is { } dueAt)
+                {
+                    var now = _timeProvider.GetUtcNow();
+                    if (now >= dueAt)
+                    {
+                        // Due: PerformDueRepeatAttackAsync's own pending-first turn logic
+                        // (PerformPendingOrFreshAttackTurnAsync) is what actually re-snapshots and
+                        // dispatches the pending attempt - this call's own `active` argument is
+                        // irrelevant to that path (it only matters for the fresh-attempt fallback,
+                        // which the pending-first check inside it will not reach while a pending
+                        // attempt still exists). Passing `active` here (possibly null) is harmless:
+                        // the fixpos prelude's own `stillCurrent`/`noPendingBlocksIt` checks already
+                        // correctly no-op for a null/stale `expected` on this path.
+                        await PerformDueRepeatAttackAsync(active ?? new RepeatAttackState(0), cancellationToken);
+                        continue;
+                    }
+
+                    using var pendingDelayCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                    var pendingWake = Task.WhenAny(
+                        _pendingRetrySignal.WaitAsync(pendingDelayCancellation.Token),
+                        _attackSignal.WaitAsync(pendingDelayCancellation.Token),
+                        Task.Delay(dueAt - now, _timeProvider, pendingDelayCancellation.Token));
+                    try { await pendingWake; } catch (OperationCanceledException) { }
+                    pendingDelayCancellation.Cancel();
+                    continue;
+                }
 
                 if (active is null)
                 {
-                    await _attackSignal.WaitAsync(cancellationToken);
+                    using var bothNullCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                    var bothNullWake = Task.WhenAny(
+                        _attackSignal.WaitAsync(bothNullCancellation.Token),
+                        _pendingRetrySignal.WaitAsync(bothNullCancellation.Token));
+                    try { await bothNullWake; } catch (OperationCanceledException) { }
+                    bothNullCancellation.Cancel();
                     continue;
                 }
 
@@ -1902,22 +2079,219 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     // inline due-now execution, or RunRepeatAttackLoopAsync's background scheduled execution) uses
     // to actually execute a due attack turn - serializes them via _attackExecutionGate so the
     // required invariant "one RepeatAttackState -> at most one due attack execution at a time"
-    // holds regardless of which caller reaches it first, then delegates to
-    // PerformDueRepeatAttackCoreAsync (the unchanged original body) for the actual execution.
-    // _attackExecutionGate is only ever held around this call - never across any OTHER await in
-    // either caller - so a caller blocked waiting for it is simply waiting for whichever execution
-    // is already in flight to finish, never for an unrelated I/O operation.
+    // holds regardless of which caller reaches it first.
+    //
+    // Step 7 substep 8 (§12-§15, §24.2 of the plan): the ENTIRE 0x0088 fixpos decision - check,
+    // consume, send - now lives HERE, inside this single _attackExecutionGate acquisition, rather
+    // than in HandleIroAttackRequestAsync (which only sets DueNowFixposPending = true and calls this
+    // method, exactly as before). This is what makes the decision race-free: nothing can create a
+    // new PendingMonsterDamageAttempt between this prelude's check and its send, because doing so
+    // would itself require running the pending-first turn's own fresh-attempt path, which cannot
+    // happen until THIS call releases _attackExecutionGate.
+    //
+    // After the prelude, this delegates to the pending-first turn (PerformPendingOrFreshAttackTurnAsync)
+    // - substep 8's own isolated mechanism, which takes priority over PerformDueRepeatAttackCoreAsync
+    // (the legacy, still-live combat path) whenever a PendingMonsterDamageAttempt exists. Substep 9
+    // replaces PerformDueRepeatAttackCoreAsync's own body with the real ApplyMonsterDamageAsync flow;
+    // for now, when no pending attempt exists, control falls through to that unchanged legacy method.
     private async Task PerformDueRepeatAttackAsync(RepeatAttackState expected, CancellationToken cancellationToken)
     {
         await _attackExecutionGate.WaitAsync(cancellationToken);
         try
         {
-            await PerformDueRepeatAttackCoreAsync(expected, cancellationToken);
+            bool sendDueNowFixpos;
+            await _attackGate.WaitAsync(cancellationToken);
+            try
+            {
+                // Re-validate: a packet handler may have replaced _repeatAttack since `expected` was
+                // captured by whichever caller (HandleIroAttackRequestAsync or the scheduler) is
+                // invoking this method - the SAME ReferenceEquals guard PerformDueRepeatAttackCoreAsync's
+                // own top re-check already applies, for exactly the same reason.
+                var stillCurrent = ReferenceEquals(_repeatAttack, expected);
+                var noPendingBlocksIt = _pendingDamageAttempt is null;
+                if (stillCurrent && noPendingBlocksIt && expected.DueNowFixposPending)
+                {
+                    // Consume EXACTLY ONCE, atomically with the decision to send - never left true
+                    // after this branch is taken (a later ordinary scheduled repeat tick for this
+                    // SAME RepeatAttackState object must never send a second 0x0088).
+                    expected.DueNowFixposPending = false;
+                    sendDueNowFixpos = true;
+                }
+                else
+                {
+                    // Leave the flag AS-IS: if an old pending attempt is what blocked it, it stays
+                    // true for a later turn (once that pending attempt resolves and the scheduler
+                    // re-dispatches this retained RepeatAttackState); if `expected` was already
+                    // superseded, there is nothing to do.
+                    sendDueNowFixpos = false;
+                }
+            }
+            finally { _attackGate.Release(); }
+
+            if (sendDueNowFixpos)
+            {
+                // The packet write happens AFTER releasing _attackGate (never while it is held - see
+                // that gate's own doc comment: it never guards a socket write), but STILL inside this
+                // method's own _attackExecutionGate acquisition, which is what actually provides the
+                // ordering/race-freedom guarantee described above.
+                SyncPositionToNow();
+                await WriteAsync(IroMonsterActorPackets.BuildStopMove(_accountId, _x, _y), cancellationToken);
+            }
+
+            await PerformPendingOrFreshAttackTurnAsync(expected, cancellationToken);
         }
         finally
         {
             _attackExecutionGate.Release();
         }
+    }
+
+    // Step 7 substep 8 (§6/§17/§21 of the plan): the pending-first control-flow gate. Every attack
+    // execution - regardless of which caller reached PerformDueRepeatAttackAsync, and regardless of
+    // whether `expected` is stale, `_repeatAttack` is null, or movement has already cleared the
+    // repeat state - first snapshots pending/repeat state under _attackGate and decides which of the
+    // two entirely-decoupled concerns this invocation is actually about:
+    //
+    //   - A pending attempt exists: this invocation is ABOUT that pending attempt, unconditionally.
+    //     Not yet due (`now < pending.NextRetryAt`): send nothing, call nothing, return - a pending
+    //     attempt existing and a pending attempt being AUTHORIZED to send right now are not the same
+    //     condition. Due (`now >= pending.NextRetryAt`): retry the exact stored payload, verbatim,
+    //     through DispatchPendingDamageAttemptAsync - never re-deriving Life/Damage/AcquireEngagement
+    //     from `expected`/the current target/MonsterFeedProjection (a pending attempt is already past
+    //     every fresh gameplay legality check). The fresh-attempt path below never runs in the same
+    //     invocation.
+    //   - No pending attempt: only THEN does `expected` need to still be current at all - the
+    //     existing legacy fresh-attempt path (PerformDueRepeatAttackCoreAsync, unchanged, still the
+    //     only path that reaches a live production hit as of substep 8) runs exactly as before.
+    //
+    // Snapshotting into immutable locals under _attackGate (never reading a mutable
+    // PendingMonsterDamageAttempt property after releasing the gate) is the mandatory pattern used
+    // consistently everywhere this state is touched - see RunRepeatAttackLoopAsync's own identical
+    // shape for the canonical example.
+    private async Task PerformPendingOrFreshAttackTurnAsync(RepeatAttackState expected, CancellationToken cancellationToken)
+    {
+        WorldMonsterLifeReference? pendingLife;
+        long pendingSequence = 0;
+        uint pendingDamage = 0;
+        bool pendingAcquireEngagement = false;
+        DateTimeOffset? pendingNextRetryAt;
+
+        await _attackGate.WaitAsync(cancellationToken);
+        try
+        {
+            var pending = _pendingDamageAttempt;
+            pendingLife = pending?.Life;
+            if (pending is not null)
+            {
+                pendingSequence = pending.AttackSequence;
+                pendingDamage = pending.Damage;
+                pendingAcquireEngagement = pending.AcquireEngagement;
+            }
+            pendingNextRetryAt = pending?.NextRetryAt;
+        }
+        finally { _attackGate.Release(); }
+
+        if (pendingLife is { } life)
+        {
+            if (_timeProvider.GetUtcNow() < pendingNextRetryAt) return; // Not yet due - a no-op with respect to World.
+
+            // Due: resend the exact stored payload verbatim - never resolve the current
+            // RepeatAttackState/target, never call MonsterFeedProjection.TryGetLife, never resolve
+            // weapon/range/CalculateAttack again.
+            await DispatchPendingDamageAttemptAsync(life, pendingSequence, pendingDamage, pendingAcquireEngagement, cancellationToken);
+            return;
+        }
+
+        // No pending attempt blocks this turn - fall through to the existing, unchanged legacy
+        // fresh-attempt path (still the only path that reaches a live production hit; substep 9
+        // replaces this call with the real ApplyMonsterDamageAsync-driven flow).
+        await PerformDueRepeatAttackCoreAsync(expected, cancellationToken);
+    }
+
+    // Step 7 substep 8 (§8/§9/§10/§22): the SOLE call site through which both the first send (from a
+    // freshly-allocated PendingMonsterDamageAttempt, §7) and every internal retry (from
+    // PerformPendingOrFreshAttackTurnAsync's own due-retry branch above) funnel - substep 9 will
+    // point this at the real World.ApplyMonsterDamageAsync RPC; for now it calls the isolated test
+    // seam (DebugApplyMonsterDamageDispatcher), which is null in production, matching the fact that
+    // nothing yet actually ALLOCATES a PendingMonsterDamageAttempt on the live path either (only this
+    // substep's own isolated tests do, via AllocatePendingDamageAttemptForTestAsync below).
+    //
+    // `life`/`sequence`/`damage`/`acquireEngagement` are the pending attempt's own immutable,
+    // already-snapshotted payload - never re-derived here. On an unambiguous result (any status, or
+    // a thrown non-transient exception), the pending attempt is retired under _attackGate. On a
+    // transient exception, the SAME logical attempt's NextRetryAt is advanced under _attackGate,
+    // ONLY if the stored pending attempt is still THIS exact logical attempt (compared by
+    // AttackSequence - guards against a retire-then-reallocate race that could otherwise happen
+    // between releasing the gate before this call and reacquiring it in the catch below) - and
+    // _pendingRetrySignal is released so the scheduler wakes and re-evaluates. Never mutates a
+    // DIFFERENT/newer pending attempt that may have replaced this one while this call was in flight.
+    private async Task DispatchPendingDamageAttemptAsync(WorldMonsterLifeReference life, long sequence, uint damage, bool acquireEngagement, CancellationToken cancellationToken)
+    {
+        var dispatcher = DebugApplyMonsterDamageDispatcher;
+        if (dispatcher is null) return; // No seam wired (production, pre-substep-9) - nothing to do yet.
+
+        var command = new WorldMonsterDamageCommand(life, CharacterId, _presenceId ?? Guid.Empty, sequence, damage, acquireEngagement);
+        try
+        {
+            await dispatcher(command, cancellationToken);
+        }
+        catch (Exception ex) when (IsTransientWorldRpcFailure(ex, cancellationToken))
+        {
+            await _attackGate.WaitAsync(cancellationToken);
+            try
+            {
+                if (_pendingDamageAttempt is { } current && current.AttackSequence == sequence)
+                {
+                    var delayMs = AttackDelayCalculator.AttackDelayMs(_statusEffects.Recalculate(_gameplayState!.State), null);
+                    current.NextRetryAt = _timeProvider.GetUtcNow().AddMilliseconds(delayMs);
+                }
+            }
+            finally { _attackGate.Release(); }
+            try { _pendingRetrySignal.Release(); } catch (SemaphoreFullException) { }
+            return;
+        }
+
+        // Any unambiguous result (the seam threw nothing, or threw a non-transient exception that
+        // propagates past this method - either way the attempt is resolved from this session's own
+        // perspective) retires the pending attempt, but ONLY if it is still THIS exact logical
+        // attempt - a concurrent retire/reallocate must never be clobbered.
+        await _attackGate.WaitAsync(CancellationToken.None);
+        try
+        {
+            if (_pendingDamageAttempt is { } current && current.AttackSequence == sequence) _pendingDamageAttempt = null;
+        }
+        finally { _attackGate.Release(); }
+        try { _pendingRetrySignal.Release(); } catch (SemaphoreFullException) { }
+    }
+
+    // Step 7 substep 8 isolated-test-only helper (never called from any production code path):
+    // allocates a fresh PendingMonsterDamageAttempt with the next monotonic AttackSequence and
+    // performs the FIRST dispatch inline, synchronously, as part of this same call - exactly
+    // matching §7/§17 step 3's "creating this record does not itself schedule a send; the first
+    // send happens immediately, as the last action of the very turn that allocates it" rule.
+    // NextRetryAt is set at allocation time but governs only a POSSIBLE later retry, never this
+    // first call. Real production allocation (substep 9) happens inline inside the fresh-attempt
+    // branch of PerformDueRepeatAttackCoreAsync's eventual replacement, using this exact shape.
+    internal async Task AllocatePendingDamageAttemptForTestAsync(WorldMonsterLifeReference life, uint damage, bool acquireEngagement, CancellationToken cancellationToken)
+    {
+        long sequence;
+        await _attackGate.WaitAsync(cancellationToken);
+        try
+        {
+            sequence = _nextAttackSequence++;
+            _pendingDamageAttempt = new PendingMonsterDamageAttempt
+            {
+                Life = life,
+                AttackSequence = sequence,
+                Damage = damage,
+                AcquireEngagement = acquireEngagement,
+                NextRetryAt = _timeProvider.GetUtcNow().AddMilliseconds(AttackDelayCalculator.AttackDelayMs(_statusEffects.Recalculate(_gameplayState!.State), null)),
+            };
+        }
+        finally { _attackGate.Release(); }
+        try { _pendingRetrySignal.Release(); } catch (SemaphoreFullException) { }
+
+        await DispatchPendingDamageAttemptAsync(life, sequence, damage, acquireEngagement, cancellationToken);
     }
 
     // Executes exactly one authoritative hit for the repeat-attack state active at the time the
@@ -1933,8 +2307,12 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     // still the CURRENT session target (not merely non-null) before doing anything: a replacing
     // attack request or a teleport/movement cancellation between "the loop woke" and "this method
     // acquired the gate" must not let a stale hit execute or reschedule against a target the
-    // session no longer intends to attack. Only ever called through PerformDueRepeatAttackAsync
-    // above, which holds _attackExecutionGate for the ENTIRE duration of this method's own body.
+    // session no longer intends to attack. As of Step 7 substep 8, only ever called through
+    // PerformPendingOrFreshAttackTurnAsync's own fresh-attempt branch (reached only when no
+    // PendingMonsterDamageAttempt exists) - which is itself only ever called through
+    // PerformDueRepeatAttackAsync, which holds _attackExecutionGate for the ENTIRE duration of this
+    // method's own body. This remains the ONLY path that reaches a live production monster hit;
+    // substep 9 replaces its body with the pending-attempt-driven flow built in isolation here.
     private async Task PerformDueRepeatAttackCoreAsync(RepeatAttackState expected, CancellationToken cancellationToken)
     {
         await _attackGate.WaitAsync(cancellationToken);
