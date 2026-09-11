@@ -4223,9 +4223,10 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     // by the specific entry kind that happened to be processed.
     public async Task NotifyMonsterMovedAsync(IMonsterActorView actor, WorldMonsterMovementKind? movementKind, WorldMonsterInstance instance, CancellationToken cancellationToken)
     {
-        if (instance.ActorId != actor.ActorId || !instance.IncarnationId.Value.Equals(actor.IncarnationId.Value))
+        if (instance.ActorId != actor.ActorId || !instance.IncarnationId.Value.Equals(actor.IncarnationId.Value) ||
+            !string.Equals(instance.MapId, actor.Map, StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException(
-                $"WorldMonsterInstance (ActorId={instance.ActorId}, IncarnationId={instance.IncarnationId.Value}) does not match the projected actor (ActorId={actor.ActorId}, IncarnationId={actor.IncarnationId.Value}) - refusing to project mixed-life actor/instance data.");
+                $"WorldMonsterInstance (ActorId={instance.ActorId}, IncarnationId={instance.IncarnationId.Value}, MapId={instance.MapId}) does not match the projected actor (ActorId={actor.ActorId}, IncarnationId={actor.IncarnationId.Value}, Map={actor.Map}) - refusing to project mixed-life actor/instance data.");
         if (!string.Equals(actor.Map, _mapName, StringComparison.OrdinalIgnoreCase)) return;
 
         var position = actor.GetPosition();
