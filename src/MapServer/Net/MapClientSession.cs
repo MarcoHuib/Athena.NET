@@ -2197,7 +2197,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
                 // may conservatively lose THIS attacker's own reward in that ambiguous case; no
                 // operation-id/exactly-once protocol is introduced here. Otherwise (no Died observed
                 // yet), local HP remains untouched and the ordinary attack cadence re-arms normally.
-                var diedObservedWhilePending = _lethalDeathArbiter.CompleteInFlight(life);
+                var diedObservedWhilePending = _lethalDeathArbiter.CompleteInFlight(life, markProjected: false);
                 if (diedObservedWhilePending)
                 {
                     MapLogger.Warning($"[iRO MAP DEBUG] Transient TryMarkMonsterDeadAsync failure mobActorId={expected.TargetActorId}, but an authoritative Died feed for this exact life was already observed while pending - performing the deferred authoritative vanish now and stopping this repeat target.");
@@ -2231,7 +2231,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
                 MapLogger.Warning($"[iRO MAP DEBUG] TryMarkMonsterDeadAsync did not confirm a fresh death ({deathResult.Status}) mobActorId={expected.TargetActorId} - no local HP mutation, no damage/HP/death wire projection, no quest/EXP.");
                 if (deathResult.Status == WorldMonsterDeathStatus.StaleLifeReference)
                     _combatState.Remove(MonsterCombatKey.From(life));
-                if (_lethalDeathArbiter.CompleteInFlight(life))
+                if (_lethalDeathArbiter.CompleteInFlight(life, markProjected: false))
                     await PerformDeferredAuthoritativeDiedAsync(expected.TargetActorId, cancellationToken);
                 ClearRepeatAttackIfCurrent(expected);
                 return;
@@ -2270,7 +2270,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
                 // silently discarded - otherwise leave ordinary future Died feed delivery (this
                 // session no longer has an in-flight registration) able to remove the actor normally.
                 MapLogger.Warning($"[iRO MAP DEBUG] World confirmed MarkedDead but local CommitConfirmedDeath did not itself confirm a kill (unexpected local-state mismatch) mobActorId={expected.TargetActorId} - no local reward/wire projection from this call.");
-                if (_lethalDeathArbiter.CompleteInFlight(life))
+                if (_lethalDeathArbiter.CompleteInFlight(life, markProjected: false))
                     await PerformDeferredAuthoritativeDiedAsync(expected.TargetActorId, cancellationToken);
             }
         }
@@ -2417,7 +2417,13 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
             if (_lethalCommitLife is { } committedLife)
             {
                 _lethalCommitLife = null;
-                _lethalDeathArbiter.CompleteInFlight(committedLife);
+                // Step 7 substep 6 (§14.2): markProjected: true - this session's own authoritative
+                // death vanish was JUST sent successfully (the WriteAsync above already completed),
+                // so a LATER duplicate Died for this exact life must be suppressed even after this
+                // in-flight registration is gone - see TryDeferDiedWhileInFlight's own "already
+                // projected" branch. Never called with true before the vanish write succeeds (see
+                // this call's position, strictly after SendMonsterVanishAsync above).
+                _lethalDeathArbiter.CompleteInFlight(committedLife, markProjected: true);
             }
 
             foreach (var drop in outcome.QuestDrops)
@@ -2481,7 +2487,11 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
             if (_lethalCommitLife is { } leakedLife)
             {
                 _lethalCommitLife = null;
-                _lethalDeathArbiter.CompleteInFlight(leakedLife);
+                // markProjected: false - the vanish write never successfully completed (an exception
+                // escaped before reaching it, or during it), so this session did NOT actually project
+                // its own authoritative death - never mark it projected merely because World had
+                // already confirmed the death.
+                _lethalDeathArbiter.CompleteInFlight(leakedLife, markProjected: false);
             }
         }
     }
