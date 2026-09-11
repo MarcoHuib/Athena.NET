@@ -652,6 +652,24 @@ public sealed class MapTcpServer
             return;
         }
 
+        // Step 7 substep 7 (§14.5): a Respawned entry means World just minted a NEW incarnation for
+        // this ActorId - before this fan-out's own ordinary discovery projection (below) runs for
+        // that new life, tell every session's own LethalDeathProjectionArbiter to forget any stale
+        // `_alreadyProjected` marker it may still be holding for an OLD incarnation of this same
+        // ActorId (see NotifyMonsterRespawnedAsync's own doc comment for why this cleanup cannot be
+        // deferred indefinitely). Deliberately does NOT return after this - the ordinary discovery
+        // path immediately below is what actually re-introduces the new incarnation to each session,
+        // exactly like any other newly-visible actor.
+        if (entry.Kind == WorldMonsterFeedEntryKind.Respawned)
+        {
+            // Synchronous, pure in-memory cleanup (see NotifyMonsterRespawnedAsync's own doc
+            // comment) - no I/O, so unlike every other per-session call in this method, no
+            // IOException/OperationCanceledException guard is needed here.
+            var newLife = new WorldMonsterLifeReference(entry.Instance.MapId, epoch, entry.ActorId, entry.IncarnationId);
+            foreach (var session in mapSessions)
+                session.NotifyMonsterRespawnedAsync(newLife);
+        }
+
         // Step 7 substep 5: entry.Instance (World-authoritative, includes CurrentHp/MaxHp) is the
         // sole HP source for this fan-out - the prior _world.CombatState.TryGet lookup here was a
         // redundant second read purely to obtain HP that already sits in entry.Instance. A missing

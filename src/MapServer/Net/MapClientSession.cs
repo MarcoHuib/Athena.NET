@@ -2423,6 +2423,13 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
                 // in-flight registration is gone - see TryDeferDiedWhileInFlight's own "already
                 // projected" branch. Never called with true before the vanish write succeeds (see
                 // this call's position, strictly after SendMonsterVanishAsync above).
+                //
+                // The return value here is intentionally discarded, not ignored by oversight: it
+                // means ONLY "was an authoritative Died for this exact life observed WHILE this
+                // registration was in flight" - true or false, this session already just performed
+                // the equivalent authoritative death-vanish/cleanup itself (the SendMonsterVanishAsync
+                // call above), so there is nothing further this call site would ever need to DO with
+                // that signal either way; a `true` here does not mean a second vanish is owed.
                 _lethalDeathArbiter.CompleteInFlight(committedLife, markProjected: true);
             }
 
@@ -4396,6 +4403,29 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     // cleanup half of the arbitration" intent reads clearly at each call site.
     private async Task PerformDeferredAuthoritativeDiedAsync(uint actorId, CancellationToken cancellationToken) =>
         await SendMonsterVanishAsync(actorId, PacketConstants.ZcNotifyVanishReasonDied, cancellationToken);
+
+    // Step 7 substep 7 (§14.5): the real Respawned hook LethalDeathProjectionArbiter's own
+    // ForgetProjectedForActor doc comment anticipated. Called by MapTcpServer.FanOutEntryAsync for
+    // EVERY session on the map when World's feed reports a monster Respawned, BEFORE that same
+    // fan-out's own ordinary discovery projection for the new incarnation runs.
+    //
+    // `_alreadyProjected`'s own doc comment: an entry there is a "this session already sent its own
+    // authoritative death vanish for this exact (now-old) life" marker, deliberately kept alive with
+    // no time-based expiry so a late-arriving Died for that same life is suppressed no matter how
+    // late it arrives - see TryDeferDiedWhileInFlight's own "already projected" branch. Once a
+    // respawn genuinely occurs, that marker has done its job and must be freed, or it would
+    // permanently occupy memory for an ActorId that keeps respawning over a long-running session.
+    // ForgetProjectedForActor does not need (and this method does not try to guess) the exact OLD
+    // IncarnationId(s) still on record - it structurally removes every stale entry for this
+    // (MapId, SimulationEpoch, ActorId) whose IncarnationId is NOT the new one, correct even if this
+    // session's own arbiter fell behind more than one respawn before ever observing this entry (a
+    // multi-respawn backlog - see LethalDeathProjectionArbiterTests' own coverage of that scenario).
+    //
+    // Synchronous, non-`async` (pure in-memory HashSet.RemoveWhere, no I/O) - cannot throw
+    // IOException/OperationCanceledException, so the caller's own per-session try/catch around this
+    // call is defensive only, never expected to actually catch anything from this method.
+    public void NotifyMonsterRespawnedAsync(WorldMonsterLifeReference newLife) =>
+        _lethalDeathArbiter.ForgetProjectedForActor(newLife.MapId, newLife.SimulationEpoch, newLife.ActorId, exceptIncarnationId: newLife.IncarnationId);
 
     // Step 4 of the binding bootstrap/resync ordering, per-session half (see MonsterFeedProjection's
     // own doc comment) - called by MapTcpServer.ReconcileSessionsFullyAsync for EVERY active session
