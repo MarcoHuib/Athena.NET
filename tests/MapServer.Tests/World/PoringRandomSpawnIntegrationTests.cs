@@ -121,7 +121,7 @@ public sealed class PoringRandomSpawnIntegrationTests
         var selector = new RathenaCompatibleMobSpawnCellSelector(provider);
         var spawns = GPoringSpawns.Where(s => s.Map == mapName).ToArray();
 
-        var registry = new MonsterRegistry(spawns, new WorldActorIdAllocator(), selector, TimeProvider.System);
+        var registry = new MonsterRegistry(spawns, new WorldActorIdAllocator().Allocate, selector, TimeProvider.System);
 
         var instances = registry.AllInstances.Where(i => i.Map == mapName).ToArray();
         Assert.Equal(40, instances.Length);
@@ -142,7 +142,7 @@ public sealed class PoringRandomSpawnIntegrationTests
         var selector = new RathenaCompatibleMobSpawnCellSelector(provider);
         var spawn = new MobSpawnDefinition(GeneratedMobs.GPoring, mapName, 1, 5000, 0, new("rAthena", "abc", "x.txt", 1));
         var clock = new FakeTimeProvider();
-        var registry = new MonsterRegistry([spawn], new WorldActorIdAllocator(), selector, clock);
+        var registry = new MonsterRegistry([spawn], new WorldActorIdAllocator().Allocate, selector, clock);
         var instance = registry.AllInstances.Single();
 
         instance.ApplyDamage(instance.CurrentHp);

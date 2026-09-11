@@ -171,6 +171,14 @@ public static class PacketConstants
     // match: srcId.L dstId.L tick.L srcSpeed.L dstSpeed.L damage.L isSpDamage.B div.W type.B damage2.L
     public const short ZcNotifyAct3 = 0x08c8;
     public const int ZcNotifyAct3Length = 34;
+    // PINNED-SOURCE-BACKED, NOT capture-verified (no stock-iRO capture of this packet has been
+    // independently obtained yet - the repo's only combat capture is a lethal two-hit kill, which
+    // never exercises a non-lethal hit on an already-visible monster). clif_monster_hp_bar
+    // (clif.cpp:19958-19969), gated `#if PACKETVER >= 20120404` (pinned PACKETVER 20220406
+    // satisfies this; no later/alternate opcode ever replaces it). Fixed 14 bytes per packet_db
+    // (clif_packetdb.hpp:1537/1639, "Monster HP Bar"): id.L hp.L maxHp.L.
+    public const short ZcHpInfo = 0x0977;
+    public const int ZcHpInfoLength = 14;
     // Verified capture frame 674: ZC_STOPMOVE (clif.cpp:2204): id.L x.W y.W
     public const short ZcStopMove = 0x0088;
     public const int ZcStopMoveLength = 10;

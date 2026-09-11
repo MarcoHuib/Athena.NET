@@ -29,15 +29,38 @@ public readonly record struct MobEngagement(uint? TargetAccountId, MobCombatStat
 // time across a respawn (see MobInstance.GetPosition's own doc comment).
 public readonly record struct MobPosition(ushort X, ushort Y);
 
+// Distinguishes a MobInstance's CURRENT life from a prior one that ended in death - a plain `long`
+// wrapped in its own type so callers cannot accidentally compare it against an unrelated numeric
+// ID (ActorId, AccountId, etc.) by mistake. Pure domain value: lives in the same file/namespace as
+// MobInstance itself (Athena.Net.MapServer.World, file-linked unmodified into Athena.World.Monsters)
+// so BOTH MapServer and World read/compare the identical representation with no dependency in
+// either direction on Athena.World.Contracts' own WorldMonsterIncarnationId wire type - the World
+// grain boundary (WorldMonsterMapSimulation.ToWireInstance) is the ONLY place that ever converts
+// between the two, exactly like every other MobInstance-to-WorldXxx projection.
+//
+// Starts at 1 for a freshly constructed instance (never 0 - avoids colliding with an
+// uninitialized/default(long) sentinel anywhere this value might accidentally flow through).
+// Incremented exactly once per successful Dead->Alive transition (see MobInstance.TryRespawn) -
+// never on death itself, never on merely scheduling or attempting a respawn.
+public readonly record struct MonsterIncarnationId(long Value)
+{
+    public static readonly MonsterIncarnationId First = new(1);
+    public MonsterIncarnationId Next() => new(Value + 1);
+}
+
 // One runtime monster instance. Mutable current HP/lifecycle/position only
 // live here, never in the immutable generated MobDefinition/MobSpawnDefinition.
-public sealed class MobInstance
+//
+// Implements IMonsterActorView directly - see that interface's own doc comment for why its
+// members are exactly this narrow (position/identity/movement only, no CurrentHp/NextAttackAt).
+public sealed class MobInstance : IMonsterActorView
 {
     private readonly Lock _gate = new();
     private uint _currentHp;
     private MobLifecycleState _state;
     private long _deadUntilUtcTicks;
     private MobPosition _position;
+    private MonsterIncarnationId _incarnationId = MonsterIncarnationId.First;
     // Idle-walk scheduling/movement state - see TryStartIdleWalk/AdvanceMovement's own doc
     // comments. `_nextIdleWalkAt` mirrors pinned mob_data.next_walktime (mob.hpp) exactly: null
     // means "not yet initialized" (pinned mob_randomwalk's own `INVALID_TIMER` sentinel check,
@@ -109,6 +132,18 @@ public sealed class MobInstance
     public MobSpawnDefinition Spawn { get; }
     public string Map => Spawn.Map;
 
+    // IMonsterActorView's own static-mob-data passthroughs - deliberately reading through
+    // Spawn.Mob rather than duplicating these fields on MobInstance itself, exactly like Map above.
+    int IMonsterActorView.MobId => Spawn.Mob.Id;
+    string IMonsterActorView.Name => Spawn.Mob.Name;
+    int IMonsterActorView.WalkSpeed => Spawn.Mob.WalkSpeed;
+
+    // The CURRENT life's incarnation - see MonsterIncarnationId's own doc comment. Locked read for
+    // the same reason every other mutable field on this type is (TryRespawn increments this under
+    // the identical lock as the rest of its atomic Dead->Alive transition, so a torn read here is
+    // impossible).
+    public MonsterIncarnationId IncarnationId { get { lock (_gate) return _incarnationId; } }
+
     // The single, atomic way to read a monster's current runtime cell: a random-spawn declaration
     // (MobSpawnDefinition X=0,Y=0,Xs=0,Ys=0 - see IMobSpawnCellSelector) picks a FRESH valid cell
     // on every respawn, matching pinned mob_spawn re-running map_search_freecell on every call
@@ -127,6 +162,22 @@ public sealed class MobInstance
     public uint CurrentHp { get { lock (_gate) return _currentHp; } }
     public MobLifecycleState State { get { lock (_gate) return _state; } }
     public bool IsAlive => State == MobLifecycleState.Alive;
+
+    // The ONE atomic way to read every MapServer-local combat field together - IncarnationId,
+    // CurrentHp, and NextAttackAt are all read under the SAME lock acquisition, so no concurrent
+    // respawn/lifecycle transition can ever be observed as a torn mix (e.g. the OLD IncarnationId
+    // paired with the NEW life's already-reset full HP and cleared NextAttackAt, or vice versa -
+    // TryRespawn resets _currentHp/_nextAttackAt and bumps _incarnationId together under its own
+    // lock, so any caller reading these three fields via separate property getters could observe
+    // an in-between state that never corresponds to any single life). Returns a plain tuple (not
+    // MonsterCombatState itself) so this file - shared unmodified into Athena.World.Monsters, see
+    // this file's own top-of-file doc comment - never needs a dependency on
+    // Athena.Net.World.Contracts merely to express MonsterCombatState's own WorldMonsterIncarnationId
+    // field; MonsterCombatState.FromInstance (a MapServer-only file) does that one conversion.
+    public (uint ActorId, MonsterIncarnationId IncarnationId, uint CurrentHp, uint MaxHp, DateTimeOffset? NextAttackAt) CaptureCombatState()
+    {
+        lock (_gate) return (ActorId, _incarnationId, _currentHp, Spawn.Mob.MaxHp, _nextAttackAt);
+    }
 
     // One atomic read of target/state together - see MobEngagement's own doc comment for why this
     // must be a single snapshot rather than two separate property reads.
@@ -287,6 +338,15 @@ public sealed class MobInstance
         lock (_gate) { _movement.Stop(); }
     }
 
+    // SUPERSEDED on the migrated live MapServer combat path (Step 5) - MonsterCombatStateStore is
+    // now the sole owner of CurrentHp for MonsterCombatCoordinator/MonsterEngagementTickProcessor
+    // and every production call site they depend on; those callers no longer call ApplyDamage.
+    // This method is retained ONLY for its own existing focused unit tests (MobInstanceTests.cs)
+    // and any not-yet-migrated caller - it must not be (re)introduced as a second mutable HP
+    // authority on the migrated path. See MonsterCombatStateStore.ApplyDamage for the current
+    // production implementation, which calls MarkDeadIfNeeded (not this method) for the lifecycle
+    // transition while holding its own per-key critical section.
+    //
     // Applies damage and reports whether THIS call caused the Alive->Dead
     // transition (never true twice for the same death - the state check and
     // the mutation happen under one lock, so two concurrent lethal hits
@@ -311,6 +371,36 @@ public sealed class MobInstance
                 _nextAttackAt = null;
             }
             return (before, after, killed);
+        }
+    }
+
+    // The narrow, HP-free lifecycle transition MonsterCombatStateStore.ApplyDamage calls (while
+    // still holding ITS OWN per-(MapId,ActorId,IncarnationId) critical section) once it has
+    // determined - using its own separately-owned CurrentHp - that this hit brought HP from >0 to
+    // exactly 0. Deliberately does NOT touch CurrentHp/NextAttackAt at all (those are the store's
+    // own fields on the migrated path); it only performs the Alive->Dead transition and the
+    // engagement-clearing side effect that legitimately belongs to it (pinned mob_dead's own
+    // unlock-on-death, mob.cpp:3863 - identical to ApplyDamage's own long-standing behavior above,
+    // just without also owning the HP math that decided to call this).
+    //
+    // Returns true only the FIRST time this transitions Alive->Dead (never true twice for the same
+    // death, matching ApplyDamage's own exactly-once guarantee) - a caller that already observed
+    // Dead (e.g. a second concurrent lethal hit serialized behind the store's own lock, which by
+    // then already applied the first hit's lethal transition) gets false and changes nothing.
+    //
+    // Must NOT call back into MonsterCombatStateStore (or any other component's lock) while holding
+    // `_gate` - this method's own critical section only ever touches MobInstance's own fields, so
+    // no lock-order inversion is possible between this method and the store's own outer lock.
+    public bool MarkDeadIfNeeded()
+    {
+        lock (_gate)
+        {
+            if (_state != MobLifecycleState.Alive) return false;
+            _state = MobLifecycleState.Dead;
+            _targetAccountId = null;
+            _combatState = MobCombatState.Idle;
+            _nextAttackAt = null;
+            return true;
         }
     }
 
@@ -369,6 +459,10 @@ public sealed class MobInstance
             _currentHp = Spawn.Mob.MaxHp;
             _deadUntilUtcTicks = 0;
             _position = position;
+            // The one and only place IncarnationId ever advances - exactly once per successful
+            // Dead->Alive transition (never on death, scheduling, a not-yet-due attempt, or a
+            // failed selectPosition search, all of which return before reaching this line).
+            _incarnationId = _incarnationId.Next();
             // Reset movement state entirely on respawn: any in-flight walk from the PREVIOUS life
             // must never continue to mutate a respawned instance's position (an old scheduled
             // movement event must not move a respawned instance to where the dead instance was

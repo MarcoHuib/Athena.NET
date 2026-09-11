@@ -57,7 +57,7 @@ public sealed class MonsterRegistryTests
     public void Construction_CreatesOneInstancePerSpawnCount()
     {
         var spawn = new MobSpawnDefinition(MakeMob(), "int_land01", 3, 5000, 0, new("rAthena", "abc", "x.txt", 1));
-        var registry = new MonsterRegistry([spawn], new WorldActorIdAllocator(), new FixedCellSelector(50, 50), new FakeTimeProvider());
+        var registry = new MonsterRegistry([spawn], new WorldActorIdAllocator().Allocate, new FixedCellSelector(50, 50), new FakeTimeProvider());
 
         Assert.Equal(3, registry.AllInstances.Count);
     }
@@ -66,7 +66,7 @@ public sealed class MonsterRegistryTests
     public void Construction_AssignsUniqueActorIds()
     {
         var spawn = new MobSpawnDefinition(MakeMob(), "int_land01", 5, 5000, 0, new("rAthena", "abc", "x.txt", 1));
-        var registry = new MonsterRegistry([spawn], new WorldActorIdAllocator(), new FixedCellSelector(50, 50), new FakeTimeProvider());
+        var registry = new MonsterRegistry([spawn], new WorldActorIdAllocator().Allocate, new FixedCellSelector(50, 50), new FakeTimeProvider());
 
         var ids = registry.AllInstances.Select(i => i.ActorId).ToArray();
         Assert.Equal(ids.Length, ids.Distinct().Count());
@@ -76,7 +76,7 @@ public sealed class MonsterRegistryTests
     public void TwoInstancesOnSameMap_HaveIndependentHp()
     {
         var spawn = new MobSpawnDefinition(MakeMob(), "int_land01", 2, 5000, 0, new("rAthena", "abc", "x.txt", 1));
-        var registry = new MonsterRegistry([spawn], new WorldActorIdAllocator(), new FixedCellSelector(50, 50), new FakeTimeProvider());
+        var registry = new MonsterRegistry([spawn], new WorldActorIdAllocator().Allocate, new FixedCellSelector(50, 50), new FakeTimeProvider());
         var (first, second) = (registry.AllInstances[0], registry.AllInstances[1]);
 
         first.ApplyDamage(20);
@@ -89,7 +89,7 @@ public sealed class MonsterRegistryTests
     public void KillingOneInstance_DoesNotKillOrRespawnAnother()
     {
         var spawn = new MobSpawnDefinition(MakeMob(), "int_land01", 2, 5000, 0, new("rAthena", "abc", "x.txt", 1));
-        var registry = new MonsterRegistry([spawn], new WorldActorIdAllocator(), new FixedCellSelector(50, 50), new FakeTimeProvider());
+        var registry = new MonsterRegistry([spawn], new WorldActorIdAllocator().Allocate, new FixedCellSelector(50, 50), new FakeTimeProvider());
         var (first, second) = (registry.AllInstances[0], registry.AllInstances[1]);
 
         first.ApplyDamage(55);
@@ -103,7 +103,7 @@ public sealed class MonsterRegistryTests
     {
         var spawnA = new MobSpawnDefinition(MakeMob(), "int_land01", 1, 5000, 0, new("rAthena", "abc", "x.txt", 1));
         var spawnB = new MobSpawnDefinition(MakeMob(), "int_land02", 1, 5000, 0, new("rAthena", "abc", "x.txt", 2));
-        var registry = new MonsterRegistry([spawnA, spawnB], new WorldActorIdAllocator(), new FixedCellSelector(50, 50), new FakeTimeProvider());
+        var registry = new MonsterRegistry([spawnA, spawnB], new WorldActorIdAllocator().Allocate, new FixedCellSelector(50, 50), new FakeTimeProvider());
 
         var onMap1 = registry.AllInstances.Single(i => i.Map == "int_land01");
         var onMap2 = registry.AllInstances.Single(i => i.Map == "int_land02");
@@ -119,7 +119,7 @@ public sealed class MonsterRegistryTests
     public void TryGetInstance_WrongMap_Fails()
     {
         var spawn = new MobSpawnDefinition(MakeMob(), "int_land01", 1, 5000, 0, new("rAthena", "abc", "x.txt", 1));
-        var registry = new MonsterRegistry([spawn], new WorldActorIdAllocator(), new FixedCellSelector(50, 50), new FakeTimeProvider());
+        var registry = new MonsterRegistry([spawn], new WorldActorIdAllocator().Allocate, new FixedCellSelector(50, 50), new FakeTimeProvider());
         var actorId = registry.AllInstances[0].ActorId;
 
         Assert.False(registry.TryGetInstance(actorId, "int_land02", out _));
@@ -130,7 +130,7 @@ public sealed class MonsterRegistryTests
     public void GetVisibleInstances_ExcludesDeadAndOutOfRange()
     {
         var spawn = new MobSpawnDefinition(MakeMob(), "int_land01", 1, 5000, 0, new("rAthena", "abc", "x.txt", 1));
-        var registry = new MonsterRegistry([spawn], new WorldActorIdAllocator(), new FixedCellSelector(50, 50), new FakeTimeProvider());
+        var registry = new MonsterRegistry([spawn], new WorldActorIdAllocator().Allocate, new FixedCellSelector(50, 50), new FakeTimeProvider());
 
         Assert.Single(registry.GetVisibleInstances("int_land01", 51, 51, range: 14));
         Assert.Empty(registry.GetVisibleInstances("int_land01", 100, 100, range: 14));
@@ -145,7 +145,7 @@ public sealed class MonsterRegistryTests
         var clock = new FakeTimeProvider();
         var fastSpawn = new MobSpawnDefinition(MakeMob(), "int_land01", 1, 1000, 0, new("rAthena", "abc", "x.txt", 1));
         var slowSpawn = new MobSpawnDefinition(MakeMob(), "int_land01", 1, 10000, 0, new("rAthena", "abc", "x.txt", 2));
-        var registry = new MonsterRegistry([fastSpawn, slowSpawn], new WorldActorIdAllocator(), new FixedCellSelector(50, 50), clock);
+        var registry = new MonsterRegistry([fastSpawn, slowSpawn], new WorldActorIdAllocator().Allocate, new FixedCellSelector(50, 50), clock);
         var (fast, slow) = (registry.AllInstances[0], registry.AllInstances[1]);
 
         fast.ApplyDamage(55);
@@ -170,7 +170,7 @@ public sealed class MonsterRegistryTests
         // exception or a fabricated coordinate.
         var spawn = new MobSpawnDefinition(MakeMob(), "int_land01", 1, 5000, 0, new("rAthena", "abc", "x.txt", 1));
 
-        var registry = new MonsterRegistry([spawn], new WorldActorIdAllocator(), new AlwaysExhaustedCellSelector(), new FakeTimeProvider());
+        var registry = new MonsterRegistry([spawn], new WorldActorIdAllocator().Allocate, new AlwaysExhaustedCellSelector(), new FakeTimeProvider());
 
         var instance = Assert.Single(registry.AllInstances);
         Assert.False(instance.IsAlive);
@@ -181,7 +181,7 @@ public sealed class MonsterRegistryTests
     {
         var spawn = new MobSpawnDefinition(MakeMob(), "int_land01", 2, 5000, 0, new("rAthena", "abc", "x.txt", 1));
 
-        var registry = new MonsterRegistry([spawn], new WorldActorIdAllocator(), new AlwaysExhaustedCellSelector(), new FakeTimeProvider());
+        var registry = new MonsterRegistry([spawn], new WorldActorIdAllocator().Allocate, new AlwaysExhaustedCellSelector(), new FakeTimeProvider());
 
         Assert.Equal(2, registry.AllInstances.Count);
         var ids = registry.AllInstances.Select(i => i.ActorId).ToArray();
@@ -196,7 +196,7 @@ public sealed class MonsterRegistryTests
         var spawn = new MobSpawnDefinition(MakeMob(), "int_land01", 1, 5000, 0, new("rAthena", "abc", "x.txt", 1));
         var selector = new EventuallySucceedsCellSelector(failuresBeforeSuccess: 2, x: 77, y: 88);
 
-        var registry = new MonsterRegistry([spawn], new WorldActorIdAllocator(), selector, clock);
+        var registry = new MonsterRegistry([spawn], new WorldActorIdAllocator().Allocate, selector, clock);
         var instance = Assert.Single(registry.AllInstances);
         Assert.False(instance.IsAlive); // Initial spawn attempt (call #1) failed - pending.
 
@@ -215,7 +215,7 @@ public sealed class MonsterRegistryTests
     {
         var clock = new FakeTimeProvider();
         var spawn = new MobSpawnDefinition(MakeMob(), "int_land01", 1, 1000, 0, new("rAthena", "abc", "x.txt", 1));
-        var registry = new MonsterRegistry([spawn], new WorldActorIdAllocator(), new FixedCellSelector(50, 50), clock);
+        var registry = new MonsterRegistry([spawn], new WorldActorIdAllocator().Allocate, new FixedCellSelector(50, 50), clock);
         var instance = registry.AllInstances[0];
         instance.ApplyDamage(55);
         registry.ScheduleRespawnIfNeeded(instance);

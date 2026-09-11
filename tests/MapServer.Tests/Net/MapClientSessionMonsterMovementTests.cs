@@ -8,6 +8,7 @@ using Athena.Net.MapServer.Generated.GameData.Mobs;
 using Athena.Net.MapServer.Generated.GameData.Quests;
 using Athena.Net.MapServer.Net;
 using Athena.Net.MapServer.World;
+using Athena.Net.World.Contracts;
 
 namespace Athena.Net.MapServer.Tests.Net;
 
@@ -90,7 +91,28 @@ public sealed class MapClientSessionMonsterMovementTests
         return [.. header, .. await ReadExact(stream, length - 4)];
     }
 
-    private async Task<(TcpClient Client, NetworkStream Stream, MapClientSession Session, Task RunTask, MobInstance Target)> SetupAsync(MobInstance? sharedTarget = null, MonsterRegistry? sharedRegistry = null, MonsterRuntime? monsterRuntime = null)
+    // 1:1 mapping between the legacy MonsterRuntime-local MonsterMovementChangeKind (still used by
+    // the legacy MonsterRuntime class this file's own realistic-scheduler test still exercises
+    // directly) and the World wire-shaped WorldMonsterMovementKind NotifyMonsterMovedAsync now
+    // requires - see the task's own doc comment on WorldMonsterMovementKind for why these mirror
+    // each other exactly, case for case.
+    private static WorldMonsterMovementKind ToWorldMovementKind(MonsterMovementChangeKind kind) => kind switch
+    {
+        MonsterMovementChangeKind.WalkStarted => WorldMonsterMovementKind.WalkStarted,
+        MonsterMovementChangeKind.CellCrossed => WorldMonsterMovementKind.CellCrossed,
+        MonsterMovementChangeKind.WalkFinished => WorldMonsterMovementKind.WalkFinished,
+        MonsterMovementChangeKind.ChaseInterrupted => WorldMonsterMovementKind.ChaseInterrupted,
+        _ => throw new ArgumentOutOfRangeException(nameof(kind)),
+    };
+
+    // Step 7 substep 5: NotifyMonsterMovedAsync now takes the authoritative WorldMonsterInstance
+    // directly (never MonsterCombatState) as its HP/identity source. This overload keeps every
+    // existing call site in this file source-compatible by deriving that WorldMonsterInstance from
+    // the same MobInstance the tests already drive - see WorldMonsterProjectionTestHelper.ToWorldMonsterInstance.
+    private static Task NotifyMovedAsync(MapClientSession session, IMonsterActorView actor, MonsterMovementChangeKind kind, MobInstance instanceForHp, CancellationToken cancellationToken) =>
+        session.NotifyMonsterMovedAsync(actor, ToWorldMovementKind(kind), instanceForHp.ToWorldMonsterInstance(), cancellationToken);
+
+    private async Task<(TcpClient Client, NetworkStream Stream, MapClientSession Session, Task RunTask, MobInstance Target)> SetupAsync(MobInstance? sharedTarget = null, MonsterRegistry? sharedRegistry = null)
     {
         var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
@@ -104,14 +126,28 @@ public sealed class MapClientSessionMonsterMovementTests
         var allocator = new WorldActorIdAllocator();
         var registry = sharedRegistry ?? new MonsterRegistry(
             [new MobSpawnDefinition(GeneratedMobs.GPoring, "int_land03", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "test", 0))],
-            allocator, new FixedCellSelector(75, 51), TimeProvider.System);
+            allocator.Allocate, new FixedCellSelector(75, 51), TimeProvider.System);
         var target = sharedTarget ?? registry.AllInstances[0];
+
+        // Step 6 cutover: SendVisibleMonsterActorsAsync (the 0x007D map-load monster spawn fan-out
+        // MakeVisibleAsync below depends on) now requires BOTH _monsterProjections AND _combatState
+        // to be non-null (it reads CurrentHp from the combat store for the spawn packet's own HP
+        // fields) - a null combatState makes it return immediately with no packet sent at all,
+        // which is what silently hung this file's tests until this fix. A fresh, empty
+        // MonsterCombatStateStore is registered here for every instance in the shared registry, at
+        // a throwaway epoch matching whatever the projection above was seeded with - these tests
+        // never assert on HP values through this path, only identity/position/movement.
+        var epochForVisibility = WorldSimulationEpoch.NewEpoch();
+        var combatStateForVisibility = new MonsterCombatStateStore();
+        foreach (var instance in registry.AllInstances)
+            combatStateForVisibility.Register(instance.Map, epochForVisibility, instance.ActorId, new WorldMonsterIncarnationId(instance.IncarnationId.Value), instance.Spawn.Mob.MaxHp);
+        var monsterProjections = WorldMonsterProjectionTestHelper.SeedProjection(target.Map, epochForVisibility, combatStateForVisibility, registry.AllInstances);
 
         var session = new MapClientSession(
             1, serverClient, new CharServerConnector(new MapConfigStore(new MapConfig(), "unused.conf")), true,
             "int_land03", 75, 51, WorldMapRegistry.Tutorial,
             gameplayStatePersistence: new FixedGameplayStatePersistence(FreshNovice()),
-            accountId: AccountId, charId: CharId, monsters: registry, monsterRuntime: monsterRuntime);
+            accountId: AccountId, charId: CharId, monsterProjections: monsterProjections, combatState: combatStateForVisibility);
         var run = session.RunAsync(CancellationToken.None);
         await session.CompleteIroAuthenticationAsync(new(AccountId, CharId, 1, 2, 0, 0, false, "int_land03", 75, 51, 0, 0, 0));
 
@@ -161,7 +197,7 @@ public sealed class MapClientSessionMonsterMovementTests
 
         Assert.True(target.TryStartIdleWalk([(75, 51), (76, 51)], orthogonalStepMs: 400, now: DateTimeOffset.UnixEpoch, jitterMs: () => 0));
 
-        await session.NotifyMonsterMovedAsync(new MonsterMovementChange(target, MonsterMovementChangeKind.WalkStarted), CancellationToken.None);
+        await NotifyMovedAsync(session, target, MonsterMovementChangeKind.WalkStarted, target, CancellationToken.None);
 
         var walkPacket = await ReadDynamic(stream);
         Assert.Equal((short)0x09fd, BinaryPrimitives.ReadInt16LittleEndian(walkPacket));
@@ -184,7 +220,7 @@ public sealed class MapClientSessionMonsterMovementTests
 
         Assert.True(target.TryStartIdleWalk([(75, 51), (76, 51)], orthogonalStepMs: 400, now: DateTimeOffset.UnixEpoch, jitterMs: () => 0));
 
-        await session.NotifyMonsterMovedAsync(new MonsterMovementChange(target, MonsterMovementChangeKind.CellCrossed), CancellationToken.None);
+        await NotifyMovedAsync(session, target, MonsterMovementChangeKind.CellCrossed, target, CancellationToken.None);
 
         await AssertNothingArrivesAsync(stream);
 
@@ -208,9 +244,105 @@ public sealed class MapClientSessionMonsterMovementTests
         target.AdvanceMovement(DateTimeOffset.UnixEpoch.AddMilliseconds(400));
         Assert.False(target.IsWalking);
 
-        await session.NotifyMonsterMovedAsync(new MonsterMovementChange(target, MonsterMovementChangeKind.WalkFinished), CancellationToken.None);
+        await NotifyMovedAsync(session, target, MonsterMovementChangeKind.WalkFinished, target, CancellationToken.None);
 
         await AssertNothingArrivesAsync(stream);
+
+        client.Close();
+        await run.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    // Step 4 (IMonsterActorView/MonsterCombatState split) regression coverage, updated for Step 7
+    // substep 5: NotifyMonsterMovedAsync takes MonsterMovementChange.Instance as IMonsterActorView
+    // (not MobInstance directly) for identity/position, and now reads HP from the separately-supplied
+    // WorldMonsterInstance (never MonsterCombatState) - these tests prove that plumbing actually
+    // reaches the wire packet correctly, both for the full-HP sentinel and a damaged monster.
+
+    [Fact]
+    public void MobInstance_SatisfiesIMonsterActorView_ExposingRealIncarnationIdAndPositionData()
+    {
+        var allocator = new WorldActorIdAllocator();
+        var registry = new MonsterRegistry(
+            [new MobSpawnDefinition(GeneratedMobs.GPoring, "int_land03", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "test", 0))],
+            allocator.Allocate, new FixedCellSelector(75, 51), TimeProvider.System);
+        var target = registry.AllInstances[0];
+        IMonsterActorView actor = target; // Compiles without any cast helper - MobInstance implements the interface directly.
+
+        Assert.Equal(target.ActorId, actor.ActorId);
+        Assert.Equal(target.IncarnationId, actor.IncarnationId);
+        Assert.Equal(MonsterIncarnationId.First, actor.IncarnationId); // The REAL incarnation, not a stub.
+        Assert.Equal(target.Map, actor.Map);
+        Assert.Equal(target.GetPosition(), actor.GetPosition());
+        Assert.Equal(target.Spawn.Mob.Id, actor.MobId);
+        Assert.Equal(target.Spawn.Mob.Name, actor.Name);
+        Assert.Equal(target.Spawn.Mob.WalkSpeed, actor.WalkSpeed);
+        Assert.Equal(target.IsWalking, actor.IsWalking);
+    }
+
+    [Fact]
+    public async Task NotifyMonsterMovedAsync_WalkStarted_FullHp_SendsSentinelHpValues()
+    {
+        var (client, stream, session, run, target) = await SetupAsync();
+        using var _ = client;
+        await MakeVisibleAsync(stream, target);
+
+        Assert.True(target.TryStartIdleWalk([(75, 51), (76, 51)], orthogonalStepMs: 400, now: DateTimeOffset.UnixEpoch, jitterMs: () => 0));
+
+        Assert.Equal(55u, target.CurrentHp);
+        Assert.Equal(55u, target.Spawn.Mob.MaxHp);
+        await NotifyMovedAsync(session, target, MonsterMovementChangeKind.WalkStarted, target, CancellationToken.None);
+
+        var walkPacket = await ReadDynamic(stream);
+        Assert.Equal((short)0x09fd, BinaryPrimitives.ReadInt16LittleEndian(walkPacket));
+        // Full-HP sentinel (0xFFFFFFFF/0xFFFFFFFF) at the same offsets IroMonsterActorPacketsTests
+        // proves for BuildWalkEntry directly - this confirms WorldMonsterInstance's own values
+        // actually reach that builder unchanged through NotifyMonsterMovedAsync's plumbing.
+        Assert.Equal(uint.MaxValue, BinaryPrimitives.ReadUInt32LittleEndian(walkPacket.AsSpan(79)));
+        Assert.Equal(uint.MaxValue, BinaryPrimitives.ReadUInt32LittleEndian(walkPacket.AsSpan(83)));
+
+        client.Close();
+        await run.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
+    public async Task NotifyMonsterMovedAsync_WalkStarted_DamagedMonster_SendsRealHpValues()
+    {
+        var (client, stream, session, run, target) = await SetupAsync();
+        using var _ = client;
+        await MakeVisibleAsync(stream, target);
+
+        target.ApplyDamage(37); // 55 -> 18 current HP.
+        Assert.True(target.TryStartIdleWalk([(75, 51), (76, 51)], orthogonalStepMs: 400, now: DateTimeOffset.UnixEpoch, jitterMs: () => 0));
+
+        Assert.Equal(18u, target.CurrentHp);
+        Assert.Equal(55u, target.Spawn.Mob.MaxHp);
+        await NotifyMovedAsync(session, target, MonsterMovementChangeKind.WalkStarted, target, CancellationToken.None);
+
+        var walkPacket = await ReadDynamic(stream);
+        Assert.Equal(55, BinaryPrimitives.ReadInt32LittleEndian(walkPacket.AsSpan(79)));
+        Assert.Equal(18, BinaryPrimitives.ReadInt32LittleEndian(walkPacket.AsSpan(83)));
+
+        client.Close();
+        await run.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
+    public async Task NotifyMonsterMovedAsync_DiscoveryStandEntry_DamagedMonster_SendsRealHpValues()
+    {
+        // Discovery (not-yet-visible) path: MakeVisibleAsync is deliberately NOT called first, so
+        // the very first NotifyMonsterMovedAsync call takes the "just became visible" branch and
+        // builds a fresh BuildStandEntry - exercising the OTHER packet-building call site that
+        // reads MonsterCombatState (distinct from the already-visible WalkStarted path above).
+        var (client, stream, session, run, target) = await SetupAsync();
+        using var _ = client;
+        target.ApplyDamage(40); // 55 -> 15 current HP.
+
+        await NotifyMovedAsync(session, target, MonsterMovementChangeKind.CellCrossed, target, CancellationToken.None);
+
+        var standPacket = await ReadDynamic(stream);
+        Assert.Equal((short)0x09ff, BinaryPrimitives.ReadInt16LittleEndian(standPacket));
+        Assert.Equal(55, BinaryPrimitives.ReadInt32LittleEndian(standPacket.AsSpan(73)));
+        Assert.Equal(15, BinaryPrimitives.ReadInt32LittleEndian(standPacket.AsSpan(77)));
 
         client.Close();
         await run.WaitAsync(TimeSpan.FromSeconds(5));
@@ -229,14 +361,14 @@ public sealed class MapClientSessionMonsterMovementTests
         // within the 14-cell visibility range of the mob's spawn cell for MakeVisibleAsync's
         // initial 0x007D spawn read to ever complete.
         var spawn = new MobSpawnDefinition(GeneratedMobs.GPoring, "int_land03", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "test", 0));
-        var registry = new MonsterRegistry([spawn], allocator, new FixedCellSelector(70, 51), clock);
+        var registry = new MonsterRegistry([spawn], allocator.Allocate, new FixedCellSelector(70, 51), clock);
         var target = registry.AllInstances[0];
         var map = new MapCollisionMap("int_land03", 90, 90, Enumerable.Repeat(MapCellFlags.Walkable, 90 * 90).ToArray());
         var collisionProvider = new MapCollisionProvider([map]);
         var pathProvider = new RathenaCompatibleMovementPathProvider(collisionProvider);
         var monsterRuntime = new MonsterRuntime(registry, collisionProvider, pathProvider, clock);
 
-        var (client, stream, session, run, _) = await SetupAsync(sharedTarget: target, sharedRegistry: registry, monsterRuntime: monsterRuntime);
+        var (client, stream, session, run, _) = await SetupAsync(sharedTarget: target, sharedRegistry: registry);
         using var _2 = client;
         await MakeVisibleAsync(stream, target);
 
@@ -259,13 +391,13 @@ public sealed class MapClientSessionMonsterMovementTests
                 if (change.Kind == MonsterMovementChangeKind.WalkStarted)
                 {
                     walkStartedCount++;
-                    await session.NotifyMonsterMovedAsync(change, CancellationToken.None);
+                    await NotifyMovedAsync(session, change.Instance, change.Kind, target, CancellationToken.None);
                     var walkPacket = await ReadDynamic(stream);
                     Assert.Equal((short)0x09fd, BinaryPrimitives.ReadInt16LittleEndian(walkPacket));
                 }
                 else
                 {
-                    await session.NotifyMonsterMovedAsync(change, CancellationToken.None);
+                    await NotifyMovedAsync(session, change.Instance, change.Kind, target, CancellationToken.None);
                 }
             }
         }
@@ -282,7 +414,7 @@ public sealed class MapClientSessionMonsterMovementTests
                 // observing the first one's own completion - not expected here, and would also
                 // desynchronize the dynamic-packet read count above.
                 Assert.NotEqual(MonsterMovementChangeKind.WalkStarted, change.Kind);
-                await session.NotifyMonsterMovedAsync(change, CancellationToken.None);
+                await NotifyMovedAsync(session, change.Instance, change.Kind, target, CancellationToken.None);
             }
         }
         Assert.False(target.IsWalking);
@@ -304,7 +436,7 @@ public sealed class MapClientSessionMonsterMovementTests
         var (client, stream, session, run, target) = await SetupAsync();
         using var _ = client;
 
-        await session.NotifyMonsterMovedAsync(new MonsterMovementChange(target, MonsterMovementChangeKind.CellCrossed), CancellationToken.None);
+        await NotifyMovedAsync(session, target, MonsterMovementChangeKind.CellCrossed, target, CancellationToken.None);
 
         var standPacket = await ReadDynamic(stream);
         Assert.Equal((short)0x09ff, BinaryPrimitives.ReadInt16LittleEndian(standPacket));
@@ -313,7 +445,7 @@ public sealed class MapClientSessionMonsterMovementTests
 
         // A second notification for the SAME still-visible instance must not resend a duplicate
         // discovery packet - only the first crossing into visibility does.
-        await session.NotifyMonsterMovedAsync(new MonsterMovementChange(target, MonsterMovementChangeKind.CellCrossed), CancellationToken.None);
+        await NotifyMovedAsync(session, target, MonsterMovementChangeKind.CellCrossed, target, CancellationToken.None);
         await AssertNothingArrivesAsync(stream);
 
         client.Close();
@@ -332,7 +464,7 @@ public sealed class MapClientSessionMonsterMovementTests
 
         Assert.True(target.TryStartIdleWalk([(75, 51), (76, 51)], orthogonalStepMs: 400, now: DateTimeOffset.UnixEpoch, jitterMs: () => 0));
 
-        await session.NotifyMonsterMovedAsync(new MonsterMovementChange(target, MonsterMovementChangeKind.WalkStarted), CancellationToken.None);
+        await NotifyMovedAsync(session, target, MonsterMovementChangeKind.WalkStarted, target, CancellationToken.None);
 
         var discoveryPacket = await ReadDynamic(stream);
         Assert.Equal((short)0x09fd, BinaryPrimitives.ReadInt16LittleEndian(discoveryPacket));
@@ -350,13 +482,13 @@ public sealed class MapClientSessionMonsterMovementTests
         // 200 cells away - far outside the 14-cell visibility range used by both
         // MonsterRegistry.GetVisibleInstances and NotifyMonsterMovedAsync's own discovery check.
         var farSpawn = new MobSpawnDefinition(GeneratedMobs.GPoring, "int_land03", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "test", 0));
-        var registry = new MonsterRegistry([farSpawn], allocator, new FixedCellSelector(275, 275), TimeProvider.System);
+        var registry = new MonsterRegistry([farSpawn], allocator.Allocate, new FixedCellSelector(275, 275), TimeProvider.System);
         var farTarget = registry.AllInstances[0];
 
         var (client, stream, session, run, _) = await SetupAsync(sharedTarget: farTarget, sharedRegistry: registry);
         using var _2 = client;
 
-        await session.NotifyMonsterMovedAsync(new MonsterMovementChange(farTarget, MonsterMovementChangeKind.CellCrossed), CancellationToken.None);
+        await NotifyMovedAsync(session, farTarget, MonsterMovementChangeKind.CellCrossed, farTarget, CancellationToken.None);
 
         await AssertNothingArrivesAsync(stream);
 
@@ -389,10 +521,14 @@ public sealed class MapClientSessionMonsterMovementTests
         var clock = new Athena.Net.MapServer.Tests.Testing.ControllableTimeProvider();
         var allocator = new WorldActorIdAllocator();
         var spawn = new MobSpawnDefinition(GeneratedMobs.GPoring, "int_land03", 1, RespawnDelay: 5000, RespawnRandomDelay: 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "test", 0));
-        var registry = new MonsterRegistry([spawn], allocator, new FixedCellSelector(75, 51), clock);
+        var registry = new MonsterRegistry([spawn], allocator.Allocate, new FixedCellSelector(75, 51), clock);
         var questDrops = new QuestDropResolver(GeneratedQuestDrops.All);
-        var combat = new MonsterCombatCoordinator(registry, questDrops, new RenewalBasicAttackRules());
         var target = registry.AllInstances[0];
+        var epoch = WorldSimulationEpoch.NewEpoch();
+        var combatState = new MonsterCombatStateStore();
+        combatState.Register(target.Map, epoch, target.ActorId, new WorldMonsterIncarnationId(target.IncarnationId.Value), target.Spawn.Mob.MaxHp);
+        var combat = new MonsterCombatCoordinator(questDrops, new RenewalBasicAttackRules(), combatState);
+        var monsterProjections = WorldMonsterProjectionTestHelper.SeedProjection(target.Map, epoch, combatState, registry.AllInstances);
 
         var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
@@ -408,7 +544,8 @@ public sealed class MapClientSessionMonsterMovementTests
             1, serverClient, new CharServerConnector(new MapConfigStore(new MapConfig(), "unused.conf")), true,
             "int_land03", 75, 51, WorldMapRegistry.Tutorial,
             gameplayStatePersistence: new FixedGameplayStatePersistence(StrongNovice()),
-            accountId: AccountId, charId: CharId, monsters: registry, combat: combat, timeProvider: clock);
+            accountId: AccountId, charId: CharId, monsterProjections: monsterProjections, combat: combat, timeProvider: clock, combatState: combatState,
+            distributedWorld: new FakeCombatWorldRuntime());
         var run = session.RunAsync(CancellationToken.None);
         await session.CompleteIroAuthenticationAsync(new(AccountId, CharId, 1, 2, 0, 0, false, "int_land03", 75, 51, 0, 0, 0));
         await ReadExact(stream, 4 + 6 + 6 + 13);
@@ -422,10 +559,32 @@ public sealed class MapClientSessionMonsterMovementTests
         attackPacket[7] = 0x7f;
         await WriteBoundedAsync(stream, attackPacket);
 
+        // Live-acceptance wire-fidelity fix: pinned unit_attack's own due-now branch (unit.cpp:
+        // 2971-2978) sends clif_fixpos (0x0088, the ATTACKER's own current position)
+        // unconditionally, before the attack-timer-equivalent execution/range check - including
+        // for this test's genuinely due-now killing blow.
+        var fixposPacket = await ReadExact(stream, PacketConstants.ZcStopMoveLength);
+        Assert.Equal((short)PacketConstants.ZcStopMove, BinaryPrimitives.ReadInt16LittleEndian(fixposPacket));
+        Assert.Equal(AccountId, BinaryPrimitives.ReadUInt32LittleEndian(fixposPacket.AsSpan(2)));
+
         var damagePacket = await ReadExact(stream, PacketConstants.ZcNotifyAct3Length);
         Assert.Equal((short)PacketConstants.ZcNotifyAct3, BinaryPrimitives.ReadInt16LittleEndian(damagePacket));
+        // ZC_HP_INFO (0x0977) follows the killing blow itself (with hp=0) before the vanish
+        // packet - see PacketConstants.ZcHpInfo's own doc comment for the pinned ordering trace.
+        var hpInfoPacket = await ReadExact(stream, PacketConstants.ZcHpInfoLength);
+        Assert.Equal((short)PacketConstants.ZcHpInfo, BinaryPrimitives.ReadInt16LittleEndian(hpInfoPacket));
+        Assert.Equal(0u, BinaryPrimitives.ReadUInt32LittleEndian(hpInfoPacket.AsSpan(6)));
         var vanishPacket = await ReadExact(stream, PacketConstants.ZcNotifyVanishLength);
         Assert.Equal((short)PacketConstants.ZcNotifyVanish, BinaryPrimitives.ReadInt16LittleEndian(vanishPacket));
+
+        // The coordinator's own kill mutation lands in MonsterCombatStateStore, never on the local
+        // MobInstance (there is no local MobInstance for a production monster post-cutover) - the
+        // local MobInstance driving this test's own generated-spawn/respawn-delay data must be
+        // independently killed too, mirroring what a real World life transition would have already
+        // done, so ScheduleRespawnIfNeeded/ProcessDueRespawns below have a genuinely dead instance
+        // to work with.
+        Assert.Equal(0u, combatState.TryGet(new MonsterCombatKey(target.Map, epoch, target.ActorId, new WorldMonsterIncarnationId(target.IncarnationId.Value)), out var deadState) ? deadState.CurrentHp : 1u);
+        target.ApplyDamage(target.CurrentHp);
         Assert.False(target.IsAlive);
 
         registry.ScheduleRespawnIfNeeded(target);
@@ -436,7 +595,7 @@ public sealed class MapClientSessionMonsterMovementTests
         Assert.False(target.IsWalking); // Proves discovery isn't riding along on an idle walk.
 
         foreach (var instance in respawned)
-            await session.NotifyMonsterMovedAsync(new MonsterMovementChange(instance, MonsterMovementChangeKind.CellCrossed), CancellationToken.None);
+            await NotifyMovedAsync(session, instance, MonsterMovementChangeKind.CellCrossed, instance, CancellationToken.None);
 
         var standPacket = await ReadDynamic(stream);
         Assert.Equal((short)0x09ff, BinaryPrimitives.ReadInt16LittleEndian(standPacket));
@@ -452,13 +611,13 @@ public sealed class MapClientSessionMonsterMovementTests
     {
         var allocator = new WorldActorIdAllocator();
         var otherMapSpawn = new MobSpawnDefinition(GeneratedMobs.GPoring, "int_land04", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "test", 0));
-        var registry = new MonsterRegistry([otherMapSpawn], allocator, new FixedCellSelector(75, 51), TimeProvider.System);
+        var registry = new MonsterRegistry([otherMapSpawn], allocator.Allocate, new FixedCellSelector(75, 51), TimeProvider.System);
         var otherMapTarget = registry.AllInstances[0];
 
         var (client, stream, session, run, _) = await SetupAsync(sharedTarget: otherMapTarget, sharedRegistry: registry);
         using var _2 = client;
 
-        await session.NotifyMonsterMovedAsync(new MonsterMovementChange(otherMapTarget, MonsterMovementChangeKind.CellCrossed), CancellationToken.None);
+        await NotifyMovedAsync(session, otherMapTarget, MonsterMovementChangeKind.CellCrossed, otherMapTarget, CancellationToken.None);
 
         await AssertNothingArrivesAsync(stream);
 
@@ -486,7 +645,7 @@ public sealed class MapClientSessionMonsterMovementTests
             .Select(i => new MobSpawnDefinition(GeneratedMobs.GPoring, "int_land03", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "test", i)))
             .ToArray();
         var positions = Enumerable.Range(0, monsterCount).Select(i => (ushort)(68 + i)).ToArray();
-        var registry = new MonsterRegistry(spawns, allocator, new SequentialCellSelector(positions), TimeProvider.System);
+        var registry = new MonsterRegistry(spawns, allocator.Allocate, new SequentialCellSelector(positions), TimeProvider.System);
         var instances = registry.AllInstances;
 
         var (client, stream, session, run, _) = await SetupAsync(sharedRegistry: registry);
@@ -531,7 +690,7 @@ public sealed class MapClientSessionMonsterMovementTests
         {
             foreach (var instance in instances)
             {
-                try { await session.NotifyMonsterMovedAsync(new MonsterMovementChange(instance, MonsterMovementChangeKind.CellCrossed), CancellationToken.None); }
+                try { await NotifyMovedAsync(session, instance, MonsterMovementChangeKind.CellCrossed, instance, CancellationToken.None); }
                 catch (IOException) { }
                 catch (ObjectDisposedException) { }
             }

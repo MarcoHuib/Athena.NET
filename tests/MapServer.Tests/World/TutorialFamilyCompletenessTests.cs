@@ -52,7 +52,7 @@ public sealed class TutorialFamilyCompletenessTests
                 missing.Add($"Navigation(intro_evt02) missing for '{izInt}'");
             if (!GeneratedMobSpawnRegistry.GetForMap(intLand).Any(s => s.Mob.AegisName == "G_PORING"))
                 missing.Add($"MobSpawn(G_PORING) missing for '{intLand}'");
-            if (!world.Monsters.AllInstances.Any(instance => instance.Map == intLand))
+            if (!world.MonsterSpawns.Any(spawn => spawn.Map == intLand))
                 missing.Add($"Composed monster instances missing for '{intLand}'");
         }
 

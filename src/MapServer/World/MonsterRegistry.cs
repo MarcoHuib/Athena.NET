@@ -8,9 +8,25 @@ namespace Athena.Net.MapServer.World;
 // constructed once at startup and threaded down explicitly instead of being exposed
 // as a lazily-initialized static property.
 //
-// The `allocator` parameter must be the SAME WorldActorIdAllocator instance passed to
-// the composed WorldMapRegistry, so monster actor IDs share one namespace with NPC/
-// warp actor IDs rather than each content kind getting its own arbitrary sub-range.
+// `allocateActorId` must draw from the SAME actor-ID namespace as whatever else shares this
+// composed world's identity space (NPC/warp actors in MapServer's own WorldActorIdAllocator; a
+// future per-partition allocator in Athena.World.Monsters, backed by
+// Athena.Net.World.Contracts.LeasedBlockActorIdAllocator leasing blocks from the global
+// ActorIdBlockAuthorityGrain - see that type's own doc comment for the leasing design). Deliberately
+// a bare `Func<uint>` delegate rather than a concrete allocator type or a new single-method
+// interface: this is the exact pattern IMobSpawnCellSelector.TrySelectCell and
+// MonsterRegistry.ProcessDueRespawns' own `selectPosition` callback already use elsewhere in this
+// class, and it is what lets this same MonsterRegistry class - file-linked unchanged into
+// Athena.World.Monsters (see that project's own csproj) - be constructed with either
+// WorldActorIdAllocator.Allocate (MapServer's own composition) or a synchronous local allocator
+// built over an already-leased block (the grain's composition, once wired) without MonsterRegistry
+// itself referencing either concrete type or Athena.World.Contracts at all. Note: allocation
+// happens ONLY during construction, for the initial spawn batch - an existing MobInstance retains
+// its ActorId for its entire lifetime, including across death/respawn (ProcessDueRespawns never
+// allocates a new ID; a respawned instance is the SAME MobInstance object, same ActorId, matching
+// pinned rAthena's own respawn-reuses-the-slot semantics). A future PR adding genuinely dynamic
+// monster creation after construction (not yet part of this PR) would need to acquire additional
+// leased capacity explicitly at that point, outside this constructor's own synchronous contract.
 public sealed class MonsterRegistry
 {
     private readonly TimeProvider _timeProvider;
@@ -18,7 +34,7 @@ public sealed class MonsterRegistry
     private readonly List<MobInstance> _instances = [];
     private readonly Dictionary<uint, MobInstance> _byActorId = [];
 
-    public MonsterRegistry(IEnumerable<MobSpawnDefinition> spawns, WorldActorIdAllocator allocator, IMobSpawnCellSelector cellSelector, TimeProvider timeProvider)
+    public MonsterRegistry(IEnumerable<MobSpawnDefinition> spawns, Func<uint> allocateActorId, IMobSpawnCellSelector cellSelector, TimeProvider timeProvider)
     {
         _timeProvider = timeProvider;
         _cellSelector = cellSelector;
@@ -33,8 +49,8 @@ public sealed class MonsterRegistry
                 // MobInstance.CreatePending, reusing the EXISTING ProcessDueRespawns retry sweep -
                 // never a thrown exception, and never a silent fallback coordinate.
                 var instance = cellSelector.TrySelectCell(spawn, i, out var position)
-                    ? new MobInstance(allocator.Allocate(), spawn, position.X, position.Y)
-                    : MobInstance.CreatePending(allocator.Allocate(), spawn, timeProvider.GetUtcNow().UtcTicks);
+                    ? new MobInstance(allocateActorId(), spawn, position.X, position.Y)
+                    : MobInstance.CreatePending(allocateActorId(), spawn, timeProvider.GetUtcNow().UtcTicks);
                 _instances.Add(instance);
                 _byActorId[instance.ActorId] = instance;
             }
