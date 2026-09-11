@@ -11,13 +11,26 @@ using Athena.Net.World.Contracts;
 namespace Athena.Net.MapServer.Tests.Net;
 
 // Step 7 substep 7 (§14.5): MapClientSession.NotifyMonsterRespawnedAsync is the real Respawned hook
-// LethalDeathProjectionArbiter's own ForgetProjectedForActor doc comment anticipated - these tests
-// prove the WIRING (session -> its own arbiter's ForgetProjectedForActor with the correct identity),
-// complementing LethalDeathProjectionArbiterTests.cs's pure in-memory coverage of
-// ForgetProjectedForActor's own removal semantics. Driven against a real socket-backed
-// MapClientSession (this file's established convention, matching
-// MapClientSessionLethalDeathProjectionRaceTests.cs) so a genuine successful lethal kill produces a
-// REAL `_alreadyProjected` marker via the session's own live attack path, never a hand-constructed one.
+// LethalDeathProjectionArbiter's own ForgetProjectedForActor doc comment anticipated. These tests
+// call NotifyMonsterRespawnedAsync/NotifyMonsterMovedAsync DIRECTLY, in sequence, to prove
+// NotifyMonsterRespawnedAsync's OWN effect on the session's own arbiter (ForgetProjectedForActor
+// called with the correct identity) and that a subsequent discovery call still behaves ordinarily
+// afterward - complementing LethalDeathProjectionArbiterTests.cs's pure in-memory coverage of
+// ForgetProjectedForActor's own removal semantics.
+//
+// IMPORTANT: none of the tests in this file exercise MapTcpServer.FanOutEntryAsync itself - they
+// would keep passing even if FanOutEntryAsync's own Respawned branch were accidentally changed to
+// `return` immediately after calling NotifyMonsterRespawnedAsync (skipping the existing discovery
+// tail), since this file drives both calls itself rather than through that production fan-out path.
+// The regression that specifically proves FanOutEntryAsync performs BOTH effects from ONE real
+// Respawned feed entry is
+// MapTcpServerMonsterAuthorityIntegrationTests.Respawned_RealFeedEntry_ThroughProcessOneMonsterTick_ProducesOrdinaryDiscoveryOfNewIncarnation,
+// driven through a real Orleans grain and the real ProcessOneMonsterTickAsync polling loop.
+//
+// Driven against a real socket-backed MapClientSession (this file's established convention,
+// matching MapClientSessionLethalDeathProjectionRaceTests.cs) so a genuine successful lethal kill
+// produces a REAL `_alreadyProjected` marker via the session's own live attack path, never a
+// hand-constructed one.
 public sealed class MapClientSessionRespawnCleanupTests
 {
     private const uint AccountId = 71;
@@ -206,10 +219,14 @@ public sealed class MapClientSessionRespawnCleanupTests
         await scenario.RunTask.WaitAsync(TimeSpan.FromSeconds(5));
     }
 
-    // Test 3: Respawned still performs ordinary ActorId discovery after the cleanup call - proven at
-    // the MapTcpServer.FanOutEntryAsync level (the actual production call site), confirming the
-    // cleanup call does not consume/short-circuit the entry, and the existing discovery projection
-    // (movementKind: null -> NotifyMonsterMovedAsync) still runs for the SAME entry afterward.
+    // Test 3: calling NotifyMonsterRespawnedAsync does not itself prevent a SUBSEQENT discovery call
+    // from working ordinarily - this test calls the two methods directly, in the same order
+    // FanOutEntryAsync's own Respawned branch calls them, but does NOT go through FanOutEntryAsync
+    // itself (see this file's own header comment). It proves NotifyMonsterRespawnedAsync has no side
+    // effect that would corrupt/block a following NotifyMonsterMovedAsync call for the same actor -
+    // it does NOT prove FanOutEntryAsync itself actually makes both calls for one real feed entry;
+    // that is MapTcpServerMonsterAuthorityIntegrationTests.Respawned_RealFeedEntry_ThroughProcessOneMonsterTick_ProducesOrdinaryDiscoveryOfNewIncarnation's
+    // job.
     [Fact]
     public async Task NotifyMonsterRespawnedAsync_DoesNotPreventOrdinaryDiscovery_SessionStillDiscoversNewIncarnation()
     {
@@ -219,9 +236,10 @@ public sealed class MapClientSessionRespawnCleanupTests
         var newIncarnation = scenario.Incarnation.Next();
         var newLife = new WorldMonsterLifeReference(scenario.MapId, scenario.Epoch, scenario.ActorId, newIncarnation);
 
-        // Exactly the two calls FanOutEntryAsync's own Respawned branch performs, in the SAME order:
-        // cleanup first, ordinary discovery second - proving the cleanup call itself does not
-        // prevent, consume, or otherwise interfere with the discovery call that follows it.
+        // Called directly, in the same order FanOutEntryAsync's own Respawned branch calls them -
+        // proving the cleanup call itself does not prevent, consume, or otherwise interfere with a
+        // following discovery call for the same actor (see the caveat above: this does not exercise
+        // FanOutEntryAsync's own control flow).
         scenario.Session.NotifyMonsterRespawnedAsync(newLife);
 
         var respawnedInstance = new WorldMonsterInstance(

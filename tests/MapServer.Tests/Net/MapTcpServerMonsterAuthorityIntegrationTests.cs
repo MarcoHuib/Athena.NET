@@ -39,17 +39,17 @@ public sealed class MapTcpServerMonsterAuthorityIntegrationTests : IAsyncLifetim
 
     private static IWorldPartitionResolver Resolver() => WorldPartitionTopologyLoader.Load(Path.Combine(FindRepositoryRoot(), "conf", "world_partitions.json"), ["izlude", "geffen"]);
 
-    private static MobSpawnDefinition PoringSpawn(string mapId, int count = 1) =>
-        new(Athena.Net.MapServer.Generated.GameData.Mobs.GeneratedMobRegistry.Get(PoringMobId), mapId, count, RespawnDelay: 5000, RespawnRandomDelay: 0,
+    private static MobSpawnDefinition PoringSpawn(string mapId, int count = 1, int respawnDelayMs = 5000) =>
+        new(Athena.Net.MapServer.Generated.GameData.Mobs.GeneratedMobRegistry.Get(PoringMobId), mapId, count, RespawnDelay: respawnDelayMs, RespawnRandomDelay: 0,
             new WorldSourceInfo("rAthena", "abc", "test", 0), SpawnName: "Poring", X: (short)MonsterX, Y: (short)MonsterY, Xs: 1, Ys: 1);
 
-    private static MapServerWorld MakeWorld(string mapId, int count = 1)
+    private static MapServerWorld MakeWorld(string mapId, int count = 1, int respawnDelayMs = 5000)
     {
         var combatState = new MonsterCombatStateStore();
         var combat = new MonsterCombatCoordinator(new QuestDropResolver([]), new RenewalBasicAttackRules(), combatState);
         return new MapServerWorld(
             WorldMapRegistry.Tutorial,
-            [PoringSpawn(mapId, count)],
+            [PoringSpawn(mapId, count, respawnDelayMs)],
             combat,
             EmptyMapCollisionProvider.Instance,
             new UnverifiedGridLineMovementPathProvider(),
@@ -309,6 +309,103 @@ public sealed class MapTcpServerMonsterAuthorityIntegrationTests : IAsyncLifetim
         await run.WaitAsync(TimeSpan.FromSeconds(5));
     }
 
+    // Step 7 substep 7 review fix: the prior MapClientSessionRespawnCleanupTests only proved
+    // NotifyMonsterRespawnedAsync's OWN effect and NotifyMonsterMovedAsync's OWN discovery behavior
+    // when called manually, in sequence, by the test itself - never that MapTcpServer.FanOutEntryAsync
+    // ACTUALLY calls both for a real Respawned feed entry. A `return` accidentally inserted right
+    // after FanOutEntryAsync's own Respawned cleanup branch would make every one of those tests keep
+    // passing, since none of them ever go through FanOutEntryAsync at all.
+    //
+    // This test drives a REAL kill+respawn cycle through the actual Orleans grain (never a scripted
+    // fake), then calls the real ProcessOneMonsterTickAsync -> ... -> FanOutEntryAsync path (never
+    // NotifyMonsterRespawnedAsync/NotifyMonsterMovedAsync directly) and asserts the session's own
+    // socket receives ordinary discovery of the NEW incarnation. If FanOutEntryAsync's own Respawned
+    // branch were changed to `return` right after the cleanup call (skipping the existing generic
+    // discovery tail below it), this session would never receive ANY packet for the new incarnation
+    // and this test would time out / fail on the ReadDynamic call below.
+    [Fact]
+    public async Task Respawned_RealFeedEntry_ThroughProcessOneMonsterTick_ProducesOrdinaryDiscoveryOfNewIncarnation()
+    {
+        var mapId = "izlude";
+        // A short, real respawn delay so the World-side grain's own 100ms tick timer produces a
+        // genuine Respawned feed entry within a bounded, deterministic polling window - never
+        // simulated/hand-constructed.
+        var world = MakeWorld(mapId, respawnDelayMs: 200);
+        var worldRuntime = new OrleansWorldRuntime(_cluster.Client, Resolver());
+        var server = new MapTcpServer(new MapConfigStore(new MapConfig(), "unused.conf"), new CharServerConnector(new MapConfigStore(new MapConfig(), "unused.conf")), world, worldRuntime);
+        var (client, stream, session, run, _) = await ConnectSessionAsync(server, world, worldRuntime, accountId: 6, mapId, MonsterX, MonsterY);
+        using var _dispose = client;
+
+        // First tick: SpawnInitializationRequired -> LoadMonsterSpawnsAsync issued.
+        await server.ProcessOneMonsterTickAsync([session], CancellationToken.None);
+        // Second tick: fresh atomic bootstrap now available - the session discovers incarnation 1.
+        await server.ProcessOneMonsterTickAsync([session], CancellationToken.None);
+        var initialDiscovery = await ReadDynamic(stream);
+        Assert.Equal((short)PacketConstants.ZcNotifyStandEntry, BinaryPrimitives.ReadInt16LittleEndian(initialDiscovery));
+
+        Assert.True(world.MonsterProjections.TryGet(mapId, out var projection));
+        var original = Assert.Single(projection.AllInstances);
+        var epoch = projection.CurrentEpoch!.Value;
+        var oldLife = new WorldMonsterLifeReference(mapId, epoch, original.ActorId, original.IncarnationId);
+
+        // Kill it via the REAL grain, exactly as StaleLifeReference_AfterRespawn_... above does -
+        // this schedules the real World-side respawn, whose real 100ms grain timer will observe the
+        // due respawn and append a genuine Respawned feed entry on its own.
+        var grain = _cluster.GrainFactory.GetGrain<IWorldPartitionGrain>(Resolver().ResolvePartition(mapId));
+        Assert.Equal(WorldMonsterDeathStatus.MarkedDead, (await grain.TryMarkMonsterDeadAsync(oldLife)).Status);
+
+        // Drive ProcessOneMonsterTickAsync repeatedly (the real production polling loop's own unit
+        // of work) until the death vanish (0x0080 reason=Died) reaches the wire - this is World's own
+        // real Died feed entry, fanned out by FanOutEntryAsync's own EXISTING Died branch (unchanged
+        // by this substep), and must be drained before looking for the later Respawned discovery
+        // packet, or this read would misinterpret the vanish packet's own bytes as the rediscovery.
+        var deadlineForDeath = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        var observedDeathVanish = false;
+        var vanishReadTask = ReadExact(stream, PacketConstants.ZcNotifyVanishLength);
+        while (DateTime.UtcNow < deadlineForDeath && !observedDeathVanish)
+        {
+            await server.ProcessOneMonsterTickAsync([session], CancellationToken.None);
+            observedDeathVanish = vanishReadTask.IsCompletedSuccessfully;
+            if (!observedDeathVanish) await Task.Delay(20);
+        }
+        var vanishPacket = await vanishReadTask;
+        Assert.Equal((short)PacketConstants.ZcNotifyVanish, BinaryPrimitives.ReadInt16LittleEndian(vanishPacket));
+        Assert.Equal(original.ActorId, BinaryPrimitives.ReadUInt32LittleEndian(vanishPacket.AsSpan(2)));
+        Assert.Equal(PacketConstants.ZcNotifyVanishReasonDied, vanishPacket[6]);
+
+        // Continue driving ProcessOneMonsterTickAsync until the session's projection reports a NEW
+        // incarnation for this ActorId - proof the real World-side respawn has genuinely occurred and
+        // propagated through the feed.
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        WorldMonsterInstance? respawnedInstance = null;
+        while (DateTime.UtcNow < deadline)
+        {
+            await server.ProcessOneMonsterTickAsync([session], CancellationToken.None);
+            if (world.MonsterProjections.TryGet(mapId, out var current) &&
+                current.AllInstances.SingleOrDefault(i => i.ActorId == original.ActorId) is { Lifecycle: WorldMonsterLifecycleState.Alive } candidate &&
+                !candidate.IncarnationId.Equals(original.IncarnationId))
+            {
+                respawnedInstance = candidate;
+                break;
+            }
+            await Task.Delay(50);
+        }
+        Assert.NotNull(respawnedInstance);
+
+        // The load-bearing assertion: the session's own socket receives ordinary discovery
+        // (0x09FF stand entry) of the NEW incarnation - produced ENTIRELY by the real
+        // ProcessOneMonsterTickAsync -> FanOutEntryAsync -> NotifyMonsterMovedAsync path, never by
+        // this test calling NotifyMonsterRespawnedAsync/NotifyMonsterMovedAsync itself. If
+        // FanOutEntryAsync's own Respawned branch returned immediately after its cleanup call
+        // (skipping this discovery tail), this read would time out and fail the test.
+        var rediscoveryPacket = await ReadDynamic(stream);
+        Assert.Equal((short)PacketConstants.ZcNotifyStandEntry, BinaryPrimitives.ReadInt16LittleEndian(rediscoveryPacket));
+        Assert.Equal(original.ActorId, BinaryPrimitives.ReadUInt32LittleEndian(rediscoveryPacket.AsSpan(5)));
+
+        client.Close();
+        await run.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
     [Fact]
     public async Task StaleLifeReference_AfterRespawn_CannotBeAttacked_NoQuestOrDeathProjection()
     {
@@ -384,6 +481,13 @@ public sealed class MapTcpServerMonsterAuthorityIntegrationTests : IAsyncLifetim
         var buffer = new byte[length];
         await stream.ReadExactlyAsync(buffer).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
         return buffer;
+    }
+
+    private static async Task<byte[]> ReadDynamic(Stream stream)
+    {
+        var header = await ReadExact(stream, 4);
+        var length = BinaryPrimitives.ReadUInt16LittleEndian(header.AsSpan(2));
+        return [.. header, .. await ReadExact(stream, length - 4)];
     }
 
     private static string FindRepositoryRoot()
