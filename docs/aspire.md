@@ -29,8 +29,14 @@ Aspire uses a new `athena-sql-server-2025` data volume. It never mounts the reti
 
 ## CharServer service token
 CharServer authenticates to LoginServer via an HMAC-SHA256 challenge/response
-over a shared `ServiceToken` - there is no database row to seed. Configure the
-same value for both servers in `solutionfiles/secrets/secret.json`
+over a shared `ServiceToken` - there is no database row to seed. The token
+must be Base64-encoded and decode to at least 32 bytes (256 bits):
+
+```sh
+openssl rand -base64 32
+```
+
+Configure the same value for both servers in `solutionfiles/secrets/secret.json`
 (`ServiceAuthentication.CharServer.Token`), or via the
 `ATHENA_NET_CHAR_SERVER_SERVICE_TOKEN` environment variable. See
 `ai/login-server.md` ("Inter-server service authentication") for details.
