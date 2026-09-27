@@ -1,74 +1,71 @@
 using System.Security.Cryptography;
-using System.Text;
-using Athena.Net.LoginServer.Db.Entities;
 using Athena.Net.LoginServer.Net;
 
 namespace Athena.Net.LoginServer.Application;
 
 /// <summary>
-/// Default per-connection <see cref="IServiceAuthenticationService"/>. Wraps the
-/// existing reserved-account-range classification (sex='S', account_id &lt; 5)
-/// in <see cref="ServerAccountAuthentication"/> without changing its rules, and
-/// tracks whether this specific connection has successfully authenticated as a
-/// service (CharServer) so packet handlers can gate privileged operations on it.
-/// Also owns legacy UserPass/MD5 verification for service-account rows, which -
-/// unlike player credentials - are intentionally never migrated to ASP.NET Core
-/// Identity.
+/// Default per-connection <see cref="IServiceAuthenticationService"/>: HMAC-SHA256
+/// challenge/response over the configured CharServer ServiceToken. A fresh
+/// instance is created per TCP connection (see ServiceComposition), so the
+/// one-outstanding-challenge state and IsAuthenticated flag are naturally
+/// scoped to a single connection - one connection's issued nonce/proof can
+/// never authenticate a different connection.
 /// </summary>
 public sealed class ServiceAuthenticationService : IServiceAuthenticationService
 {
-    public bool IsAuthenticated { get; private set; }
+    private static readonly TimeSpan ChallengeTimeout = TimeSpan.FromSeconds(30);
 
-    public bool VerifyPassword(LoginAccount account, string suppliedPassword, int passwordEnc, byte[]? md5Key)
+    private readonly CharServerServiceTokenProvider _tokenProvider;
+    private PendingChallenge? _pendingChallenge;
+
+    public ServiceAuthenticationService(CharServerServiceTokenProvider tokenProvider)
     {
-        if (passwordEnc == 0)
-        {
-            return string.Equals(suppliedPassword, account.UserPass, StringComparison.Ordinal);
-        }
-
-        if (md5Key == null || md5Key.Length == 0)
-        {
-            return false;
-        }
-
-        if ((passwordEnc & 0x01) != 0)
-        {
-            var hash = Md5Hex(Concat(md5Key, Encoding.ASCII.GetBytes(account.UserPass)));
-            if (string.Equals(suppliedPassword, hash, StringComparison.OrdinalIgnoreCase))
-            {
-                return true;
-            }
-        }
-
-        if ((passwordEnc & 0x02) != 0)
-        {
-            var hash = Md5Hex(Concat(Encoding.ASCII.GetBytes(account.UserPass), md5Key));
-            if (string.Equals(suppliedPassword, hash, StringComparison.OrdinalIgnoreCase))
-            {
-                return true;
-            }
-        }
-
-        return false;
+        _tokenProvider = tokenProvider;
     }
 
-    public ServiceAuthenticationResult Authenticate(LoginAccount? account, bool passwordMatches)
-    {
-        var failure = ServerAccountAuthentication.Classify(account, passwordMatches);
-        var outcome = failure switch
-        {
-            ServerAccountFailure.None => ServiceAuthenticationOutcome.Success,
-            ServerAccountFailure.NotFound => ServiceAuthenticationOutcome.AccountNotFound,
-            ServerAccountFailure.InvalidCredential => ServiceAuthenticationOutcome.InvalidCredential,
-            ServerAccountFailure.NotAuthorized => ServiceAuthenticationOutcome.NotAuthorized,
-            _ => ServiceAuthenticationOutcome.NotAuthorized,
-        };
+    public bool IsAuthenticated { get; private set; }
 
-        // Deliberately does not set IsAuthenticated here: credential/classification
-        // success is necessary but not sufficient. The caller still has to check
-        // expiration/ban/account state and reach a final successful CharServer
-        // login before calling MarkAuthenticated().
-        return new ServiceAuthenticationResult(outcome);
+    public string? ServiceId { get; private set; }
+
+    public byte[] GenerateChallenge(string serviceId)
+    {
+        ServiceId = serviceId;
+        var nonce = RandomNumberGenerator.GetBytes(PacketConstants.ServiceNonceLength);
+        _pendingChallenge = new PendingChallenge(serviceId, nonce, DateTime.UtcNow);
+        return nonce;
+    }
+
+    public ServiceAuthenticationResult VerifyProof(byte[] proof)
+    {
+        // Consumed unconditionally, before any check below runs: a challenge
+        // can be satisfied at most once, whether the proof that consumes it is
+        // right or wrong.
+        var challenge = _pendingChallenge;
+        _pendingChallenge = null;
+
+        if (!_tokenProvider.IsConfigured)
+        {
+            return new ServiceAuthenticationResult(ServiceAuthenticationOutcome.TokenNotConfigured);
+        }
+
+        if (challenge == null)
+        {
+            return new ServiceAuthenticationResult(ServiceAuthenticationOutcome.NoChallengeIssued);
+        }
+
+        if (DateTime.UtcNow - challenge.IssuedAt > ChallengeTimeout)
+        {
+            return new ServiceAuthenticationResult(ServiceAuthenticationOutcome.ChallengeExpired);
+        }
+
+        var expected = ServiceAuthProofCalculator.ComputeProof(_tokenProvider.TokenBytes!, challenge.ServiceId, challenge.Nonce);
+
+        if (expected.Length != proof.Length || !CryptographicOperations.FixedTimeEquals(expected, proof))
+        {
+            return new ServiceAuthenticationResult(ServiceAuthenticationOutcome.InvalidProof);
+        }
+
+        return new ServiceAuthenticationResult(ServiceAuthenticationOutcome.Success);
     }
 
     public void MarkAuthenticated()
@@ -76,28 +73,5 @@ public sealed class ServiceAuthenticationService : IServiceAuthenticationService
         IsAuthenticated = true;
     }
 
-    private static byte[] Concat(byte[] first, byte[] second)
-    {
-        var buffer = new byte[first.Length + second.Length];
-        Buffer.BlockCopy(first, 0, buffer, 0, first.Length);
-        Buffer.BlockCopy(second, 0, buffer, first.Length, second.Length);
-        return buffer;
-    }
-
-    private static string Md5Hex(byte[] data)
-    {
-        using var md5 = MD5.Create();
-        return BytesToHex(md5.ComputeHash(data));
-    }
-
-    private static string BytesToHex(byte[] data)
-    {
-        var sb = new StringBuilder(data.Length * 2);
-        foreach (var b in data)
-        {
-            sb.Append(b.ToString("x2", System.Globalization.CultureInfo.InvariantCulture));
-        }
-
-        return sb.ToString();
-    }
+    private sealed record PendingChallenge(string ServiceId, byte[] Nonce, DateTime IssuedAt);
 }

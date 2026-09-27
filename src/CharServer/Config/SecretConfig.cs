@@ -10,6 +10,20 @@ public sealed class SecretConfig
     public string CharDbProvider { get; init; } = string.Empty;
     public string CharDbConnectionString { get; init; } = string.Empty;
 
+    /// <summary>
+    /// Shared secret for CharServer &lt;-&gt; LoginServer HMAC-SHA256 service
+    /// authentication (see <see cref="Net.ServiceAuthProofCalculator"/> and
+    /// ai/login-server.md). Never transmitted over the network - only an
+    /// HMAC proof derived from it is. Read from ServiceAuthentication.CharServer.Token
+    /// in this file (the same path and file LoginServer reads), or the
+    /// ATHENA_NET_CHAR_SERVER_SERVICE_TOKEN environment variable (checked by
+    /// <see cref="Net.CharServerServiceTokenProvider"/>, which takes priority
+    /// when both are set). Unrelated to <see cref="CharServerUserId"/>/
+    /// <see cref="CharServerPassword"/>, which authenticate MapServer to this
+    /// CharServer, not CharServer to LoginServer.
+    /// </summary>
+    public string CharServerServiceToken { get; init; } = string.Empty;
+
     public static SecretConfig Load(string path)
     {
         if (!File.Exists(path))
@@ -27,6 +41,7 @@ public sealed class SecretConfig
             var password = string.Empty;
             var provider = string.Empty;
             var connectionString = string.Empty;
+            var serviceToken = string.Empty;
 
             if (root.TryGetProperty("CharServer", out var charServer))
             {
@@ -39,6 +54,13 @@ public sealed class SecretConfig
                 {
                     password = passwordElement.GetString() ?? string.Empty;
                 }
+            }
+
+            if (root.TryGetProperty("ServiceAuthentication", out var serviceAuth) &&
+                serviceAuth.TryGetProperty("CharServer", out var charServerAuth) &&
+                charServerAuth.TryGetProperty("Token", out var tokenElement))
+            {
+                serviceToken = tokenElement.GetString() ?? string.Empty;
             }
 
             if (root.TryGetProperty("CharDb", out var charDb))
@@ -60,6 +82,7 @@ public sealed class SecretConfig
                 CharServerPassword = password,
                 CharDbProvider = provider,
                 CharDbConnectionString = connectionString,
+                CharServerServiceToken = serviceToken,
             };
         }
         catch (Exception ex)
@@ -78,6 +101,7 @@ public sealed class SecretConfig
             IroAdvertisedMapPort = config.IroAdvertisedMapPort,
             UserId = string.IsNullOrWhiteSpace(CharServerUserId) ? config.UserId : CharServerUserId,
             Password = string.IsNullOrWhiteSpace(CharServerPassword) ? config.Password : CharServerPassword,
+            ServiceId = config.ServiceId,
             ServerName = config.ServerName,
             LoginIp = config.LoginIp,
             LoginPort = config.LoginPort,

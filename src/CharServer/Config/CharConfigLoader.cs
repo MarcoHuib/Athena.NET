@@ -11,6 +11,7 @@ public static class CharConfigLoader
     {
         var userId = string.Empty;
         var password = string.Empty;
+        var serviceId = "CharServer";
         var serverName = "rAthena";
         var loginIp = IPAddress.Loopback;
         var loginPort = 6900;
@@ -67,6 +68,7 @@ public static class CharConfigLoader
             {
                 UserId = userId,
                 Password = password,
+                ServiceId = serviceId,
                 ServerName = serverName,
                 LoginIp = loginIp,
                 LoginPort = loginPort,
@@ -140,6 +142,10 @@ public static class CharConfigLoader
             else if (key.Equals("passwd", StringComparison.OrdinalIgnoreCase))
             {
                 password = value;
+            }
+            else if (key.Equals("service_id", StringComparison.OrdinalIgnoreCase))
+            {
+                serviceId = value;
             }
             else if (key.Equals("server_name", StringComparison.OrdinalIgnoreCase))
             {
@@ -394,6 +400,7 @@ public static class CharConfigLoader
         {
             UserId = userId,
             Password = password,
+            ServiceId = serviceId,
             ServerName = serverName,
             LoginIp = loginIp,
             LoginPort = loginPort,

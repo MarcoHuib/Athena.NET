@@ -1,13 +1,26 @@
 using System.Collections.Concurrent;
 using System.Linq;
+using System.Threading;
 
 namespace Athena.Net.LoginServer.Net;
 
 public sealed class CharServerRegistry
 {
     private readonly ConcurrentDictionary<int, CharServerInfo> _servers = new();
+    private int _nextId;
 
     public IReadOnlyCollection<CharServerInfo> Servers => _servers.Values.ToArray();
+
+    /// <summary>
+    /// Allocates the next opaque registry id for a newly service-authenticated
+    /// CharServer connection. Purely an internal bookkeeping counter - it
+    /// carries no meaning outside this process and is never derived from any
+    /// account/credential concept.
+    /// </summary>
+    public int NextId()
+    {
+        return Interlocked.Increment(ref _nextId);
+    }
 
     public void Register(int id, CharServerInfo info)
     {

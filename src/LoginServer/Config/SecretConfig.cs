@@ -9,6 +9,17 @@ public sealed class SecretConfig
     public string LoginDbConnectionString { get; init; } = string.Empty;
     public string SqlServerSaPassword { get; init; } = string.Empty;
 
+    /// <summary>
+    /// Shared secret for CharServer &lt;-&gt; LoginServer HMAC-SHA256 service
+    /// authentication (see <see cref="Application.ServiceAuthProofCalculator"/> and
+    /// ai/login-server.md). Never transmitted over the network - only an
+    /// HMAC proof derived from it is. Read from ServiceAuthentication.CharServer.Token
+    /// in this file, or the ATHENA_NET_CHAR_SERVER_SERVICE_TOKEN environment
+    /// variable (checked by <see cref="Application.CharServerServiceTokenProvider"/>,
+    /// which takes priority when both are set).
+    /// </summary>
+    public string CharServerServiceToken { get; init; } = string.Empty;
+
     public static SecretConfig Load(string path)
     {
         if (!File.Exists(path))
@@ -25,6 +36,7 @@ public sealed class SecretConfig
             var provider = string.Empty;
             var connectionString = string.Empty;
             var saPassword = string.Empty;
+            var charServerServiceToken = string.Empty;
 
             if (root.TryGetProperty("LoginDb", out var loginDb))
             {
@@ -47,11 +59,19 @@ public sealed class SecretConfig
                 }
             }
 
+            if (root.TryGetProperty("ServiceAuthentication", out var serviceAuth) &&
+                serviceAuth.TryGetProperty("CharServer", out var charServerAuth) &&
+                charServerAuth.TryGetProperty("Token", out var tokenElement))
+            {
+                charServerServiceToken = tokenElement.GetString() ?? string.Empty;
+            }
+
             return new SecretConfig
             {
                 LoginDbProvider = provider,
                 LoginDbConnectionString = connectionString,
                 SqlServerSaPassword = saPassword,
+                CharServerServiceToken = charServerServiceToken,
             };
         }
         catch (Exception ex)

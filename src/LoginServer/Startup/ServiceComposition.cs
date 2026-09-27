@@ -31,6 +31,10 @@ public static class ServiceComposition
         // (LoginConfigStore.Reload()) visible everywhere.
         services.AddSingleton(configStore);
 
+        // Resolved once at startup and shared: the ServiceToken itself never
+        // changes at runtime, so there is no reload concern like LoginConfigStore's.
+        services.AddSingleton(new CharServerServiceTokenProvider(secrets));
+
         var dbAvailable = DbSetup.TryAddLoginDbContext(services, interConfig, secrets, tableNames);
         var identityDbAvailable = IdentityDbSetup.TryAddAthenaIdentityDbContext(services, interConfig, secrets);
 
