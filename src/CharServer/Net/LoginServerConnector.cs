@@ -137,6 +137,15 @@ public sealed class LoginServerConnector
             return false;
         }
 
+        if (!ServiceHelloFieldValidator.TryValidate(config.ServiceId, config.ServerName, out var helloFields, out var validationError))
+        {
+            // Fail before ever attempting the handshake: a value that cannot
+            // be represented losslessly on the wire would otherwise make the
+            // HMAC proof diverge from what LoginServer actually receives.
+            CharLogger.Error($"CharServer service-auth registration fields are invalid: {validationError} Cannot authenticate to the login server.");
+            return false;
+        }
+
         try
         {
             using var client = new TcpClient();
@@ -148,7 +157,7 @@ public sealed class LoginServerConnector
             using var stream = client.GetStream();
             var connection = new LoginConnectionState(stream);
 
-            if (!await AuthenticateAsync(connection, stream, config, cancellationToken))
+            if (!await AuthenticateAsync(connection, stream, config, helloFields, cancellationToken))
             {
                 return false;
             }
@@ -236,9 +245,9 @@ public sealed class LoginServerConnector
     /// failure - malformed/unexpected packet, or a non-zero result byte -
     /// aborts the connection attempt; the outer retry loop reconnects.
     /// </summary>
-    private async Task<bool> AuthenticateAsync(LoginConnectionState connection, NetworkStream stream, CharConfig config, CancellationToken cancellationToken)
+    private async Task<bool> AuthenticateAsync(LoginConnectionState connection, NetworkStream stream, CharConfig config, ValidatedServiceHelloFields helloFields, CancellationToken cancellationToken)
     {
-        await SendServiceHelloAsync(connection, config, cancellationToken);
+        await SendServiceHelloAsync(connection, config, helloFields, cancellationToken);
 
         var challengePacket = await ReadPacketAsync(stream, cancellationToken);
         if (challengePacket.Length == 0)
@@ -254,12 +263,16 @@ public sealed class LoginServerConnector
         }
 
         var nonce = challengePacket.AsSpan(2, PacketConstants.ServiceNonceLength).ToArray();
+        // ServiceId/ServerName come from the same validated helloFields that
+        // SendServiceHelloAsync wrote to the wire (never re-read from
+        // config), so the proof is guaranteed to be computed over exactly
+        // what LoginServer will decode.
         var proof = ServiceAuthProofCalculator.ComputeProof(
             _serviceTokenProvider.TokenBytes!,
-            config.ServiceId,
+            helloFields.ServiceId,
             config.CharIp,
             (ushort)config.CharPort,
-            config.ServerName,
+            helloFields.ServerName,
             (ushort)config.CharMaintenance,
             (ushort)config.CharNewDisplay,
             nonce);
@@ -349,12 +362,17 @@ public sealed class LoginServerConnector
     /// LcServiceHello wire layout (56 bytes total; must match
     /// src/LoginServer/Net/ClientSession.cs's HandleServiceHelloAsync exactly):
     /// 2 header + 24 ServiceId + 4 IP + 2 port + 20 server name + 2 maintenance + 2 new-display.
+    /// ServiceId/ServerName come from <paramref name="helloFields"/> - already
+    /// validated by <see cref="ServiceHelloFieldValidator"/> to fit losslessly
+    /// in these fixed-width ASCII fields - never re-read from
+    /// <see cref="CharConfig"/> directly, so this and the HMAC proof
+    /// computation in <see cref="AuthenticateAsync"/> can never diverge.
     /// </summary>
-    private static async Task SendServiceHelloAsync(LoginConnectionState connection, CharConfig config, CancellationToken cancellationToken)
+    private static async Task SendServiceHelloAsync(LoginConnectionState connection, CharConfig config, ValidatedServiceHelloFields helloFields, CancellationToken cancellationToken)
     {
         var buffer = new byte[2 + PacketConstants.NameLength + 4 + 2 + PacketConstants.ServerNameLength + 2 + 2];
         BinaryPrimitives.WriteInt16LittleEndian(buffer.AsSpan(0, 2), PacketConstants.LcServiceHello);
-        WriteFixedString(buffer.AsSpan(2, PacketConstants.NameLength), config.ServiceId);
+        WriteFixedString(buffer.AsSpan(2, PacketConstants.NameLength), helloFields.ServiceId);
 
         var ipOffset = 2 + PacketConstants.NameLength;
         var ipBytes = config.CharIp.MapToIPv4().GetAddressBytes();
@@ -362,7 +380,7 @@ public sealed class LoginServerConnector
         BinaryPrimitives.WriteUInt16BigEndian(buffer.AsSpan(ipOffset + 4, 2), (ushort)config.CharPort);
 
         var nameOffset = ipOffset + 4 + 2;
-        WriteFixedString(buffer.AsSpan(nameOffset, PacketConstants.ServerNameLength), config.ServerName);
+        WriteFixedString(buffer.AsSpan(nameOffset, PacketConstants.ServerNameLength), helloFields.ServerName);
 
         var maintenanceOffset = nameOffset + PacketConstants.ServerNameLength;
         BinaryPrimitives.WriteUInt16LittleEndian(buffer.AsSpan(maintenanceOffset, 2), (ushort)config.CharMaintenance);
@@ -379,7 +397,14 @@ public sealed class LoginServerConnector
         await connection.WriteAsync(buffer, cancellationToken);
     }
 
-    private static void WriteFixedString(Span<byte> buffer, string value)
+    /// <summary>
+    /// Internal (not private) so tests can prove this exact wire-encoding
+    /// function round-trips losslessly for a <see cref="ServiceHelloFieldValidator"/>-validated
+    /// value, and that the resulting bytes are exactly what
+    /// <see cref="ServiceAuthProofCalculator"/> was given - see
+    /// ServiceHelloWireCanonicalizationTests in CharServer.Tests.
+    /// </summary>
+    internal static void WriteFixedString(Span<byte> buffer, string value)
     {
         var bytes = Encoding.ASCII.GetBytes(value ?? string.Empty);
         var length = Math.Min(bytes.Length, buffer.Length);
@@ -393,7 +418,7 @@ public sealed class LoginServerConnector
         }
     }
 
-    private static string ReadFixedString(ReadOnlySpan<byte> buffer)
+    internal static string ReadFixedString(ReadOnlySpan<byte> buffer)
     {
         var length = buffer.IndexOf((byte)0);
         if (length < 0)

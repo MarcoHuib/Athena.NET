@@ -550,12 +550,16 @@ public sealed class ClientSession : IDisposable
     /// Only valid from <see cref="ServiceAuthConnectionState.ChallengeIssued"/>;
     /// a proof with no outstanding challenge (never issued, already consumed,
     /// or arriving after this connection already authenticated) is always
-    /// rejected. Only on success is this connection registered as a
-    /// CharServer and marked authenticated - a failed proof leaves
-    /// IsAuthenticated false and closes the connection (rather than allowing
-    /// unlimited retries), matching the security invariant that protected
-    /// Lc* packets must be unreachable before a fully successful service
-    /// login.
+    /// rejected. Registration and authentication happen in that order - the
+    /// CharServer is registered in <see cref="CharServerRegistry"/> first, and
+    /// <see cref="IServiceAuthenticationService.MarkAuthenticated"/> (which
+    /// unlocks every <c>ServiceOnlyPackets</c> handler) is only called if that
+    /// registration actually succeeds - so if registration were ever to fail
+    /// for any reason, the socket can never become authenticated. Any failure
+    /// along this path leaves IsAuthenticated false and closes the connection
+    /// (rather than allowing unlimited retries), matching the security
+    /// invariant that protected Lc* packets must be unreachable before a
+    /// fully successful service login.
     /// </summary>
     private async Task HandleServiceAuthProofAsync(byte[] packet, CancellationToken cancellationToken)
     {
@@ -579,13 +583,36 @@ public sealed class ClientSession : IDisposable
             return;
         }
 
-        // Only at this point has the HMAC proof been verified against the
-        // one-time challenge and the complete bound ServiceHello payload.
-        // ServiceOnlyPackets must never be gated on anything earlier than
-        // this.
-        _serviceAuth.MarkAuthenticated();
+        // Register before authenticating: if registration ever fails (defense
+        // in depth - the state machine above already makes this path
+        // unreachable twice on the same connection), the socket must never
+        // become authenticated.
+        if (!TryRegisterCharServer(result.Hello))
+        {
+            LoginLogger.Warning("CharServer registration failed after a verified proof. Closing connection.");
+            await SendServiceAuthResultAsync(1, cancellationToken);
+            _client.Close();
+            return;
+        }
 
-        RegisterCharServer(result.Hello);
+        // Only at this point has the HMAC proof been verified against the
+        // one-time challenge and the complete bound ServiceHello payload, AND
+        // the CharServer been registered. IServiceAuthenticationService.MarkAuthenticated
+        // itself only succeeds immediately after this connection's own
+        // successful VerifyProof call (see ServiceAuthConnectionState.ProofVerified),
+        // so it cannot be reached from any other state even by a caller bug -
+        // ServiceOnlyPackets must never be gated on anything earlier than a
+        // true result from this call.
+        if (!_serviceAuth.MarkAuthenticated())
+        {
+            // Unreachable given the flow above, but fail closed rather than
+            // silently treating the connection as authenticated regardless.
+            LoginLogger.Warning("MarkAuthenticated was rejected unexpectedly after a successful proof verification. Closing connection.");
+            await SendServiceAuthResultAsync(1, cancellationToken);
+            _client.Close();
+            return;
+        }
+
         LoginLogger.Status($"Char server registered (serviceId='{result.Hello.ServiceId}', name='{result.Hello.ServerName}').");
         await SendServiceAuthResultAsync(0, cancellationToken);
     }
@@ -1275,10 +1302,12 @@ public sealed class ClientSession : IDisposable
 
     /// <summary>
     /// Finalizes CharServer registration once LcServiceAuthProof has verified
-    /// successfully. The int registry key is Athena.NET's own internal
-    /// bookkeeping id (assigned by <see cref="CharServerRegistry.NextId"/>) -
-    /// it carries no meaning outside this process and is never derived from
-    /// any account/credential concept.
+    /// successfully, called before <see cref="IServiceAuthenticationService.MarkAuthenticated"/>
+    /// so that a registration failure can never leave the socket authenticated
+    /// (see <see cref="HandleServiceAuthProofAsync"/>). The int registry key is
+    /// Athena.NET's own internal bookkeeping id (assigned by
+    /// <see cref="CharServerRegistry.NextId"/>) - it carries no meaning outside
+    /// this process and is never derived from any account/credential concept.
     /// <para>
     /// Defense in depth against a stale registry leak: the service-auth state
     /// machine already guarantees at most one successful proof per
@@ -1287,16 +1316,17 @@ public sealed class ClientSession : IDisposable
     /// <see cref="_charServerId"/> should never already be set here - but if
     /// it somehow were, registering a second entry and only ever unregistering
     /// the latest one on <see cref="Dispose"/> would leak the first
-    /// registration forever. Guard against that explicitly rather than relying
-    /// solely on the caller-side invariant.
+    /// registration forever. Guard against that explicitly (returning
+    /// <c>false</c>, which the caller treats as a fatal registration failure)
+    /// rather than relying solely on the caller-side invariant.
     /// </para>
     /// </summary>
-    private void RegisterCharServer(ServiceHelloInfo hello)
+    private bool TryRegisterCharServer(ServiceHelloInfo hello)
     {
         if (_charServerId.HasValue)
         {
-            LoginLogger.Warning("RegisterCharServer called more than once on the same connection; ignoring the redundant registration.");
-            return;
+            LoginLogger.Warning("RegisterCharServer called more than once on the same connection; rejecting the redundant registration.");
+            return false;
         }
 
         var info = new CharServerInfo
@@ -1313,6 +1343,7 @@ public sealed class ClientSession : IDisposable
         _charServerId = _charServers.NextId();
         _charServers.Register(_charServerId.Value, info);
         LoginLogger.Status($"Registered char server '{info.Name}' at {info.Ip}:{info.Port} (type={info.Type}, new={info.IsNew}).");
+        return true;
     }
 
     private async Task LogLoginAsync(LoginDbContext db, string userId, string ip, uint resultCode, string message, CancellationToken cancellationToken)

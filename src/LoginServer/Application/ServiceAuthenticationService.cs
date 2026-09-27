@@ -15,7 +15,14 @@ namespace Athena.Net.LoginServer.Application;
 /// <para>
 /// Enforces the handshake state machine (<see cref="ServiceAuthConnectionState"/>):
 /// a hello is only accepted from <c>Unauthenticated</c>, a proof only from
-/// <c>ChallengeIssued</c>. Any other attempt - a second hello while a
+/// <c>ChallengeIssued</c>, and <see cref="MarkAuthenticated"/> only succeeds
+/// from <c>ProofVerified</c> - the state <see cref="VerifyProof"/> transitions
+/// to on success. This means <see cref="MarkAuthenticated"/> cannot be misused
+/// to reach <c>Authenticated</c> without an immediately-preceding successful
+/// <see cref="VerifyProof"/> call on this same instance: calling it from
+/// <c>Unauthenticated</c>, <c>ChallengeIssued</c>, <c>Failed</c>, or again
+/// after already <c>Authenticated</c> all safely no-op (return <c>false</c>,
+/// no state change). Any other invalid attempt - a second hello while a
 /// challenge is outstanding, a hello or proof after authentication, or a
 /// proof with no outstanding challenge - fails closed and moves the state to
 /// the terminal <c>Failed</c> state (never silently resets to a fresh
@@ -80,10 +87,10 @@ public sealed class ServiceAuthenticationService : IServiceAuthenticationService
 
         if (State != ServiceAuthConnectionState.ChallengeIssued)
         {
-            // A proof with no outstanding challenge (never issued, already
-            // consumed, or arriving on an already-failed connection) is
-            // always rejected - never re-checked against a stale/previous
-            // challenge.
+            // A proof with no outstanding challenge - never issued, already
+            // consumed, already verified once (ProofVerified) and submitted
+            // again, or arriving on an already-failed connection - is always
+            // rejected - never re-checked against a stale/previous challenge.
             State = ServiceAuthConnectionState.Failed;
             return new ServiceAuthenticationResult(ServiceAuthenticationOutcome.NoChallengeIssued);
         }
@@ -120,15 +127,30 @@ public sealed class ServiceAuthenticationService : IServiceAuthenticationService
             return new ServiceAuthenticationResult(ServiceAuthenticationOutcome.InvalidProof);
         }
 
-        // Verified, but still waiting on the caller's explicit MarkAuthenticated()
-        // before this connection is trusted - State stays ChallengeIssued.
+        // Verified: moves to ProofVerified, the only state from which
+        // MarkAuthenticated can succeed - still not trusted until that
+        // explicit finalization call.
+        State = ServiceAuthConnectionState.ProofVerified;
         return new ServiceAuthenticationResult(ServiceAuthenticationOutcome.Success, challenge.Hello);
     }
 
-    public void MarkAuthenticated()
+    public bool MarkAuthenticated()
     {
+        if (State != ServiceAuthConnectionState.ProofVerified)
+        {
+            // Nothing to finalize: either no proof was ever successfully
+            // verified on this connection (Unauthenticated/ChallengeIssued/Failed),
+            // or it already was and this is a redundant repeat call
+            // (Authenticated) - either way, a safe no-op rather than a side
+            // effect. This is the enforcement point that makes it impossible
+            // to reach Authenticated without an immediately-preceding
+            // successful VerifyProof call on this same instance.
+            return false;
+        }
+
         IsAuthenticated = true;
         State = ServiceAuthConnectionState.Authenticated;
+        return true;
     }
 
     private sealed record PendingChallenge(ServiceHelloInfo Hello, byte[] Nonce, DateTime IssuedAt);

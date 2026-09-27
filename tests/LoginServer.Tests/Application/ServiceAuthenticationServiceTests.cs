@@ -372,7 +372,7 @@ public sealed class ServiceAuthenticationServiceTests
 
         Assert.True(result.Success);
         Assert.False(service.IsAuthenticated);
-        Assert.Equal(ServiceAuthConnectionState.ChallengeIssued, service.State);
+        Assert.Equal(ServiceAuthConnectionState.ProofVerified, service.State);
     }
 
     [Fact]
@@ -383,8 +383,9 @@ public sealed class ServiceAuthenticationServiceTests
         var proof = ComputeProof(ValidTokenBase64, DefaultHello, nonce);
         Assert.True(service.VerifyProof(proof).Success);
 
-        service.MarkAuthenticated();
+        var marked = service.MarkAuthenticated();
 
+        Assert.True(marked);
         Assert.True(service.IsAuthenticated);
         Assert.Equal(ServiceAuthConnectionState.Authenticated, service.State);
     }
@@ -397,8 +398,141 @@ public sealed class ServiceAuthenticationServiceTests
         var wrongProof = ComputeProof(AlternateTokenBase64, DefaultHello, nonce);
 
         var result = service.VerifyProof(wrongProof);
-
         Assert.False(result.Success);
+        Assert.Equal(ServiceAuthConnectionState.Failed, service.State);
+
+        // The name of this test is the point: actually call MarkAuthenticated()
+        // after the failed verification and prove it cannot resurrect the
+        // connection.
+        var marked = service.MarkAuthenticated();
+
+        Assert.False(marked);
         Assert.False(service.IsAuthenticated);
+        Assert.Equal(ServiceAuthConnectionState.Failed, service.State);
+    }
+
+    // ------------------------------------------------------------------
+    // MarkAuthenticated misuse-resistance
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void MarkAuthenticated_FromUnauthenticated_Fails()
+    {
+        var service = CreateService();
+        Assert.Equal(ServiceAuthConnectionState.Unauthenticated, service.State);
+
+        var marked = service.MarkAuthenticated();
+
+        Assert.False(marked);
+        Assert.False(service.IsAuthenticated);
+        Assert.Equal(ServiceAuthConnectionState.Unauthenticated, service.State);
+    }
+
+    [Fact]
+    public void MarkAuthenticated_BeforeSuccessfulVerifyProof_Fails()
+    {
+        var service = CreateService();
+        service.GenerateChallenge(DefaultHello);
+        Assert.Equal(ServiceAuthConnectionState.ChallengeIssued, service.State);
+
+        // No VerifyProof call at all yet - a challenge merely being
+        // outstanding must never be enough to finalize authentication.
+        var marked = service.MarkAuthenticated();
+
+        Assert.False(marked);
+        Assert.False(service.IsAuthenticated);
+        Assert.Equal(ServiceAuthConnectionState.ChallengeIssued, service.State);
+    }
+
+    [Fact]
+    public void MarkAuthenticated_AfterSuccessfulVerifyProof_SucceedsExactlyOnce()
+    {
+        var service = CreateService();
+        var nonce = service.GenerateChallenge(DefaultHello)!;
+        var proof = ComputeProof(ValidTokenBase64, DefaultHello, nonce);
+        Assert.True(service.VerifyProof(proof).Success);
+
+        var firstCall = service.MarkAuthenticated();
+        var secondCall = service.MarkAuthenticated();
+        var thirdCall = service.MarkAuthenticated();
+
+        Assert.True(firstCall);
+        Assert.False(secondCall);
+        Assert.False(thirdCall);
+        Assert.True(service.IsAuthenticated);
+        Assert.Equal(ServiceAuthConnectionState.Authenticated, service.State);
+    }
+
+    [Fact]
+    public void RepeatedMarkAuthenticated_HasNoHarmfulSideEffects()
+    {
+        var service = CreateService();
+        var nonce = service.GenerateChallenge(DefaultHello)!;
+        var proof = ComputeProof(ValidTokenBase64, DefaultHello, nonce);
+        Assert.True(service.VerifyProof(proof).Success);
+        Assert.True(service.MarkAuthenticated());
+
+        // Repeated calls after the first successful finalization must be
+        // pure no-ops: same IsAuthenticated/State every time, no exception,
+        // no further mutation.
+        for (var i = 0; i < 5; i++)
+        {
+            var marked = service.MarkAuthenticated();
+            Assert.False(marked);
+            Assert.True(service.IsAuthenticated);
+            Assert.Equal(ServiceAuthConnectionState.Authenticated, service.State);
+        }
+    }
+
+    [Fact]
+    public void Failed_CanNeverTransitionToAuthenticated_ViaMarkAuthenticated()
+    {
+        var service = CreateService();
+        var nonce = service.GenerateChallenge(DefaultHello)!;
+        var wrongProof = ComputeProof(AlternateTokenBase64, DefaultHello, nonce);
+        Assert.False(service.VerifyProof(wrongProof).Success);
+        Assert.Equal(ServiceAuthConnectionState.Failed, service.State);
+
+        var marked = service.MarkAuthenticated();
+
+        Assert.False(marked);
+        Assert.False(service.IsAuthenticated);
+        Assert.Equal(ServiceAuthConnectionState.Failed, service.State);
+    }
+
+    /// <summary>
+    /// End-to-end proof that MarkAuthenticated cannot be misused to reach
+    /// Authenticated from any state other than immediately after this same
+    /// instance's own successful VerifyProof call - covers every disallowed
+    /// transition named in the task spec in one place.
+    /// </summary>
+    [Theory]
+    [InlineData("Unauthenticated")]
+    [InlineData("ChallengeIssued")]
+    [InlineData("Failed")]
+    public void MarkAuthenticated_NeverReachesAuthenticated_WithoutAPrecedingSuccessfulVerifyProof(string startingState)
+    {
+        var service = CreateService();
+
+        switch (startingState)
+        {
+            case "ChallengeIssued":
+                service.GenerateChallenge(DefaultHello);
+                break;
+            case "Failed":
+                service.GenerateChallenge(DefaultHello);
+                var badProof = new byte[32];
+                RandomNumberGenerator.Fill(badProof);
+                service.VerifyProof(badProof);
+                break;
+        }
+
+        Assert.NotEqual(ServiceAuthConnectionState.Authenticated, service.State);
+
+        var marked = service.MarkAuthenticated();
+
+        Assert.False(marked);
+        Assert.False(service.IsAuthenticated);
+        Assert.NotEqual(ServiceAuthConnectionState.Authenticated, service.State);
     }
 }

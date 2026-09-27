@@ -21,8 +21,9 @@ namespace Athena.Net.LoginServer.Tests.Net;
 /// authentication handshake at the wire/ClientSession level (see
 /// ai/login-server.md, "Inter-server service authentication"): the
 /// protected-packet gate, the handshake connection state machine
-/// (Unauthenticated -&gt; ChallengeIssued -&gt; Authenticated, with any invalid
-/// transition failing closed), the real wall-clock handshake timeout, and
+/// (Unauthenticated -&gt; ChallengeIssued -&gt; ProofVerified -&gt; Authenticated,
+/// with any invalid transition failing closed), the real wall-clock
+/// handshake timeout, and
 /// CharServerRegistry registration hygiene. Proof-integrity/tamper coverage
 /// for the v2 HMAC message format itself lives in
 /// ServiceAuthenticationServiceTests.cs (Application layer) - the tests here
