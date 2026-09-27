@@ -139,9 +139,7 @@ public static class BackgroundTasks
     /// Login->Char handoff that was never completed - see
     /// LoginState.ScheduleWaitingDisconnect). Player WebAuthToken state lives on
     /// AthenaGameAccount (Identity schema), looked up by RagnarokAccountId - the
-    /// only account identifier this legacy path ever carries - never the legacy
-    /// LoginDbContext.Accounts table, which service accounts use and which never
-    /// has web auth tokens.
+    /// only account identifier this legacy path ever carries.
     /// </summary>
     public static async Task DisableWebAuthTokenAsync(uint accountId, LoginConfigStore configStore, LoginState state, Func<AthenaIdentityDbContext?> identityDbFactory, CancellationToken cancellationToken)
     {

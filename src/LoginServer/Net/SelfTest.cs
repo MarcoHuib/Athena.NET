@@ -35,9 +35,6 @@ public static class SelfTest
         }
 
         var ok = true;
-        var hashOk = await ProbeHashAsync(server.BoundPort);
-        LoginLogger.Status($"Self-test: hash {(hashOk ? "ok" : "failed")}");
-        ok &= hashOk;
 
         var canUseDb = await CanUseLoginDbAsync(dbFactory);
         if (canUseDb)
@@ -76,7 +73,6 @@ public static class SelfTest
             BindIp = IPAddress.Loopback,
             LoginPort = 0,
             LogLogin = false,
-            UseMd5Passwords = config.UseMd5Passwords,
             DateFormat = config.DateFormat,
             AccountNameMinLength = config.AccountNameMinLength,
             PasswordMinLength = config.PasswordMinLength,
@@ -99,49 +95,12 @@ public static class SelfTest
             DnsblServers = string.Empty,
             IpBanCleanupIntervalSeconds = config.IpBanCleanupIntervalSeconds,
             ConsoleEnabled = false,
-            ClientHashCheck = config.ClientHashCheck,
-            ClientHashRules = config.ClientHashRules,
             IpSyncIntervalMinutes = config.IpSyncIntervalMinutes,
             UsercountDisable = config.UsercountDisable,
             UsercountLow = config.UsercountLow,
             UsercountMedium = config.UsercountMedium,
             UsercountHigh = config.UsercountHigh,
         };
-    }
-
-    private static async Task<bool> ProbeHashAsync(int port)
-    {
-        using var client = new TcpClient();
-        await client.ConnectAsync(IPAddress.Loopback, port);
-        using var stream = client.GetStream();
-
-        var req = new byte[2];
-        BinaryPrimitives.WriteInt16LittleEndian(req.AsSpan(0, 2), PacketConstants.CaReqHash);
-        await stream.WriteAsync(req);
-
-        var header = await ReadExactAsync(stream, 4);
-        if (header.Length < 4)
-        {
-            LoginLogger.Warning("Self-test: hash missing header.");
-            return false;
-        }
-
-        var packetType = BinaryPrimitives.ReadInt16LittleEndian(header.AsSpan(0, 2));
-        var length = BinaryPrimitives.ReadInt16LittleEndian(header.AsSpan(2, 2));
-        if (packetType != PacketConstants.AcAckHash || length < 4)
-        {
-            LoginLogger.Warning($"Self-test: hash unexpected response 0x{packetType:X4} len={length}.");
-            return false;
-        }
-
-        var body = await ReadExactAsync(stream, length - 4);
-        if (body.Length != length - 4)
-        {
-            LoginLogger.Warning($"Self-test: hash body size mismatch {body.Length} != {length - 4}.");
-            return false;
-        }
-
-        return true;
     }
 
     private static async Task<bool> ProbeLoginRefuseAsync(int port)
@@ -423,7 +382,7 @@ public static class SelfTest
                     return false;
                 }
 
-                await db.Accounts.AnyAsync();
+                await db.IpBanList.AnyAsync();
                 return true;
             }
             catch (Exception)

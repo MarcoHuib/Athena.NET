@@ -14,7 +14,6 @@ public static class InterConfigLoader
         var db = "";
         var provider = "sqlserver";
         var caseSensitive = false;
-        var loginAccountTable = "login";
         var ipbanTable = "ipbanlist";
         var loginLogTable = "loginlog";
         var globalAccRegNumTable = "global_acc_reg_num";
@@ -79,10 +78,6 @@ public static class InterConfigLoader
             {
                 provider = value;
             }
-            else if (key.Equals("login_server_account_db", StringComparison.OrdinalIgnoreCase))
-            {
-                loginAccountTable = value;
-            }
             else if (key.Equals("ipban_table", StringComparison.OrdinalIgnoreCase))
             {
                 ipbanTable = value;
@@ -120,7 +115,6 @@ public static class InterConfigLoader
             LoginDbProvider = normalizedProvider,
             LoginDbConnectionString = connectionString,
             LoginCaseSensitive = caseSensitive,
-            LoginAccountTable = loginAccountTable,
             IpBanTable = ipbanTable,
             LoginLogTable = loginLogTable,
             GlobalAccRegNumTable = globalAccRegNumTable,

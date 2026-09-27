@@ -27,7 +27,6 @@ public static class LoginServerApp
 
         var tableNames = new LoginDbTableNames
         {
-            AccountTable = interConfig.LoginAccountTable,
             IpBanTable = interConfig.IpBanTable,
             LoginLogTable = interConfig.LoginLogTable,
             GlobalAccRegNumTable = interConfig.GlobalAccRegNumTable,
