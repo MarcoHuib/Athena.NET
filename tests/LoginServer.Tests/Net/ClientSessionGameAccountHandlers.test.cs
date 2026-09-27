@@ -290,7 +290,7 @@ public sealed class ClientSessionGameAccountHandlersTests : IDisposable
                 new Athena.Net.LoginServer.Net.LoginState(),
                 new SubnetConfig(),
                 new UnavailablePlayerAuthenticationService(),
-                new ServiceAuthenticationService(),
+                new ServiceAuthenticationService(new CharServerServiceTokenProvider(new SecretConfig())),
                 identityAccountService);
 
             return new ClientSessionFixture(session, listener, testClient, serverSide);

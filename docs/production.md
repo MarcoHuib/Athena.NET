@@ -26,8 +26,14 @@ Because auto-migrate is disabled in production, run the manual script:
 ./scripts/migrate-login-db.sh
 ```
 
-## 4) Optional seed
+## 4) Configure the CharServer service token
 
-```sh
-./scripts/seed-login-server-account.sh
-```
+CharServer authenticates to LoginServer with an HMAC-SHA256 challenge/response
+over a shared `ServiceToken` - there is no database row to seed. Set the same
+high-entropy value (256 bits/32+ bytes recommended) for both servers, either
+in `solutionfiles/secrets/secret.json` under `ServiceAuthentication.CharServer.Token`,
+or via the `ATHENA_NET_CHAR_SERVER_SERVICE_TOKEN` environment variable
+(suited to deployment secret sources such as Kubernetes Secrets; it takes
+priority over the secrets file when both are set). See
+`ai/login-server.md` ("Inter-server service authentication") for the full
+handshake.

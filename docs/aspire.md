@@ -27,8 +27,10 @@ The LoginServer consumes the connection string from Aspire via
 
 Aspire uses a new `athena-sql-server-2025` data volume. It never mounts the retired Azure SQL Edge volume; see [SQL Server development database](sql-server-development.md) for data and Apple Silicon guidance.
 
-## Seed login server account (optional)
-If you need server credentials for the char/map handshake:
-```
-./scripts/seed-login-server-account.sh
-```
+## CharServer service token
+CharServer authenticates to LoginServer via an HMAC-SHA256 challenge/response
+over a shared `ServiceToken` - there is no database row to seed. Configure the
+same value for both servers in `solutionfiles/secrets/secret.json`
+(`ServiceAuthentication.CharServer.Token`), or via the
+`ATHENA_NET_CHAR_SERVER_SERVICE_TOKEN` environment variable. See
+`ai/login-server.md` ("Inter-server service authentication") for details.

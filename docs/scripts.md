@@ -1,7 +1,7 @@
 # Helper Scripts
 
-- `scripts/seed-login-server-account.sh` (uses `ConnectionStrings__LoginDb` or `ATHENA_NET_LOGIN_DB_CONNECTION`)
-- `scripts/create-player-account.sh <username> <password> [M|F]` creates a normal player account. It reads the SQL password from `SA_PASSWORD`, the root `.env`, or `solutionfiles/secrets/secret.json`, in that order.
+- `scripts/create-player-account.sh <username> [M|F] [email]` creates a normal player account. The password is never a positional argument - it is read from the hidden `Password:` prompt, or from stdin for non-interactive automation. It reads the SQL password from `SA_PASSWORD`, the root `.env`, or `solutionfiles/secrets/secret.json`, in that order.
+- CharServer's inter-server `ServiceToken` (HMAC-SHA256 service authentication with LoginServer) is configured, not seeded - see `ai/login-server.md` ("Inter-server service authentication").
 
 Both account scripts target standard SQL Server connection strings and use Microsoft's `mssql-tools` image. When the Compose SQL resource is running, they locate it by the stable Compose `sql` service identity rather than by database image name.
 

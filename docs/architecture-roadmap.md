@@ -649,6 +649,10 @@ client-risk signals
 server-side bot/behavior detection
 anti-tamper
 production edge hardening
+TLS/mTLS for the internal LoginServer<->CharServer connection (currently
+  plaintext TCP; HMAC-SHA256 service authentication - see ai/login-server.md -
+  authenticates possession of the shared ServiceToken but does not encrypt
+  the transport)
 ```
 
 These should receive their own threat model and architecture document when Athena.NET reaches that stage.

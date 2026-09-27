@@ -19,18 +19,27 @@ namespace Athena.Net.LoginServer.Tests.Net;
 
 /// <summary>
 /// End-to-end regression coverage for the Login -&gt; Char handoff: a real player
-/// login through ASP.NET Core Identity + AthenaGameAccount, and a real CharServer
-/// service-account login against the legacy LoginDbContext. This is the "golden
-/// path" definition-of-done gate for the Identity migration.
+/// login through ASP.NET Core Identity + AthenaGameAccount. This is the "golden
+/// path" definition-of-done gate for the Identity migration. CharServer's own
+/// HMAC-SHA256 service authentication handshake against LoginServer is covered
+/// separately in ClientSessionServiceAuthGate.test.cs; the WebAuthToken test
+/// below drives it only as a prerequisite for the offline-notification flow.
 /// </summary>
 public sealed class ClientSessionLoginCharFlowTests
 {
     private const short CaLogin = 0x64;
-    private const short LcCharServerLogin = 0x2710;
     private const short AcAcceptLogin = 0x0A4D;
     private const short AcRefuseLogin = 0x083E;
-    private const short LcCharServerLoginAck = 0x2711;
+    private const short LcServiceHello = 0x2750;
+    private const short LcServiceAuthChallenge = 0x2751;
+    private const short LcServiceAuthProof = 0x2752;
+    private const short LcServiceAuthResult = 0x2753;
     private const int NameLength = 24;
+    private const int ServerNameLength = 20;
+    private const int ServiceNonceLength = 32;
+    private const int ServiceProofLength = 32;
+    private const string ServiceToken = "test-only-service-token-0123456789abcdef";
+    private const string ServiceId = "TestCharServer";
 
     [Fact]
     public async Task StockLogin_ValidPlayerCredentials_ReturnsAcAcceptLogin()
@@ -322,82 +331,16 @@ public sealed class ClientSessionLoginCharFlowTests
     }
 
     [Fact]
-    public async Task CharServerLogin_ValidServiceAccount_RegistersAndAcknowledges()
-    {
-        // Arrange: a reserved service account (sex='S', account_id < 5), per
-        // ai/login-server.md's documented CharServer provisioning convention.
-        // Service accounts remain on the legacy LoginDbContext - never Identity.
-        await using var db = CreateLoginDb(nameof(CharServerLogin_ValidServiceAccount_RegistersAndAcknowledges));
-        db.Accounts.Add(new LoginAccount
-        {
-            AccountId = 1,
-            UserId = "charserver",
-            UserPass = "service-secret",
-            Sex = "S",
-        });
-        await db.SaveChangesAsync();
-
-        using var fixture = ClientSessionFixture.Create(() => CreateLoginDb(nameof(CharServerLogin_ValidServiceAccount_RegistersAndAcknowledges)));
-
-        var packet = BuildCharServerLoginPacket("charserver", "service-secret");
-
-        var handlePacket = typeof(ClientSession).GetMethod("HandlePacketAsync", BindingFlags.NonPublic | BindingFlags.Instance);
-
-        // Act
-        await (Task)handlePacket!.Invoke(fixture.Session, new object[] { LcCharServerLogin, packet, CancellationToken.None })!;
-        var response = await fixture.ReadExactAsync(3);
-
-        // Assert: LcCharServerLoginAck with result 0 (success).
-        Assert.Equal(LcCharServerLoginAck, BinaryPrimitives.ReadInt16LittleEndian(response.AsSpan(0, 2)));
-        Assert.Equal((byte)0, response[2]);
-    }
-
-    [Fact]
-    public async Task CharServerLogin_PlayerAccount_IsRejectedAsServer()
-    {
-        // Arrange: a legacy-style player row must never be usable as a service
-        // login, even with a correct password (ServerAccountAuthentication.Classify).
-        await using var db = CreateLoginDb(nameof(CharServerLogin_PlayerAccount_IsRejectedAsServer));
-        db.Accounts.Add(new LoginAccount
-        {
-            AccountId = 2000020,
-            UserId = "notaserver",
-            UserPass = "whatever",
-            Sex = "M",
-        });
-        await db.SaveChangesAsync();
-
-        using var fixture = ClientSessionFixture.Create(() => CreateLoginDb(nameof(CharServerLogin_PlayerAccount_IsRejectedAsServer)));
-        var packet = BuildCharServerLoginPacket("notaserver", "whatever");
-
-        var handlePacket = typeof(ClientSession).GetMethod("HandlePacketAsync", BindingFlags.NonPublic | BindingFlags.Instance);
-
-        // Act
-        await (Task)handlePacket!.Invoke(fixture.Session, new object[] { LcCharServerLogin, packet, CancellationToken.None })!;
-        var response = await fixture.ReadExactAsync(3);
-
-        // Assert
-        Assert.Equal(LcCharServerLoginAck, BinaryPrimitives.ReadInt16LittleEndian(response.AsSpan(0, 2)));
-        Assert.Equal((byte)3, response[2]);
-    }
-
-    [Fact]
     public async Task PlayerLogin_EnablesWebAuthToken_ThenGoesOffline_DisablesWebAuthToken()
     {
         // Arrange: a real Identity login with UseWebAuthToken enabled end-to-end.
-        // Login enables the token on AthenaGameAccount (never the legacy
-        // LoginAccount table, which service accounts use); CharServer then
-        // reports the player offline, which must disable it - also on
-        // AthenaGameAccount, looked up by RagnarokAccountId.
+        // Login enables the token on AthenaGameAccount; CharServer then reports
+        // the player offline, which must disable it - also on AthenaGameAccount,
+        // looked up by RagnarokAccountId.
         using var identity = new IdentityTestFixture(useWebAuthToken: true);
         var provisioned = await identity.ProvisionAsync("webtokenuser", "correct-password", 'M');
 
         var loginDbName = Guid.NewGuid().ToString();
-        await using (var seedDb = CreateLoginDb(loginDbName))
-        {
-            seedDb.Accounts.Add(new LoginAccount { AccountId = 1, UserId = "charserver", UserPass = "service-secret", Sex = "S" });
-            await seedDb.SaveChangesAsync();
-        }
 
         using var fixture = ClientSessionFixture.Create(
             dbFactory: () => CreateLoginDb(loginDbName),
@@ -421,12 +364,10 @@ public sealed class ClientSessionLoginCharFlowTests
 
         Assert.True(await identity.GetWebAuthTokenEnabledAsync(provisioned.GameAccountId), "A successful login must enable the WebAuthToken.");
 
-        // Act 2: CharServer authenticates, then reports the player offline
-        // (LcSetAccountOffline is a ServiceOnlyPackets packet - CharServer must
-        // authenticate first).
-        var charLoginPacket = BuildCharServerLoginPacket("charserver", "service-secret");
-        await (Task)handlePacket!.Invoke(fixture.Session, new object[] { LcCharServerLogin, charLoginPacket, CancellationToken.None })!;
-        await fixture.ReadExactAsync(3);
+        // Act 2: CharServer completes the HMAC-SHA256 service handshake, then
+        // reports the player offline (LcSetAccountOffline is a ServiceOnlyPackets
+        // packet - CharServer must authenticate first).
+        await CompleteServiceHandshakeAsync(fixture, handlePacket!);
 
         var offlinePacket = new byte[6];
         BinaryPrimitives.WriteUInt32LittleEndian(offlinePacket.AsSpan(2, 4), provisioned.RagnarokAccountId);
@@ -456,18 +397,36 @@ public sealed class ClientSessionLoginCharFlowTests
         return await condition();
     }
 
-    private static byte[] BuildCharServerLoginPacket(string user, string pass)
+    /// <summary>
+    /// Drives the LcServiceHello -&gt; LcServiceAuthChallenge -&gt; LcServiceAuthProof
+    /// -&gt; LcServiceAuthResult HMAC-SHA256 handshake against a session under
+    /// test, using the fixture's configured <see cref="ServiceToken"/>. See
+    /// ClientSessionServiceAuthGate.test.cs for dedicated success/failure
+    /// coverage of the handshake itself; this helper exists only so flows that
+    /// need an authenticated CharServer connection as a prerequisite (e.g. the
+    /// WebAuthToken offline-notification test) can reach that state.
+    /// </summary>
+    private static async Task CompleteServiceHandshakeAsync(ClientSessionFixture fixture, MethodInfo handlePacket)
     {
-        // LcCharServerLogin is 86 bytes: id[2] user[24] pass[24] ... ip[4] port[2] name[20] type[2] isNew[2] (from offset 54).
-        var packet = new byte[86];
-        WriteFixedAscii(packet, 2, NameLength, user);
-        WriteFixedAscii(packet, 26, NameLength, pass);
-        IPAddress.Loopback.GetAddressBytes().CopyTo(packet, 54);
-        BinaryPrimitives.WriteUInt16BigEndian(packet.AsSpan(58, 2), 6121);
-        WriteFixedAscii(packet, 60, 20, "TestChar");
-        BinaryPrimitives.WriteUInt16LittleEndian(packet.AsSpan(82, 2), 0);
-        BinaryPrimitives.WriteUInt16LittleEndian(packet.AsSpan(84, 2), 0);
-        return packet;
+        var hello = new byte[2 + NameLength + 4 + 2 + ServerNameLength + 2 + 2];
+        WriteFixedAscii(hello, 2, NameLength, ServiceId);
+        IPAddress.Loopback.GetAddressBytes().CopyTo(hello, 2 + NameLength);
+        BinaryPrimitives.WriteUInt16BigEndian(hello.AsSpan(2 + NameLength + 4, 2), 6121);
+        WriteFixedAscii(hello, 2 + NameLength + 4 + 2, ServerNameLength, "TestChar");
+        await (Task)handlePacket.Invoke(fixture.Session, new object[] { LcServiceHello, hello, CancellationToken.None })!;
+
+        var challengePacket = await fixture.ReadExactAsync(2 + ServiceNonceLength);
+        Assert.Equal(LcServiceAuthChallenge, BinaryPrimitives.ReadInt16LittleEndian(challengePacket.AsSpan(0, 2)));
+        var nonce = challengePacket.AsSpan(2, ServiceNonceLength).ToArray();
+
+        var proof = ServiceAuthProofCalculator.ComputeProof(Encoding.UTF8.GetBytes(ServiceToken), ServiceId, nonce);
+        var proofPacket = new byte[2 + ServiceProofLength];
+        proof.CopyTo(proofPacket, 2);
+        await (Task)handlePacket.Invoke(fixture.Session, new object[] { LcServiceAuthProof, proofPacket, CancellationToken.None })!;
+
+        var resultPacket = await fixture.ReadExactAsync(3);
+        Assert.Equal(LcServiceAuthResult, BinaryPrimitives.ReadInt16LittleEndian(resultPacket.AsSpan(0, 2)));
+        Assert.Equal((byte)0, resultPacket[2]);
     }
 
     private static void WriteFixedAscii(byte[] buffer, int offset, int length, string value)
@@ -647,7 +606,7 @@ public sealed class ClientSessionLoginCharFlowTests
                 new LoginState(),
                 new SubnetConfig(),
                 playerAuth ?? new UnavailablePlayerAuthenticationService(),
-                new ServiceAuthenticationService());
+                new ServiceAuthenticationService(new CharServerServiceTokenProvider(new SecretConfig { CharServerServiceToken = ServiceToken })));
 
             return new ClientSessionFixture(session, charServers, listener, testClient, serverSide);
         }

@@ -46,12 +46,15 @@ separate domains that happen to both flow through LoginServer's TCP listener:
   Athena.Client/Gateway/QUIC, and for the important caveat that Identity
   protects server-side credential storage only - it does not encrypt the
   Ragexe TCP transport.
-- **CharServer/service accounts** are unrelated to Identity and remain on
-  the legacy `LoginAccount`/`login` table exactly as before, verified by
-  `IServiceAuthenticationService`. CharServer is never an Identity user.
+- **CharServer/service authentication** is a third, fully separate domain
+  from both player Identity and the legacy `login` table (which no longer
+  exists - see "Inter-server service authentication" below). CharServer is
+  never an Identity user, never has a password, and never requires a
+  database row. It proves possession of a shared `ServiceToken` via an
+  HMAC-SHA256 challenge/response handled by `IServiceAuthenticationService`.
   Every inter-server ("Lc*") packet that manages player game-account state
   (ban, VIP, sex change, pincode, account info/data, email change, etc.) is
-  rejected unless the socket has already authenticated as a service account
+  rejected unless the socket has already authenticated as a service
   (`IServiceAuthenticationService.IsAuthenticated`); LoginServer used to
   process these packets without checking that first, which has been fixed
   and is covered by regression tests
@@ -63,23 +66,58 @@ separate domains that happen to both flow through LoginServer's TCP listener:
   Identity - it is how CharServer and MapServer confirm a session, and it
   has nothing to do with human/Identity authentication.
 
-## Development service-account provisioning
+## Inter-server service authentication
 
-CharServer authenticates to LoginServer with `CharServer.UserId` and
-`CharServer.Password` from `solutionfiles/secrets/secret.json`. LoginDb stores this
-infrastructure identity in the normal `login` table with `sex='S'` and a reserved
-`account_id` below 5. It is configuration-derived bootstrap data, not EF schema
-seed data. After creating or resetting `LoginDb`, provision it idempotently:
+CharServer authenticates to LoginServer with a non-secret `ServiceId` and a
+shared `ServiceToken`, never a username/password pair and never a database
+row. The legacy `login` table (which used to hold a `sex='S'`, low-`account_id`
+"service account" row for this purpose) has been dropped entirely - see
+`docs/architecture-roadmap.md` for the migration that removes it.
 
-```bash
-./scripts/seed-login-server-account.sh
-```
+The handshake, driven by `IServiceAuthenticationService`
+(`ServiceAuthenticationService` in production) and mirrored byte-for-byte on
+the CharServer side by `Athena.Net.CharServer.Net.ServiceAuthProofCalculator`,
+is:
 
-The script reads configured credentials without printing them, reserves account ID
-1 by default, refreshes the configured password for an existing valid service row,
-and refuses to convert a player or non-reserved row into a server identity. Normal
-development player accounts are provisioned through ASP.NET Core Identity, never
-by inserting rows directly:
+1. CharServer opens a TCP connection to LoginServer and sends `LcServiceHello`
+   (`0x2750`) carrying its non-secret `ServiceId` and registration info
+   (advertised IP/port, server name, maintenance/new-display flags).
+2. LoginServer generates a cryptographically random 32-byte one-time nonce
+   (`RandomNumberGenerator`) and replies with `LcServiceAuthChallenge`
+   (`0x2751`) carrying it. The nonce is scoped to this connection only and can
+   be consumed exactly once.
+3. CharServer computes
+   `HMAC-SHA256(ServiceToken, "Athena.NET/CharServer/Auth/v1" + 0x1F + ServiceId + 0x1F + nonce)`
+   (see `ServiceAuthProofCalculator`) and sends only the 32-byte proof back as
+   `LcServiceAuthProof` (`0x2752`). The `ServiceToken` itself never travels
+   over the network - only this one-time derived proof does.
+4. LoginServer independently recomputes the expected proof and compares it to
+   the submitted one with `CryptographicOperations.FixedTimeEquals` (a
+   fixed-time comparison, so a wrong proof cannot be distinguished by timing).
+   Only on an exact match does it set `IsAuthenticated = true` and register
+   the connection as a live CharServer; any other outcome - wrong proof,
+   expired/already-consumed challenge, or no `ServiceToken` configured at all
+   (fail closed) - sends `LcServiceAuthResult` (`0x2753`) with a failure byte
+   and closes the connection rather than allowing retries.
+
+HMAC-SHA256 here authenticates *possession* of the shared `ServiceToken` and
+prevents that secret from ever being sent over the wire - it does not encrypt
+the connection. The player-facing stock-iRO TCP transport, and this internal
+LoginServer<->CharServer transport, are both still plaintext for now; a future
+TLS/mTLS layer may protect the internal connection later but is out of scope
+here.
+
+The `ServiceToken` is configured in `solutionfiles/secrets/secret.json` under
+`ServiceAuthentication.CharServer.Token`, or via the
+`ATHENA_NET_CHAR_SERVER_SERVICE_TOKEN` environment variable (checked first,
+suited to deployment secret sources such as Kubernetes Secrets). It should be
+a high-entropy random value (256 bits/32+ bytes is recommended) and both
+LoginServer and CharServer must be configured with the identical value. It is
+never stored in SQL Server, never hashed into any table, and never
+represented as an ASP.NET Core Identity user.
+
+Normal development player accounts are provisioned through ASP.NET Core
+Identity, never by inserting rows directly:
 
 ```bash
 ./scripts/create-player-account.sh <username> [M|F] [email]

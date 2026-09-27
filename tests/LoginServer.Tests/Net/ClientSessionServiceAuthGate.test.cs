@@ -10,7 +10,6 @@ using Microsoft.Extensions.DependencyInjection;
 using Athena.Net.LoginServer.Application;
 using Athena.Net.LoginServer.Config;
 using Athena.Net.LoginServer.Db;
-using Athena.Net.LoginServer.Db.Entities;
 using Athena.Net.LoginServer.Db.Identity;
 using Athena.Net.LoginServer.Net;
 using Athena.Net.LoginServer.Tests.TestSupport;
@@ -18,22 +17,29 @@ using Athena.Net.LoginServer.Tests.TestSupport;
 namespace Athena.Net.LoginServer.Tests.Net;
 
 /// <summary>
-/// Security regression coverage: an arbitrary TCP client that has not proven it
-/// is an authenticated CharServer (via LcCharServerLogin) must not be able to
-/// execute privileged inter-server operations - account-data requests, bans,
-/// state changes, registry updates, or player auth requests. Only
-/// LcCharServerLogin itself is accepted before authentication.
+/// Security regression coverage: an arbitrary TCP client that has not completed
+/// the LcServiceHello -&gt; LcServiceAuthChallenge -&gt; LcServiceAuthProof HMAC-SHA256
+/// handshake (see ai/login-server.md, "Inter-server service authentication")
+/// must not be able to execute privileged inter-server operations -
+/// account-data requests, bans, state changes, registry updates, or player
+/// auth requests. Only LcServiceHello/LcServiceAuthProof themselves (the
+/// handshake) are accepted before authentication.
 /// </summary>
 public sealed class ClientSessionServiceAuthGateTests : IDisposable
 {
-    private const short LcCharServerLogin = 0x2710;
-    private const short LcCharServerLoginAck = 0x2711;
+    private const short LcServiceHello = 0x2750;
+    private const short LcServiceAuthChallenge = 0x2751;
+    private const short LcServiceAuthProof = 0x2752;
+    private const short LcServiceAuthResult = 0x2753;
     private const short LcBanAccount = 0x2725;
     private const short LcAccountDataRequest = 0x2716;
-    private const short LcAccountDataResponse = 0x2717;
     private const short LcAuthRequest = 0x2712;
-    private const short LcAuthResponse = 0x2713;
     private const int NameLength = 24;
+    private const int ServerNameLength = 20;
+    private const int ServiceNonceLength = 32;
+    private const int ServiceProofLength = 32;
+    private const string ServiceToken = "test-only-service-token-0123456789abcdef";
+    private const string ServiceId = "TestCharServer";
 
     private readonly SqliteConnection _connection;
     private readonly ServiceProvider _serviceProvider;
@@ -87,27 +93,17 @@ public sealed class ClientSessionServiceAuthGateTests : IDisposable
         return new AthenaIdentityDbContext(options);
     }
 
-    private static LoginDbContext CreateLoginDb(string name)
-    {
-        var options = new DbContextOptionsBuilder<LoginDbContext>()
-            .UseInMemoryDatabase(name)
-            .ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.InMemoryEventId.TransactionIgnoredWarning))
-            .Options;
-        return new LoginDbContext(options);
-    }
-
     [Fact]
     public async Task UnauthenticatedSocket_LcBanAccount_IsDropped_AndDoesNotModifyGameAccount()
     {
         var provisioned = await ProvisionPlayerAsync("banvictim");
-        using var fixture = ClientSessionFixture.Create(() => null, () => CreateIdentityDb());
+        using var fixture = ClientSessionFixture.Create(() => CreateIdentityDb());
 
         var packet = new byte[10];
         BinaryPrimitives.WriteUInt32LittleEndian(packet.AsSpan(2, 4), provisioned.RagnarokAccountId);
         BinaryPrimitives.WriteInt32LittleEndian(packet.AsSpan(6, 4), 3600);
 
-        var handlePacket = typeof(ClientSession).GetMethod("HandlePacketAsync", BindingFlags.NonPublic | BindingFlags.Instance);
-        await (Task)handlePacket!.Invoke(fixture.Session, new object[] { LcBanAccount, packet, CancellationToken.None })!;
+        await fixture.InvokeHandlePacketAsync(LcBanAccount, packet);
 
         using var scope = _serviceProvider.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AthenaIdentityDbContext>();
@@ -119,13 +115,12 @@ public sealed class ClientSessionServiceAuthGateTests : IDisposable
     public async Task UnauthenticatedSocket_LcAccountDataRequest_ReceivesNoResponse()
     {
         var provisioned = await ProvisionPlayerAsync("dataleaktest");
-        using var fixture = ClientSessionFixture.Create(() => null, () => CreateIdentityDb());
+        using var fixture = ClientSessionFixture.Create(() => CreateIdentityDb());
 
         var packet = new byte[6];
         BinaryPrimitives.WriteUInt32LittleEndian(packet.AsSpan(2, 4), provisioned.RagnarokAccountId);
 
-        var handlePacket = typeof(ClientSession).GetMethod("HandlePacketAsync", BindingFlags.NonPublic | BindingFlags.Instance);
-        await (Task)handlePacket!.Invoke(fixture.Session, new object[] { LcAccountDataRequest, packet, CancellationToken.None })!;
+        await fixture.InvokeHandlePacketAsync(LcAccountDataRequest, packet);
 
         // No bytes should ever arrive: the packet must be dropped before any
         // handler runs, not merely fail to find data.
@@ -136,13 +131,12 @@ public sealed class ClientSessionServiceAuthGateTests : IDisposable
     [Fact]
     public async Task UnauthenticatedSocket_LcAuthRequest_IsDropped()
     {
-        using var fixture = ClientSessionFixture.Create(() => null, () => CreateIdentityDb());
+        using var fixture = ClientSessionFixture.Create(() => CreateIdentityDb());
 
         var packet = new byte[23];
         BinaryPrimitives.WriteUInt32LittleEndian(packet.AsSpan(2, 4), 12345);
 
-        var handlePacket = typeof(ClientSession).GetMethod("HandlePacketAsync", BindingFlags.NonPublic | BindingFlags.Instance);
-        await (Task)handlePacket!.Invoke(fixture.Session, new object[] { LcAuthRequest, packet, CancellationToken.None })!;
+        await fixture.InvokeHandlePacketAsync(LcAuthRequest, packet);
 
         var receivedAnything = await fixture.TryReadAnyByteAsync(TimeSpan.FromMilliseconds(300));
         Assert.False(receivedAnything, "An unauthenticated socket must never receive an LcAuthResponse.");
@@ -152,28 +146,14 @@ public sealed class ClientSessionServiceAuthGateTests : IDisposable
     public async Task AfterSuccessfulServiceLogin_LcBanAccount_Succeeds()
     {
         var provisioned = await ProvisionPlayerAsync("realbanflow");
+        using var fixture = ClientSessionFixture.Create(() => CreateIdentityDb());
 
-        var loginDbName = Guid.NewGuid().ToString();
-        await using (var seedDb = CreateLoginDb(loginDbName))
-        {
-            seedDb.Accounts.Add(new LoginAccount { AccountId = 1, UserId = "charserver", UserPass = "service-secret", Sex = "S" });
-            await seedDb.SaveChangesAsync();
-        }
-
-        using var fixture = ClientSessionFixture.Create(() => CreateLoginDb(loginDbName), () => CreateIdentityDb());
-
-        var loginPacket = BuildCharServerLoginPacket("charserver", "service-secret");
-        var handlePacket = typeof(ClientSession).GetMethod("HandlePacketAsync", BindingFlags.NonPublic | BindingFlags.Instance);
-        await (Task)handlePacket!.Invoke(fixture.Session, new object[] { LcCharServerLogin, loginPacket, CancellationToken.None })!;
-
-        var loginAck = await fixture.ReadExactAsync(3);
-        Assert.Equal(LcCharServerLoginAck, BinaryPrimitives.ReadInt16LittleEndian(loginAck.AsSpan(0, 2)));
-        Assert.Equal((byte)0, loginAck[2]); // service login succeeded
+        await fixture.CompleteServiceHandshakeAsync(expectSuccess: true);
 
         var banPacket = new byte[10];
         BinaryPrimitives.WriteUInt32LittleEndian(banPacket.AsSpan(2, 4), provisioned.RagnarokAccountId);
         BinaryPrimitives.WriteInt32LittleEndian(banPacket.AsSpan(6, 4), 3600);
-        await (Task)handlePacket!.Invoke(fixture.Session, new object[] { LcBanAccount, banPacket, CancellationToken.None })!;
+        await fixture.InvokeHandlePacketAsync(LcBanAccount, banPacket);
 
         using var scope = _serviceProvider.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AthenaIdentityDbContext>();
@@ -181,95 +161,43 @@ public sealed class ClientSessionServiceAuthGateTests : IDisposable
         Assert.True(account.UnbanTime > 0, "An authenticated CharServer must still be able to ban an account.");
     }
 
-    [Theory]
-    [InlineData("wrong-password")]
-    public async Task CharServerLogin_WrongPassword_FailsAndLeavesConnectionUnauthenticated(string suppliedPassword)
-    {
-        await AssertServiceLoginFailsAndLeavesConnectionUnauthenticatedAsync(
-            new LoginAccount { AccountId = 1, UserId = "charserver", UserPass = "service-secret", Sex = "S" },
-            suppliedPassword);
-    }
-
-    [Fact]
-    public async Task CharServerLogin_BannedServiceAccount_FailsAndLeavesConnectionUnauthenticated()
-    {
-        var unbanTime = (uint)DateTimeOffset.UtcNow.AddHours(1).ToUnixTimeSeconds();
-        await AssertServiceLoginFailsAndLeavesConnectionUnauthenticatedAsync(
-            new LoginAccount { AccountId = 1, UserId = "charserver", UserPass = "service-secret", Sex = "S", UnbanTime = unbanTime },
-            "service-secret");
-    }
-
-    [Fact]
-    public async Task CharServerLogin_ExpiredServiceAccount_FailsAndLeavesConnectionUnauthenticated()
-    {
-        var expirationTime = (uint)DateTimeOffset.UtcNow.AddHours(-1).ToUnixTimeSeconds();
-        await AssertServiceLoginFailsAndLeavesConnectionUnauthenticatedAsync(
-            new LoginAccount { AccountId = 1, UserId = "charserver", UserPass = "service-secret", Sex = "S", ExpirationTime = expirationTime },
-            "service-secret");
-    }
-
-    [Fact]
-    public async Task CharServerLogin_RestrictedStateServiceAccount_FailsAndLeavesConnectionUnauthenticated()
-    {
-        await AssertServiceLoginFailsAndLeavesConnectionUnauthenticatedAsync(
-            new LoginAccount { AccountId = 1, UserId = "charserver", UserPass = "service-secret", Sex = "S", State = 5 },
-            "service-secret");
-    }
-
     /// <summary>
-    /// Seeds a service account row, attempts a CharServer login that must fail for
-    /// the given reason (wrong password, banned, expired, or state-restricted),
-    /// confirms the failure ack, and then proves the connection is still
-    /// unauthenticated by sending a protected Lc* packet on the SAME session and
-    /// confirming it is dropped. This is the core regression for the
-    /// "IsAuthenticated must only become true after a fully successful CharServer
-    /// login" security fix.
+    /// Core regression for the "IsAuthenticated must only become true after a
+    /// fully successful HMAC-SHA256 proof verification" security invariant: a
+    /// proof computed from the wrong token must fail the handshake and leave
+    /// the connection unable to run a protected Lc* packet afterwards, on the
+    /// SAME session/socket.
     /// </summary>
-    private async Task AssertServiceLoginFailsAndLeavesConnectionUnauthenticatedAsync(LoginAccount account, string suppliedPassword)
+    [Fact]
+    public async Task ServiceHandshake_WrongToken_FailsAndLeavesConnectionUnauthenticated()
     {
-        var loginDbName = Guid.NewGuid().ToString();
-        await using (var seedDb = CreateLoginDb(loginDbName))
-        {
-            seedDb.Accounts.Add(account);
-            await seedDb.SaveChangesAsync();
-        }
+        using var fixture = ClientSessionFixture.Create(() => CreateIdentityDb());
 
-        using var fixture = ClientSessionFixture.Create(() => CreateLoginDb(loginDbName), () => CreateIdentityDb());
-
-        var loginPacket = BuildCharServerLoginPacket(account.UserId, suppliedPassword);
-        var handlePacket = typeof(ClientSession).GetMethod("HandlePacketAsync", BindingFlags.NonPublic | BindingFlags.Instance);
-        await (Task)handlePacket!.Invoke(fixture.Session, new object[] { LcCharServerLogin, loginPacket, CancellationToken.None })!;
-
-        var loginAck = await fixture.ReadExactAsync(3);
-        Assert.Equal(LcCharServerLoginAck, BinaryPrimitives.ReadInt16LittleEndian(loginAck.AsSpan(0, 2)));
-        Assert.NotEqual((byte)0, loginAck[2]);
+        await fixture.CompleteServiceHandshakeAsync(expectSuccess: false, proofToken: "a-completely-wrong-token");
 
         var banPacket = new byte[10];
         BinaryPrimitives.WriteUInt32LittleEndian(banPacket.AsSpan(2, 4), 2000001);
         BinaryPrimitives.WriteInt32LittleEndian(banPacket.AsSpan(6, 4), 3600);
-        await (Task)handlePacket!.Invoke(fixture.Session, new object[] { LcBanAccount, banPacket, CancellationToken.None })!;
+        await fixture.InvokeHandlePacketAsync(LcBanAccount, banPacket);
 
         var receivedAnything = await fixture.TryReadAnyByteAsync(TimeSpan.FromMilliseconds(300));
-        Assert.False(receivedAnything, "A connection whose CharServer login failed must not be treated as authenticated.");
+        Assert.False(receivedAnything, "A connection whose service handshake failed must not be treated as authenticated.");
     }
 
-    private static byte[] BuildCharServerLoginPacket(string user, string pass)
+    [Fact]
+    public async Task ServiceHandshake_NoTokenConfigured_FailsClosed()
     {
-        var packet = new byte[86];
-        WriteFixedAscii(packet, 2, NameLength, user);
-        WriteFixedAscii(packet, 26, NameLength, pass);
-        IPAddress.Loopback.GetAddressBytes().CopyTo(packet, 54);
-        BinaryPrimitives.WriteUInt16BigEndian(packet.AsSpan(58, 2), 6121);
-        WriteFixedAscii(packet, 60, 20, "TestChar");
-        BinaryPrimitives.WriteUInt16LittleEndian(packet.AsSpan(82, 2), 0);
-        BinaryPrimitives.WriteUInt16LittleEndian(packet.AsSpan(84, 2), 0);
-        return packet;
-    }
+        using var fixture = ClientSessionFixture.Create(() => CreateIdentityDb(), configuredToken: null);
 
-    private static void WriteFixedAscii(byte[] buffer, int offset, int length, string value)
-    {
-        var bytes = Encoding.ASCII.GetBytes(value);
-        Buffer.BlockCopy(bytes, 0, buffer, offset, Math.Min(length, bytes.Length));
+        await fixture.CompleteServiceHandshakeAsync(expectSuccess: false, proofToken: ServiceToken);
+
+        var banPacket = new byte[10];
+        BinaryPrimitives.WriteUInt32LittleEndian(banPacket.AsSpan(2, 4), 2000001);
+        BinaryPrimitives.WriteInt32LittleEndian(banPacket.AsSpan(6, 4), 3600);
+        await fixture.InvokeHandlePacketAsync(LcBanAccount, banPacket);
+
+        var receivedAnything = await fixture.TryReadAnyByteAsync(TimeSpan.FromMilliseconds(300));
+        Assert.False(receivedAnything, "A connection must fail closed when no ServiceToken is configured at all.");
     }
 
     private sealed class ClientSessionFixture : IDisposable
@@ -277,6 +205,7 @@ public sealed class ClientSessionServiceAuthGateTests : IDisposable
         private readonly TcpListener _listener;
         private readonly TcpClient _testClient;
         private readonly TcpClient _serverSide;
+        private readonly MethodInfo _handlePacketMethod;
 
         public ClientSession Session { get; }
 
@@ -286,9 +215,10 @@ public sealed class ClientSessionServiceAuthGateTests : IDisposable
             _listener = listener;
             _testClient = testClient;
             _serverSide = serverSide;
+            _handlePacketMethod = typeof(ClientSession).GetMethod("HandlePacketAsync", BindingFlags.NonPublic | BindingFlags.Instance)!;
         }
 
-        public static ClientSessionFixture Create(Func<LoginDbContext?> dbFactory, Func<AthenaIdentityDbContext?> identityDbFactory)
+        public static ClientSessionFixture Create(Func<AthenaIdentityDbContext?> identityDbFactory, string? configuredToken = ServiceToken)
         {
             var listener = new TcpListener(IPAddress.Loopback, 0);
             listener.Start();
@@ -301,19 +231,76 @@ public sealed class ClientSessionServiceAuthGateTests : IDisposable
 
             var configStore = new LoginConfigStore(new LoginConfig { LogLogin = false });
             var messageStore = new LoginMessageStore(new LoginMessageCatalog(new Dictionary<uint, string>()));
+            var secrets = new SecretConfig { CharServerServiceToken = configuredToken ?? string.Empty };
+            var serviceAuth = new ServiceAuthenticationService(new CharServerServiceTokenProvider(secrets));
             var session = new Athena.Net.LoginServer.Net.ClientSession(
                 serverSide,
                 configStore,
                 messageStore,
-                dbFactory,
+                () => null,
                 identityDbFactory,
                 new Athena.Net.LoginServer.Net.CharServerRegistry(),
                 new Athena.Net.LoginServer.Net.LoginState(),
                 new SubnetConfig(),
                 new UnavailablePlayerAuthenticationService(),
-                new ServiceAuthenticationService());
+                serviceAuth);
 
             return new ClientSessionFixture(session, listener, testClient, serverSide);
+        }
+
+        public async Task InvokeHandlePacketAsync(short packetType, byte[] packet)
+        {
+            await (Task)_handlePacketMethod.Invoke(Session, new object[] { packetType, packet, CancellationToken.None })!;
+        }
+
+        /// <summary>
+        /// Drives the full LcServiceHello -&gt; LcServiceAuthChallenge -&gt;
+        /// LcServiceAuthProof -&gt; LcServiceAuthResult handshake against the
+        /// session under test, computing the HMAC-SHA256 proof with
+        /// <paramref name="proofToken"/> (defaults to the correctly configured
+        /// <see cref="ServiceToken"/>, but a test can pass a different value to
+        /// exercise the wrong-token failure path).
+        /// </summary>
+        public async Task CompleteServiceHandshakeAsync(bool expectSuccess, string proofToken = ServiceToken)
+        {
+            var hello = BuildServiceHelloPacket(ServiceId);
+            await InvokeHandlePacketAsync(LcServiceHello, hello);
+
+            var challengePacket = await ReadExactAsync(2 + ServiceNonceLength);
+            Assert.Equal(LcServiceAuthChallenge, BinaryPrimitives.ReadInt16LittleEndian(challengePacket.AsSpan(0, 2)));
+            var nonce = challengePacket.AsSpan(2, ServiceNonceLength).ToArray();
+
+            var proof = ServiceAuthProofCalculator.ComputeProof(Encoding.UTF8.GetBytes(proofToken), ServiceId, nonce);
+            var proofPacket = new byte[2 + ServiceProofLength];
+            proof.CopyTo(proofPacket, 2);
+            await InvokeHandlePacketAsync(LcServiceAuthProof, proofPacket);
+
+            var resultPacket = await ReadExactAsync(3);
+            Assert.Equal(LcServiceAuthResult, BinaryPrimitives.ReadInt16LittleEndian(resultPacket.AsSpan(0, 2)));
+            if (expectSuccess)
+            {
+                Assert.Equal((byte)0, resultPacket[2]);
+            }
+            else
+            {
+                Assert.NotEqual((byte)0, resultPacket[2]);
+            }
+        }
+
+        private static byte[] BuildServiceHelloPacket(string serviceId)
+        {
+            var packet = new byte[2 + NameLength + 4 + 2 + ServerNameLength + 2 + 2];
+            WriteFixedAscii(packet, 2, NameLength, serviceId);
+            IPAddress.Loopback.GetAddressBytes().CopyTo(packet, 2 + NameLength);
+            BinaryPrimitives.WriteUInt16BigEndian(packet.AsSpan(2 + NameLength + 4, 2), 6121);
+            WriteFixedAscii(packet, 2 + NameLength + 4 + 2, ServerNameLength, "TestChar");
+            return packet;
+        }
+
+        private static void WriteFixedAscii(byte[] buffer, int offset, int length, string value)
+        {
+            var bytes = Encoding.ASCII.GetBytes(value);
+            Buffer.BlockCopy(bytes, 0, buffer, offset, Math.Min(length, bytes.Length));
         }
 
         public async Task<byte[]> ReadExactAsync(int length)

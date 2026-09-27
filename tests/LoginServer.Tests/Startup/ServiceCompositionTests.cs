@@ -28,7 +28,6 @@ public sealed class ServiceCompositionTests
         var secrets = new SecretConfig();
         var tableNames = new LoginDbTableNames
         {
-            AccountTable = interConfig.LoginAccountTable,
             IpBanTable = interConfig.IpBanTable,
             LoginLogTable = interConfig.LoginLogTable,
             GlobalAccRegNumTable = interConfig.GlobalAccRegNumTable,

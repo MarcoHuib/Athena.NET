@@ -1,84 +1,185 @@
 using System.Security.Cryptography;
-using System.Text;
 using Athena.Net.LoginServer.Application;
-using Athena.Net.LoginServer.Db.Entities;
+using Athena.Net.LoginServer.Config;
 
 namespace Athena.Net.LoginServer.Tests.Application;
 
+/// <summary>
+/// Covers the HMAC-SHA256 CharServer &lt;-&gt; LoginServer service authentication
+/// handshake (see ai/login-server.md, "Inter-server service authentication").
+/// No LoginAccount/Identity database query is ever involved - <see cref="ServiceAuthenticationService"/>
+/// never takes a DbContext dependency at all, and no service database row is
+/// required to authenticate.
+/// </summary>
 public sealed class ServiceAuthenticationServiceTests
 {
-    [Fact]
-    public void VerifyPassword_PlainText_MatchesExactly()
-    {
-        var service = new ServiceAuthenticationService();
-        var account = new LoginAccount { UserPass = "hunter2" };
+    private const string ServiceId = "CharServer";
 
-        Assert.True(service.VerifyPassword(account, "hunter2", passwordEnc: 0, md5Key: null));
-        Assert.False(service.VerifyPassword(account, "wrong", passwordEnc: 0, md5Key: null));
+    private static ServiceAuthenticationService CreateService(string? token = "correct-horse-battery-staple-0123456789")
+    {
+        var secrets = new SecretConfig { CharServerServiceToken = token ?? string.Empty };
+        return new ServiceAuthenticationService(new CharServerServiceTokenProvider(secrets));
+    }
+
+    private static byte[] ComputeProof(string token, string serviceId, byte[] nonce)
+    {
+        return ServiceAuthProofCalculator.ComputeProof(System.Text.Encoding.UTF8.GetBytes(token), serviceId, nonce);
     }
 
     [Fact]
-    public void VerifyPassword_Md5KeyPrefix_MatchesRAthenaChallengeScheme()
+    public void ValidProof_Succeeds()
     {
-        var service = new ServiceAuthenticationService();
-        var account = new LoginAccount { UserPass = "hunter2" };
-        var md5Key = Encoding.ASCII.GetBytes("challenge-key");
-        var expected = Md5Hex(Concat(md5Key, Encoding.ASCII.GetBytes(account.UserPass)));
+        var service = CreateService();
+        var nonce = service.GenerateChallenge(ServiceId);
+        var proof = ComputeProof("correct-horse-battery-staple-0123456789", ServiceId, nonce);
 
-        Assert.True(service.VerifyPassword(account, expected, passwordEnc: 0x01, md5Key: md5Key));
-    }
-
-    [Fact]
-    public void VerifyPassword_Md5Enc_WithoutKey_Fails()
-    {
-        var service = new ServiceAuthenticationService();
-        var account = new LoginAccount { UserPass = "hunter2" };
-
-        Assert.False(service.VerifyPassword(account, "anything", passwordEnc: 0x01, md5Key: null));
-    }
-
-    private static byte[] Concat(byte[] first, byte[] second)
-    {
-        var buffer = new byte[first.Length + second.Length];
-        Buffer.BlockCopy(first, 0, buffer, 0, first.Length);
-        Buffer.BlockCopy(second, 0, buffer, first.Length, second.Length);
-        return buffer;
-    }
-
-    private static string Md5Hex(byte[] data)
-    {
-        using var md5 = MD5.Create();
-        var hash = md5.ComputeHash(data);
-        var sb = new StringBuilder(hash.Length * 2);
-        foreach (var b in hash)
-        {
-            sb.Append(b.ToString("x2"));
-        }
-
-        return sb.ToString();
-    }
-
-    [Fact]
-    public void Authenticate_ValidReservedServiceAccount_Succeeds_ButDoesNotYetMarkConnectionAuthenticated()
-    {
-        // Authenticate() only classifies credentials. The caller (ClientSession)
-        // still has to run expiration/ban/state checks and reach a final
-        // successful login before the connection is trusted - see
-        // MarkAuthenticated_OnlyExplicitCall_SetsIsAuthenticated below.
-        var service = new ServiceAuthenticationService();
-        Assert.False(service.IsAuthenticated);
-
-        var result = service.Authenticate(new LoginAccount { AccountId = 1, Sex = "S" }, passwordMatches: true);
+        var result = service.VerifyProof(proof);
 
         Assert.True(result.Success);
         Assert.Equal(ServiceAuthenticationOutcome.Success, result.Outcome);
+    }
+
+    [Fact]
+    public void WrongToken_Fails()
+    {
+        var service = CreateService();
+        var nonce = service.GenerateChallenge(ServiceId);
+        var proof = ComputeProof("a-completely-different-token", ServiceId, nonce);
+
+        var result = service.VerifyProof(proof);
+
+        Assert.False(result.Success);
+        Assert.Equal(ServiceAuthenticationOutcome.InvalidProof, result.Outcome);
+    }
+
+    [Fact]
+    public void ModifiedProofByte_Fails()
+    {
+        var service = CreateService();
+        var nonce = service.GenerateChallenge(ServiceId);
+        var proof = ComputeProof("correct-horse-battery-staple-0123456789", ServiceId, nonce);
+        proof[0] ^= 0xFF;
+
+        var result = service.VerifyProof(proof);
+
+        Assert.False(result.Success);
+        Assert.Equal(ServiceAuthenticationOutcome.InvalidProof, result.Outcome);
+    }
+
+    [Fact]
+    public void ProofComputedForDifferentServiceId_Fails()
+    {
+        var service = CreateService();
+        var nonce = service.GenerateChallenge(ServiceId);
+        var proof = ComputeProof("correct-horse-battery-staple-0123456789", "SomeOtherService", nonce);
+
+        var result = service.VerifyProof(proof);
+
+        Assert.False(result.Success);
+        Assert.Equal(ServiceAuthenticationOutcome.InvalidProof, result.Outcome);
+    }
+
+    [Fact]
+    public void MissingToken_FailsClosed()
+    {
+        var service = CreateService(token: null);
+        var nonce = service.GenerateChallenge(ServiceId);
+        var proof = ComputeProof("anything", ServiceId, nonce);
+
+        var result = service.VerifyProof(proof);
+
+        Assert.False(result.Success);
+        Assert.Equal(ServiceAuthenticationOutcome.TokenNotConfigured, result.Outcome);
+    }
+
+    [Fact]
+    public void NoChallengeIssued_Fails()
+    {
+        var service = CreateService();
+        var proof = new byte[32];
+        RandomNumberGenerator.Fill(proof);
+
+        var result = service.VerifyProof(proof);
+
+        Assert.False(result.Success);
+        Assert.Equal(ServiceAuthenticationOutcome.NoChallengeIssued, result.Outcome);
+    }
+
+    [Fact]
+    public void ChallengeReuse_SecondVerifyAgainstSameChallenge_Fails()
+    {
+        var service = CreateService();
+        var nonce = service.GenerateChallenge(ServiceId);
+        var proof = ComputeProof("correct-horse-battery-staple-0123456789", ServiceId, nonce);
+
+        var first = service.VerifyProof(proof);
+        Assert.True(first.Success);
+
+        var second = service.VerifyProof(proof);
+        Assert.False(second.Success);
+        Assert.Equal(ServiceAuthenticationOutcome.NoChallengeIssued, second.Outcome);
+    }
+
+    [Fact]
+    public void FailedProof_AlsoConsumesChallenge_CannotBeRetried()
+    {
+        var service = CreateService();
+        var nonce = service.GenerateChallenge(ServiceId);
+        var wrongProof = ComputeProof("wrong-token", ServiceId, nonce);
+
+        var first = service.VerifyProof(wrongProof);
+        Assert.False(first.Success);
+
+        var correctProof = ComputeProof("correct-horse-battery-staple-0123456789", ServiceId, nonce);
+        var retry = service.VerifyProof(correctProof);
+
+        Assert.False(retry.Success);
+        Assert.Equal(ServiceAuthenticationOutcome.NoChallengeIssued, retry.Outcome);
+    }
+
+    /// <summary>
+    /// The scenario from the task spec: connection A's nonce/proof pair must
+    /// never authenticate a different connection B. Each TCP connection gets
+    /// its own <see cref="ServiceAuthenticationService"/> instance (see
+    /// ServiceComposition's AddTransient registration), so connection B's
+    /// service here has never issued connection A's nonce and has no pending
+    /// challenge for it - replaying A's proof against B fails exactly like a
+    /// proof submitted with no challenge issued at all.
+    /// </summary>
+    [Fact]
+    public void ReplayAcrossConnections_ProofFromConnectionA_DoesNotAuthenticateConnectionB()
+    {
+        var connectionA = CreateService();
+        var nonceA = connectionA.GenerateChallenge(ServiceId);
+        var proofA = ComputeProof("correct-horse-battery-staple-0123456789", ServiceId, nonceA);
+        Assert.True(connectionA.VerifyProof(proofA).Success);
+
+        var connectionB = CreateService();
+        connectionB.GenerateChallenge(ServiceId);
+
+        var replayResult = connectionB.VerifyProof(proofA);
+
+        Assert.False(replayResult.Success);
+        Assert.NotEqual(ServiceAuthenticationOutcome.Success, replayResult.Outcome);
+    }
+
+    [Fact]
+    public void VerifyProof_NeverSetsIsAuthenticated()
+    {
+        var service = CreateService();
+        var nonce = service.GenerateChallenge(ServiceId);
+        var proof = ComputeProof("correct-horse-battery-staple-0123456789", ServiceId, nonce);
+
+        var result = service.VerifyProof(proof);
+
+        Assert.True(result.Success);
         Assert.False(service.IsAuthenticated);
     }
 
     [Fact]
     public void MarkAuthenticated_OnlyExplicitCall_SetsIsAuthenticated()
     {
-        var service = new ServiceAuthenticationService();
+        var service = CreateService();
         Assert.False(service.IsAuthenticated);
 
         service.MarkAuthenticated();
@@ -87,38 +188,15 @@ public sealed class ServiceAuthenticationServiceTests
     }
 
     [Fact]
-    public void Authenticate_UnknownAccount_Fails_AndLeavesConnectionUnauthenticated()
+    public void FailedVerification_NeverTransitionsToAuthenticated_EvenIfMarkAuthenticatedIsCalledAfterwards()
     {
-        var service = new ServiceAuthenticationService();
+        var service = CreateService();
+        var nonce = service.GenerateChallenge(ServiceId);
+        var wrongProof = ComputeProof("wrong-token", ServiceId, nonce);
 
-        var result = service.Authenticate(null, passwordMatches: false);
+        var result = service.VerifyProof(wrongProof);
 
         Assert.False(result.Success);
-        Assert.Equal(ServiceAuthenticationOutcome.AccountNotFound, result.Outcome);
-        Assert.False(service.IsAuthenticated);
-    }
-
-    [Fact]
-    public void Authenticate_WrongPassword_Fails_AndLeavesConnectionUnauthenticated()
-    {
-        var service = new ServiceAuthenticationService();
-
-        var result = service.Authenticate(new LoginAccount { AccountId = 1, Sex = "S" }, passwordMatches: false);
-
-        Assert.False(result.Success);
-        Assert.Equal(ServiceAuthenticationOutcome.InvalidCredential, result.Outcome);
-        Assert.False(service.IsAuthenticated);
-    }
-
-    [Fact]
-    public void Authenticate_PlayerAccount_IsNeverAuthorizedAsService()
-    {
-        var service = new ServiceAuthenticationService();
-
-        var result = service.Authenticate(new LoginAccount { AccountId = 2000001, Sex = "M" }, passwordMatches: true);
-
-        Assert.False(result.Success);
-        Assert.Equal(ServiceAuthenticationOutcome.NotAuthorized, result.Outcome);
         Assert.False(service.IsAuthenticated);
     }
 }
