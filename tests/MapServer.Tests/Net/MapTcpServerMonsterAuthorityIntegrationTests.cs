@@ -111,6 +111,32 @@ public sealed class MapTcpServerMonsterAuthorityIntegrationTests : IAsyncLifetim
         return (client, stream, session, run, listener);
     }
 
+    // Substep 10: thin wrapper around ConnectSessionAsync that also spins up the background
+    // drain-loop pattern already duplicated inline by PlayerAttack_NonLethalHit_.../
+    // PlayerAttack_LethalHit_... above. Only used by scenarios that don't need to read/assert
+    // specific packets off the stream themselves - those use plain ConnectSessionAsync and drain
+    // manually/selectively instead.
+    private static async Task<(TcpClient Client, NetworkStream Stream, MapClientSession Session, Task RunTask, CancellationTokenSource DrainCts, Task DrainTask)> ConnectAttackerAsync(
+        MapTcpServer server, MapServerWorld world, IWorldRuntime worldRuntime, uint accountId, string mapId, ushort x, ushort y, CharacterGameplayState? gameplayState = null)
+    {
+        var (client, stream, session, run, _) = await ConnectSessionAsync(server, world, worldRuntime, accountId, mapId, x, y, gameplayState);
+        var drainCts = new CancellationTokenSource();
+        var drainTask = Task.Run(async () =>
+        {
+            var sink = new byte[4096];
+            try { while (!drainCts.IsCancellationRequested) await stream.ReadAsync(sink, drainCts.Token); }
+            catch (OperationCanceledException) { } catch (IOException) { }
+        });
+        return (client, stream, session, run, drainCts, drainTask);
+    }
+
+    // Substep 10: a fixture whose first hit against Poring's real 55 HP is reliably NON-LETHAL
+    // (confirmed by inline assertion at each use site - see scenario 3), but two hits together
+    // reliably kill. Deterministic per this project's own unarmed statusAtk formula (no RNG
+    // dependency): a low-BaseLevel, low-stat attacker without a weapon.
+    private static CharacterGameplayState ModerateAttackerFor(uint accountId) =>
+        new(accountId, 1, 0, 5, 1, 0, 0, 100, 20, 100, 20, 0, 0, 5, 3, 3, 3, 5, 3);
+
     [Fact]
     public async Task SpawnInitializationRequired_LoadsSpawns_AndBootstrapsProjection()
     {
@@ -461,6 +487,704 @@ public sealed class MapTcpServerMonsterAuthorityIntegrationTests : IAsyncLifetim
         Assert.Equal(WorldMonsterAttackWindowStatus.StaleTargetPresence, staleWindow.Status);
     }
 
+    // ================================================================================
+    // Substep 10: multi-attacker / cross-process integration.
+    // ================================================================================
+
+    // Scenario 1: two sessions, both using the file-level strong/one-shot attacker fixture (so
+    // EACH session's own FIRST logical attack attempt would independently be lethal if it wins the
+    // race - not merely "two hits together kill"), race a genuinely concurrent attack against the
+    // SAME monster through the real grain. A shared barrier (both sessions' own
+    // DebugApplyMonsterDamageDispatcher signals arrival, then blocks on one shared release gate
+    // before calling the REAL dispatcher) guarantees the two dispatches genuinely overlap without
+    // ever controlling or predicting which one the real grain actually processes first - that
+    // ordering stays nondeterministic by design. Assertions are winner-independent: exactly one
+    // first-attempt result is Applied+KilledByThisHit, the other is AlreadyDead, and the
+    // AlreadyDead loser's own wire silence (no damage/HP-info/reward packet) is proven directly
+    // against its own socket, not merely inferred from the status.
+    [Fact]
+    public async Task TwoAttackers_ConcurrentLethalRace_ExactlyOneWinner_NoHpUnderflow_LoserGetsAlreadyDead()
+    {
+        var mapId = "izlude";
+        var world = MakeWorld(mapId);
+        var worldRuntime = new OrleansWorldRuntime(_cluster.Client, Resolver());
+        var server = new MapTcpServer(new MapConfigStore(new MapConfig(), "unused.conf"), new CharServerConnector(new MapConfigStore(new MapConfig(), "unused.conf")), world, worldRuntime);
+        var (clientA, streamA, sessionA, runA, _) = await ConnectSessionAsync(server, world, worldRuntime, accountId: 100, mapId, (ushort)(MonsterX - 1), MonsterY);
+        var (clientB, streamB, sessionB, runB, _) = await ConnectSessionAsync(server, world, worldRuntime, accountId: 101, mapId, (ushort)(MonsterX + 1), MonsterY);
+        using var _disposeA = clientA;
+        using var _disposeB = clientB;
+
+        await server.ProcessOneMonsterTickAsync([sessionA, sessionB], CancellationToken.None);
+        await server.ProcessOneMonsterTickAsync([sessionA, sessionB], CancellationToken.None);
+        await server.ProcessOneMonsterTickAsync([sessionA, sessionB], CancellationToken.None);
+
+        Assert.True(world.MonsterProjections.TryGet(mapId, out var projection));
+        var monster = Assert.Single(projection.AllInstances);
+
+        var aReachedBarrier = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var bReachedBarrier = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseBoth = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        WorldMonsterDamageResult? firstResultA = null;
+        WorldMonsterDamageResult? firstResultB = null;
+
+        sessionA.DebugApplyMonsterDamageDispatcher = async (command, ct) =>
+        {
+            aReachedBarrier.TrySetResult();
+            await releaseBoth.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            var result = await worldRuntime.ApplyMonsterDamageAsync(command, ct);
+            firstResultA ??= result;
+            return result;
+        };
+        sessionB.DebugApplyMonsterDamageDispatcher = async (command, ct) =>
+        {
+            bReachedBarrier.TrySetResult();
+            await releaseBoth.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            var result = await worldRuntime.ApplyMonsterDamageAsync(command, ct);
+            firstResultB ??= result;
+            return result;
+        };
+
+        await streamA.WriteAsync(BuildAttackPacket(monster.ActorId));
+        await streamB.WriteAsync(BuildAttackPacket(monster.ActorId));
+
+        await aReachedBarrier.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await bReachedBarrier.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        // Both sessions are now genuinely parked at the barrier, mid-dispatch, simultaneously -
+        // release them together. Which one the real grain actually processes first stays
+        // nondeterministic; this barrier only guarantees overlap, never a winner.
+        releaseBoth.TrySetResult();
+
+        var grain = _cluster.GrainFactory.GetGrain<IWorldPartitionGrain>(Resolver().ResolvePartition(mapId));
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        var confirmedDead = false;
+        while (DateTime.UtcNow < deadline && !confirmedDead)
+        {
+            await Task.Delay(50);
+            var page = await grain.PollMonsterFeedAsync(cursor: null, mapId);
+            confirmedDead = page.Snapshot!.SingleOrDefault(i => i.ActorId == monster.ActorId) is { Lifecycle: WorldMonsterLifecycleState.Dead };
+        }
+        Assert.True(confirmedDead, "Expected the grain to confirm the monster's death after the race resolved.");
+
+        // Bounded settle window so both sessions' own first-result captures are guaranteed populated.
+        var settleDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        while (DateTime.UtcNow < settleDeadline && (firstResultA is null || firstResultB is null)) await Task.Delay(20);
+        Assert.NotNull(firstResultA);
+        Assert.NotNull(firstResultB);
+
+        var lethalResults = new[] { firstResultA!, firstResultB! }.Where(r => r.Status == WorldMonsterDamageStatus.Applied && r.KilledByThisHit).ToArray();
+        var alreadyDeadResults = new[] { firstResultA!, firstResultB! }.Where(r => r.Status == WorldMonsterDamageStatus.AlreadyDead).ToArray();
+        Assert.Single(lethalResults);
+        Assert.Single(alreadyDeadResults);
+
+        var finalPage = await grain.PollMonsterFeedAsync(cursor: null, mapId);
+        var finalInstance = Assert.Single(finalPage.Snapshot!, i => i.ActorId == monster.ActorId);
+        Assert.Equal(WorldMonsterLifecycleState.Dead, finalInstance.Lifecycle);
+        Assert.Equal(0u, finalInstance.CurrentHp);
+        Assert.Single(finalPage.Snapshot!, i => i.ActorId == monster.ActorId); // No duplicate/ghost entries.
+
+        // Prove the AlreadyDead loser's wire silence directly against its own socket - not merely
+        // inferred from the status - since this is the cross-process integration proof.
+        var loserStream = firstResultA!.Status == WorldMonsterDamageStatus.AlreadyDead ? streamA : streamB;
+        await AssertNoDamageHpOrRewardPacketsAsync(loserStream);
+
+        clientA.Close(); clientB.Close();
+        await runA.WaitAsync(TimeSpan.FromSeconds(5));
+        await runB.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    // Scenario 2: two FULLY INDEPENDENT MapServerWorld/MapTcpServer instances (own projection
+    // registry/cadence store/coordinator each) share only the same Orleans cluster/grain - zero
+    // shared MapServer-local object identity. One attacker session on serverA/worldA commits a
+    // real non-lethal hit; the bystander session on serverB/worldB, whose own projection never
+    // shares an object reference with worldA's, converges to the new authoritative HP purely
+    // through its own real ProcessOneMonsterTickAsync poll cycle.
+    [Fact]
+    public async Task CrossProcess_HealthChangedConvergence_ThroughRealPollLoop_NoSharedProjectionIdentity()
+    {
+        var mapId = "izlude";
+        var worldA = MakeWorld(mapId);
+        var worldB = MakeWorld(mapId);
+        var worldRuntime = new OrleansWorldRuntime(_cluster.Client, Resolver());
+        var serverA = new MapTcpServer(new MapConfigStore(new MapConfig(), "unused.conf"), new CharServerConnector(new MapConfigStore(new MapConfig(), "unused.conf")), worldA, worldRuntime);
+        var serverB = new MapTcpServer(new MapConfigStore(new MapConfig(), "unused.conf"), new CharServerConnector(new MapConfigStore(new MapConfig(), "unused.conf")), worldB, worldRuntime);
+
+        // Deliberately weaker than ModerateAttackerFor (2-hit-kill) - this scenario only needs ONE
+        // real, non-zero-damage, non-lethal hit to land before the assertions below run, and must
+        // stay non-lethal comfortably across the whole poll window. A pure minimum-stat fixture
+        // (STR/DEX/AGI all 1) was found to miss 100% of the time against this monster/attacker
+        // combo (see this scenario's own git history) - BaseLevel 5 with modest STR/DEX guarantees
+        // real, small, non-lethal damage per hit.
+        var lightAttacker = new CharacterGameplayState(200, 1, 0, 5, 1, 0, 0, 100, 20, 100, 20, 0, 0, 5, 3, 3, 3, 5, 3);
+        var (clientA, streamA, sessionA, runA, drainCtsA, drainTaskA) = await ConnectAttackerAsync(serverA, worldA, worldRuntime, accountId: 200, mapId, (ushort)(MonsterX - 1), MonsterY, lightAttacker);
+        var (clientB, _, sessionB, runB, _) = await ConnectSessionAsync(serverB, worldB, worldRuntime, accountId: 201, mapId, (ushort)(MonsterX + 1), MonsterY);
+        using var _disposeA = clientA;
+        using var _disposeB = clientB;
+
+        await serverA.ProcessOneMonsterTickAsync([sessionA], CancellationToken.None);
+        await serverA.ProcessOneMonsterTickAsync([sessionA], CancellationToken.None);
+        await serverA.ProcessOneMonsterTickAsync([sessionA], CancellationToken.None);
+        await serverB.ProcessOneMonsterTickAsync([sessionB], CancellationToken.None);
+        await serverB.ProcessOneMonsterTickAsync([sessionB], CancellationToken.None);
+        await serverB.ProcessOneMonsterTickAsync([sessionB], CancellationToken.None);
+
+        Assert.True(worldA.MonsterProjections.TryGet(mapId, out var projectionA));
+        var monster = Assert.Single(projectionA.AllInstances);
+        Assert.True(worldB.MonsterProjections.TryGet(mapId, out var projectionB));
+        var baselineHp = Assert.Single(projectionB.AllInstances, i => i.ActorId == monster.ActorId).CurrentHp;
+
+        await streamA.WriteAsync(BuildAttackPacket(monster.ActorId));
+
+        var grain = _cluster.GrainFactory.GetGrain<IWorldPartitionGrain>(Resolver().ResolvePartition(mapId));
+        var mutationDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(15);
+        uint? authoritativeHp = null;
+        uint? authoritativeMaxHp = null;
+        while (DateTime.UtcNow < mutationDeadline)
+        {
+            await Task.Delay(100);
+            var page = await grain.PollMonsterFeedAsync(cursor: null, mapId);
+            var instance = page.Snapshot!.Single(i => i.ActorId == monster.ActorId);
+            if (instance.CurrentHp < baselineHp) { authoritativeHp = instance.CurrentHp; authoritativeMaxHp = instance.MaxHp; break; }
+        }
+        Assert.True(authoritativeHp.HasValue, "Expected the real non-lethal attack to commit a HealthChanged mutation at World within the poll window.");
+
+        // Now drive serverB's OWN real poll loop, decoupled entirely from serverA's own cadence,
+        // until worldB's own (never-shared) projection converges to the new authoritative HP.
+        var convergenceDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        WorldMonsterInstance? convergedInstance = null;
+        while (DateTime.UtcNow < convergenceDeadline)
+        {
+            await serverB.ProcessOneMonsterTickAsync([sessionB], CancellationToken.None);
+            if (worldB.MonsterProjections.TryGet(mapId, out var current))
+            {
+                var candidate = current.AllInstances.SingleOrDefault(i => i.ActorId == monster.ActorId);
+                if (candidate is { } found && found.CurrentHp == authoritativeHp) { convergedInstance = found; break; }
+            }
+            await Task.Delay(50);
+        }
+        Assert.NotNull(convergedInstance);
+        Assert.Equal(authoritativeHp, convergedInstance!.CurrentHp);
+        Assert.Equal(authoritativeMaxHp, convergedInstance.MaxHp);
+        Assert.Equal(monster.IncarnationId, convergedInstance.IncarnationId);
+        Assert.Equal(WorldMonsterLifecycleState.Alive, convergedInstance.Lifecycle);
+
+        // The literal "no shared object identity required" proof.
+        Assert.False(ReferenceEquals(worldA.MonsterProjections, worldB.MonsterProjections));
+        Assert.False(ReferenceEquals(worldA.CombatState, worldB.CombatState));
+
+        drainCtsA.Cancel();
+        try { await drainTaskA; } catch { }
+        clientA.Close(); clientB.Close();
+        await runA.WaitAsync(TimeSpan.FromSeconds(5));
+        await runB.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    // Scenario 3: session A's own original command genuinely reaches and commits at World (its
+    // real, non-lethal result is captured and asserted inline) BEFORE the test deliberately throws
+    // in place of returning that result to MapClientSession - simulating "the request committed but
+    // the response was lost." While A's own PendingMonsterDamageAttempt remains unresolved, session
+    // B kills the same Life through its own real attack path. A tick is driven for A specifically so
+    // A's own feed poll observes B's authoritative Died while A's BeginInFlight registration is
+    // still open, forcing the arbiter to defer it. Only THEN is A's natural retry allowed to
+    // resolve - it must replay (ReplayedSequence), never AlreadyDead, since A's original command
+    // already committed.
+    [Fact]
+    public async Task LostResponse_CommittedButLost_RetryReplaysWhileConcurrentAttackerKills_NoDoubleApplication_DeferredDiedSuppressesStaleProjection()
+    {
+        var mapId = "izlude";
+        // This scenario's own deterministic sequence (lost-response commit, B's concurrent kill,
+        // a forced tick, A's natural retry cadence, then a settle window) can legitimately run past
+        // MakeWorld's default 5s respawn delay before the final grain-state assertions read HP -
+        // a real respawn mid-test would silently reset CurrentHp back to full and falsely pass/fail
+        // unrelated assertions. Use a respawn delay comfortably longer than this scenario's own
+        // generous bounded waits so no respawn can occur before the final assertions run.
+        var world = MakeWorld(mapId, respawnDelayMs: 120_000);
+        var worldRuntime = new OrleansWorldRuntime(_cluster.Client, Resolver());
+        var server = new MapTcpServer(new MapConfigStore(new MapConfig(), "unused.conf"), new CharServerConnector(new MapConfigStore(new MapConfig(), "unused.conf")), world, worldRuntime);
+
+        var (clientA, streamA, sessionA, runA, _) = await ConnectSessionAsync(server, world, worldRuntime, accountId: 300, mapId, (ushort)(MonsterX - 1), MonsterY, ModerateAttackerFor(300));
+        var (clientB, streamB, sessionB, runB, _) = await ConnectSessionAsync(server, world, worldRuntime, accountId: 301, mapId, (ushort)(MonsterX + 1), MonsterY);
+        using var _disposeA = clientA;
+        using var _disposeB = clientB;
+
+        // B's own reward tail (damage/HP/EXP/vanish/drop packets from its real kill) is never
+        // asserted by this scenario - drain it continuously so those unread packets never fill the
+        // OS socket buffer and stall B's own send path, which would otherwise silently stall B's
+        // real ApplyMonsterDamageAsync call from ever completing (mirrors the drain pattern used by
+        // every other scenario/existing test in this file for streams whose packets aren't read).
+        using var drainCtsB = new CancellationTokenSource();
+        var drainTaskB = Task.Run(async () =>
+        {
+            var sink = new byte[4096];
+            try { while (!drainCtsB.IsCancellationRequested) await streamB.ReadAsync(sink, drainCtsB.Token); }
+            catch (OperationCanceledException) { } catch (IOException) { }
+        });
+
+        await server.ProcessOneMonsterTickAsync([sessionA, sessionB], CancellationToken.None);
+        await server.ProcessOneMonsterTickAsync([sessionA, sessionB], CancellationToken.None);
+        await server.ProcessOneMonsterTickAsync([sessionA, sessionB], CancellationToken.None);
+
+        Assert.True(world.MonsterProjections.TryGet(mapId, out var projection));
+        var monster = Assert.Single(projection.AllInstances);
+
+        WorldMonsterDamageCommand? originalCommand = null;
+        WorldMonsterDamageResult? originalResult = null;
+        WorldMonsterDamageCommand? retryCommand = null;
+        WorldMonsterDamageResult? retryResult = null;
+        var lostResponseCommitted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var isFirstDispatch = true;
+
+        sessionA.DebugApplyMonsterDamageDispatcher = async (command, ct) =>
+        {
+            if (isFirstDispatch)
+            {
+                isFirstDispatch = false;
+                var real = await worldRuntime.ApplyMonsterDamageAsync(command, ct);
+                Assert.Equal(WorldMonsterDamageStatus.Applied, real.Status);
+                Assert.False(real.KilledByThisHit, "Expected ModerateAttackerFor's first hit against Poring to be non-lethal - adjust the fixture if this assertion ever fails.");
+                originalCommand = command;
+                originalResult = real;
+                lostResponseCommitted.TrySetResult();
+                throw new IOException("Simulated lost response: the request committed at World but MapServer never received the reply.");
+            }
+            retryCommand = command;
+            var retry = await worldRuntime.ApplyMonsterDamageAsync(command, ct);
+            retryResult = retry;
+            return retry;
+        };
+
+        await streamA.WriteAsync(BuildAttackPacket(monster.ActorId));
+        await lostResponseCommitted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        // While A's pending attempt remains unresolved, B kills the same Life through its own real
+        // attack path.
+        await streamB.WriteAsync(BuildAttackPacket(monster.ActorId));
+        var grain = _cluster.GrainFactory.GetGrain<IWorldPartitionGrain>(Resolver().ResolvePartition(mapId));
+        var deathDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        var confirmedDead = false;
+        while (DateTime.UtcNow < deathDeadline && !confirmedDead)
+        {
+            await Task.Delay(100);
+            var page = await grain.PollMonsterFeedAsync(cursor: null, mapId);
+            confirmedDead = page.Snapshot!.SingleOrDefault(i => i.ActorId == monster.ActorId) is { Lifecycle: WorldMonsterLifecycleState.Dead };
+        }
+        Assert.True(confirmedDead, "Expected B's own attack to confirm the kill.");
+
+        // BEFORE A's retry is allowed to happen, drive a tick for A specifically so its own feed
+        // poll observes B's authoritative Died while A's BeginInFlight registration is still open -
+        // forcing the arbiter to defer it rather than deliver it as an ordinary bystander vanish.
+        await server.ProcessOneMonsterTickAsync([sessionA, sessionB], CancellationToken.None);
+
+        // Now allow A's natural retry to fire on its own real cadence (TimeProvider.System-backed,
+        // like the rest of this file - no artificial pulse needed).
+        var retryDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(15);
+        while (DateTime.UtcNow < retryDeadline && retryResult is null) await Task.Delay(50);
+        Assert.NotNull(retryResult);
+        Assert.NotNull(originalCommand);
+        Assert.NotNull(originalResult);
+
+        // Drive ticks for both sessions so A's deferred-Died handling and B's own reward tail both
+        // fully resolve on the wire before the packet-level assertions below.
+        var settleDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        while (DateTime.UtcNow < settleDeadline)
+        {
+            await server.ProcessOneMonsterTickAsync([sessionA, sessionB], CancellationToken.None);
+            await Task.Delay(50);
+        }
+
+        Assert.NotNull(retryCommand);
+        // The retry command must be identical to the original.
+        Assert.Equal(originalCommand!.Life, retryCommand!.Life);
+        Assert.Equal(originalCommand.AttackSequence, retryCommand.AttackSequence);
+        Assert.Equal(originalCommand.Damage, retryCommand.Damage);
+        Assert.Equal(originalCommand.AcquireEngagement, retryCommand.AcquireEngagement);
+
+        Assert.Equal(WorldMonsterDamageStatus.ReplayedSequence, retryResult!.Status);
+        Assert.NotEqual(WorldMonsterDamageStatus.AlreadyDead, retryResult.Status);
+
+        var finalPage = await grain.PollMonsterFeedAsync(cursor: null, mapId);
+        var finalInstance = Assert.Single(finalPage.Snapshot!, i => i.ActorId == monster.ActorId);
+        Assert.Equal(0u, finalInstance.CurrentHp);
+        Assert.Equal(WorldMonsterLifecycleState.Dead, finalInstance.Lifecycle);
+
+        // A receives exactly one authoritative Died vanish, no stale damage/HP/reward tail.
+        await AssertExactlyOneDiedVanishNoRewardTailAsync(streamA);
+
+        drainCtsB.Cancel();
+        try { await drainTaskB; } catch { }
+        clientA.Close(); clientB.Close();
+        await runA.WaitAsync(TimeSpan.FromSeconds(5));
+        await runB.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    // Scenario 4: session A establishes a real AttackSequence ledger entry for its own PresenceId,
+    // then a SECOND dispatch (its own natural retry/next hit) is gated open mid-flight - its
+    // WorldMonsterDamageCommand is already fully constructed, including the still-current (soon to
+    // be stale) PresenceId, before the gate is even installed. Session A then genuinely disconnects
+    // and reconnects (a fresh ConnectAttackerAsync call, same CharacterId, new PresenceId) - the
+    // gate is only released once the grain itself confirms the old PresenceId is no longer valid.
+    // The held-back dispatch, still carrying the OLD PresenceId, must then be rejected
+    // StaleAttackerPresence with zero HP/wire impact, and the new PresenceId must attack normally
+    // afterward.
+    [Fact]
+    public async Task ReconnectMidCombat_StaleDelayedCommandFromOldPresence_RejectedAfterReconnect()
+    {
+        var mapId = "izlude";
+        var world = MakeWorld(mapId);
+        var worldRuntime = new OrleansWorldRuntime(_cluster.Client, Resolver());
+        var server = new MapTcpServer(new MapConfigStore(new MapConfig(), "unused.conf"), new CharServerConnector(new MapConfigStore(new MapConfig(), "unused.conf")), world, worldRuntime);
+
+        const uint accountId = 400;
+        var (clientA, streamA, sessionA, _, _) = await ConnectSessionAsync(server, world, worldRuntime, accountId, mapId, (ushort)(MonsterX - 1), MonsterY, ModerateAttackerFor(accountId));
+
+        await server.ProcessOneMonsterTickAsync([sessionA], CancellationToken.None);
+        await server.ProcessOneMonsterTickAsync([sessionA], CancellationToken.None);
+        await server.ProcessOneMonsterTickAsync([sessionA], CancellationToken.None);
+
+        Assert.True(world.MonsterProjections.TryGet(mapId, out var projection));
+        var monster = Assert.Single(projection.AllInstances);
+
+        var staleRetryStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseStaleRetry = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        WorldMonsterDamageResult? staleResult = null;
+        var isFirstDispatch = true;
+
+        sessionA.DebugApplyMonsterDamageDispatcher = async (command, ct) =>
+        {
+            if (isFirstDispatch)
+            {
+                isFirstDispatch = false;
+                return await worldRuntime.ApplyMonsterDamageAsync(command, ct); // Establishes the ledger entry for presence A.
+            }
+            staleRetryStarted.TrySetResult();
+            await releaseStaleRetry.Task.WaitAsync(TimeSpan.FromSeconds(15));
+            // `ct` is this session's own linked cancellation token - closing clientA's socket below
+            // makes RunAsync's read loop exit and immediately cancel _sessionCancellation (see
+            // MapClientSession's own disconnect-teardown, which does this BEFORE joining the attack
+            // loop this exact call is parked inside - not gated behind it). Using the by-then-
+            // cancelled `ct` here would make this call throw OperationCanceledException instead of
+            // ever reaching the grain, which is not what this scenario is proving - a real deferred/
+            // queued retry that was already in flight when a client disconnects still runs to
+            // completion against World; only the LOCAL session-side bookkeeping is torn down early.
+            // CancellationToken.None reflects that: this call's job is to reach the grain and prove
+            // the OLD PresenceId is rejected, exactly like production's real dispatcher call would
+            // still do for an already-in-flight RPC.
+            var result = await worldRuntime.ApplyMonsterDamageAsync(command, CancellationToken.None); // `command` still carries the OLD (by-now-stale) PresenceId, built before this gate opened.
+            staleResult = result;
+            return result;
+        };
+
+        // Drain A's stream in the background - its own hits produce wire traffic this test doesn't
+        // read directly.
+        var drainCts = new CancellationTokenSource();
+        var drainTask = Task.Run(async () =>
+        {
+            var sink = new byte[4096];
+            try { while (!drainCts.IsCancellationRequested) await streamA.ReadAsync(sink, drainCts.Token); }
+            catch (OperationCanceledException) { } catch (IOException) { }
+        });
+
+        await streamA.WriteAsync(BuildAttackPacket(monster.ActorId));
+        await staleRetryStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        var presenceIdA = sessionA.PresenceId!.Value;
+        clientA.Client.Close(); // Do NOT await runA here - the attack loop is blocked inside the gated dispatcher; awaiting would deadlock.
+
+        var grain = _cluster.GrainFactory.GetGrain<IWorldPartitionGrain>(Resolver().ResolvePartition(mapId));
+        var life = new WorldMonsterLifeReference(mapId, projection.CurrentEpoch!.Value, monster.ActorId, monster.IncarnationId);
+
+        // RunAsync's own teardown (LeavePlayerWorldAsync -> UnregisterPresenceAsync) cannot run yet:
+        // that teardown awaits _attackLoop's own completion, and _attackLoop is the exact task
+        // parked inside this session's gated dispatcher above - genuinely deadlocked against itself
+        // until releaseStaleRetry fires, which must not happen before the stale command resolves.
+        // A real disconnect's eventual unregistration is simulated directly against the grain
+        // instead (mirroring Scenario 5's own single legitimate direct-grain-call precedent) - this
+        // still exercises the real ApplyMonsterDamageAsync validation contract (step 2 of its own
+        // documented ordering) against a genuinely-removed presence, without requiring this
+        // session's own attack loop to unwind first.
+        var unregistration = await grain.UnregisterPresenceAsync(mapId, accountId, presenceIdA);
+        Assert.Equal(WorldPresenceUnregistrationStatus.Removed, unregistration.Status);
+
+        var window = await grain.ValidateMonsterAttackWindowAsync(new WorldMonsterAttackWindowQuery(life, accountId, presenceIdA));
+        Assert.NotEqual(WorldMonsterAttackWindowStatus.Valid, window.Status);
+
+        // The grain-level presence is now gone, but session A's own LOCAL MapServer-side
+        // registration (world.PlayerVisibility, populated by EnterPlayerWorldAsync's own
+        // _playerVisibility.RegisterAsync call, keyed by ActorId) is a SEPARATE registry this direct
+        // grain call never touches - RunAsync's own teardown would normally clear it via
+        // LeavePlayerWorldAsync, but that teardown is exactly what's deadlocked above. Without this,
+        // A2's own reconnect (same ActorId) would throw "already registered" from
+        // PlayerVisibilityCoordinator.RegisterAsync's own conflict check.
+        await world.PlayerVisibility.UnregisterAsync(accountId, CancellationToken.None);
+
+        var hpBeforeRelease = (await grain.PollMonsterFeedAsync(cursor: null, mapId)).Snapshot!.Single(i => i.ActorId == monster.ActorId).CurrentHp;
+
+        var (clientA2, streamA2, sessionA2, runA2, _) = await ConnectSessionAsync(server, world, worldRuntime, accountId, mapId, (ushort)(MonsterX - 1), MonsterY, ModerateAttackerFor(accountId));
+        using var _disposeA2 = clientA2;
+        var presenceIdB = sessionA2.PresenceId!.Value;
+        Assert.NotEqual(presenceIdA, presenceIdB);
+
+        releaseStaleRetry.TrySetResult();
+
+        var staleResultDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        while (DateTime.UtcNow < staleResultDeadline && staleResult is null) await Task.Delay(20);
+        Assert.NotNull(staleResult);
+        Assert.Equal(WorldMonsterDamageStatus.StaleAttackerPresence, staleResult!.Status);
+
+        var hpAfterStaleResolves = (await grain.PollMonsterFeedAsync(cursor: null, mapId)).Snapshot!.Single(i => i.ActorId == monster.ActorId).CurrentHp;
+        Assert.Equal(hpBeforeRelease, hpAfterStaleResolves);
+
+        drainCts.Cancel();
+        try { await drainTask; } catch { }
+
+        // The new PresenceId attacks normally afterward.
+        await server.ProcessOneMonsterTickAsync([sessionA2], CancellationToken.None);
+        await streamA2.WriteAsync(BuildAttackPacket(monster.ActorId));
+        var engagedDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        var engaged = false;
+        while (DateTime.UtcNow < engagedDeadline && !engaged)
+        {
+            await Task.Delay(100);
+            var page = await grain.PollMonsterFeedAsync(cursor: null, mapId);
+            engaged = page.Snapshot!.SingleOrDefault(i => i.ActorId == monster.ActorId)?.EngagedTarget?.CharacterId == accountId;
+        }
+        Assert.True(engaged, "Expected the reconnected session (new PresenceId) to attack normally after the stale request was rejected.");
+
+        clientA2.Close();
+        await runA2.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    // Scenario 5: extends the existing Respawned_RealFeedEntry_... pattern with two changes: the
+    // kill is driven through a REAL attacker session's own attack (not a direct grain call with a
+    // synthetic presence), and a second, non-attacking bystander session is present throughout and
+    // independently observes the same kill/respawn cycle.
+    //
+    // Scope note: this test proves end-to-end functional respawn continuity (new incarnation, full
+    // HP, old-life rejection, new-life attackability, both consumers converging). It does NOT
+    // re-prove that LethalDeathProjectionArbiter's internal _alreadyProjected marker for the OLD
+    // Life was removed from memory - that marker is keyed by exact Life, so a new incarnation (a
+    // different Life) functions correctly regardless of whether the old marker leaked. The actual
+    // removal-semantics proof lives in LethalDeathProjectionArbiterTests.cs
+    // (ForgetProjectedForActor_RemovesStaleIncarnations_PreservesExceptedAndUnrelatedEntries /
+    // ForgetProjectedForActor_MultiRespawnBacklog_ClearsAllStaleIncarnations_PreservesCurrent); the
+    // correct CALL-SITE wiring (NotifyMonsterRespawnedAsync calling ForgetProjectedForActor with the
+    // right identity) is proven by MapClientSessionRespawnCleanupTests.cs. Both are re-run alongside
+    // this substep's own verification pass, not re-derived here.
+    [Fact]
+    public async Task KillThroughRealAttack_BystanderPresent_RespawnContinuity_StaleIncarnationRejected()
+    {
+        var mapId = "izlude";
+        var world = MakeWorld(mapId, respawnDelayMs: 200);
+        var worldRuntime = new OrleansWorldRuntime(_cluster.Client, Resolver());
+        var server = new MapTcpServer(new MapConfigStore(new MapConfig(), "unused.conf"), new CharServerConnector(new MapConfigStore(new MapConfig(), "unused.conf")), world, worldRuntime);
+
+        var (clientAttacker, streamAttacker, sessionAttacker, runAttacker, _) = await ConnectSessionAsync(server, world, worldRuntime, accountId: 500, mapId, (ushort)(MonsterX - 1), MonsterY);
+        var (clientBystander, streamBystander, sessionBystander, runBystander, _) = await ConnectSessionAsync(server, world, worldRuntime, accountId: 501, mapId, (ushort)(MonsterX + 1), MonsterY);
+        using var _disposeAttacker = clientAttacker;
+        using var _disposeBystander = clientBystander;
+
+        await server.ProcessOneMonsterTickAsync([sessionAttacker, sessionBystander], CancellationToken.None);
+        await server.ProcessOneMonsterTickAsync([sessionAttacker, sessionBystander], CancellationToken.None);
+        // Each session's own discovery burst here includes BOTH the other player (ZcNotifyNewEntry,
+        // 0x09FE - a PC discovering another nearby PC) and the monster (ZcNotifyStandEntry, 0x09FF) -
+        // unlike the single-attacker-only Respawned_RealFeedEntry_... pattern this scenario extends,
+        // there is a second live player here, so ordering between the two kinds is not guaranteed.
+        // Drain dynamic packets from each stream until the monster's own discovery is found.
+        await ReadUntilMonsterDiscoveryAsync(streamAttacker);
+        await ReadUntilMonsterDiscoveryAsync(streamBystander);
+
+        Assert.True(world.MonsterProjections.TryGet(mapId, out var projection));
+        var original = Assert.Single(projection.AllInstances);
+        var epoch = projection.CurrentEpoch!.Value;
+        var oldLife = new WorldMonsterLifeReference(mapId, epoch, original.ActorId, original.IncarnationId);
+
+        await streamAttacker.WriteAsync(BuildAttackPacket(original.ActorId));
+
+        var grain = _cluster.GrainFactory.GetGrain<IWorldPartitionGrain>(Resolver().ResolvePartition(mapId));
+        var deathDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        var confirmedDead = false;
+        while (DateTime.UtcNow < deathDeadline && !confirmedDead)
+        {
+            await Task.Delay(100);
+            var page = await grain.PollMonsterFeedAsync(cursor: null, mapId);
+            confirmedDead = page.Snapshot!.SingleOrDefault(i => i.ActorId == original.ActorId) is { Lifecycle: WorldMonsterLifecycleState.Dead };
+        }
+        Assert.True(confirmedDead, "Expected the real attacker session's own attack to confirm the kill.");
+
+        // Both sessions must observe exactly one Died vanish, driven purely through the real
+        // ProcessOneMonsterTickAsync -> FanOutEntryAsync path. The attacker's own stream also
+        // carries its own lethal hit's damage/HP-info tail (and either stream can carry an ordinary
+        // ZcStopMove) ahead of the vanish - ReadUntilVanishAsync skips over anything else using each
+        // packet's own real framing (mirrors AssertExactlyOneDiedVanishNoRewardTailAsync's identical
+        // fix), rather than assuming the vanish is the very next fixed-length packet on the wire.
+        var vanishDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        var attackerVanishTask = ReadUntilVanishAsync(streamAttacker);
+        var bystanderVanishTask = ReadUntilVanishAsync(streamBystander);
+        while (DateTime.UtcNow < vanishDeadline && !(attackerVanishTask.IsCompletedSuccessfully && bystanderVanishTask.IsCompletedSuccessfully))
+        {
+            await server.ProcessOneMonsterTickAsync([sessionAttacker, sessionBystander], CancellationToken.None);
+            await Task.Delay(20);
+        }
+        var attackerVanish = await attackerVanishTask;
+        Assert.Equal(PacketConstants.ZcNotifyVanishReasonDied, attackerVanish[6]);
+        var bystanderVanish = await bystanderVanishTask;
+        Assert.Equal(PacketConstants.ZcNotifyVanishReasonDied, bystanderVanish[6]);
+
+        // Continue driving ticks until a NEW incarnation appears.
+        var respawnDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        WorldMonsterInstance? respawnedInstance = null;
+        while (DateTime.UtcNow < respawnDeadline)
+        {
+            await server.ProcessOneMonsterTickAsync([sessionAttacker, sessionBystander], CancellationToken.None);
+            if (world.MonsterProjections.TryGet(mapId, out var current) &&
+                current.AllInstances.SingleOrDefault(i => i.ActorId == original.ActorId) is { Lifecycle: WorldMonsterLifecycleState.Alive } candidate &&
+                !candidate.IncarnationId.Equals(original.IncarnationId))
+            {
+                respawnedInstance = candidate;
+                break;
+            }
+            await Task.Delay(50);
+        }
+        Assert.NotNull(respawnedInstance);
+        Assert.NotEqual(original.IncarnationId, respawnedInstance!.IncarnationId);
+        Assert.Equal(respawnedInstance.MaxHp, respawnedInstance.CurrentHp);
+
+        // Both sessions receive their own independent rediscovery wire packet.
+        var attackerRediscovery = await ReadUntilMonsterDiscoveryAsync(streamAttacker);
+        Assert.Equal(original.ActorId, BinaryPrimitives.ReadUInt32LittleEndian(attackerRediscovery.AsSpan(5)));
+        var bystanderRediscovery = await ReadUntilMonsterDiscoveryAsync(streamBystander);
+        Assert.Equal(original.ActorId, BinaryPrimitives.ReadUInt32LittleEndian(bystanderRediscovery.AsSpan(5)));
+
+        // The old Life is rejected as stale - mirrors the already-established
+        // StaleLifeReference_AfterRespawn_... pattern (proving World's own contract, not
+        // re-exercising the session dispatch path).
+        var killerPresenceId = Guid.NewGuid();
+        await grain.RegisterPresenceAsync(new WorldPlayerPresence(killerPresenceId, ActorId: 998, CharacterId: 998, mapId, X: original.X, Y: original.Y));
+        var staleAttempt = await grain.ApplyMonsterDamageAsync(new WorldMonsterDamageCommand(oldLife, AttackerCharacterId: 998, killerPresenceId, AttackSequence: 1, Damage: 9999, AcquireEngagement: false));
+        Assert.Equal(WorldMonsterDamageStatus.StaleLifeReference, staleAttempt.Status);
+
+        // The attacker session's own target resolution naturally re-resolves to the new
+        // incarnation and can attack it normally.
+        await streamAttacker.WriteAsync(BuildAttackPacket(original.ActorId));
+        var freshAttackDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        var freshHitObserved = false;
+        while (DateTime.UtcNow < freshAttackDeadline && !freshHitObserved)
+        {
+            await Task.Delay(100);
+            var page = await grain.PollMonsterFeedAsync(cursor: null, mapId);
+            var candidate = page.Snapshot!.SingleOrDefault(i => i.ActorId == original.ActorId);
+            freshHitObserved = candidate is not null && candidate.IncarnationId.Equals(respawnedInstance.IncarnationId) && candidate.CurrentHp < candidate.MaxHp;
+        }
+        Assert.True(freshHitObserved, "Expected the attacker session to land a fresh attack against the new incarnation normally.");
+
+        clientAttacker.Close(); clientBystander.Close();
+        await runAttacker.WaitAsync(TimeSpan.FromSeconds(5));
+        await runBystander.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    // Substep 10 helper: bounded, non-destructive proof that no damage/HP-info/reward packet ever
+    // arrives on the given stream - used to prove an AlreadyDead loser's wire silence directly.
+    private static async Task AssertNoDamageHpOrRewardPacketsAsync(NetworkStream stream)
+    {
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(2);
+        while (DateTime.UtcNow < deadline)
+        {
+            byte[] header;
+            try
+            {
+                using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(300));
+                var buffer = new byte[2];
+                await stream.ReadExactlyAsync(buffer, cts.Token);
+                header = buffer;
+            }
+            catch (OperationCanceledException) { return; } // Nothing else arrived - the load-bearing proof.
+            var opcode = BinaryPrimitives.ReadInt16LittleEndian(header);
+            Assert.True(
+                opcode != (short)PacketConstants.ZcNotifyAct3 && opcode != (short)PacketConstants.ZcHpInfo,
+                $"Expected no damage/HP-info packet on the AlreadyDead loser's own stream, but observed opcode 0x{opcode:X4}.");
+            // Drain whatever else this opcode's own payload is (best-effort - anything reaching here
+            // is already unexpected for this proof) using each packet's OWN real length - a fixed
+            // too-small skip guess would desynchronize this byte-level scan from real packet
+            // boundaries for any packet larger than the guess (see the identical fix in
+            // AssertExactlyOneDiedVanishNoRewardTailAsync's own doc comment for the failure this
+            // caused there).
+            var skipLength = opcode switch
+            {
+                (short)PacketConstants.ZcNotifyAct3 => PacketConstants.ZcNotifyAct3Length,
+                (short)PacketConstants.ZcHpInfo => PacketConstants.ZcHpInfoLength,
+                (short)PacketConstants.ZcStopMove => PacketConstants.ZcStopMoveLength,
+                _ => -1,
+            };
+            if (skipLength >= 0)
+            {
+                await ReadExact(stream, skipLength - 2);
+            }
+            else
+            {
+                var lengthField = await ReadExact(stream, 2);
+                var length = BinaryPrimitives.ReadUInt16LittleEndian(lengthField);
+                await ReadExact(stream, length - 4);
+            }
+        }
+    }
+
+    // Substep 10 helper: reads exactly one Died vanish packet off the given stream and confirms no
+    // damage/HP-info/reward packet precedes or follows it within the bounded window.
+    private static async Task AssertExactlyOneDiedVanishNoRewardTailAsync(NetworkStream stream)
+    {
+        var vanishSeen = false;
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        while (DateTime.UtcNow < deadline)
+        {
+            byte[] header;
+            try
+            {
+                using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(500));
+                var buffer = new byte[2];
+                await stream.ReadExactlyAsync(buffer, cts.Token);
+                header = buffer;
+            }
+            catch (OperationCanceledException) { break; }
+            var opcode = BinaryPrimitives.ReadInt16LittleEndian(header);
+            if (opcode == (short)PacketConstants.ZcNotifyVanish)
+            {
+                Assert.False(vanishSeen, "Expected exactly one Died vanish packet, but observed a second one.");
+                var rest = await ReadExact(stream, PacketConstants.ZcNotifyVanishLength - 2);
+                var full = header.Concat(rest).ToArray();
+                Assert.Equal(PacketConstants.ZcNotifyVanishReasonDied, full[6]);
+                vanishSeen = true;
+                continue;
+            }
+            Assert.True(
+                opcode != (short)PacketConstants.ZcNotifyAct3 && opcode != (short)PacketConstants.ZcHpInfo,
+                $"Expected no damage/HP-info/reward packet on this stream, but observed opcode 0x{opcode:X4}.");
+            // Every other packet this server's fan-out/discovery path can produce is either a
+            // fixed-size struct this helper knows the exact length of, or a dynamic, self-describing
+            // length-prefixed packet (ZcNotifyNewEntry/ZcNotifyStandEntry, matching ReadDynamic's own
+            // 4-byte-header/2-byte-length shape used elsewhere in this file) - a fixed, too-small
+            // "skip N bytes" guess here would desynchronize this byte-level opcode scan from the real
+            // packet boundaries for any packet larger than that guess, corrupting every subsequent
+            // read in this loop (including the real vanish this helper exists to find).
+            var skipLength = opcode switch
+            {
+                (short)PacketConstants.ZcNotifyAct3 => PacketConstants.ZcNotifyAct3Length,
+                (short)PacketConstants.ZcHpInfo => PacketConstants.ZcHpInfoLength,
+                (short)PacketConstants.ZcStopMove => PacketConstants.ZcStopMoveLength,
+                _ => -1,
+            };
+            if (skipLength >= 0)
+            {
+                await ReadExact(stream, skipLength - 2);
+            }
+            else
+            {
+                var lengthField = await ReadExact(stream, 2);
+                var length = BinaryPrimitives.ReadUInt16LittleEndian(lengthField);
+                await ReadExact(stream, length - 4);
+            }
+        }
+        Assert.True(vanishSeen, "Expected exactly one deferred Died vanish packet to arrive.");
+    }
+
     // Real capture-verified 8-byte shape (mirrors IroAttackRequestPacketTests' own CapturedBytes
     // fixture: kill-poring-heal-jobup.pcapng frame 614) - id.W targetActorId.L actionType.B
     // (7=DMG_REPEAT) opaqueByte.B (0x7F). A 7-byte packet is rejected outright by
@@ -488,6 +1212,60 @@ public sealed class MapTcpServerMonsterAuthorityIntegrationTests : IAsyncLifetim
         var header = await ReadExact(stream, 4);
         var length = BinaryPrimitives.ReadUInt16LittleEndian(header.AsSpan(2));
         return [.. header, .. await ReadExact(stream, length - 4)];
+    }
+
+    // Substep 10 (Scenario 5): with a bystander session present, a stream's discovery burst mixes
+    // ZcNotifyNewEntry (0x09FE, a PC discovering another nearby PC) with ZcNotifyStandEntry (0x09FF,
+    // monster discovery) in no guaranteed order - unlike the single-attacker Respawned_RealFeedEntry_...
+    // pattern this scenario extends, there is a second live player here. Drains dynamic packets
+    // (both share ReadDynamic's own 4-byte-header/2-byte-length shape) until the monster's own
+    // discovery is found, and returns it.
+    private static async Task<byte[]> ReadUntilMonsterDiscoveryAsync(Stream stream)
+    {
+        while (true)
+        {
+            var packet = await ReadDynamic(stream);
+            if (BinaryPrimitives.ReadInt16LittleEndian(packet) == (short)PacketConstants.ZcNotifyStandEntry) return packet;
+        }
+    }
+
+    // Substep 10 (Scenario 5): the attacker's own lethal hit produces its own damage/HP-info tail
+    // (and either stream can carry an ordinary ZcStopMove) ahead of the authoritative Died vanish -
+    // skips every other packet using its OWN real length (fixed-size for known opcodes, otherwise
+    // length-prefixed - the same framing fix applied to AssertExactlyOneDiedVanishNoRewardTailAsync/
+    // AssertNoDamageHpOrRewardPacketsAsync) rather than assuming the vanish is the very next
+    // fixed-length packet on the wire.
+    private static async Task<byte[]> ReadUntilVanishAsync(Stream stream)
+    {
+        while (true)
+        {
+            var header = await ReadExact(stream, 2);
+            var opcode = BinaryPrimitives.ReadInt16LittleEndian(header);
+            if (opcode == (short)PacketConstants.ZcNotifyVanish)
+                return [.. header, .. await ReadExact(stream, PacketConstants.ZcNotifyVanishLength - 2)];
+
+            var skipLength = opcode switch
+            {
+                (short)PacketConstants.ZcNotifyAct3 => PacketConstants.ZcNotifyAct3Length,
+                (short)PacketConstants.ZcHpInfo => PacketConstants.ZcHpInfoLength,
+                (short)PacketConstants.ZcStopMove => PacketConstants.ZcStopMoveLength,
+                (short)PacketConstants.ZcParameterChange => 8,
+                (short)PacketConstants.ZcLongLongParameterChange => 12,
+                (short)PacketConstants.ZcNotifyExperience => PacketConstants.ZcNotifyExperienceLength,
+                (short)PacketConstants.ZcNotifyEffect => PacketConstants.ZcNotifyEffectLength,
+                _ => -1,
+            };
+            if (skipLength >= 0)
+            {
+                await ReadExact(stream, skipLength - 2);
+            }
+            else
+            {
+                var lengthField = await ReadExact(stream, 2);
+                var length = BinaryPrimitives.ReadUInt16LittleEndian(lengthField);
+                await ReadExact(stream, length - 4);
+            }
+        }
     }
 
     private static string FindRepositoryRoot()
