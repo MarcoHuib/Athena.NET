@@ -33,11 +33,16 @@ public static class LoginServerApp
 
         LoginLogger.Status($"Login server starting on {config.BindIp}:{config.LoginPort} (PACKETVER 20220406)");
 
-        var dbFactory = DbSetup.Configure(interConfig, secrets, tableNames, options.AutoMigrate);
+        var composition = ServiceComposition.Build(interConfig, secrets, tableNames);
+        await using var serviceProvider = composition.Provider;
+        var dbAvailable = composition.DbAvailable;
+        var dbFactory = dbAvailable
+            ? await DbSetup.CreateDbFactoryAsync(serviceProvider, options.AutoMigrate)
+            : (Func<LoginDbContext?>)(() => null);
 
         if (options.SelfTest)
         {
-            var exitCode = await SelfTest.RunAsync(config, dbFactory);
+            var exitCode = await SelfTest.RunAsync(config, dbFactory, serviceProvider);
             return exitCode;
         }
 
@@ -53,7 +58,7 @@ public static class LoginServerApp
         state.OnAutoDisconnect = accountId => BackgroundTasks.DisableWebAuthTokenAsync(accountId, configStore, state, dbFactory, cts.Token);
 
         var consoleTask = ConsoleCommandLoop.StartAsync(configStore, loginMessages, options.InterConfigPath, charServers, state, dbFactory, cts);
-        var server = new LoginTcpServer(configStore, loginMessages, dbFactory, charServers, state, subnetConfig);
+        var server = new LoginTcpServer(configStore, loginMessages, dbFactory, charServers, state, subnetConfig, serviceProvider);
         var cleanupTask = BackgroundTasks.StartIpBanCleanupAsync(configStore, dbFactory, cts.Token);
         var ipSyncTask = BackgroundTasks.StartIpSyncAsync(configStore, charServers, cts.Token);
         var onlineCleanupTask = BackgroundTasks.StartOnlineCleanupAsync(state, cts.Token);

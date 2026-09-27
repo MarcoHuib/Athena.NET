@@ -1,6 +1,8 @@
 using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
+using Microsoft.Extensions.DependencyInjection;
+using Athena.Net.LoginServer.Application;
 using Athena.Net.LoginServer.Config;
 using Athena.Net.LoginServer.Logging;
 using Athena.Net.LoginServer.Telemetry;
@@ -15,6 +17,7 @@ public sealed class LoginTcpServer
     private readonly CharServerRegistry _charServers;
     private readonly LoginState _state;
     private readonly Config.SubnetConfig _subnetConfig;
+    private readonly IServiceProvider _serviceProvider;
     private readonly TcpListener _listener;
 
     public int BoundPort { get; private set; }
@@ -25,7 +28,8 @@ public sealed class LoginTcpServer
         Func<Db.LoginDbContext?> dbFactory,
         CharServerRegistry charServers,
         LoginState state,
-        Config.SubnetConfig subnetConfig
+        Config.SubnetConfig subnetConfig,
+        IServiceProvider serviceProvider
     )
     {
         _configStore = configStore;
@@ -34,6 +38,7 @@ public sealed class LoginTcpServer
         _charServers = charServers;
         _state = state;
         _subnetConfig = subnetConfig;
+        _serviceProvider = serviceProvider;
 
         var config = _configStore.Current;
         _listener = new TcpListener(config.BindIp, config.LoginPort);
@@ -85,6 +90,11 @@ public sealed class LoginTcpServer
         LoginLogger.Info($"Client connected: {endpoint}");
 
         using (client)
+        // A DI scope is created per TCP connection solely to resolve the
+        // lightweight per-connection auth services below (never an EF
+        // DbContext - those continue to come from short-lived _dbFactory()
+        // calls scoped to a single operation, not this connection's lifetime).
+        using (var scope = _serviceProvider.CreateScope())
         {
             try
             {
@@ -97,6 +107,9 @@ public sealed class LoginTcpServer
                 // ---------------------------------------------------------
                 await LogInitialPacketAsync(client, cancellationToken);
 
+                var playerAuth = scope.ServiceProvider.GetRequiredService<IPlayerAuthenticationService>();
+                var serviceAuth = scope.ServiceProvider.GetRequiredService<IServiceAuthenticationService>();
+
                 using var session = new ClientSession(
                     client,
                     _configStore,
@@ -104,7 +117,9 @@ public sealed class LoginTcpServer
                     _dbFactory,
                     _charServers,
                     _state,
-                    _subnetConfig
+                    _subnetConfig,
+                    playerAuth,
+                    serviceAuth
                 );
 
                 await session.RunAsync(cancellationToken);

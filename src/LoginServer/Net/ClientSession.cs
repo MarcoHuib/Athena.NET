@@ -67,6 +67,20 @@ public sealed class ClientSession : IDisposable
     };
 
     public ClientSession(TcpClient client, LoginConfigStore configStore, LoginMessageStore messageStore, Func<LoginDbContext?> dbFactory, CharServerRegistry charServers, LoginState state, Config.SubnetConfig subnetConfig)
+        : this(client, configStore, messageStore, dbFactory, charServers, state, subnetConfig, new LegacyPlayerAuthenticationService(), new ServiceAuthenticationService())
+    {
+    }
+
+    public ClientSession(
+        TcpClient client,
+        LoginConfigStore configStore,
+        LoginMessageStore messageStore,
+        Func<LoginDbContext?> dbFactory,
+        CharServerRegistry charServers,
+        LoginState state,
+        Config.SubnetConfig subnetConfig,
+        IPlayerAuthenticationService playerAuth,
+        IServiceAuthenticationService serviceAuth)
     {
         _client = client;
         _configStore = configStore;
@@ -75,8 +89,8 @@ public sealed class ClientSession : IDisposable
         _charServers = charServers;
         _state = state;
         _subnetConfig = subnetConfig;
-        _playerAuth = new LegacyPlayerAuthenticationService();
-        _serviceAuth = new ServiceAuthenticationService();
+        _playerAuth = playerAuth;
+        _serviceAuth = serviceAuth;
         _stream = client.GetStream();
     }
 

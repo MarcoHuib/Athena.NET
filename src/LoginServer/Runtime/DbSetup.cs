@@ -1,6 +1,7 @@
 using System.Linq;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.Extensions.DependencyInjection;
 using Athena.Net.LoginServer.Config;
 using Athena.Net.LoginServer.Db;
 using Athena.Net.LoginServer.Logging;
@@ -9,35 +10,55 @@ namespace Athena.Net.LoginServer.Runtime;
 
 public static class DbSetup
 {
-    public static Func<LoginDbContext?> Configure(InterConfig interConfig, SecretConfig secrets, LoginDbTableNames tableNames, bool autoMigrate)
+    /// <summary>
+    /// Registers the LoginDb <see cref="IDbContextFactory{LoginDbContext}"/> in the
+    /// composition root, resolving connection string/provider configuration. Returns
+    /// false (and registers nothing) when configuration is missing or unsupported,
+    /// so the caller can fall back to a null db factory without a real container
+    /// registration to resolve.
+    /// </summary>
+    public static bool TryAddLoginDbContext(IServiceCollection services, InterConfig interConfig, SecretConfig secrets, LoginDbTableNames tableNames)
     {
         var connectionString = ResolveConnectionString(interConfig, secrets);
         if (string.IsNullOrWhiteSpace(connectionString))
         {
             LoginLogger.Error("DB: no connection string configured (check conf/inter_athena.conf).");
-            return () => null;
+            return false;
         }
 
         var dbProvider = ResolveDbProvider(interConfig, secrets);
         if (dbProvider != "sqlserver")
         {
             LoginLogger.Error($"DB: unsupported provider '{dbProvider}'. LoginServer is SQL Server only.");
-            return () => null;
+            return false;
         }
 
-        try
+        services.AddSingleton(tableNames);
+        services.AddDbContextFactory<LoginDbContext>(optionsBuilder =>
         {
-            var optionsBuilder = new DbContextOptionsBuilder<LoginDbContext>();
-            optionsBuilder.UseSqlServer(connectionString, sql =>
-                sql.EnableRetryOnFailure());
-
+            optionsBuilder.UseSqlServer(connectionString, sql => sql.EnableRetryOnFailure());
             optionsBuilder.ConfigureWarnings(warnings =>
                 warnings.Ignore(RelationalEventId.PendingModelChangesWarning));
+        });
 
-            var options = optionsBuilder.Options;
-            var factory = () => new LoginDbContext(options, tableNames);
+        return true;
+    }
 
-            ApplyMigrationsWithRetry(factory, autoMigrate).GetAwaiter().GetResult();
+    /// <summary>
+    /// Resolves the registered <see cref="IDbContextFactory{LoginDbContext}"/>, applies
+    /// migrations/waits for connectivity exactly as before, and returns a
+    /// short-lived-context factory delegate for the many existing call sites that are
+    /// not yet DI-aware. A new LoginDbContext is created per call; none is tied to a
+    /// TCP connection's lifetime.
+    /// </summary>
+    public static async Task<Func<LoginDbContext?>> CreateDbFactoryAsync(IServiceProvider serviceProvider, bool autoMigrate)
+    {
+        try
+        {
+            var contextFactory = serviceProvider.GetRequiredService<IDbContextFactory<LoginDbContext>>();
+            Func<LoginDbContext> factory = () => contextFactory.CreateDbContext();
+
+            await ApplyMigrationsWithRetry(factory, autoMigrate);
 
             return factory;
         }

@@ -14,7 +14,7 @@ namespace Athena.Net.LoginServer.Net;
 
 public static class SelfTest
 {
-    public static async Task<int> RunAsync(LoginConfig config, Func<LoginDbContext?> dbFactory)
+    public static async Task<int> RunAsync(LoginConfig config, Func<LoginDbContext?> dbFactory, IServiceProvider serviceProvider)
     {
         var testConfig = CreateTestConfig(config);
         var configStore = new LoginConfigStore(testConfig);
@@ -24,7 +24,7 @@ public static class SelfTest
 
         using var cts = new CancellationTokenSource();
         var messageStore = new LoginMessageStore(new LoginMessageCatalog(new Dictionary<uint, string>()));
-        var server = new LoginTcpServer(configStore, messageStore, dbFactory, charServers, state, subnetConfig);
+        var server = new LoginTcpServer(configStore, messageStore, dbFactory, charServers, state, subnetConfig, serviceProvider);
         var serverTask = server.RunAsync(cts.Token);
 
         var ready = await WaitForPortAsync(server, TimeSpan.FromSeconds(2));
