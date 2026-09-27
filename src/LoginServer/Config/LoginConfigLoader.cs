@@ -13,7 +13,6 @@ public static class LoginConfigLoader
         var logLogin = true;
         var useMd5Passwords = false;
         var dateFormat = "yyyy-MM-dd HH:mm:ss";
-        var newAccountFlag = true;
         var accountNameMinLength = 6;
         var passwordMinLength = 6;
         var groupIdToConnect = -1;
@@ -39,9 +38,6 @@ public static class LoginConfigLoader
         var consoleSilent = 0;
         var consoleLogFilePath = "./log/login-msg_log.log";
         var timestampFormat = string.Empty;
-        var allowedRegistrations = 1;
-        var registrationWindowSeconds = 10;
-        var startLimitedTimeSeconds = -1;
         var clientHashCheck = false;
         var clientHashRules = new List<ClientHashRule>();
         var ipSyncIntervalMinutes = 0;
@@ -60,7 +56,6 @@ public static class LoginConfigLoader
                 LogLogin = logLogin,
                 UseMd5Passwords = useMd5Passwords,
                 DateFormat = dateFormat,
-                NewAccountFlag = newAccountFlag,
                 AccountNameMinLength = accountNameMinLength,
                 PasswordMinLength = passwordMinLength,
                 GroupIdToConnect = groupIdToConnect,
@@ -86,9 +81,6 @@ public static class LoginConfigLoader
                 ConsoleSilent = consoleSilent,
                 ConsoleLogFilePath = consoleLogFilePath,
                 TimestampFormat = timestampFormat,
-                AllowedRegistrations = allowedRegistrations,
-                RegistrationWindowSeconds = registrationWindowSeconds,
-                StartLimitedTimeSeconds = startLimitedTimeSeconds,
                 ClientHashCheck = clientHashCheck,
                 ClientHashRules = clientHashRules,
                 IpSyncIntervalMinutes = ipSyncIntervalMinutes,
@@ -141,10 +133,6 @@ public static class LoginConfigLoader
             else if (key.Equals("date_format", StringComparison.OrdinalIgnoreCase))
             {
                 dateFormat = value;
-            }
-            else if (key.Equals("new_account", StringComparison.OrdinalIgnoreCase))
-            {
-                newAccountFlag = ParseBool(value, newAccountFlag);
             }
             else if (key.Equals("acc_name_min_length", StringComparison.OrdinalIgnoreCase))
             {
@@ -309,27 +297,6 @@ public static class LoginConfigLoader
             {
                 timestampFormat = value;
             }
-            else if (key.Equals("allowed_regs", StringComparison.OrdinalIgnoreCase))
-            {
-                if (int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed))
-                {
-                    allowedRegistrations = parsed;
-                }
-            }
-            else if (key.Equals("time_allowed", StringComparison.OrdinalIgnoreCase))
-            {
-                if (int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed))
-                {
-                    registrationWindowSeconds = parsed;
-                }
-            }
-            else if (key.Equals("start_limited_time", StringComparison.OrdinalIgnoreCase))
-            {
-                if (int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed))
-                {
-                    startLimitedTimeSeconds = parsed;
-                }
-            }
             else if (key.Equals("client_hash_check", StringComparison.OrdinalIgnoreCase))
             {
                 clientHashCheck = ParseBool(value, clientHashCheck);
@@ -402,7 +369,6 @@ public static class LoginConfigLoader
             LogLogin = logLogin,
             UseMd5Passwords = useMd5Passwords,
             DateFormat = dateFormat,
-            NewAccountFlag = newAccountFlag,
             AccountNameMinLength = accountNameMinLength,
             PasswordMinLength = passwordMinLength,
             GroupIdToConnect = groupIdToConnect,
@@ -428,9 +394,6 @@ public static class LoginConfigLoader
             ConsoleSilent = consoleSilent,
             ConsoleLogFilePath = consoleLogFilePath,
             TimestampFormat = timestampFormat,
-            AllowedRegistrations = allowedRegistrations,
-            RegistrationWindowSeconds = registrationWindowSeconds,
-            StartLimitedTimeSeconds = startLimitedTimeSeconds,
             ClientHashCheck = clientHashCheck,
             ClientHashRules = clientHashRules,
             IpSyncIntervalMinutes = ipSyncIntervalMinutes,

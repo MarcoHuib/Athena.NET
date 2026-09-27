@@ -114,6 +114,70 @@ public sealed class ClientSessionLoginCharFlowTests
         Assert.Equal(0u, BinaryPrimitives.ReadUInt32LittleEndian(response.AsSpan(2, 4)));
     }
 
+    /// <summary>
+    /// The stock login screen is authentication-only: no login packet can create
+    /// an account. The legacy rAthena "log in as name_M/name_F to auto-create an
+    /// account" feature has been removed entirely (not merely disabled by
+    /// default), so a login for a name ending in _M/_F with no existing account
+    /// is just an unknown-username failure like any other, and must not create
+    /// an AthenaIdentityUser or an AthenaGameAccount as a side effect.
+    /// </summary>
+    [Fact]
+    public async Task StockLogin_UsernameEndingInM_WithNoExistingAccount_IsUnknownUsername_AndCreatesNothing()
+    {
+        using var identity = new IdentityTestFixture();
+        using var fixture = ClientSessionFixture.Create(dbFactory: () => CreateLoginDb(Guid.NewGuid().ToString()), playerAuth: identity.PlayerAuth);
+
+        var packet = new byte[55];
+        BinaryPrimitives.WriteInt16LittleEndian(packet.AsSpan(0, 2), CaLogin);
+        BinaryPrimitives.WriteUInt32LittleEndian(packet.AsSpan(2, 4), 18);
+        WriteFixedAscii(packet, 6, NameLength, "newplayer_M");
+        WriteFixedAscii(packet, 30, NameLength, "whatever");
+        packet[54] = 0;
+
+        var handlePacket = typeof(ClientSession).GetMethod("HandlePacketAsync", BindingFlags.NonPublic | BindingFlags.Instance);
+
+        await (Task)handlePacket!.Invoke(fixture.Session, new object[] { CaLogin, packet, CancellationToken.None })!;
+        var response = await fixture.ReadExactAsync(26);
+
+        Assert.Equal(AcRefuseLogin, BinaryPrimitives.ReadInt16LittleEndian(response.AsSpan(0, 2)));
+        Assert.Equal(0u, BinaryPrimitives.ReadUInt32LittleEndian(response.AsSpan(2, 4)));
+
+        await using var db = identity.CreateDb();
+        Assert.False(await db.Users.AnyAsync(u => u.UserName == "newplayer_M"), "No AthenaIdentityUser must be created for an auto-register-style login.");
+        Assert.Equal(0, await db.GameAccounts.CountAsync());
+    }
+
+    /// <summary>
+    /// A real, pre-existing username that happens to literally end in _M or _F
+    /// (coincidence, not the legacy auto-register convention) must still
+    /// authenticate exactly like any other username.
+    /// </summary>
+    [Fact]
+    public async Task StockLogin_ExistingUsernameEndingInF_AuthenticatesNormally()
+    {
+        using var identity = new IdentityTestFixture();
+        var provisioned = await identity.ProvisionAsync("realplayer_F", "correct-password", 'F');
+
+        using var fixture = ClientSessionFixture.Create(dbFactory: () => CreateLoginDb(Guid.NewGuid().ToString()), playerAuth: identity.PlayerAuth);
+        fixture.RegisterCharServer(1, "Chaos");
+
+        var packet = new byte[55];
+        BinaryPrimitives.WriteInt16LittleEndian(packet.AsSpan(0, 2), CaLogin);
+        BinaryPrimitives.WriteUInt32LittleEndian(packet.AsSpan(2, 4), 18);
+        WriteFixedAscii(packet, 6, NameLength, "realplayer_F");
+        WriteFixedAscii(packet, 30, NameLength, "correct-password");
+        packet[54] = 0;
+
+        var handlePacket = typeof(ClientSession).GetMethod("HandlePacketAsync", BindingFlags.NonPublic | BindingFlags.Instance);
+
+        await (Task)handlePacket!.Invoke(fixture.Session, new object[] { CaLogin, packet, CancellationToken.None })!;
+        var response = await fixture.ReadExactAsync(96);
+
+        Assert.Equal(AcAcceptLogin, BinaryPrimitives.ReadInt16LittleEndian(response.AsSpan(0, 2)));
+        Assert.Equal(provisioned.RagnarokAccountId, BinaryPrimitives.ReadUInt32LittleEndian(response.AsSpan(8, 4)));
+    }
+
     [Fact]
     public async Task StockLogin_LockedOutAfterFailedAttempts_ReturnsAcRefuseLoginWithCode6()
     {

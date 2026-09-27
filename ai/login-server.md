@@ -91,9 +91,13 @@ This shells out to LoginServer's own one-shot `--create-account-*` startup mode
 `AthenaIdentityUser` + `AthenaGameAccount` pair transactionally through
 `IPlayerAccountProvisioningService` using the same configuration/connection-string
 resolution as the running server. The same console-driven flow is available while
-the server is running via the `create:` command in `ConsoleCommandLoop`. There is
-no legacy player auto-registration path anymore (the old `NewAccountFlag`
-auto-register-on-login behavior was removed with the legacy password system).
+the server is running via the `create:` command in `ConsoleCommandLoop`. The
+Ragexe login screen is authentication-only: no login packet can create an
+account. The legacy rAthena `_M`/`_F` auto-register-on-login behavior and its
+configuration (`new_account`, `allowed_regs`/`time_allowed`,
+`start_limited_time`) have been removed entirely, not merely left unused - a
+login for a name ending in `_M`/`_F` with no existing account is just an
+unknown-username failure, the same as any other unknown username.
 
 ## Useful legacy reference areas
 Both repositories live under `legacy/` and should be treated as read-only reference material unless explicitly asked otherwise. For this server, use `legacy/rathena/` primarily for architecture/domain behavior and `legacy/openkore/` for packet naming or iRO/community protocol clues.
