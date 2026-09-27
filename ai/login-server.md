@@ -83,19 +83,25 @@ by inserting rows directly:
 
 ```bash
 ./scripts/create-player-account.sh <username> [M|F] [email]
-# then either pipe the password in:
-echo 'mypassword' | ./scripts/create-player-account.sh <username> [M|F] [email]
-# or run it interactively and type it at the hidden "Password:" prompt.
+Password:
 ```
 
+Run it as shown above and type the password at the hidden `Password:` prompt.
 The password is deliberately never a positional argument to this script or to
 LoginServer's own `--create-account-*` startup mode: a password passed as a
 process argument is visible in shell history and, for as long as the process
-runs, in every other process's view of its argument list (e.g. `ps aux`). The
-script reads the password itself (from stdin if piped, or a hidden prompt if
-run from a terminal) and pipes it to the LoginServer child process's stdin;
-`LoginServerApp.CreateAccountAsync`/`ReadPasswordFromStdin` on the receiving
-end does the same for anyone invoking the one-shot mode directly.
+runs, in every other process's view of its argument list (e.g. `ps aux`).
+
+For non-interactive automation, the script also accepts the password on
+stdin instead of the hidden prompt - source it from a secret manager or a
+protected CI secret and pipe it in. Never place the plaintext password
+directly in the command line (an `echo '<password>' | ...` example would
+defeat the purpose, landing the password in shell history just the same).
+The script reads the password itself (from stdin if piped, or a hidden
+prompt if run from a terminal) and pipes it to the LoginServer child
+process's stdin; `LoginServerApp.CreateAccountAsync`/`ReadPasswordFromStdin`
+on the receiving end does the same for anyone invoking the one-shot mode
+directly.
 
 This shells out to LoginServer's own one-shot `--create-account-*` startup mode
 (see `src/LoginServer/Startup/StartupOptions.cs` /

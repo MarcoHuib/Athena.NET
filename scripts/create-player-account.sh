@@ -4,8 +4,9 @@ set -euo pipefail
 if [ "$#" -lt 1 ] || [ "$#" -gt 3 ]; then
   echo "Usage: $0 <username> [M|F] [email]" >&2
   echo "Password is never a command-line argument (shell history / 'ps' would expose it)." >&2
-  echo "  - Piped:       echo 'mypassword' | $0 <username> [M|F] [email]" >&2
-  echo "  - Interactive: $0 <username> [M|F] [email]   (you will be prompted, input hidden)" >&2
+  echo "  - Interactive: $0 <username> [M|F] [email]   then type it at the hidden 'Password:' prompt." >&2
+  echo "  - Automation:  supply the password on stdin (e.g. from a secret manager or a protected" >&2
+  echo "                 CI secret) instead of typing it - never place it directly in the command line." >&2
   exit 1
 fi
 
