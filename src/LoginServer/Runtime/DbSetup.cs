@@ -18,27 +18,18 @@ public static class DbSetup
             return () => null;
         }
 
-        var dbProvider = ResolveDbProvider(interConfig, secrets, connectionString);
-        connectionString = ApplyMySqlCodepage(dbProvider, connectionString, interConfig.LoginDbCodepage);
+        var dbProvider = ResolveDbProvider(interConfig, secrets);
+        if (dbProvider != "sqlserver")
+        {
+            LoginLogger.Error($"DB: unsupported provider '{dbProvider}'. LoginServer is SQL Server only.");
+            return () => null;
+        }
 
         try
         {
             var optionsBuilder = new DbContextOptionsBuilder<LoginDbContext>();
-            if (dbProvider == "sqlserver")
-            {
-                optionsBuilder.UseSqlServer(connectionString, sql =>
-                    sql.EnableRetryOnFailure());
-            }
-            else if (dbProvider == "mysql")
-            {
-                optionsBuilder.UseMySql(connectionString, ServerVersion.AutoDetect(connectionString), mysql =>
-                    mysql.EnableRetryOnFailure());
-            }
-            else
-            {
-                LoginLogger.Error($"DB: unsupported provider '{dbProvider}'.");
-                return () => null;
-            }
+            optionsBuilder.UseSqlServer(connectionString, sql =>
+                sql.EnableRetryOnFailure());
 
             optionsBuilder.ConfigureWarnings(warnings =>
                 warnings.Ignore(RelationalEventId.PendingModelChangesWarning));
@@ -137,7 +128,7 @@ public static class DbSetup
         return interConfig.LoginDbConnectionString;
     }
 
-    private static string ResolveDbProvider(InterConfig interConfig, SecretConfig secrets, string connectionString)
+    private static string ResolveDbProvider(InterConfig interConfig, SecretConfig secrets)
     {
         var envProvider = Environment.GetEnvironmentVariable("ATHENA_NET_LOGIN_DB_PROVIDER");
         if (!string.IsNullOrWhiteSpace(envProvider))
@@ -149,50 +140,6 @@ public static class DbSetup
             ? secrets.LoginDbProvider
             : interConfig.LoginDbProvider;
 
-        if (!string.IsNullOrWhiteSpace(provider))
-        {
-            return provider.Trim().ToLowerInvariant();
-        }
-
-        return GuessDbProvider(connectionString);
-    }
-
-    private static string GuessDbProvider(string connectionString)
-    {
-        if (connectionString.Contains("Port=", StringComparison.OrdinalIgnoreCase) ||
-            connectionString.Contains("SslMode=", StringComparison.OrdinalIgnoreCase))
-        {
-            return "mysql";
-        }
-
-        if (connectionString.Contains("TrustServerCertificate=", StringComparison.OrdinalIgnoreCase) ||
-            connectionString.Contains("Encrypt=", StringComparison.OrdinalIgnoreCase) ||
-            connectionString.Contains("User ID=", StringComparison.OrdinalIgnoreCase))
-        {
-            return "sqlserver";
-        }
-
-        return string.Empty;
-    }
-
-    private static string ApplyMySqlCodepage(string provider, string connectionString, string codepage)
-    {
-        if (provider != "mysql")
-        {
-            return connectionString;
-        }
-
-        if (string.IsNullOrWhiteSpace(codepage))
-        {
-            return connectionString;
-        }
-
-        if (connectionString.Contains("CharSet=", StringComparison.OrdinalIgnoreCase) ||
-            connectionString.Contains("Charset=", StringComparison.OrdinalIgnoreCase))
-        {
-            return connectionString;
-        }
-
-        return connectionString + $"CharSet={codepage};";
+        return string.IsNullOrWhiteSpace(provider) ? "sqlserver" : provider.Trim().ToLowerInvariant();
     }
 }

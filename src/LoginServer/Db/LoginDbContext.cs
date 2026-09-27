@@ -20,21 +20,15 @@ public sealed class LoginDbContext : DbContext
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
-        var isMySql = Database.ProviderName?.Contains("MySql", StringComparison.OrdinalIgnoreCase) == true;
-
         modelBuilder.Entity<LoginAccount>(entity =>
         {
             entity.ToTable(_tableNames.AccountTable);
             entity.HasKey(e => e.AccountId);
 
-            var accountId = entity.Property(e => e.AccountId)
+            entity.Property(e => e.AccountId)
                 .HasColumnName("account_id")
-                .ValueGeneratedOnAdd();
-
-            if (!isMySql)
-            {
-                accountId.UseIdentityColumn(2000000, 1);
-            }
+                .ValueGeneratedOnAdd()
+                .UseIdentityColumn(2000000, 1);
 
             entity.Property(e => e.UserId)
                 .HasColumnName("userid")
@@ -53,12 +47,6 @@ public sealed class LoginDbContext : DbContext
                 .HasMaxLength(1)
                 .IsRequired()
                 .HasDefaultValue("M");
-
-            if (isMySql)
-            {
-                entity.Property(e => e.Sex)
-                    .HasColumnType("enum('M','F','S')");
-            }
 
             entity.Property(e => e.Email)
                 .HasColumnName("email")

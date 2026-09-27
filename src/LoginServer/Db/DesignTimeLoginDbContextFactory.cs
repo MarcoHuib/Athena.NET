@@ -16,28 +16,13 @@ public sealed class DesignTimeLoginDbContextFactory : IDesignTimeDbContextFactor
         var interConfig = InterConfigLoader.Load(interConfigPath);
 
         var connectionString = ResolveConnectionString(interConfig, secrets);
-        var provider = ResolveProvider(interConfig, secrets, connectionString);
-        if (string.IsNullOrWhiteSpace(provider))
-        {
-            provider = "sqlserver";
-        }
-
         if (string.IsNullOrWhiteSpace(connectionString))
         {
-            connectionString = provider == "mysql"
-                ? "Server=127.0.0.1;Port=3306;Database=athena.net;User=ragnarok;Password=ragnarok;SslMode=None;"
-                : "Server=localhost;Database=athena.net;User ID=sa;Password=Password123!;Encrypt=True;TrustServerCertificate=True;";
+            connectionString = "Server=localhost;Database=athena.net;User ID=sa;Password=Password123!;Encrypt=True;TrustServerCertificate=True;";
         }
 
         var optionsBuilder = new DbContextOptionsBuilder<LoginDbContext>();
-        if (provider == "mysql")
-        {
-            optionsBuilder.UseMySql(connectionString, ServerVersion.AutoDetect(connectionString));
-        }
-        else
-        {
-            optionsBuilder.UseSqlServer(connectionString);
-        }
+        optionsBuilder.UseSqlServer(connectionString);
 
         var tableNames = new LoginDbTableNames
         {
@@ -65,39 +50,6 @@ public sealed class DesignTimeLoginDbContextFactory : IDesignTimeDbContextFactor
         }
 
         return interConfig.LoginDbConnectionString;
-    }
-
-    private static string ResolveProvider(InterConfig interConfig, SecretConfig secrets, string connectionString)
-    {
-        var envProvider = Environment.GetEnvironmentVariable("ATHENA_NET_LOGIN_DB_PROVIDER");
-        if (!string.IsNullOrWhiteSpace(envProvider))
-        {
-            return envProvider.Trim().ToLowerInvariant();
-        }
-
-        var provider = !string.IsNullOrWhiteSpace(secrets.LoginDbProvider)
-            ? secrets.LoginDbProvider
-            : interConfig.LoginDbProvider;
-
-        if (!string.IsNullOrWhiteSpace(provider))
-        {
-            return provider.Trim().ToLowerInvariant();
-        }
-
-        if (connectionString.Contains("Port=", StringComparison.OrdinalIgnoreCase) ||
-            connectionString.Contains("SslMode=", StringComparison.OrdinalIgnoreCase))
-        {
-            return "mysql";
-        }
-
-        if (connectionString.Contains("TrustServerCertificate=", StringComparison.OrdinalIgnoreCase) ||
-            connectionString.Contains("Encrypt=", StringComparison.OrdinalIgnoreCase) ||
-            connectionString.Contains("User ID=", StringComparison.OrdinalIgnoreCase))
-        {
-            return "sqlserver";
-        }
-
-        return string.Empty;
     }
 
     private static string FindRepoRoot(string start)

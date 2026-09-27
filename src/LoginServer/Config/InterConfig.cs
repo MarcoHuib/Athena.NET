@@ -4,7 +4,6 @@ public sealed class InterConfig
 {
     public string LoginDbProvider { get; init; } = string.Empty;
     public string LoginDbConnectionString { get; init; } = string.Empty;
-    public string LoginDbCodepage { get; init; } = string.Empty;
     public bool LoginCaseSensitive { get; init; }
     public string LoginAccountTable { get; init; } = "login";
     public string IpBanTable { get; init; } = "ipbanlist";
