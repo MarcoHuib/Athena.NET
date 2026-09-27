@@ -7,13 +7,24 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="9.0.0" />
-    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="9.0.0">
+    <!--
+      EF Core is pinned to the 10.0.x line (matching the net10.0 TargetFramework)
+      rather than 9.0.x: EF Core 9.0.0 transitively pulls in
+      Microsoft.Extensions.Logging 10.0.0, which requires
+      Microsoft.Extensions.DependencyInjection >= 10.0.0 - so 9.0.x EF packages
+      and a 10.0.x DI container cannot coexist without a downgrade error.
+      10.0.x is used consistently across EF Core, the SQL Server provider, and
+      (from the Identity migration commit onward) the Identity EF Core store,
+      to avoid mixing incompatible EF Core / Identity-store / provider versions.
+    -->
+    <PackageReference Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" Version="10.0.12" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="10.0.12" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.12">
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
-    <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="9.0.0" />
-    <PackageReference Include="Pomelo.EntityFrameworkCore.MySql" Version="9.0.0" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="10.0.12" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.12" />
     <PackageReference Include="OpenTelemetry" Version="1.17.0" />
     <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.17.0" />
   </ItemGroup>

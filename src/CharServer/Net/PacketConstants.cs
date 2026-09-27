@@ -7,9 +7,22 @@ public static class PacketConstants
     public const int ServerNameLength = 20;
     public const int MapNameLength = 16;
     public const int DomainLength = 128;
+    public const int ServiceNonceLength = 32;
+    public const int ServiceProofLength = 32;
 
-    public const short LcCharServerLogin = 0x2710;
-    public const short LcCharServerLoginAck = 0x2711;
+    // Athena.NET-internal CharServer<->LoginServer HMAC-SHA256 service
+    // authentication handshake (see ai/login-server.md, "Inter-server
+    // service authentication"). These are not stock-iRO packets and must
+    // match src/LoginServer/Net/PacketConstants.cs exactly.
+    /// <summary>CharServer -&gt; LoginServer: ServiceId + registration info. 56 bytes (2 header + 24 ServiceId + 4 IP + 2 port + 20 server name + 2 maintenance + 2 new-display).</summary>
+    public const short LcServiceHello = 0x2750;
+    /// <summary>LoginServer -&gt; CharServer: one-time nonce challenge. 34 bytes (2 header + 32 nonce).</summary>
+    public const short LcServiceAuthChallenge = 0x2751;
+    /// <summary>CharServer -&gt; LoginServer: HMAC-SHA256 proof. 34 bytes (2 header + 32 proof).</summary>
+    public const short LcServiceAuthProof = 0x2752;
+    /// <summary>LoginServer -&gt; CharServer: authentication result. 3 bytes (2 header + 1 result byte, 0 = success).</summary>
+    public const short LcServiceAuthResult = 0x2753;
+
     public const short LcAuthRequest = 0x2712;
     public const short LcAuthResponse = 0x2713;
     public const short LcAccountDataRequest = 0x2716;

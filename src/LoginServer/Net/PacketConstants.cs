@@ -1,25 +1,34 @@
-    namespace Athena.Net.LoginServer.Net;
+namespace Athena.Net.LoginServer.Net;
 
 public static class PacketConstants
 {
     public const int PacketVer = 20220406;
     public const int NameLength = 24;
-    public const int Md5KeyLength = 20;
+    public const int ServerNameLength = 20;
     public const int WebAuthTokenLength = 17;
+    public const int ServiceNonceLength = 32;
+    public const int ServiceProofLength = 32;
 
     public const short CaLogin = 0x64;
-    public const short CaLogin2 = 0x1dd;
-    public const short CaLogin3 = 0x1fa;
     public const short CaConnectInfoChanged = 0x200;
-    public const short CaExeHashCheck = 0x204;
-    public const short CaReqHash = 0x1db;
     public const short CaLoginPcBang = 0x277;
-    public const short CaLogin4 = 0x27c;
     public const short CaLoginChannel = 0x2b0;
     public const short CaSsoLoginReq = 0x825;
 
-    public const short LcCharServerLogin = 0x2710;
-    public const short LcCharServerLoginAck = 0x2711;
+    // Athena.NET-internal CharServer <-> LoginServer service authentication
+    // (HMAC-SHA256 challenge/response - see Application.ServiceAuthProofCalculator
+    // and ai/login-server.md). Not stock-iRO packets; the wire IDs/layouts are
+    // Athena.NET's own and may change without affecting client compatibility.
+    // Replaces the legacy username/password LcCharServerLogin/LcCharServerLoginAck.
+    /// <summary>CharServer -&gt; LoginServer: ServiceId + server registration info. 56 bytes.</summary>
+    public const short LcServiceHello = 0x2750;
+    /// <summary>LoginServer -&gt; CharServer: one-time 32-byte nonce challenge. 34 bytes.</summary>
+    public const short LcServiceAuthChallenge = 0x2751;
+    /// <summary>CharServer -&gt; LoginServer: 32-byte HMAC-SHA256 proof. 34 bytes.</summary>
+    public const short LcServiceAuthProof = 0x2752;
+    /// <summary>LoginServer -&gt; CharServer: 1-byte result (0 = success). 3 bytes.</summary>
+    public const short LcServiceAuthResult = 0x2753;
+
     public const short LcAuthRequest = 0x2712;
     public const short LcAuthResponse = 0x2713;
     public const short LcUserCount = 0x2714;
@@ -52,7 +61,6 @@ public static class PacketConstants
     public const short LcAccountSexNotify = 0x2723;
 
     public const short AcAcceptLogin = 0x0a4d;
-    public const short AcAckHash = 0x1dc;
     public const short AcRefuseLogin = 0x83e;
     public const short ScNotifyBan = 0x81;
 }

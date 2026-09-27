@@ -26,14 +26,9 @@ public static class DbSetup
                 optionsBuilder.UseSqlServer(connectionString, sql =>
                     sql.EnableRetryOnFailure());
             }
-            else if (dbProvider == "mysql")
-            {
-                optionsBuilder.UseMySql(connectionString, ServerVersion.AutoDetect(connectionString), mysql =>
-                    mysql.EnableRetryOnFailure());
-            }
             else
             {
-                CharLogger.Error($"DB: unsupported provider '{dbProvider}'.");
+                CharLogger.Error($"DB: unsupported provider '{dbProvider}'. CharServer is SQL Server only.");
                 return () => null;
             }
 
@@ -139,7 +134,7 @@ public static class DbSetup
         var envProvider = Environment.GetEnvironmentVariable("ATHENA_NET_CHAR_DB_PROVIDER");
         if (!string.IsNullOrWhiteSpace(envProvider))
         {
-            return envProvider.Trim().ToLowerInvariant();
+            return NormalizeProvider(envProvider);
         }
 
         var provider = !string.IsNullOrWhiteSpace(secrets.CharDbProvider)
@@ -148,20 +143,20 @@ public static class DbSetup
 
         if (!string.IsNullOrWhiteSpace(provider))
         {
-            return provider.Trim().ToLowerInvariant();
+            return NormalizeProvider(provider);
         }
 
         return GuessDbProvider(connectionString);
     }
 
+    private static string NormalizeProvider(string provider)
+    {
+        var normalized = provider.Trim().ToLowerInvariant();
+        return normalized == "mssql" ? "sqlserver" : normalized;
+    }
+
     private static string GuessDbProvider(string connectionString)
     {
-        if (connectionString.Contains("Port=", StringComparison.OrdinalIgnoreCase) ||
-            connectionString.Contains("SslMode=", StringComparison.OrdinalIgnoreCase))
-        {
-            return "mysql";
-        }
-
         if (connectionString.Contains("TrustServerCertificate=", StringComparison.OrdinalIgnoreCase) ||
             connectionString.Contains("Encrypt=", StringComparison.OrdinalIgnoreCase) ||
             connectionString.Contains("User ID=", StringComparison.OrdinalIgnoreCase))

@@ -10,8 +10,31 @@ public sealed class StartupOptions
     public bool SelfTest { get; init; }
     public bool AutoMigrate { get; init; }
 
+    /// <summary>
+    /// One-shot account-creation mode: provisions a single player account (via
+    /// IPlayerAccountProvisioningService) and exits, instead of starting the
+    /// server. Used by scripts/create-player-account.sh, replacing that script's
+    /// former direct-SQL insert into the legacy login table (which player login
+    /// no longer reads after the Identity migration).
+    /// <para>
+    /// Deliberately has no CreateAccountPassword property / --create-account-password
+    /// argument: a password passed as a process argument is visible in shell
+    /// history and in the process argument list of every other process on the
+    /// machine for as long as this process runs (e.g. "ps aux"). The password is
+    /// instead read from stdin by LoginServerApp - piped by
+    /// scripts/create-player-account.sh, or as hidden interactive input when run
+    /// directly from a terminal.
+    /// </para>
+    /// </summary>
+    public string? CreateAccountUserName { get; init; }
+    public char CreateAccountSex { get; init; } = 'M';
+    public string? CreateAccountEmail { get; init; }
+
     public static StartupOptions Parse(string[] args)
     {
+        var createAccountUserName = ArgsHelper.GetValue(args, "--create-account-username");
+        var sexArg = ArgsHelper.GetValue(args, "--create-account-sex");
+
         return new StartupOptions
         {
             ConfigPath = ArgsHelper.GetValue(args, "--login-config") ?? "conf/login_athena.conf",
@@ -22,6 +45,9 @@ public sealed class StartupOptions
             SelfTest = ArgsHelper.HasFlag(args, "--self-test"),
             AutoMigrate = ArgsHelper.HasFlag(args, "--auto-migrate") ||
                 string.Equals(Environment.GetEnvironmentVariable("ATHENA_NET_LOGIN_DB_AUTOMIGRATE"), "true", StringComparison.OrdinalIgnoreCase),
+            CreateAccountUserName = createAccountUserName,
+            CreateAccountSex = !string.IsNullOrEmpty(sexArg) ? char.ToUpperInvariant(sexArg[0]) : 'M',
+            CreateAccountEmail = ArgsHelper.GetValue(args, "--create-account-email"),
         };
     }
 }

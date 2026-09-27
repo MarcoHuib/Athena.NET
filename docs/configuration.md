@@ -13,5 +13,7 @@ Notes
 - Login message text is loaded from `conf/msg_conf/login_msg.conf` (legacy format), override with `--login-msg-config <path>`.
 - Console logging honors `console_msg_log`, `console_silent`, and `console_log_filepath` from `conf/login_athena.conf`.
 - `timestamp_format` in `conf/login_athena.conf` prefixes console/file logs (legacy format tokens are supported).
-- `login_case_sensitive` and `login_codepage` in `conf/inter_athena.conf` are supported. `login_codepage` is applied for MySQL connections only.
+- `login_case_sensitive` in `conf/inter_athena.conf` is supported.
 - Database credentials are not read from `conf/inter_athena.conf`; keep secrets in `solutionfiles/secrets/secret.json`.
+- LoginServer is SQL Server only. `login_db_provider` in `conf/inter_athena.conf` (or `ATHENA_NET_LOGIN_DB_PROVIDER`) must resolve to `sqlserver` (or the `mssql` alias); no other provider is supported.
+- CharServer is SQL Server only. `char_db_provider` in `conf/inter_athena.conf` (or `ATHENA_NET_CHAR_DB_PROVIDER`) must resolve to `sqlserver` (or the `mssql` alias); no other provider is supported.

@@ -2,10 +2,10 @@ using System.Buffers.Binary;
 using System.Globalization;
 using System.Net;
 using System.Net.Sockets;
-using System.Security.Cryptography;
 using System.Text;
 using System.Linq;
 using Microsoft.EntityFrameworkCore;
+using Athena.Net.LoginServer.Application;
 using Athena.Net.LoginServer.Config;
 using Athena.Net.LoginServer.Db;
 using Athena.Net.LoginServer.Db.Entities;
@@ -15,34 +15,32 @@ namespace Athena.Net.LoginServer.Net;
 
 public sealed class ClientSession : IDisposable
 {
-    private const int PasswordEncMode = 3;
-
     private readonly TcpClient _client;
     private readonly NetworkStream _stream;
     private readonly LoginConfigStore _configStore;
     private readonly LoginMessageStore _messageStore;
     private readonly Func<LoginDbContext?> _dbFactory;
+    private readonly Func<Db.Identity.AthenaIdentityDbContext?> _identityDbFactory;
     private readonly CharServerRegistry _charServers;
     private readonly LoginState _state;
     private readonly Config.SubnetConfig _subnetConfig;
-    private byte[]? _md5Key;
-    private byte[]? _clientHash;
+    private readonly IPlayerAuthenticationService _playerAuth;
+    private readonly IServiceAuthenticationService _serviceAuth;
+    private readonly IPlayerIdentityAccountService _identityAccountService;
+    private readonly TimeSpan _serviceAuthTimeout;
     private int? _charServerId;
+    private CancellationTokenSource? _handshakeCts;
     private LoginConfig Config => _configStore.Current;
     private bool IsCaseSensitive => _configStore.LoginCaseSensitive;
 
     private static readonly Dictionary<short, int> PacketLengths = new()
     {
         [PacketConstants.CaLogin] = 2 + 4 + PacketConstants.NameLength + PacketConstants.NameLength + 1,
-        [PacketConstants.CaLogin2] = 2 + 4 + PacketConstants.NameLength + 16 + 1,
-        [PacketConstants.CaLogin3] = 2 + 4 + PacketConstants.NameLength + 16 + 1 + 1,
         [PacketConstants.CaConnectInfoChanged] = 2 + PacketConstants.NameLength,
-        [PacketConstants.CaExeHashCheck] = 2 + 16,
-        [PacketConstants.CaReqHash] = 2,
         [PacketConstants.CaLoginPcBang] = 2 + 4 + PacketConstants.NameLength + PacketConstants.NameLength + 1 + 16 + 13,
-        [PacketConstants.CaLogin4] = 2 + 4 + PacketConstants.NameLength + 16 + 1 + 13,
         [PacketConstants.CaLoginChannel] = 2 + 4 + PacketConstants.NameLength + PacketConstants.NameLength + 1 + 16 + 13 + 1,
-        [PacketConstants.LcCharServerLogin] = 86,
+        [PacketConstants.LcServiceHello] = 2 + PacketConstants.NameLength + 4 + 2 + PacketConstants.ServerNameLength + 2 + 2,
+        [PacketConstants.LcServiceAuthProof] = 2 + PacketConstants.ServiceProofLength,
         [PacketConstants.LcAuthRequest] = 23,
         [PacketConstants.LcUserCount] = 6,
         [PacketConstants.LcAccountDataRequest] = 6,
@@ -64,35 +62,88 @@ public sealed class ClientSession : IDisposable
     };
 
     public ClientSession(TcpClient client, LoginConfigStore configStore, LoginMessageStore messageStore, Func<LoginDbContext?> dbFactory, CharServerRegistry charServers, LoginState state, Config.SubnetConfig subnetConfig)
+        : this(client, configStore, messageStore, dbFactory, () => null, charServers, state, subnetConfig, new UnavailablePlayerAuthenticationService(), new ServiceAuthenticationService(new CharServerServiceTokenProvider(new SecretConfig())))
+    {
+    }
+
+    public ClientSession(
+        TcpClient client,
+        LoginConfigStore configStore,
+        LoginMessageStore messageStore,
+        Func<LoginDbContext?> dbFactory,
+        Func<Db.Identity.AthenaIdentityDbContext?> identityDbFactory,
+        CharServerRegistry charServers,
+        LoginState state,
+        Config.SubnetConfig subnetConfig,
+        IPlayerAuthenticationService playerAuth,
+        IServiceAuthenticationService serviceAuth,
+        IPlayerIdentityAccountService? identityAccountService = null,
+        TimeSpan? serviceAuthTimeout = null)
     {
         _client = client;
         _configStore = configStore;
         _messageStore = messageStore;
         _dbFactory = dbFactory;
+        _identityDbFactory = identityDbFactory;
         _charServers = charServers;
         _state = state;
         _subnetConfig = subnetConfig;
+        _playerAuth = playerAuth;
+        _serviceAuth = serviceAuth;
+        _identityAccountService = identityAccountService ?? new UnavailablePlayerIdentityAccountService();
+        _serviceAuthTimeout = serviceAuthTimeout ?? TimeSpan.FromSeconds(30);
         _stream = client.GetStream();
     }
 
+    /// <summary>
+    /// Runs the packet loop for this connection's lifetime. A per-connection
+    /// <see cref="CancellationTokenSource"/>, linked to the server-lifetime
+    /// <paramref name="cancellationToken"/>, is used for every read so the
+    /// service-auth handshake can impose a real wall-clock timeout (see
+    /// <see cref="HandleServiceHelloAsync"/>) on just the "waiting for
+    /// LcServiceAuthProof" window, without affecting the outer token or the
+    /// normal long-lived authenticated CharServer connection once that
+    /// window closes.
+    /// </summary>
     public async Task RunAsync(CancellationToken cancellationToken)
     {
-        while (!cancellationToken.IsCancellationRequested)
+        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        _handshakeCts = linkedCts;
+        var token = linkedCts.Token;
+
+        try
         {
-            var header = await ReadExactAsync(2, cancellationToken);
-            if (header.Length == 0)
+            while (!token.IsCancellationRequested)
             {
-                return;
-            }
+                var header = await ReadExactAsync(2, token);
+                if (header.Length == 0)
+                {
+                    return;
+                }
 
-            var packetType = BinaryPrimitives.ReadInt16LittleEndian(header);
-            var packet = await ReadPacketAsync(packetType, header, cancellationToken);
-            if (packet.Length == 0)
-            {
-                return;
-            }
+                var packetType = BinaryPrimitives.ReadInt16LittleEndian(header);
+                var packet = await ReadPacketAsync(packetType, header, token);
+                if (packet.Length == 0)
+                {
+                    return;
+                }
 
-            await HandlePacketAsync(packetType, packet, cancellationToken);
+                await HandlePacketAsync(packetType, packet, token);
+            }
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            // The outer server-lifetime token is still alive, so this
+            // cancellation came only from the per-connection handshake
+            // timeout: a challenge was issued but LcServiceAuthProof never
+            // arrived within the timeout window. No CharServer is registered
+            // and no service-auth state remains active - the connection is
+            // simply closed like any other malformed/abandoned connection.
+            LoginLogger.Warning("Service authentication handshake timed out waiting for LcServiceAuthProof. Closing connection.");
+        }
+        finally
+        {
+            _handshakeCts = null;
         }
     }
 
@@ -226,17 +277,49 @@ public sealed class ClientSession : IDisposable
         return packetFixed;
     }
 
+    /// <summary>
+    /// Inter-server packets that must never execute for a socket that has not
+    /// successfully completed the LcServiceHello -&gt; LcServiceAuthChallenge -&gt;
+    /// LcServiceAuthProof HMAC handshake. LcServiceHello and LcServiceAuthProof
+    /// are intentionally excluded - they are the only two packets an
+    /// unauthenticated service socket is allowed to send (the handshake
+    /// itself).
+    /// </summary>
+    private static readonly HashSet<short> ServiceOnlyPackets = new()
+    {
+        PacketConstants.LcAuthRequest,
+        PacketConstants.LcUserCount,
+        PacketConstants.LcAccountDataRequest,
+        PacketConstants.LcKeepAliveRequest,
+        PacketConstants.LcChangeEmailRequest,
+        PacketConstants.LcUpdateAccountState,
+        PacketConstants.LcBanAccount,
+        PacketConstants.LcChangeSex,
+        PacketConstants.LcUnbanAccount,
+        PacketConstants.LcVipRequest,
+        PacketConstants.LcSetAccountOnline,
+        PacketConstants.LcSetAccountOffline,
+        PacketConstants.LcOnlineList,
+        PacketConstants.LcAccountInfoRequest,
+        PacketConstants.LcAccountReg2Update,
+        PacketConstants.LcGlobalAccRegRequest,
+        PacketConstants.LcCharIpUpdate,
+        PacketConstants.LcSetAllOffline,
+        PacketConstants.LcPincodeUpdate,
+        PacketConstants.LcPincodeAuthFail,
+    };
+
     private async Task HandlePacketAsync(short packetType, byte[] packet, CancellationToken cancellationToken)
     {
+        if (ServiceOnlyPackets.Contains(packetType) && !_serviceAuth.IsAuthenticated)
+        {
+            LoginLogger.Warning($"Rejected inter-server packet 0x{packetType:X4} from an unauthenticated socket.");
+            return;
+        }
+
         switch (packetType)
         {
-            case PacketConstants.CaReqHash:
-                await SendAckHashAsync(cancellationToken);
-                break;
             case PacketConstants.CaConnectInfoChanged:
-                break;
-            case PacketConstants.CaExeHashCheck:
-                _clientHash = packet.AsSpan(2, 16).ToArray();
                 break;
             case PacketConstants.CaLogin:
             {
@@ -247,43 +330,7 @@ public sealed class ClientSession : IDisposable
                 }
                 var request = ParsePlainLogin(packet);
                 LoginLogger.Info($"Client login request: packet=0x{packetType:X4} len={packet.Length} clientType={request.ClientType}");
-                await HandleLoginAsync(request, false, cancellationToken);
-                break;
-            }
-            case PacketConstants.CaLogin2:
-            {
-                if (packet.Length < 47)
-                {
-                    _client.Close();
-                    break;
-                }
-                var request = ParseMd5Login(packet);
-                LoginLogger.Info($"Client login request: packet=0x{packetType:X4} len={packet.Length} clientType={request.ClientType}");
-                await HandleLoginAsync(request, false, cancellationToken);
-                break;
-            }
-            case PacketConstants.CaLogin3:
-            {
-                if (packet.Length < 47)
-                {
-                    _client.Close();
-                    break;
-                }
-                var request = ParseMd5Login(packet);
-                LoginLogger.Info($"Client login request: packet=0x{packetType:X4} len={packet.Length} clientType={request.ClientType}");
-                await HandleLoginAsync(request, false, cancellationToken);
-                break;
-            }
-            case PacketConstants.CaLogin4:
-            {
-                if (packet.Length < 47)
-                {
-                    _client.Close();
-                    break;
-                }
-                var request = ParseMd5Login(packet);
-                LoginLogger.Info($"Client login request: packet=0x{packetType:X4} len={packet.Length} clientType={request.ClientType}");
-                await HandleLoginAsync(request, false, cancellationToken);
+                await HandleLoginAsync(request, cancellationToken);
                 break;
             }
             case PacketConstants.CaLoginPcBang:
@@ -295,7 +342,7 @@ public sealed class ClientSession : IDisposable
                 }
                 var request = ParsePlainLogin(packet);
                 LoginLogger.Info($"Client login request: packet=0x{packetType:X4} len={packet.Length} clientType={request.ClientType}");
-                await HandleLoginAsync(request, false, cancellationToken);
+                await HandleLoginAsync(request, cancellationToken);
                 break;
             }
             case PacketConstants.CaLoginChannel:
@@ -307,7 +354,7 @@ public sealed class ClientSession : IDisposable
                 }
                 var request = ParsePlainLogin(packet);
                 LoginLogger.Info($"Client login request: packet=0x{packetType:X4} len={packet.Length} clientType={request.ClientType}");
-                await HandleLoginAsync(request, false, cancellationToken);
+                await HandleLoginAsync(request, cancellationToken);
                 break;
             }
             case PacketConstants.CaSsoLoginReq:
@@ -319,11 +366,14 @@ public sealed class ClientSession : IDisposable
                 }
                 var request = ParseSsoLogin(packet);
                 LoginLogger.Info($"Client login request: packet=0x{packetType:X4} len={packet.Length} clientType={request.ClientType}");
-                await HandleLoginAsync(request, false, cancellationToken);
+                await HandleLoginAsync(request, cancellationToken);
                 break;
             }
-            case PacketConstants.LcCharServerLogin:
-                await HandleCharServerLoginAsync(packet, cancellationToken);
+            case PacketConstants.LcServiceHello:
+                await HandleServiceHelloAsync(packet, cancellationToken);
+                break;
+            case PacketConstants.LcServiceAuthProof:
+                await HandleServiceAuthProofAsync(packet, cancellationToken);
                 break;
             case PacketConstants.LcAuthRequest:
                 await HandleAuthRequestAsync(packet, cancellationToken);
@@ -390,67 +440,20 @@ public sealed class ClientSession : IDisposable
         }
     }
 
-    private async Task HandleLoginAsync(LoginRequest request, bool isServer, CancellationToken cancellationToken)
+    private async Task HandleLoginAsync(LoginRequest request, CancellationToken cancellationToken)
     {
-        if (Config.UseMd5Passwords && request.PasswordEnc != 0)
-        {
-            await SendRefuseLoginAsync(3, string.Empty, cancellationToken);
-            return;
-        }
-
-        if (Config.NewAccountFlag && request.AutoRegisterBaseId != null)
-        {
-            request = request with { UserId = request.AutoRegisterBaseId };
-        }
-
         var remoteIp = (_client.Client.RemoteEndPoint as IPEndPoint)?.Address.ToString() ?? "0.0.0.0";
-        var result = await AuthenticateAsync(request, remoteIp, isServer, cancellationToken);
+        var result = await AuthenticateAsync(request, remoteIp, cancellationToken);
 
         if (!result.Success)
         {
-            if (isServer)
+            LoginLogger.Warning($"Login failed (code={result.ErrorCode}).");
+            await SendRefuseLoginAsync(result.ErrorCode, result.UnblockTime, cancellationToken);
+            if (result.ErrorCode is 0 or 1)
             {
-                var reason = result.ServerAccountFailure switch
-                {
-                    ServerAccountFailure.NotFound => "server-account-not-found",
-                    ServerAccountFailure.InvalidCredential => "invalid-server-credential",
-                    ServerAccountFailure.NotAuthorized => "account-not-authorized-as-server",
-                    _ => "authentication-failed",
-                };
-                LoginLogger.Warning($"Char server login rejected reason={reason} code={result.ErrorCode}.");
-            }
-            else
-            {
-                LoginLogger.Warning($"Login failed (server=false, code={result.ErrorCode}).");
-            }
-            if (isServer)
-            {
-                await SendCharServerAckAsync(3, cancellationToken);
-            }
-            else
-            {
-                await SendRefuseLoginAsync(result.ErrorCode, result.UnblockTime, cancellationToken);
-                if (result.ErrorCode is 0 or 1)
-                {
-                    await ApplyDynamicIpBanAsync(remoteIp, cancellationToken);
-                }
+                await ApplyDynamicIpBanAsync(remoteIp, cancellationToken);
             }
 
-            return;
-        }
-
-        if (isServer)
-        {
-            if (result.Sex != 2 || result.AccountId >= 5)
-            {
-                LoginLogger.Warning($"Char server login refused (sex={result.Sex}).");
-                await SendCharServerAckAsync(3, cancellationToken);
-                return;
-            }
-
-            RegisterCharServer(result, request, cancellationToken);
-            LoginLogger.Status("Char server login accepted.");
-            await SendCharServerAckAsync(0, cancellationToken);
             return;
         }
 
@@ -472,24 +475,15 @@ public sealed class ClientSession : IDisposable
             return;
         }
 
-        if (_state.TryGetOnlineUser(result.AccountId, out var existing))
+        if (_state.CheckDuplicateLogin(result.AccountId) == DuplicateLoginCheckResult.AlreadyOnline)
         {
-            if (existing.CharServerId >= 0)
-            {
-                await SendKickRequestAsync(result.AccountId, cancellationToken);
-                _state.ScheduleWaitingDisconnect(result.AccountId);
-                await SendNotifyBanAsync(8, cancellationToken);
-                return;
-            }
-
-            if (existing.CharServerId == -1)
-            {
-                _state.RemoveAuthNode(result.AccountId);
-                _state.RemoveOnlineUser(result.AccountId);
-            }
+            await SendKickRequestAsync(result.AccountId, cancellationToken);
+            _state.ScheduleWaitingDisconnect(result.AccountId);
+            await SendNotifyBanAsync(8, cancellationToken);
+            return;
         }
 
-        _state.AddAuthNode(new AuthNode
+        _state.BeginPendingHandoff(new AuthNode
         {
             AccountId = result.AccountId,
             LoginId1 = result.LoginId1,
@@ -499,25 +493,128 @@ public sealed class ClientSession : IDisposable
             Ip = result.Ip
         });
 
-        _state.AddOnlineUser(-1, result.AccountId);
-        _state.ScheduleWaitingDisconnect(result.AccountId);
-
         var remoteAddress = (_client.Client.RemoteEndPoint as IPEndPoint)?.Address;
         await SendAcceptLoginAsync(result, remoteAddress, cancellationToken);
     }
 
-    private async Task HandleCharServerLoginAsync(byte[] packet, CancellationToken cancellationToken)
+    /// <summary>
+    /// First step of Athena.NET's internal CharServer &lt;-&gt; LoginServer HMAC-SHA256
+    /// service handshake (see ai/login-server.md): a CharServer identifies itself
+    /// with a non-secret ServiceId and its registration info, and receives a
+    /// one-time nonce challenge - cryptographically bound to the complete hello
+    /// payload, not just the ServiceId - in return. Only valid from
+    /// <see cref="ServiceAuthConnectionState.Unauthenticated"/>: a second hello
+    /// while a challenge is outstanding, or one arriving after this connection
+    /// already authenticated or failed, is rejected and the connection is
+    /// closed rather than silently issuing a fresh challenge. Registration is
+    /// not finalized here - only after LcServiceAuthProof verifies
+    /// successfully (see <see cref="HandleServiceAuthProofAsync"/>) is this
+    /// socket trusted with anything.
+    /// </summary>
+    private async Task HandleServiceHelloAsync(byte[] packet, CancellationToken cancellationToken)
     {
-        var user = ReadFixedString(packet, 2, PacketConstants.NameLength);
-        var pass = ReadFixedString(packet, 26, PacketConstants.NameLength);
+        var serviceId = ReadFixedString(packet, 2, PacketConstants.NameLength);
+        var ip = new IPAddress(packet.AsSpan(2 + PacketConstants.NameLength, 4));
+        var port = BinaryPrimitives.ReadUInt16BigEndian(packet.AsSpan(2 + PacketConstants.NameLength + 4, 2));
+        var name = ReadFixedString(packet, 2 + PacketConstants.NameLength + 4 + 2, PacketConstants.ServerNameLength);
+        var maintenanceOffset = 2 + PacketConstants.NameLength + 4 + 2 + PacketConstants.ServerNameLength;
+        var maintenance = BinaryPrimitives.ReadUInt16LittleEndian(packet.AsSpan(maintenanceOffset, 2));
+        var newDisplay = BinaryPrimitives.ReadUInt16LittleEndian(packet.AsSpan(maintenanceOffset + 2, 2));
 
-        if (Config.UseMd5Passwords)
+        var hello = new ServiceHelloInfo(serviceId, ip, port, name, maintenance, newDisplay);
+
+        var nonce = _serviceAuth.GenerateChallenge(hello);
+        if (nonce == null)
         {
-            pass = Md5Hex(Encoding.ASCII.GetBytes(pass));
+            LoginLogger.Warning($"Rejected LcServiceHello: connection is not in a state that accepts a new challenge (state={_serviceAuth.State}). Closing connection.");
+            await SendServiceAuthResultAsync(1, cancellationToken);
+            _client.Close();
+            return;
         }
 
-        var loginRequest = new LoginRequest(user, pass, 0, 0, null, null) { RawPacket = packet };
-        await HandleLoginAsync(loginRequest, true, cancellationToken);
+        // The handshake timeout starts only once a challenge is actually
+        // issued - a real wall-clock bound on "how long may this connection
+        // wait before sending LcServiceAuthProof", enforced by cancelling the
+        // next read rather than merely checked when a (possibly very late)
+        // proof happens to arrive.
+        _handshakeCts?.CancelAfter(_serviceAuthTimeout);
+
+        LoginLogger.Info($"Service hello received (serviceId='{serviceId}'), challenge issued.");
+        await SendServiceAuthChallengeAsync(nonce, cancellationToken);
+    }
+
+    /// <summary>
+    /// Second/final step of the handshake: verifies the submitted HMAC-SHA256
+    /// proof - recomputed over the complete ServiceHello payload bound when
+    /// the challenge was issued - against the outstanding one-time challenge.
+    /// Only valid from <see cref="ServiceAuthConnectionState.ChallengeIssued"/>;
+    /// a proof with no outstanding challenge (never issued, already consumed,
+    /// or arriving after this connection already authenticated) is always
+    /// rejected. Registration and authentication happen in that order - the
+    /// CharServer is registered in <see cref="CharServerRegistry"/> first, and
+    /// <see cref="IServiceAuthenticationService.MarkAuthenticated"/> (which
+    /// unlocks every <c>ServiceOnlyPackets</c> handler) is only called if that
+    /// registration actually succeeds - so if registration were ever to fail
+    /// for any reason, the socket can never become authenticated. Any failure
+    /// along this path leaves IsAuthenticated false and closes the connection
+    /// (rather than allowing unlimited retries), matching the security
+    /// invariant that protected Lc* packets must be unreachable before a
+    /// fully successful service login.
+    /// </summary>
+    private async Task HandleServiceAuthProofAsync(byte[] packet, CancellationToken cancellationToken)
+    {
+        var proof = packet.AsSpan(2, PacketConstants.ServiceProofLength).ToArray();
+
+        var result = _serviceAuth.VerifyProof(proof);
+
+        // Whether this proof succeeds or fails, the pending-challenge phase
+        // is over: disable the handshake timeout so it can never fire against
+        // the connection again (a long-lived authenticated CharServer
+        // connection must not inherit this timeout; a failing connection is
+        // about to be closed here directly).
+        _handshakeCts?.CancelAfter(Timeout.InfiniteTimeSpan);
+
+        if (!result.Success || result.Hello == null)
+        {
+            // Never log the proof or the token - only the classification.
+            LoginLogger.Warning($"Service authentication failed (reason={result.Outcome}). Closing connection.");
+            await SendServiceAuthResultAsync(1, cancellationToken);
+            _client.Close();
+            return;
+        }
+
+        // Register before authenticating: if registration ever fails (defense
+        // in depth - the state machine above already makes this path
+        // unreachable twice on the same connection), the socket must never
+        // become authenticated.
+        if (!TryRegisterCharServer(result.Hello))
+        {
+            LoginLogger.Warning("CharServer registration failed after a verified proof. Closing connection.");
+            await SendServiceAuthResultAsync(1, cancellationToken);
+            _client.Close();
+            return;
+        }
+
+        // Only at this point has the HMAC proof been verified against the
+        // one-time challenge and the complete bound ServiceHello payload, AND
+        // the CharServer been registered. IServiceAuthenticationService.MarkAuthenticated
+        // itself only succeeds immediately after this connection's own
+        // successful VerifyProof call (see ServiceAuthConnectionState.ProofVerified),
+        // so it cannot be reached from any other state even by a caller bug -
+        // ServiceOnlyPackets must never be gated on anything earlier than a
+        // true result from this call.
+        if (!_serviceAuth.MarkAuthenticated())
+        {
+            // Unreachable given the flow above, but fail closed rather than
+            // silently treating the connection as authenticated regardless.
+            LoginLogger.Warning("MarkAuthenticated was rejected unexpectedly after a successful proof verification. Closing connection.");
+            await SendServiceAuthResultAsync(1, cancellationToken);
+            _client.Close();
+            return;
+        }
+
+        LoginLogger.Status($"Char server registered (serviceId='{result.Hello.ServiceId}', name='{result.Hello.ServerName}').");
+        await SendServiceAuthResultAsync(0, cancellationToken);
     }
 
     private async Task HandleAuthRequestAsync(byte[] packet, CancellationToken cancellationToken)
@@ -529,17 +626,13 @@ public sealed class ClientSession : IDisposable
         var requestId = BinaryPrimitives.ReadUInt32LittleEndian(packet.AsSpan(19, 4));
 
         byte result = 1;
-        byte clientType = 0;
+        byte clientType;
 
-        if (_state.TryGetAuthNode(accountId, out var node))
+        if (_state.TryConsumeAuthNode(accountId, loginId1, loginId2, sex, out clientType))
         {
-            if (node.AccountId == accountId && node.LoginId1 == loginId1 && node.LoginId2 == loginId2 && node.Sex == sex)
-            {
-                result = 0;
-                clientType = node.ClientType;
-                _state.RemoveAuthNode(accountId);
-            }
+            result = 0;
         }
+
         if (result != 0)
         {
             LoginLogger.Warning($"Auth request denied (sex={sex}).");
@@ -570,7 +663,7 @@ public sealed class ClientSession : IDisposable
     private async Task HandleAccountDataRequestAsync(byte[] packet, CancellationToken cancellationToken)
     {
         var accountId = BinaryPrimitives.ReadUInt32LittleEndian(packet.AsSpan(2, 4));
-        var db = _dbFactory();
+        var db = _identityDbFactory();
         if (db == null)
         {
             return;
@@ -578,19 +671,28 @@ public sealed class ClientSession : IDisposable
 
         await using (db)
         {
-            var account = await db.Accounts
+            var account = await db.GameAccounts
                 .AsNoTracking()
-                .FirstOrDefaultAsync(a => a.AccountId == accountId, cancellationToken);
+                .FirstOrDefaultAsync(a => a.RagnarokAccountId == accountId, cancellationToken);
 
             if (account == null)
             {
                 return;
             }
 
-            await SendAccountDataAsync(account, cancellationToken);
+            var email = await GetIdentityEmailAsync(db, account.IdentityUserId, cancellationToken);
+            await SendAccountDataAsync(account, email, cancellationToken);
         }
     }
 
+    /// <summary>
+    /// Wire-format validation (does this look like an email at all) stays here -
+    /// it is rejecting malformed packet data, not an Identity concern. The
+    /// actual mutation goes through IPlayerIdentityAccountService/UserManager
+    /// (see PlayerIdentityAccountService), never hand-written EF property
+    /// assignment, so normalization/validation always match whatever ASP.NET
+    /// Core Identity is actually configured to do.
+    /// </summary>
     private async Task HandleChangeEmailAsync(byte[] packet, CancellationToken cancellationToken)
     {
         var accountId = BinaryPrimitives.ReadUInt32LittleEndian(packet.AsSpan(2, 4));
@@ -602,28 +704,10 @@ public sealed class ClientSession : IDisposable
             return;
         }
 
-        var db = _dbFactory();
-        if (db == null)
+        var result = await _identityAccountService.ChangeEmailAsync(accountId, actualEmail, newEmail, cancellationToken);
+        if (!result.Success)
         {
-            return;
-        }
-
-        await using (db)
-        {
-            var account = await db.Accounts.FirstOrDefaultAsync(a => a.AccountId == accountId, cancellationToken);
-            if (account == null)
-            {
-                return;
-            }
-
-            if (!string.Equals(account.Email, actualEmail, StringComparison.OrdinalIgnoreCase))
-            {
-                return;
-            }
-
-            account.Email = newEmail;
-            db.Entry(account).Property(a => a.Email).IsModified = true;
-            await db.SaveChangesAsync(cancellationToken);
+            LoginLogger.Warning($"Email change rejected for account {accountId} ({result.FailureReason}).");
         }
     }
 
@@ -632,7 +716,7 @@ public sealed class ClientSession : IDisposable
         var accountId = BinaryPrimitives.ReadUInt32LittleEndian(packet.AsSpan(2, 4));
         var state = BinaryPrimitives.ReadUInt32LittleEndian(packet.AsSpan(6, 4));
 
-        var db = _dbFactory();
+        var db = _identityDbFactory();
         if (db == null)
         {
             return;
@@ -640,14 +724,13 @@ public sealed class ClientSession : IDisposable
 
         await using (db)
         {
-            var account = await db.Accounts.FirstOrDefaultAsync(a => a.AccountId == accountId, cancellationToken);
+            var account = await db.GameAccounts.FirstOrDefaultAsync(a => a.RagnarokAccountId == accountId, cancellationToken);
             if (account == null)
             {
                 return;
             }
 
             account.State = state;
-            db.Entry(account).Property(a => a.State).IsModified = true;
             await db.SaveChangesAsync(cancellationToken);
             await BroadcastAccountStatusAsync(accountId, 0, state, cancellationToken);
         }
@@ -663,7 +746,7 @@ public sealed class ClientSession : IDisposable
             return;
         }
 
-        var db = _dbFactory();
+        var db = _identityDbFactory();
         if (db == null)
         {
             return;
@@ -671,7 +754,7 @@ public sealed class ClientSession : IDisposable
 
         await using (db)
         {
-            var account = await db.Accounts.FirstOrDefaultAsync(a => a.AccountId == accountId, cancellationToken);
+            var account = await db.GameAccounts.FirstOrDefaultAsync(a => a.RagnarokAccountId == accountId, cancellationToken);
             if (account == null)
             {
                 return;
@@ -686,7 +769,6 @@ public sealed class ClientSession : IDisposable
             }
 
             account.UnbanTime = newTime;
-            db.Entry(account).Property(a => a.UnbanTime).IsModified = true;
             await db.SaveChangesAsync(cancellationToken);
             await BroadcastAccountStatusAsync(accountId, 1, newTime, cancellationToken);
         }
@@ -695,7 +777,7 @@ public sealed class ClientSession : IDisposable
     private async Task HandleChangeSexAsync(byte[] packet, CancellationToken cancellationToken)
     {
         var accountId = BinaryPrimitives.ReadUInt32LittleEndian(packet.AsSpan(2, 4));
-        var db = _dbFactory();
+        var db = _identityDbFactory();
         if (db == null)
         {
             return;
@@ -703,19 +785,13 @@ public sealed class ClientSession : IDisposable
 
         await using (db)
         {
-            var account = await db.Accounts.FirstOrDefaultAsync(a => a.AccountId == accountId, cancellationToken);
+            var account = await db.GameAccounts.FirstOrDefaultAsync(a => a.RagnarokAccountId == accountId, cancellationToken);
             if (account == null)
             {
                 return;
             }
 
-            if (string.Equals(account.Sex, "S", StringComparison.OrdinalIgnoreCase))
-            {
-                return;
-            }
-
             account.Sex = account.Sex.Equals("M", StringComparison.OrdinalIgnoreCase) ? "F" : "M";
-            db.Entry(account).Property(a => a.Sex).IsModified = true;
             await db.SaveChangesAsync(cancellationToken);
             await BroadcastSexChangeAsync(accountId, account.Sex, cancellationToken);
         }
@@ -724,7 +800,7 @@ public sealed class ClientSession : IDisposable
     private async Task HandleUnbanAccountAsync(byte[] packet, CancellationToken cancellationToken)
     {
         var accountId = BinaryPrimitives.ReadUInt32LittleEndian(packet.AsSpan(2, 4));
-        var db = _dbFactory();
+        var db = _identityDbFactory();
         if (db == null)
         {
             return;
@@ -732,7 +808,7 @@ public sealed class ClientSession : IDisposable
 
         await using (db)
         {
-            var account = await db.Accounts.FirstOrDefaultAsync(a => a.AccountId == accountId, cancellationToken);
+            var account = await db.GameAccounts.FirstOrDefaultAsync(a => a.RagnarokAccountId == accountId, cancellationToken);
             if (account == null)
             {
                 return;
@@ -744,7 +820,6 @@ public sealed class ClientSession : IDisposable
             }
 
             account.UnbanTime = 0;
-            db.Entry(account).Property(a => a.UnbanTime).IsModified = true;
             await db.SaveChangesAsync(cancellationToken);
         }
     }
@@ -756,7 +831,7 @@ public sealed class ClientSession : IDisposable
         var timeDiff = BinaryPrimitives.ReadInt32LittleEndian(packet.AsSpan(7, 4));
         var mapFd = BinaryPrimitives.ReadUInt32LittleEndian(packet.AsSpan(11, 4));
 
-        var db = _dbFactory();
+        var db = _identityDbFactory();
         if (db == null)
         {
             return;
@@ -764,7 +839,7 @@ public sealed class ClientSession : IDisposable
 
         await using (db)
         {
-            var account = await db.Accounts.FirstOrDefaultAsync(a => a.AccountId == accountId, cancellationToken);
+            var account = await db.GameAccounts.FirstOrDefaultAsync(a => a.RagnarokAccountId == accountId, cancellationToken);
             if (account == null)
             {
                 return;
@@ -819,10 +894,6 @@ public sealed class ClientSession : IDisposable
             }
 
             account.VipTime = vipTime;
-            db.Entry(account).Property(a => a.GroupId).IsModified = true;
-            db.Entry(account).Property(a => a.OldGroup).IsModified = true;
-            db.Entry(account).Property(a => a.CharacterSlots).IsModified = true;
-            db.Entry(account).Property(a => a.VipTime).IsModified = true;
             await db.SaveChangesAsync(cancellationToken);
 
             if ((flag & 0x1) != 0)
@@ -831,7 +902,8 @@ public sealed class ClientSession : IDisposable
                 await SendVipDataAsync(account, responseFlag, mapFd, cancellationToken);
             }
 
-            await SendAccountDataAsync(account, cancellationToken);
+            var email = await GetIdentityEmailAsync(db, account.IdentityUserId, cancellationToken);
+            await SendAccountDataAsync(account, email, cancellationToken);
         }
     }
 
@@ -905,7 +977,7 @@ public sealed class ClientSession : IDisposable
         var userAid = BinaryPrimitives.ReadUInt32LittleEndian(packet.AsSpan(10, 4));
         var accountId = BinaryPrimitives.ReadUInt32LittleEndian(packet.AsSpan(14, 4));
 
-        var db = _dbFactory();
+        var db = _identityDbFactory();
         if (db == null)
         {
             return;
@@ -913,17 +985,18 @@ public sealed class ClientSession : IDisposable
 
         await using (db)
         {
-            var account = await db.Accounts
+            var account = await db.GameAccounts
                 .AsNoTracking()
-                .FirstOrDefaultAsync(a => a.AccountId == accountId, cancellationToken);
+                .FirstOrDefaultAsync(a => a.RagnarokAccountId == accountId, cancellationToken);
 
             if (account == null)
             {
-                await SendAccountInfoResponseAsync(mapFd, userFd, userAid, accountId, null, cancellationToken);
+                await SendAccountInfoResponseAsync(mapFd, userFd, userAid, accountId, null, string.Empty, string.Empty, cancellationToken);
                 return;
             }
 
-            await SendAccountInfoResponseAsync(mapFd, userFd, userAid, accountId, account, cancellationToken);
+            var user = await db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == account.IdentityUserId, cancellationToken);
+            await SendAccountInfoResponseAsync(mapFd, userFd, userAid, accountId, account, user?.Email ?? string.Empty, user?.UserName ?? string.Empty, cancellationToken);
         }
     }
 
@@ -1077,7 +1150,7 @@ public sealed class ClientSession : IDisposable
 
         var accountId = BinaryPrimitives.ReadUInt32LittleEndian(packet.AsSpan(4, 4));
         var pin = ReadFixedString(packet, 8, 5);
-        var db = _dbFactory();
+        var db = _identityDbFactory();
         if (db == null)
         {
             return;
@@ -1085,7 +1158,7 @@ public sealed class ClientSession : IDisposable
 
         await using (db)
         {
-            var account = await db.Accounts.FirstOrDefaultAsync(a => a.AccountId == accountId, cancellationToken);
+            var account = await db.GameAccounts.FirstOrDefaultAsync(a => a.RagnarokAccountId == accountId, cancellationToken);
             if (account == null)
             {
                 return;
@@ -1093,8 +1166,6 @@ public sealed class ClientSession : IDisposable
 
             account.Pincode = pin;
             account.PincodeChange = ToUnixTime(DateTime.UtcNow);
-            db.Entry(account).Property(a => a.Pincode).IsModified = true;
-            db.Entry(account).Property(a => a.PincodeChange).IsModified = true;
             await db.SaveChangesAsync(cancellationToken);
         }
     }
@@ -1102,6 +1173,27 @@ public sealed class ClientSession : IDisposable
     private async Task HandlePincodeAuthFailAsync(byte[] packet, CancellationToken cancellationToken)
     {
         var accountId = BinaryPrimitives.ReadUInt32LittleEndian(packet.AsSpan(2, 4));
+        var identityDb = _identityDbFactory();
+        if (identityDb == null)
+        {
+            return;
+        }
+
+        string userName;
+        string lastIp;
+        await using (identityDb)
+        {
+            var account = await identityDb.GameAccounts.AsNoTracking().FirstOrDefaultAsync(a => a.RagnarokAccountId == accountId, cancellationToken);
+            if (account == null)
+            {
+                return;
+            }
+
+            var user = await identityDb.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == account.IdentityUserId, cancellationToken);
+            userName = user?.UserName ?? string.Empty;
+            lastIp = account.LastIp;
+        }
+
         var db = _dbFactory();
         if (db == null)
         {
@@ -1110,15 +1202,10 @@ public sealed class ClientSession : IDisposable
 
         await using (db)
         {
-            var account = await db.Accounts.AsNoTracking().FirstOrDefaultAsync(a => a.AccountId == accountId, cancellationToken);
-            if (account == null)
-            {
-                return;
-            }
-
-            await LogLoginAsync(db, account.UserId, account.LastIp, 100, "PIN Code check failed", cancellationToken);
-            _state.RemoveOnlineUser(accountId);
+            await LogLoginAsync(db, userName, lastIp, 100, "PIN Code check failed", cancellationToken);
         }
+
+        _state.RemoveOnlineUser(accountId);
     }
 
     private static async Task UpsertAccountRegNumAsync(LoginDbContext db, uint accountId, string key, uint index, long value)
@@ -1161,7 +1248,7 @@ public sealed class ClientSession : IDisposable
         }
     }
 
-    private async Task<AuthResult> AuthenticateAsync(LoginRequest request, string remoteIp, bool isServer, CancellationToken cancellationToken)
+    private async Task<AuthResult> AuthenticateAsync(LoginRequest request, string remoteIp, CancellationToken cancellationToken)
     {
         var db = _dbFactory();
         if (db == null)
@@ -1171,225 +1258,92 @@ public sealed class ClientSession : IDisposable
 
         await using (db)
         {
-            if (!isServer && Config.IpBanEnabled)
-            {
-                if (await IsIpBannedAsync(db, remoteIp, cancellationToken))
-                {
-                    return AuthResult.Fail(3);
-                }
-            }
-
-            if (!isServer && Config.UseDnsbl && Config.DnsblServers.Length > 0)
-            {
-                if (await IsDnsblListedAsync(remoteIp, cancellationToken))
-                {
-                    await LogLoginAsync(db, request.UserId, remoteIp, 3, string.Empty, cancellationToken);
-                    return AuthResult.Fail(3);
-                }
-            }
-
-            if (!isServer && Config.NewAccountFlag)
-            {
-                var regResult = await TryAutoRegisterAsync(db, request, remoteIp, cancellationToken);
-                if (regResult.HasValue && regResult.Value != -1)
-                {
-                    return AuthResult.Fail((uint)regResult.Value);
-                }
-            }
-
-            var userId = request.AutoRegisterBaseId ?? request.UserId;
-
-            LoginAccount? account;
-            if (IsCaseSensitive)
-            {
-                account = await db.Accounts
-                    .AsNoTracking()
-                    .FirstOrDefaultAsync(a => a.UserId == userId, cancellationToken);
-            }
-            else
-            {
-                var normalizedUserId = userId.ToLowerInvariant();
-                account = await db.Accounts
-                    .AsNoTracking()
-                    .FirstOrDefaultAsync(a => a.UserId.ToLower() == normalizedUserId, cancellationToken);
-            }
-
-            if (account == null)
-            {
-                await LogLoginAsync(db, userId, remoteIp, 0, string.Empty, cancellationToken);
-                return AuthResult.Fail(0, serverAccountFailure: isServer ? ServerAccountFailure.NotFound : ServerAccountFailure.None);
-            }
-
-            if (isServer)
-            {
-                var serverAccountFailure = ServerAccountAuthentication.Classify(account, CheckPassword(request, account));
-                if (serverAccountFailure != ServerAccountFailure.None)
-                {
-                    var errorCode = serverAccountFailure == ServerAccountFailure.InvalidCredential ? 1u : 0u;
-                    await LogLoginAsync(db, userId, remoteIp, errorCode, string.Empty, cancellationToken);
-                    return AuthResult.Fail(errorCode, serverAccountFailure: serverAccountFailure);
-                }
-            }
-
-            if (!isServer && string.Equals(account.Sex, "S", StringComparison.OrdinalIgnoreCase))
-            {
-                await LogLoginAsync(db, userId, remoteIp, 0, string.Empty, cancellationToken);
-                return AuthResult.Fail(0);
-            }
-
-            if (!isServer && !CheckPassword(request, account))
-            {
-                await LogLoginAsync(db, userId, remoteIp, 1, string.Empty, cancellationToken);
-                return AuthResult.Fail(1);
-            }
-
-            var now = DateTime.UtcNow;
-            if (account.ExpirationTime != 0 && account.ExpirationTime < ToUnixTime(now))
-            {
-                await LogLoginAsync(db, userId, remoteIp, 2, string.Empty, cancellationToken);
-                return AuthResult.Fail(2);
-            }
-
-            if (account.UnbanTime != 0 && account.UnbanTime > ToUnixTime(now))
-            {
-                var unblock = FormatDate(FromUnixTime(account.UnbanTime));
-                await LogLoginAsync(db, userId, remoteIp, 6, string.Empty, cancellationToken);
-                return AuthResult.Fail(6, unblock);
-            }
-
-            if (account.State != 0)
-            {
-                var error = (uint)Math.Max(0, (int)account.State - 1);
-                await LogLoginAsync(db, userId, remoteIp, error, string.Empty, cancellationToken);
-                return AuthResult.Fail(error);
-            }
-
-            if (!isServer && Config.ClientHashCheck)
-            {
-                if (!IsClientHashAllowed(account.GroupId))
-                {
-                    await LogLoginAsync(db, userId, remoteIp, 5, string.Empty, cancellationToken);
-                    return AuthResult.Fail(5);
-                }
-            }
-
-        await UpdateAccountLoginAsync(db, account, remoteIp, cancellationToken);
-        await LogLoginAsync(db, userId, remoteIp, 100, "login ok", cancellationToken);
-
-            var loginId1 = RandomNumberGenerator.GetInt32(1, int.MaxValue);
-            var loginId2 = RandomNumberGenerator.GetInt32(1, int.MaxValue);
-
-            return AuthResult.FromAccount(account, loginId1, loginId2, remoteIp);
+            return await AuthenticatePlayerAsync(db, request, remoteIp, cancellationToken);
         }
     }
 
-    private void RegisterCharServer(AuthResult result, LoginRequest request, CancellationToken cancellationToken)
+    /// <summary>
+    /// Player login through ASP.NET Core Identity (via <see cref="_playerAuth"/>).
+    /// IP ban/DNSBL checks and login audit logging stay here since they are
+    /// connection/audit concerns, not player-identity concerns. The legacy
+    /// "login as name_M/name_F to auto-create an account" convenience is not
+    /// reimplemented: it wrote directly into the legacy login table, which player
+    /// login no longer reads. Account creation now goes exclusively through
+    /// IPlayerAccountProvisioningService.
+    /// </summary>
+    private async Task<AuthResult> AuthenticatePlayerAsync(LoginDbContext db, LoginRequest request, string remoteIp, CancellationToken cancellationToken)
     {
-        var packet = request.RawPacket;
-        if (packet == null || packet.Length < 86)
+        if (Config.IpBanEnabled && await IsIpBannedAsync(db, remoteIp, cancellationToken))
         {
-            return;
+            return AuthResult.Fail(3);
         }
 
-        var ip = new IPAddress(packet.AsSpan(54, 4));
-        var port = BinaryPrimitives.ReadUInt16BigEndian(packet.AsSpan(58, 2));
-        var name = ReadFixedString(packet, 60, 20);
-        var type = BinaryPrimitives.ReadUInt16LittleEndian(packet.AsSpan(82, 2));
-        var isNew = BinaryPrimitives.ReadUInt16LittleEndian(packet.AsSpan(84, 2));
+        if (Config.UseDnsbl && Config.DnsblServers.Length > 0 && await IsDnsblListedAsync(remoteIp, cancellationToken))
+        {
+            await LogLoginAsync(db, request.UserId, remoteIp, 3, string.Empty, cancellationToken);
+            return AuthResult.Fail(3);
+        }
+
+        var userId = request.UserId;
+        var playerResult = await _playerAuth.AuthenticateAsync(userId, request.Password, remoteIp, cancellationToken);
+        if (!playerResult.Success)
+        {
+            var errorCode = PlayerAuthenticationErrorCodeMapper.ToErrorCode(playerResult);
+            await LogLoginAsync(db, userId, remoteIp, errorCode, string.Empty, cancellationToken);
+            var unblockTime = playerResult.UnblockAtLocal.HasValue ? FormatDate(playerResult.UnblockAtLocal.Value) : string.Empty;
+            return AuthResult.Fail(errorCode, unblockTime);
+        }
+
+        await LogLoginAsync(db, userId, remoteIp, 100, "login ok", cancellationToken);
+
+        var (loginId1, loginId2) = _state.GenerateLoginIds();
+        return AuthResult.FromGameAccount(playerResult.Account!, loginId1, loginId2, remoteIp);
+    }
+
+    /// <summary>
+    /// Finalizes CharServer registration once LcServiceAuthProof has verified
+    /// successfully, called before <see cref="IServiceAuthenticationService.MarkAuthenticated"/>
+    /// so that a registration failure can never leave the socket authenticated
+    /// (see <see cref="HandleServiceAuthProofAsync"/>). The int registry key is
+    /// Athena.NET's own internal bookkeeping id (assigned by
+    /// <see cref="CharServerRegistry.NextId"/>) - it carries no meaning outside
+    /// this process and is never derived from any account/credential concept.
+    /// <para>
+    /// Defense in depth against a stale registry leak: the service-auth state
+    /// machine already guarantees at most one successful proof per
+    /// connection (a second LcServiceAuthProof after authentication is
+    /// rejected before this method could ever be reached again), so
+    /// <see cref="_charServerId"/> should never already be set here - but if
+    /// it somehow were, registering a second entry and only ever unregistering
+    /// the latest one on <see cref="Dispose"/> would leak the first
+    /// registration forever. Guard against that explicitly (returning
+    /// <c>false</c>, which the caller treats as a fatal registration failure)
+    /// rather than relying solely on the caller-side invariant.
+    /// </para>
+    /// </summary>
+    private bool TryRegisterCharServer(ServiceHelloInfo hello)
+    {
+        if (_charServerId.HasValue)
+        {
+            LoginLogger.Warning("RegisterCharServer called more than once on the same connection; rejecting the redundant registration.");
+            return false;
+        }
 
         var info = new CharServerInfo
         {
-            Name = name,
-            Ip = ip,
-            Port = port,
-            Type = type,
-            IsNew = isNew,
+            Name = hello.ServerName,
+            Ip = hello.Ip,
+            Port = hello.Port,
+            Type = hello.CharMaintenance,
+            IsNew = hello.CharNewDisplay,
             Users = 0,
             Connection = new CharServerConnection(_stream),
         };
 
-        _charServerId = (int)result.AccountId;
+        _charServerId = _charServers.NextId();
         _charServers.Register(_charServerId.Value, info);
         LoginLogger.Status($"Registered char server '{info.Name}' at {info.Ip}:{info.Port} (type={info.Type}, new={info.IsNew}).");
-    }
-
-    private bool CheckPassword(LoginRequest request, LoginAccount account)
-    {
-        if (request.PasswordEnc == 0)
-        {
-            return string.Equals(request.Password, account.UserPass, StringComparison.Ordinal);
-        }
-
-        if (_md5Key == null || _md5Key.Length == 0)
-        {
-            return false;
-        }
-
-        if ((request.PasswordEnc & 0x01) != 0)
-        {
-            var hash = Md5Hex(Concat(_md5Key, Encoding.ASCII.GetBytes(account.UserPass)));
-            if (string.Equals(request.Password, hash, StringComparison.OrdinalIgnoreCase))
-            {
-                return true;
-            }
-        }
-
-        if ((request.PasswordEnc & 0x02) != 0)
-        {
-            var hash = Md5Hex(Concat(Encoding.ASCII.GetBytes(account.UserPass), _md5Key));
-            if (string.Equals(request.Password, hash, StringComparison.OrdinalIgnoreCase))
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    private async Task UpdateAccountLoginAsync(LoginDbContext db, LoginAccount account, string remoteIp, CancellationToken cancellationToken)
-    {
-        account.LastLogin = DateTime.Now;
-        account.LastIp = remoteIp;
-        account.UnbanTime = 0;
-        account.LoginCount += 1;
-
-        db.Attach(account);
-        db.Entry(account).Property(a => a.LastLogin).IsModified = true;
-        db.Entry(account).Property(a => a.LastIp).IsModified = true;
-        db.Entry(account).Property(a => a.UnbanTime).IsModified = true;
-        db.Entry(account).Property(a => a.LoginCount).IsModified = true;
-
-        await db.SaveChangesAsync(cancellationToken);
-
-        if (Config.UseWebAuthToken && !string.Equals(account.Sex, "S", StringComparison.OrdinalIgnoreCase))
-        {
-            await UpdateWebAuthTokenWithRetryAsync(db, account, cancellationToken);
-        }
-    }
-
-    private async Task UpdateWebAuthTokenWithRetryAsync(LoginDbContext db, LoginAccount account, CancellationToken cancellationToken)
-    {
-        const int maxRetries = 20;
-
-        for (var attempt = 0; attempt < maxRetries; attempt++)
-        {
-            account.WebAuthToken = GenerateWebAuthToken();
-            account.WebAuthTokenEnabled = true;
-            db.Entry(account).Property(a => a.WebAuthToken).IsModified = true;
-            db.Entry(account).Property(a => a.WebAuthTokenEnabled).IsModified = true;
-
-            try
-            {
-                await db.SaveChangesAsync(cancellationToken);
-                return;
-            }
-            catch (DbUpdateException) when (attempt < maxRetries - 1)
-            {
-                db.Entry(account).State = EntityState.Unchanged;
-            }
-        }
-
-        LoginLogger.Warning("Failed to generate a unique web_auth_token after multiple retries.");
+        return true;
     }
 
     private async Task LogLoginAsync(LoginDbContext db, string userId, string ip, uint resultCode, string message, CancellationToken cancellationToken)
@@ -1530,19 +1484,6 @@ public sealed class ClientSession : IDisposable
         }
     }
 
-    private async Task SendAckHashAsync(CancellationToken cancellationToken)
-    {
-        _md5Key ??= RandomNumberGenerator.GetBytes(PacketConstants.Md5KeyLength);
-        var length = 4 + _md5Key.Length;
-        var buffer = new byte[length];
-
-        BinaryPrimitives.WriteInt16LittleEndian(buffer.AsSpan(0, 2), PacketConstants.AcAckHash);
-        BinaryPrimitives.WriteInt16LittleEndian(buffer.AsSpan(2, 2), (short)length);
-        Buffer.BlockCopy(_md5Key, 0, buffer, 4, _md5Key.Length);
-
-        await _stream.WriteAsync(buffer, cancellationToken);
-    }
-
     private async Task SendRefuseLoginAsync(uint error, string unblockTime, CancellationToken cancellationToken)
     {
         var buffer = new byte[2 + 4 + 20];
@@ -1566,10 +1507,18 @@ public sealed class ClientSession : IDisposable
         await _stream.WriteAsync(buffer, cancellationToken);
     }
 
-    private async Task SendCharServerAckAsync(byte result, CancellationToken cancellationToken)
+    private async Task SendServiceAuthChallengeAsync(byte[] nonce, CancellationToken cancellationToken)
+    {
+        var buffer = new byte[2 + PacketConstants.ServiceNonceLength];
+        BinaryPrimitives.WriteInt16LittleEndian(buffer.AsSpan(0, 2), PacketConstants.LcServiceAuthChallenge);
+        Buffer.BlockCopy(nonce, 0, buffer, 2, nonce.Length);
+        await _stream.WriteAsync(buffer, cancellationToken);
+    }
+
+    private async Task SendServiceAuthResultAsync(byte result, CancellationToken cancellationToken)
     {
         var buffer = new byte[3];
-        BinaryPrimitives.WriteInt16LittleEndian(buffer.AsSpan(0, 2), PacketConstants.LcCharServerLoginAck);
+        BinaryPrimitives.WriteInt16LittleEndian(buffer.AsSpan(0, 2), PacketConstants.LcServiceAuthResult);
         buffer[2] = result;
         await _stream.WriteAsync(buffer, cancellationToken);
     }
@@ -1581,11 +1530,20 @@ public sealed class ClientSession : IDisposable
         await _stream.WriteAsync(buffer, cancellationToken);
     }
 
-    private async Task SendVipDataAsync(LoginAccount account, byte flag, uint mapFd, CancellationToken cancellationToken)
+    private static async Task<string> GetIdentityEmailAsync(Db.Identity.AthenaIdentityDbContext db, Guid identityUserId, CancellationToken cancellationToken)
+    {
+        return await db.Users
+            .AsNoTracking()
+            .Where(u => u.Id == identityUserId)
+            .Select(u => u.Email)
+            .FirstOrDefaultAsync(cancellationToken) ?? string.Empty;
+    }
+
+    private async Task SendVipDataAsync(Db.Identity.AthenaGameAccount account, byte flag, uint mapFd, CancellationToken cancellationToken)
     {
         var buffer = new byte[19];
         BinaryPrimitives.WriteInt16LittleEndian(buffer.AsSpan(0, 2), PacketConstants.LcVipResponse);
-        BinaryPrimitives.WriteUInt32LittleEndian(buffer.AsSpan(2, 4), account.AccountId);
+        BinaryPrimitives.WriteUInt32LittleEndian(buffer.AsSpan(2, 4), account.RagnarokAccountId);
         BinaryPrimitives.WriteUInt32LittleEndian(buffer.AsSpan(6, 4), account.VipTime);
         buffer[10] = flag;
         BinaryPrimitives.WriteUInt32LittleEndian(buffer.AsSpan(11, 4), (uint)account.GroupId);
@@ -1688,7 +1646,7 @@ public sealed class ClientSession : IDisposable
         await _charServers.SendToAllExceptAsync(_charServerId, buffer);
     }
 
-    private async Task SendAccountInfoResponseAsync(uint mapFd, uint userFd, uint userAid, uint accountId, LoginAccount? account, CancellationToken cancellationToken)
+    private async Task SendAccountInfoResponseAsync(uint mapFd, uint userFd, uint userAid, uint accountId, Db.Identity.AthenaGameAccount? account, string email, string userName, CancellationToken cancellationToken)
     {
         if (account == null)
         {
@@ -1713,22 +1671,22 @@ public sealed class ClientSession : IDisposable
         BinaryPrimitives.WriteUInt32LittleEndian(bufferSuccess.AsSpan(19, 4), (uint)account.GroupId);
         BinaryPrimitives.WriteUInt32LittleEndian(bufferSuccess.AsSpan(23, 4), (uint)Math.Max(0, account.LoginCount));
         BinaryPrimitives.WriteUInt32LittleEndian(bufferSuccess.AsSpan(27, 4), account.State);
-        WriteFixedString(bufferSuccess, 31, 40, account.Email);
+        WriteFixedString(bufferSuccess, 31, 40, email);
         WriteFixedString(bufferSuccess, 71, 16, account.LastIp);
         WriteFixedString(bufferSuccess, 87, 24, account.LastLogin?.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture) ?? string.Empty);
         WriteFixedString(bufferSuccess, 111, 11, account.Birthdate?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) ?? string.Empty);
-        WriteFixedString(bufferSuccess, 122, PacketConstants.NameLength, account.UserId);
+        WriteFixedString(bufferSuccess, 122, PacketConstants.NameLength, userName);
 
         await _stream.WriteAsync(bufferSuccess, cancellationToken);
     }
 
-    private async Task SendAccountDataAsync(LoginAccount account, CancellationToken cancellationToken)
+    private async Task SendAccountDataAsync(Db.Identity.AthenaGameAccount account, string email, CancellationToken cancellationToken)
     {
         var buffer = new byte[75];
         BinaryPrimitives.WriteInt16LittleEndian(buffer.AsSpan(0, 2), PacketConstants.LcAccountDataResponse);
-        BinaryPrimitives.WriteUInt32LittleEndian(buffer.AsSpan(2, 4), account.AccountId);
+        BinaryPrimitives.WriteUInt32LittleEndian(buffer.AsSpan(2, 4), account.RagnarokAccountId);
 
-        WriteFixedString(buffer, 6, 40, account.Email);
+        WriteFixedString(buffer, 6, 40, email);
 
         BinaryPrimitives.WriteUInt32LittleEndian(buffer.AsSpan(46, 4), account.ExpirationTime);
         buffer[50] = (byte)Math.Clamp(account.GroupId, 0, byte.MaxValue);
@@ -1856,24 +1814,8 @@ public sealed class ClientSession : IDisposable
     {
         var user = ReadFixedString(packet, 6, PacketConstants.NameLength);
         var pass = ReadFixedString(packet, 6 + PacketConstants.NameLength, PacketConstants.NameLength);
-        if (Config.UseMd5Passwords)
-        {
-            pass = Md5Hex(Encoding.ASCII.GetBytes(pass));
-        }
-
         var clientType = packet[^1];
-        var (baseId, sex) = ParseAutoRegister(user);
-        return new LoginRequest(user, pass, 0, clientType, baseId, sex);
-    }
-
-    private LoginRequest ParseMd5Login(byte[] packet)
-    {
-        var user = ReadFixedString(packet, 6, PacketConstants.NameLength);
-        var md5Bytes = packet.AsSpan(6 + PacketConstants.NameLength, 16).ToArray();
-        var pass = BytesToHex(md5Bytes);
-        var clientType = packet[^1];
-        var (baseId, sex) = ParseAutoRegister(user);
-        return new LoginRequest(user, pass, PasswordEncMode, clientType, baseId, sex);
+        return new LoginRequest(user, pass, clientType);
     }
 
     private LoginRequest ParseSsoLogin(byte[] packet)
@@ -1882,14 +1824,8 @@ public sealed class ClientSession : IDisposable
         var tokenOffset = 9 + PacketConstants.NameLength + 27 + 17 + 15;
         var tokenLength = packet.Length - tokenOffset;
         var token = tokenLength > 0 ? Encoding.ASCII.GetString(packet, tokenOffset, tokenLength).TrimEnd('\0') : string.Empty;
-        if (Config.UseMd5Passwords)
-        {
-            token = Md5Hex(Encoding.ASCII.GetBytes(token));
-        }
-
         var clientType = packet[8];
-        var (baseId, sex) = ParseAutoRegister(user);
-        return new LoginRequest(user, token, 0, clientType, baseId, sex);
+        return new LoginRequest(user, token, clientType);
     }
 
     private static string ReadFixedString(byte[] buffer, int offset, int length)
@@ -1910,31 +1846,6 @@ public sealed class ClientSession : IDisposable
     {
         var bytes = Encoding.ASCII.GetBytes(value);
         Buffer.BlockCopy(bytes, 0, buffer, offset, Math.Min(length, bytes.Length));
-    }
-
-    private static byte[] Concat(byte[] first, byte[] second)
-    {
-        var buffer = new byte[first.Length + second.Length];
-        Buffer.BlockCopy(first, 0, buffer, 0, first.Length);
-        Buffer.BlockCopy(second, 0, buffer, first.Length, second.Length);
-        return buffer;
-    }
-
-    private static string Md5Hex(byte[] data)
-    {
-        using var md5 = MD5.Create();
-        return BytesToHex(md5.ComputeHash(data));
-    }
-
-    private static string BytesToHex(byte[] data)
-    {
-        var sb = new StringBuilder(data.Length * 2);
-        foreach (var b in data)
-        {
-            sb.Append(b.ToString("x2", CultureInfo.InvariantCulture));
-        }
-
-        return sb.ToString();
     }
 
     private static uint ToUnixTime(DateTime time)
@@ -2047,10 +1958,7 @@ public sealed class ClientSession : IDisposable
         return buffer;
     }
 
-    private readonly record struct LoginRequest(string UserId, string Password, int PasswordEnc, byte ClientType, string? AutoRegisterBaseId, char? AutoRegisterSex)
-    {
-        public byte[]? RawPacket { get; init; }
-    }
+    private readonly record struct LoginRequest(string UserId, string Password, byte ClientType);
 
     private readonly record struct AuthResult(
         bool Success,
@@ -2062,21 +1970,23 @@ public sealed class ClientSession : IDisposable
         byte Sex,
         int GroupId,
         string WebAuthToken,
-        uint Ip,
-        ServerAccountFailure ServerAccountFailure)
+        uint Ip)
     {
-        public static AuthResult Fail(uint error, string unblockTime = "", ServerAccountFailure serverAccountFailure = ServerAccountFailure.None)
+        public static AuthResult Fail(uint error, string unblockTime = "")
         {
-            return new AuthResult(false, error, unblockTime, 0, 0, 0, 0, 0, string.Empty, 0, serverAccountFailure);
+            return new AuthResult(false, error, unblockTime, 0, 0, 0, 0, 0, string.Empty, 0);
         }
 
-        public static AuthResult FromAccount(LoginAccount account, int loginId1, int loginId2, string ip)
+        public static AuthResult FromGameAccount(AuthenticatedGameAccount account, uint loginId1, uint loginId2, string ip)
         {
-            var sex = (byte)(account.Sex.Equals("F", StringComparison.OrdinalIgnoreCase) ? 0 :
-                account.Sex.Equals("M", StringComparison.OrdinalIgnoreCase) ? 1 : 2);
+            var sex = MapSex(account.Sex);
             var parsedIp = ParseIp(ip);
-            return new AuthResult(true, 0, string.Empty, account.AccountId, (uint)loginId1, (uint)loginId2, sex, account.GroupId, account.WebAuthToken ?? string.Empty, parsedIp, ServerAccountFailure.None);
+            return new AuthResult(true, 0, string.Empty, account.RagnarokAccountId, loginId1, loginId2, sex, account.GroupId, account.WebAuthToken, parsedIp);
         }
+
+        private static byte MapSex(string sex) =>
+            (byte)(sex.Equals("F", StringComparison.OrdinalIgnoreCase) ? 0 :
+                sex.Equals("M", StringComparison.OrdinalIgnoreCase) ? 1 : 2);
     }
 
     private static uint ParseIp(string ip)
@@ -2088,147 +1998,6 @@ public sealed class ClientSession : IDisposable
 
         var bytes = address.GetAddressBytes();
         return BinaryPrimitives.ReadUInt32BigEndian(bytes);
-    }
-
-    private static (string? baseId, char? sex) ParseAutoRegister(string userId)
-    {
-        if (userId.Length <= 2)
-        {
-            return (null, null);
-        }
-
-        var suffix = userId[^2..];
-        if (!suffix.StartsWith("_", StringComparison.Ordinal))
-        {
-            return (null, null);
-        }
-
-        var sexChar = suffix[1];
-        if (sexChar is 'M' or 'm')
-        {
-            return (userId[..^2], 'M');
-        }
-
-        if (sexChar is 'F' or 'f')
-        {
-            return (userId[..^2], 'F');
-        }
-
-        return (null, null);
-    }
-
-    private async Task<int?> TryAutoRegisterAsync(LoginDbContext db, LoginRequest request, string remoteIp, CancellationToken cancellationToken)
-    {
-        if (request.AutoRegisterBaseId == null || request.AutoRegisterSex == null)
-        {
-            return null;
-        }
-
-        if (request.PasswordEnc != 0)
-        {
-            return 0;
-        }
-
-        if (!Config.NewAccountFlag)
-        {
-            return null;
-        }
-
-        if (!_state.IsRegistrationAllowed(Config.AllowedRegistrations, Config.RegistrationWindowSeconds))
-        {
-            return 3;
-        }
-
-        var baseId = request.AutoRegisterBaseId;
-        if (baseId.Length < Config.AccountNameMinLength || request.Password.Length < Config.PasswordMinLength)
-        {
-            return 1;
-        }
-
-        var sex = request.AutoRegisterSex.Value;
-        if (sex is not ('M' or 'F'))
-        {
-            return 0;
-        }
-
-        var exists = await ExistsUserIdAsync(db, baseId, cancellationToken);
-        if (exists)
-        {
-            return 1;
-        }
-
-        var expiration = 0u;
-        if (Config.StartLimitedTimeSeconds != -1)
-        {
-            expiration = ToUnixTime(DateTime.UtcNow.AddSeconds(Config.StartLimitedTimeSeconds));
-        }
-
-        var account = new LoginAccount
-        {
-            UserId = baseId,
-            UserPass = request.Password,
-            Sex = sex.ToString(),
-            Email = "a@a.com",
-            ExpirationTime = expiration,
-            LastLogin = null,
-            LastIp = remoteIp,
-            Birthdate = null,
-            Pincode = string.Empty,
-            PincodeChange = 0,
-            CharacterSlots = (byte)Config.CharPerAccount,
-            VipTime = 0,
-            OldGroup = 0,
-            GroupId = 0,
-            State = 0,
-            LoginCount = 0,
-            WebAuthToken = null,
-            WebAuthTokenEnabled = false,
-        };
-
-        db.Accounts.Add(account);
-        await db.SaveChangesAsync(cancellationToken);
-        _state.RegisterSuccess(Config.RegistrationWindowSeconds);
-        return -1;
-    }
-
-    private async Task<bool> ExistsUserIdAsync(LoginDbContext db, string userId, CancellationToken cancellationToken)
-    {
-        if (IsCaseSensitive)
-        {
-            return await db.Accounts.AsNoTracking().AnyAsync(a => a.UserId == userId, cancellationToken);
-        }
-
-        var normalizedUserId = userId.ToLowerInvariant();
-        return await db.Accounts.AsNoTracking().AnyAsync(a => a.UserId.ToLower() == normalizedUserId, cancellationToken);
-    }
-
-    private bool IsClientHashAllowed(int accountGroupId)
-    {
-        var rules = Config.ClientHashRules;
-        if (rules.Count == 0)
-        {
-            return false;
-        }
-
-        foreach (var rule in rules)
-        {
-            if (accountGroupId < rule.GroupId)
-            {
-                continue;
-            }
-
-            if (rule.AllowWithoutHash)
-            {
-                return true;
-            }
-
-            if (_clientHash != null && rule.Hash != null && _clientHash.SequenceEqual(rule.Hash))
-            {
-                return true;
-            }
-        }
-
-        return false;
     }
 
     private async Task ScheduleDisableWebAuthTokenAsync(uint accountId)
@@ -2252,9 +2021,16 @@ public sealed class ClientSession : IDisposable
         await DisableWebAuthTokenAsync(accountId);
     }
 
+    /// <summary>
+    /// Player WebAuthToken state lives on AthenaGameAccount (Identity schema), not
+    /// the legacy LoginDbContext.Accounts table service accounts use - service
+    /// accounts never have web auth tokens. Looked up by RagnarokAccountId, the
+    /// only account identifier this legacy wire-protocol path (LcSetAccountOffline)
+    /// ever carries.
+    /// </summary>
     private async Task DisableWebAuthTokenAsync(uint accountId)
     {
-        var db = _dbFactory();
+        var db = _identityDbFactory();
         if (db == null)
         {
             return;
@@ -2262,27 +2038,14 @@ public sealed class ClientSession : IDisposable
 
         await using (db)
         {
-            var account = await db.Accounts.FirstOrDefaultAsync(a => a.AccountId == accountId);
+            var account = await db.GameAccounts.FirstOrDefaultAsync(a => a.RagnarokAccountId == accountId);
             if (account == null)
             {
                 return;
             }
 
             account.WebAuthTokenEnabled = false;
-            db.Entry(account).Property(a => a.WebAuthTokenEnabled).IsModified = true;
             await db.SaveChangesAsync();
         }
-    }
-
-    private static string GenerateWebAuthToken()
-    {
-        var bytes = RandomNumberGenerator.GetBytes(8);
-        var sb = new StringBuilder(16);
-        foreach (var b in bytes)
-        {
-            sb.Append(b.ToString("x2", CultureInfo.InvariantCulture));
-        }
-
-        return sb.ToString();
     }
 }

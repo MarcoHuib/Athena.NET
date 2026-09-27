@@ -14,4 +14,8 @@ if ! dotnet tool list --global | grep -q '^dotnet-ef'; then
   exit 1
 fi
 
-dotnet ef database update --project "$PROJECT"
+echo "Applying LoginDbContext migrations..."
+dotnet ef database update --project "$PROJECT" --context LoginDbContext
+
+echo "Applying AthenaIdentityDbContext migrations..."
+dotnet ef database update --project "$PROJECT" --context AthenaIdentityDbContext

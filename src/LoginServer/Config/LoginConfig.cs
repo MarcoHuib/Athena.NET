@@ -11,9 +11,7 @@ public sealed class LoginConfig
     public IPAddress BindIp { get; init; } = IPAddress.Any;
     public int LoginPort { get; init; } = 6900;
     public bool LogLogin { get; init; } = true;
-    public bool UseMd5Passwords { get; init; }
     public string DateFormat { get; init; } = "yyyy-MM-dd HH:mm:ss";
-    public bool NewAccountFlag { get; init; }
     public int AccountNameMinLength { get; init; } = 6;
     public int PasswordMinLength { get; init; } = 6;
     public int GroupIdToConnect { get; init; } = -1;
@@ -39,11 +37,6 @@ public sealed class LoginConfig
     public int ConsoleSilent { get; init; }
     public string ConsoleLogFilePath { get; init; } = string.Empty;
     public string TimestampFormat { get; init; } = string.Empty;
-    public int AllowedRegistrations { get; init; } = 1;
-    public int RegistrationWindowSeconds { get; init; } = 10;
-    public int StartLimitedTimeSeconds { get; init; } = -1;
-    public bool ClientHashCheck { get; init; }
-    public IReadOnlyList<ClientHashRule> ClientHashRules { get; init; } = Array.Empty<ClientHashRule>();
     public int IpSyncIntervalMinutes { get; init; }
     public bool UsercountDisable { get; init; }
     public int UsercountLow { get; init; } = 200;
@@ -63,11 +56,4 @@ public sealed class LoginConfig
             ? value
             : fallback;
     }
-}
-
-public sealed class ClientHashRule
-{
-    public int GroupId { get; init; }
-    public byte[]? Hash { get; init; }
-    public bool AllowWithoutHash { get; init; }
 }

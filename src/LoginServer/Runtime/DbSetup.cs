@@ -1,6 +1,7 @@
 using System.Linq;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.Extensions.DependencyInjection;
 using Athena.Net.LoginServer.Config;
 using Athena.Net.LoginServer.Db;
 using Athena.Net.LoginServer.Logging;
@@ -9,44 +10,55 @@ namespace Athena.Net.LoginServer.Runtime;
 
 public static class DbSetup
 {
-    public static Func<LoginDbContext?> Configure(InterConfig interConfig, SecretConfig secrets, LoginDbTableNames tableNames, bool autoMigrate)
+    /// <summary>
+    /// Registers the LoginDb <see cref="IDbContextFactory{LoginDbContext}"/> in the
+    /// composition root, resolving connection string/provider configuration. Returns
+    /// false (and registers nothing) when configuration is missing or unsupported,
+    /// so the caller can fall back to a null db factory without a real container
+    /// registration to resolve.
+    /// </summary>
+    public static bool TryAddLoginDbContext(IServiceCollection services, InterConfig interConfig, SecretConfig secrets, LoginDbTableNames tableNames)
     {
         var connectionString = ResolveConnectionString(interConfig, secrets);
         if (string.IsNullOrWhiteSpace(connectionString))
         {
             LoginLogger.Error("DB: no connection string configured (check conf/inter_athena.conf).");
-            return () => null;
+            return false;
         }
 
-        var dbProvider = ResolveDbProvider(interConfig, secrets, connectionString);
-        connectionString = ApplyMySqlCodepage(dbProvider, connectionString, interConfig.LoginDbCodepage);
-
-        try
+        var dbProvider = ResolveDbProvider(interConfig, secrets);
+        if (dbProvider != "sqlserver")
         {
-            var optionsBuilder = new DbContextOptionsBuilder<LoginDbContext>();
-            if (dbProvider == "sqlserver")
-            {
-                optionsBuilder.UseSqlServer(connectionString, sql =>
-                    sql.EnableRetryOnFailure());
-            }
-            else if (dbProvider == "mysql")
-            {
-                optionsBuilder.UseMySql(connectionString, ServerVersion.AutoDetect(connectionString), mysql =>
-                    mysql.EnableRetryOnFailure());
-            }
-            else
-            {
-                LoginLogger.Error($"DB: unsupported provider '{dbProvider}'.");
-                return () => null;
-            }
+            LoginLogger.Error($"DB: unsupported provider '{dbProvider}'. LoginServer is SQL Server only.");
+            return false;
+        }
 
+        services.AddSingleton(tableNames);
+        services.AddDbContextFactory<LoginDbContext>(optionsBuilder =>
+        {
+            optionsBuilder.UseSqlServer(connectionString, sql => sql.EnableRetryOnFailure());
             optionsBuilder.ConfigureWarnings(warnings =>
                 warnings.Ignore(RelationalEventId.PendingModelChangesWarning));
+        });
 
-            var options = optionsBuilder.Options;
-            var factory = () => new LoginDbContext(options, tableNames);
+        return true;
+    }
 
-            ApplyMigrationsWithRetry(factory, autoMigrate).GetAwaiter().GetResult();
+    /// <summary>
+    /// Resolves the registered <see cref="IDbContextFactory{LoginDbContext}"/>, applies
+    /// migrations/waits for connectivity exactly as before, and returns a
+    /// short-lived-context factory delegate for the many existing call sites that are
+    /// not yet DI-aware. A new LoginDbContext is created per call; none is tied to a
+    /// TCP connection's lifetime.
+    /// </summary>
+    public static async Task<Func<LoginDbContext?>> CreateDbFactoryAsync(IServiceProvider serviceProvider, bool autoMigrate)
+    {
+        try
+        {
+            var contextFactory = serviceProvider.GetRequiredService<IDbContextFactory<LoginDbContext>>();
+            Func<LoginDbContext> factory = () => contextFactory.CreateDbContext();
+
+            await ApplyMigrationsWithRetry(factory, autoMigrate);
 
             return factory;
         }
@@ -115,7 +127,12 @@ public static class DbSetup
         }
     }
 
-    private static string ResolveConnectionString(InterConfig interConfig, SecretConfig secrets)
+    /// <summary>
+    /// Resolves the LoginDb connection string. Also used by <see cref="IdentityDbSetup"/>
+    /// since the Identity/AthenaGameAccount tables live in the same physical SQL
+    /// Server database as the legacy login/audit tables.
+    /// </summary>
+    public static string ResolveConnectionString(InterConfig interConfig, SecretConfig secrets)
     {
         var aspireConnection = Environment.GetEnvironmentVariable("ConnectionStrings__LoginDb");
         if (!string.IsNullOrWhiteSpace(aspireConnection))
@@ -137,7 +154,7 @@ public static class DbSetup
         return interConfig.LoginDbConnectionString;
     }
 
-    private static string ResolveDbProvider(InterConfig interConfig, SecretConfig secrets, string connectionString)
+    public static string ResolveDbProvider(InterConfig interConfig, SecretConfig secrets)
     {
         var envProvider = Environment.GetEnvironmentVariable("ATHENA_NET_LOGIN_DB_PROVIDER");
         if (!string.IsNullOrWhiteSpace(envProvider))
@@ -149,50 +166,6 @@ public static class DbSetup
             ? secrets.LoginDbProvider
             : interConfig.LoginDbProvider;
 
-        if (!string.IsNullOrWhiteSpace(provider))
-        {
-            return provider.Trim().ToLowerInvariant();
-        }
-
-        return GuessDbProvider(connectionString);
-    }
-
-    private static string GuessDbProvider(string connectionString)
-    {
-        if (connectionString.Contains("Port=", StringComparison.OrdinalIgnoreCase) ||
-            connectionString.Contains("SslMode=", StringComparison.OrdinalIgnoreCase))
-        {
-            return "mysql";
-        }
-
-        if (connectionString.Contains("TrustServerCertificate=", StringComparison.OrdinalIgnoreCase) ||
-            connectionString.Contains("Encrypt=", StringComparison.OrdinalIgnoreCase) ||
-            connectionString.Contains("User ID=", StringComparison.OrdinalIgnoreCase))
-        {
-            return "sqlserver";
-        }
-
-        return string.Empty;
-    }
-
-    private static string ApplyMySqlCodepage(string provider, string connectionString, string codepage)
-    {
-        if (provider != "mysql")
-        {
-            return connectionString;
-        }
-
-        if (string.IsNullOrWhiteSpace(codepage))
-        {
-            return connectionString;
-        }
-
-        if (connectionString.Contains("CharSet=", StringComparison.OrdinalIgnoreCase) ||
-            connectionString.Contains("Charset=", StringComparison.OrdinalIgnoreCase))
-        {
-            return connectionString;
-        }
-
-        return connectionString + $"CharSet={codepage};";
+        return string.IsNullOrWhiteSpace(provider) ? "sqlserver" : provider.Trim().ToLowerInvariant();
     }
 }

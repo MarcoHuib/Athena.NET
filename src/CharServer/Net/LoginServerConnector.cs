@@ -13,7 +13,8 @@ public sealed class LoginServerConnector
 {
     private static readonly Dictionary<short, int> PacketLengths = new()
     {
-        [PacketConstants.LcCharServerLoginAck] = 3,
+        [PacketConstants.LcServiceAuthChallenge] = 2 + PacketConstants.ServiceNonceLength,
+        [PacketConstants.LcServiceAuthResult] = 3,
         [PacketConstants.LcAuthResponse] = 21,
         [PacketConstants.LcAccountDataResponse] = 75,
         [PacketConstants.LcKeepAliveResponse] = 2,
@@ -21,14 +22,16 @@ public sealed class LoginServerConnector
     };
 
     private readonly CharConfigStore _configStore;
+    private readonly CharServerServiceTokenProvider _serviceTokenProvider;
     private readonly TimeSpan _retryDelay = TimeSpan.FromSeconds(10);
     private readonly ConcurrentDictionary<int, ClientSession> _authRequests = new();
     private readonly ConcurrentDictionary<uint, ClientSession> _accountRequests = new();
     private LoginConnectionState? _connection;
 
-    public LoginServerConnector(CharConfigStore configStore)
+    public LoginServerConnector(CharConfigStore configStore, CharServerServiceTokenProvider serviceTokenProvider)
     {
         _configStore = configStore;
+        _serviceTokenProvider = serviceTokenProvider;
     }
 
     public bool IsConnected => _connection != null;
@@ -125,6 +128,24 @@ public sealed class LoginServerConnector
     {
         var config = _configStore.Current;
 
+        if (!_serviceTokenProvider.IsConfigured)
+        {
+            CharLogger.Error(
+                "CharServer ServiceToken is not configured (ServiceAuthentication.CharServer.Token in " +
+                "solutionfiles/secrets/secret.json, or the ATHENA_NET_CHAR_SERVER_SERVICE_TOKEN environment " +
+                "variable). Cannot authenticate to the login server.");
+            return false;
+        }
+
+        if (!ServiceHelloFieldValidator.TryValidate(config.ServiceId, config.ServerName, out var helloFields, out var validationError))
+        {
+            // Fail before ever attempting the handshake: a value that cannot
+            // be represented losslessly on the wire would otherwise make the
+            // HMAC proof diverge from what LoginServer actually receives.
+            CharLogger.Error($"CharServer service-auth registration fields are invalid: {validationError} Cannot authenticate to the login server.");
+            return false;
+        }
+
         try
         {
             using var client = new TcpClient();
@@ -136,15 +157,7 @@ public sealed class LoginServerConnector
             using var stream = client.GetStream();
             var connection = new LoginConnectionState(stream);
 
-            await SendLoginPacketAsync(connection, config, cancellationToken);
-
-            var firstPacket = await ReadPacketAsync(stream, cancellationToken);
-            if (firstPacket.Length == 0)
-            {
-                return false;
-            }
-
-            if (!HandlePacket(firstPacket))
+            if (!await AuthenticateAsync(connection, stream, config, helloFields, cancellationToken))
             {
                 return false;
             }
@@ -208,8 +221,6 @@ public sealed class LoginServerConnector
         var packetType = BinaryPrimitives.ReadInt16LittleEndian(packet.AsSpan(0, 2));
         switch (packetType)
         {
-            case PacketConstants.LcCharServerLoginAck:
-                return HandleLoginAck(packet);
             case PacketConstants.LcAuthResponse:
                 return HandleAuthResponse(packet);
             case PacketConstants.LcAccountDataResponse:
@@ -225,22 +236,71 @@ public sealed class LoginServerConnector
         }
     }
 
-    private static bool HandleLoginAck(byte[] packet)
+    /// <summary>
+    /// Drives the Athena.NET-internal HMAC-SHA256 service authentication
+    /// handshake against LoginServer (see ai/login-server.md, "Inter-server
+    /// service authentication"): send ServiceId -&gt; receive a one-time nonce
+    /// challenge -&gt; send an HMAC-SHA256 proof derived from the shared
+    /// ServiceToken (never the token itself) -&gt; receive the result. Any
+    /// failure - malformed/unexpected packet, or a non-zero result byte -
+    /// aborts the connection attempt; the outer retry loop reconnects.
+    /// </summary>
+    private async Task<bool> AuthenticateAsync(LoginConnectionState connection, NetworkStream stream, CharConfig config, ValidatedServiceHelloFields helloFields, CancellationToken cancellationToken)
     {
-        if (packet.Length < 3)
+        await SendServiceHelloAsync(connection, config, helloFields, cancellationToken);
+
+        var challengePacket = await ReadPacketAsync(stream, cancellationToken);
+        if (challengePacket.Length == 0)
         {
             return false;
         }
 
-        var result = packet[2];
-        if (result == 0)
+        var challengeType = BinaryPrimitives.ReadInt16LittleEndian(challengePacket.AsSpan(0, 2));
+        if (challengeType != PacketConstants.LcServiceAuthChallenge)
         {
-            CharLogger.Status("Login server accepted char server registration.");
-            return true;
+            CharLogger.Warning($"Expected service auth challenge, got 0x{challengeType:X4}.");
+            return false;
         }
 
-        CharLogger.Error($"Login server rejected char server registration (code {result}).");
-        return false;
+        var nonce = challengePacket.AsSpan(2, PacketConstants.ServiceNonceLength).ToArray();
+        // ServiceId/ServerName come from the same validated helloFields that
+        // SendServiceHelloAsync wrote to the wire (never re-read from
+        // config), so the proof is guaranteed to be computed over exactly
+        // what LoginServer will decode.
+        var proof = ServiceAuthProofCalculator.ComputeProof(
+            _serviceTokenProvider.TokenBytes!,
+            helloFields.ServiceId,
+            config.CharIp,
+            (ushort)config.CharPort,
+            helloFields.ServerName,
+            (ushort)config.CharMaintenance,
+            (ushort)config.CharNewDisplay,
+            nonce);
+
+        await SendServiceAuthProofAsync(connection, proof, cancellationToken);
+
+        var resultPacket = await ReadPacketAsync(stream, cancellationToken);
+        if (resultPacket.Length == 0)
+        {
+            return false;
+        }
+
+        var resultType = BinaryPrimitives.ReadInt16LittleEndian(resultPacket.AsSpan(0, 2));
+        if (resultType != PacketConstants.LcServiceAuthResult)
+        {
+            CharLogger.Warning($"Expected service auth result, got 0x{resultType:X4}.");
+            return false;
+        }
+
+        var result = resultPacket[2];
+        if (result != 0)
+        {
+            CharLogger.Error($"Login server rejected char server service authentication (code {result}).");
+            return false;
+        }
+
+        CharLogger.Status("Login server accepted char server service authentication.");
+        return true;
     }
 
     private bool HandleAuthResponse(byte[] packet)
@@ -298,27 +358,53 @@ public sealed class LoginServerConnector
         return true;
     }
 
-    private static async Task SendLoginPacketAsync(LoginConnectionState connection, CharConfig config, CancellationToken cancellationToken)
+    /// <summary>
+    /// LcServiceHello wire layout (56 bytes total; must match
+    /// src/LoginServer/Net/ClientSession.cs's HandleServiceHelloAsync exactly):
+    /// 2 header + 24 ServiceId + 4 IP + 2 port + 20 server name + 2 maintenance + 2 new-display.
+    /// ServiceId/ServerName come from <paramref name="helloFields"/> - already
+    /// validated by <see cref="ServiceHelloFieldValidator"/> to fit losslessly
+    /// in these fixed-width ASCII fields - never re-read from
+    /// <see cref="CharConfig"/> directly, so this and the HMAC proof
+    /// computation in <see cref="AuthenticateAsync"/> can never diverge.
+    /// </summary>
+    private static async Task SendServiceHelloAsync(LoginConnectionState connection, CharConfig config, ValidatedServiceHelloFields helloFields, CancellationToken cancellationToken)
     {
-        var buffer = new byte[86];
-        BinaryPrimitives.WriteInt16LittleEndian(buffer.AsSpan(0, 2), PacketConstants.LcCharServerLogin);
-        WriteFixedString(buffer.AsSpan(2, PacketConstants.NameLength), config.UserId);
-        WriteFixedString(buffer.AsSpan(26, PacketConstants.NameLength), config.Password);
-        buffer.AsSpan(50, 4).Clear();
+        var buffer = new byte[2 + PacketConstants.NameLength + 4 + 2 + PacketConstants.ServerNameLength + 2 + 2];
+        BinaryPrimitives.WriteInt16LittleEndian(buffer.AsSpan(0, 2), PacketConstants.LcServiceHello);
+        WriteFixedString(buffer.AsSpan(2, PacketConstants.NameLength), helloFields.ServiceId);
 
+        var ipOffset = 2 + PacketConstants.NameLength;
         var ipBytes = config.CharIp.MapToIPv4().GetAddressBytes();
-        ipBytes.CopyTo(buffer.AsSpan(54, 4));
-        BinaryPrimitives.WriteUInt16BigEndian(buffer.AsSpan(58, 2), (ushort)config.CharPort);
+        ipBytes.CopyTo(buffer.AsSpan(ipOffset, 4));
+        BinaryPrimitives.WriteUInt16BigEndian(buffer.AsSpan(ipOffset + 4, 2), (ushort)config.CharPort);
 
-        WriteFixedString(buffer.AsSpan(60, PacketConstants.ServerNameLength), config.ServerName);
-        buffer.AsSpan(80, 2).Clear();
-        BinaryPrimitives.WriteUInt16LittleEndian(buffer.AsSpan(82, 2), (ushort)config.CharMaintenance);
-        BinaryPrimitives.WriteUInt16LittleEndian(buffer.AsSpan(84, 2), (ushort)config.CharNewDisplay);
+        var nameOffset = ipOffset + 4 + 2;
+        WriteFixedString(buffer.AsSpan(nameOffset, PacketConstants.ServerNameLength), helloFields.ServerName);
+
+        var maintenanceOffset = nameOffset + PacketConstants.ServerNameLength;
+        BinaryPrimitives.WriteUInt16LittleEndian(buffer.AsSpan(maintenanceOffset, 2), (ushort)config.CharMaintenance);
+        BinaryPrimitives.WriteUInt16LittleEndian(buffer.AsSpan(maintenanceOffset + 2, 2), (ushort)config.CharNewDisplay);
 
         await connection.WriteAsync(buffer, cancellationToken);
     }
 
-    private static void WriteFixedString(Span<byte> buffer, string value)
+    private static async Task SendServiceAuthProofAsync(LoginConnectionState connection, byte[] proof, CancellationToken cancellationToken)
+    {
+        var buffer = new byte[2 + PacketConstants.ServiceProofLength];
+        BinaryPrimitives.WriteInt16LittleEndian(buffer.AsSpan(0, 2), PacketConstants.LcServiceAuthProof);
+        proof.CopyTo(buffer.AsSpan(2, PacketConstants.ServiceProofLength));
+        await connection.WriteAsync(buffer, cancellationToken);
+    }
+
+    /// <summary>
+    /// Internal (not private) so tests can prove this exact wire-encoding
+    /// function round-trips losslessly for a <see cref="ServiceHelloFieldValidator"/>-validated
+    /// value, and that the resulting bytes are exactly what
+    /// <see cref="ServiceAuthProofCalculator"/> was given - see
+    /// ServiceHelloWireCanonicalizationTests in CharServer.Tests.
+    /// </summary>
+    internal static void WriteFixedString(Span<byte> buffer, string value)
     {
         var bytes = Encoding.ASCII.GetBytes(value ?? string.Empty);
         var length = Math.Min(bytes.Length, buffer.Length);
@@ -332,7 +418,7 @@ public sealed class LoginServerConnector
         }
     }
 
-    private static string ReadFixedString(ReadOnlySpan<byte> buffer)
+    internal static string ReadFixedString(ReadOnlySpan<byte> buffer)
     {
         var length = buffer.IndexOf((byte)0);
         if (length < 0)

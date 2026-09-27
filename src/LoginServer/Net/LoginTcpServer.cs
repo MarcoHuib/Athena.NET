@@ -1,7 +1,10 @@
 using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
+using Microsoft.Extensions.DependencyInjection;
+using Athena.Net.LoginServer.Application;
 using Athena.Net.LoginServer.Config;
+using Athena.Net.LoginServer.Db.Identity;
 using Athena.Net.LoginServer.Logging;
 using Athena.Net.LoginServer.Telemetry;
 
@@ -12,9 +15,11 @@ public sealed class LoginTcpServer
     private readonly LoginConfigStore _configStore;
     private readonly LoginMessageStore _messageStore;
     private readonly Func<Db.LoginDbContext?> _dbFactory;
+    private readonly Func<AthenaIdentityDbContext?> _identityDbFactory;
     private readonly CharServerRegistry _charServers;
     private readonly LoginState _state;
     private readonly Config.SubnetConfig _subnetConfig;
+    private readonly IServiceProvider _serviceProvider;
     private readonly TcpListener _listener;
 
     public int BoundPort { get; private set; }
@@ -23,17 +28,21 @@ public sealed class LoginTcpServer
         LoginConfigStore configStore,
         LoginMessageStore messageStore,
         Func<Db.LoginDbContext?> dbFactory,
+        Func<AthenaIdentityDbContext?> identityDbFactory,
         CharServerRegistry charServers,
         LoginState state,
-        Config.SubnetConfig subnetConfig
+        Config.SubnetConfig subnetConfig,
+        IServiceProvider serviceProvider
     )
     {
         _configStore = configStore;
         _messageStore = messageStore;
         _dbFactory = dbFactory;
+        _identityDbFactory = identityDbFactory;
         _charServers = charServers;
         _state = state;
         _subnetConfig = subnetConfig;
+        _serviceProvider = serviceProvider;
 
         var config = _configStore.Current;
         _listener = new TcpListener(config.BindIp, config.LoginPort);
@@ -85,6 +94,11 @@ public sealed class LoginTcpServer
         LoginLogger.Info($"Client connected: {endpoint}");
 
         using (client)
+        // A DI scope is created per TCP connection solely to resolve the
+        // lightweight per-connection auth services below (never an EF
+        // DbContext - those continue to come from short-lived _dbFactory()
+        // calls scoped to a single operation, not this connection's lifetime).
+        using (var scope = _serviceProvider.CreateScope())
         {
             try
             {
@@ -97,14 +111,22 @@ public sealed class LoginTcpServer
                 // ---------------------------------------------------------
                 await LogInitialPacketAsync(client, cancellationToken);
 
+                var playerAuth = scope.ServiceProvider.GetRequiredService<IPlayerAuthenticationService>();
+                var serviceAuth = scope.ServiceProvider.GetRequiredService<IServiceAuthenticationService>();
+                var identityAccountService = scope.ServiceProvider.GetRequiredService<IPlayerIdentityAccountService>();
+
                 using var session = new ClientSession(
                     client,
                     _configStore,
                     _messageStore,
                     _dbFactory,
+                    _identityDbFactory,
                     _charServers,
                     _state,
-                    _subnetConfig
+                    _subnetConfig,
+                    playerAuth,
+                    serviceAuth,
+                    identityAccountService
                 );
 
                 await session.RunAsync(cancellationToken);

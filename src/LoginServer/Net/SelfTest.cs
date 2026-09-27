@@ -1,20 +1,20 @@
 using System.Buffers.Binary;
-using System.Globalization;
 using System.Net;
 using System.Net.Sockets;
-using System.Security.Cryptography;
 using System.Text;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using Athena.Net.LoginServer.Application;
 using Athena.Net.LoginServer.Config;
 using Athena.Net.LoginServer.Db;
 using Athena.Net.LoginServer.Db.Entities;
 using Athena.Net.LoginServer.Logging;
-using Microsoft.EntityFrameworkCore;
 
 namespace Athena.Net.LoginServer.Net;
 
 public static class SelfTest
 {
-    public static async Task<int> RunAsync(LoginConfig config, Func<LoginDbContext?> dbFactory)
+    public static async Task<int> RunAsync(LoginConfig config, Func<LoginDbContext?> dbFactory, IServiceProvider serviceProvider)
     {
         var testConfig = CreateTestConfig(config);
         var configStore = new LoginConfigStore(testConfig);
@@ -24,7 +24,7 @@ public static class SelfTest
 
         using var cts = new CancellationTokenSource();
         var messageStore = new LoginMessageStore(new LoginMessageCatalog(new Dictionary<uint, string>()));
-        var server = new LoginTcpServer(configStore, messageStore, dbFactory, charServers, state, subnetConfig);
+        var server = new LoginTcpServer(configStore, messageStore, dbFactory, () => null, charServers, state, subnetConfig, serviceProvider);
         var serverTask = server.RunAsync(cts.Token);
 
         var ready = await WaitForPortAsync(server, TimeSpan.FromSeconds(2));
@@ -35,9 +35,6 @@ public static class SelfTest
         }
 
         var ok = true;
-        var hashOk = await ProbeHashAsync(server.BoundPort);
-        LoginLogger.Status($"Self-test: hash {(hashOk ? "ok" : "failed")}");
-        ok &= hashOk;
 
         var canUseDb = await CanUseLoginDbAsync(dbFactory);
         if (canUseDb)
@@ -51,11 +48,7 @@ public static class SelfTest
             LoginLogger.Info("Self-test: login-refuse skipped (db unavailable or missing tables).");
         }
 
-        var keepAliveOk = await ProbeKeepAliveAsync(server.BoundPort);
-        LoginLogger.Status($"Self-test: keepalive {(keepAliveOk ? "ok" : "failed")}");
-        ok &= keepAliveOk;
-
-        var dbTests = await ProbeDbLoginFlowAsync(server.BoundPort, configStore, dbFactory, charServers, state, canUseDb);
+        var dbTests = await ProbeDbLoginFlowAsync(server.BoundPort, configStore, dbFactory, charServers, state, serviceProvider, canUseDb);
         if (dbTests.ran)
         {
             LoginLogger.Status($"Self-test: login-flow {(dbTests.ok ? "ok" : "failed")}");
@@ -80,9 +73,7 @@ public static class SelfTest
             BindIp = IPAddress.Loopback,
             LoginPort = 0,
             LogLogin = false,
-            UseMd5Passwords = config.UseMd5Passwords,
             DateFormat = config.DateFormat,
-            NewAccountFlag = config.NewAccountFlag,
             AccountNameMinLength = config.AccountNameMinLength,
             PasswordMinLength = config.PasswordMinLength,
             GroupIdToConnect = config.GroupIdToConnect,
@@ -104,52 +95,12 @@ public static class SelfTest
             DnsblServers = string.Empty,
             IpBanCleanupIntervalSeconds = config.IpBanCleanupIntervalSeconds,
             ConsoleEnabled = false,
-            AllowedRegistrations = config.AllowedRegistrations,
-            RegistrationWindowSeconds = config.RegistrationWindowSeconds,
-            StartLimitedTimeSeconds = config.StartLimitedTimeSeconds,
-            ClientHashCheck = config.ClientHashCheck,
-            ClientHashRules = config.ClientHashRules,
             IpSyncIntervalMinutes = config.IpSyncIntervalMinutes,
             UsercountDisable = config.UsercountDisable,
             UsercountLow = config.UsercountLow,
             UsercountMedium = config.UsercountMedium,
             UsercountHigh = config.UsercountHigh,
         };
-    }
-
-    private static async Task<bool> ProbeHashAsync(int port)
-    {
-        using var client = new TcpClient();
-        await client.ConnectAsync(IPAddress.Loopback, port);
-        using var stream = client.GetStream();
-
-        var req = new byte[2];
-        BinaryPrimitives.WriteInt16LittleEndian(req.AsSpan(0, 2), PacketConstants.CaReqHash);
-        await stream.WriteAsync(req);
-
-        var header = await ReadExactAsync(stream, 4);
-        if (header.Length < 4)
-        {
-            LoginLogger.Warning("Self-test: hash missing header.");
-            return false;
-        }
-
-        var packetType = BinaryPrimitives.ReadInt16LittleEndian(header.AsSpan(0, 2));
-        var length = BinaryPrimitives.ReadInt16LittleEndian(header.AsSpan(2, 2));
-        if (packetType != PacketConstants.AcAckHash || length < 4)
-        {
-            LoginLogger.Warning($"Self-test: hash unexpected response 0x{packetType:X4} len={length}.");
-            return false;
-        }
-
-        var body = await ReadExactAsync(stream, length - 4);
-        if (body.Length != length - 4)
-        {
-            LoginLogger.Warning($"Self-test: hash body size mismatch {body.Length} != {length - 4}.");
-            return false;
-        }
-
-        return true;
     }
 
     private static async Task<bool> ProbeLoginRefuseAsync(int port)
@@ -177,37 +128,13 @@ public static class SelfTest
         return packetType == PacketConstants.AcRefuseLogin;
     }
 
-    private static async Task<bool> ProbeKeepAliveAsync(int port)
-    {
-        using var client = new TcpClient();
-        await client.ConnectAsync(IPAddress.Loopback, port);
-        using var stream = client.GetStream();
-
-        var packet = new byte[2];
-        BinaryPrimitives.WriteInt16LittleEndian(packet.AsSpan(0, 2), PacketConstants.LcKeepAliveRequest);
-        await stream.WriteAsync(packet);
-
-        var resp = await ReadExactAsync(stream, 2);
-        if (resp.Length < 2)
-        {
-            LoginLogger.Warning("Self-test: keepalive missing response.");
-            return false;
-        }
-
-        var packetType = BinaryPrimitives.ReadInt16LittleEndian(resp);
-        if (packetType != PacketConstants.LcKeepAliveResponse)
-        {
-            LoginLogger.Warning($"Self-test: keepalive unexpected response 0x{packetType:X4}.");
-        }
-        return packetType == PacketConstants.LcKeepAliveResponse;
-    }
-
     private static async Task<(bool ran, bool ok)> ProbeDbLoginFlowAsync(
         int port,
         LoginConfigStore configStore,
         Func<LoginDbContext?> dbFactory,
         CharServerRegistry charServers,
         LoginState state,
+        IServiceProvider serviceProvider,
         bool canUseDb)
     {
         if (!canUseDb)
@@ -215,91 +142,88 @@ public static class SelfTest
             return (false, true);
         }
 
-        var db = dbFactory();
-        if (db == null)
+        using var provisioningScope = serviceProvider.CreateScope();
+        var provisioning = provisioningScope.ServiceProvider.GetService<IPlayerAccountProvisioningService>();
+        if (provisioning == null)
         {
+            LoginLogger.Info("Self-test: login-flow skipped (Identity DB unavailable).");
             return (false, true);
         }
 
-        await using (db)
+        var username = $"selftest_{Guid.NewGuid():N}".Substring(0, 16);
+        var password = "SelfTest1!";
+        var provisioned = await provisioning.ProvisionAsync(username, $"{username}@example.com", password, 'M', CancellationToken.None);
+        if (!provisioned.Success)
         {
-            var username = $"selftest_{Guid.NewGuid():N}".Substring(0, 16);
-            var password = "SelfTest1!";
-            var storedPass = configStore.Current.UseMd5Passwords ? Md5Hex(Encoding.ASCII.GetBytes(password)) : password;
+            LoginLogger.Warning($"Self-test: unable to provision test account ({provisioned.ErrorMessage}).");
+            return (true, false);
+        }
 
-            var account = new LoginAccount
+        var accountId = provisioned.RagnarokAccountId;
+
+        try
+        {
+            var charServer = new CharServerInfo
             {
-                UserId = username,
-                UserPass = storedPass,
-                Sex = "M",
-                Email = "selftest@example.com",
-                GroupId = 0,
-                State = 0,
-                UnbanTime = 0,
-                ExpirationTime = 0,
-                LoginCount = 0,
-                LastLogin = null,
-                LastIp = "127.0.0.1",
-                Birthdate = null,
-                CharacterSlots = (byte)configStore.Current.CharPerAccount,
-                Pincode = string.Empty,
-                PincodeChange = 0,
-                VipTime = 0,
-                OldGroup = 0,
-                WebAuthToken = null,
-                WebAuthTokenEnabled = false,
+                Name = "SelfTest",
+                Ip = IPAddress.Loopback,
+                Port = 6121,
+                Type = 0,
+                IsNew = 0,
+                Users = 0,
+                Connection = null,
             };
+            charServers.Register(1, charServer);
 
-            db.Accounts.Add(account);
-            await db.SaveChangesAsync();
-
-            try
+            var accept = await ProbeLoginAcceptAsync(port, username, password, configStore.Current);
+            var acceptOk = accept.ok;
+            var userCount = accept.userCount;
+            if (!acceptOk)
             {
-                var charServer = new CharServerInfo
-                {
-                    Name = "SelfTest",
-                    Ip = IPAddress.Loopback,
-                    Port = 6121,
-                    Type = 0,
-                    IsNew = 0,
-                    Users = 0,
-                    Connection = null,
-                };
-                charServers.Register(1, charServer);
-
-                var accept = await ProbeLoginAcceptAsync(port, username, password, configStore.Current);
-                var acceptOk = accept.ok;
-                var userCount = accept.userCount;
-                if (!acceptOk)
-                {
-                    return (true, false);
-                }
-
-                var expected = MapUserCount(configStore.Current, 0);
-                if (userCount != expected)
-                {
-                    LoginLogger.Warning($"Self-test: usercount mismatch {userCount} != {expected}.");
-                    return (true, false);
-                }
-
-                state.RemoveOnlineUser(account.AccountId);
-                state.RemoveAuthNode(account.AccountId);
-
-                state.AddOnlineUser(1, account.AccountId);
-                var alreadyOnlineOk = await ProbeAlreadyOnlineAsync(port, username, password);
-                if (!alreadyOnlineOk)
-                {
-                    return (true, false);
-                }
-
-                return (true, true);
+                return (true, false);
             }
-            finally
+
+            var expected = MapUserCount(configStore.Current, 0);
+            if (userCount != expected)
             {
-                state.RemoveOnlineUser(account.AccountId);
-                state.RemoveAuthNode(account.AccountId);
-                charServers.Unregister(1);
-                db.Accounts.Remove(account);
+                LoginLogger.Warning($"Self-test: usercount mismatch {userCount} != {expected}.");
+                return (true, false);
+            }
+
+            state.RemoveOnlineUser(accountId);
+            state.RemoveAuthNode(accountId);
+
+            state.AddOnlineUser(1, accountId);
+            var alreadyOnlineOk = await ProbeAlreadyOnlineAsync(port, username, password);
+            if (!alreadyOnlineOk)
+            {
+                return (true, false);
+            }
+
+            return (true, true);
+        }
+        finally
+        {
+            state.RemoveOnlineUser(accountId);
+            state.RemoveAuthNode(accountId);
+            charServers.Unregister(1);
+
+            using var scope = serviceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetService<Db.Identity.AthenaIdentityDbContext>();
+            if (db != null)
+            {
+                var user = await db.Users.FirstOrDefaultAsync(u => u.Id == provisioned.IdentityUserId);
+                if (user != null)
+                {
+                    db.Users.Remove(user);
+                }
+
+                var gameAccount = await db.GameAccounts.FirstOrDefaultAsync(a => a.Id == provisioned.GameAccountId);
+                if (gameAccount != null)
+                {
+                    db.GameAccounts.Remove(gameAccount);
+                }
+
                 await db.SaveChangesAsync();
             }
         }
@@ -441,19 +365,6 @@ public static class SelfTest
         return 3;
     }
 
-    private static string Md5Hex(byte[] data)
-    {
-        using var md5 = MD5.Create();
-        var hash = md5.ComputeHash(data);
-        var sb = new StringBuilder(hash.Length * 2);
-        foreach (var b in hash)
-        {
-            sb.Append(b.ToString("x2", CultureInfo.InvariantCulture));
-        }
-
-        return sb.ToString();
-    }
-
     private static async Task<bool> CanUseLoginDbAsync(Func<LoginDbContext?> dbFactory)
     {
         var db = dbFactory();
@@ -471,7 +382,7 @@ public static class SelfTest
                     return false;
                 }
 
-                await db.Accounts.AnyAsync();
+                await db.IpBanList.AnyAsync();
                 return true;
             }
             catch (Exception)

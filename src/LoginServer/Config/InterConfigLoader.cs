@@ -8,14 +8,12 @@ public static class InterConfigLoader
     public static InterConfig Load(string path)
     {
         var host = "127.0.0.1";
-        var port = 3306;
+        var port = 0;
         var user = "";
         var pass = "";
         var db = "";
-        var provider = "mysql";
-        var codepage = string.Empty;
+        var provider = "sqlserver";
         var caseSensitive = false;
-        var loginAccountTable = "login";
         var ipbanTable = "ipbanlist";
         var loginLogTable = "loginlog";
         var globalAccRegNumTable = "global_acc_reg_num";
@@ -72,10 +70,6 @@ public static class InterConfigLoader
             {
                 db = value;
             }
-            else if (key.Equals("login_codepage", StringComparison.OrdinalIgnoreCase))
-            {
-                codepage = value;
-            }
             else if (key.Equals("login_case_sensitive", StringComparison.OrdinalIgnoreCase))
             {
                 caseSensitive = ParseBool(value, caseSensitive);
@@ -83,10 +77,6 @@ public static class InterConfigLoader
             else if (key.Equals("login_db_provider", StringComparison.OrdinalIgnoreCase))
             {
                 provider = value;
-            }
-            else if (key.Equals("login_server_account_db", StringComparison.OrdinalIgnoreCase))
-            {
-                loginAccountTable = value;
             }
             else if (key.Equals("ipban_table", StringComparison.OrdinalIgnoreCase))
             {
@@ -112,30 +102,19 @@ public static class InterConfigLoader
         }
 
         var normalizedProvider = provider.Trim().ToLowerInvariant();
-        string connectionString;
-        if (normalizedProvider == "sqlserver" || normalizedProvider == "mssql")
+        if (normalizedProvider == "mssql")
         {
-            var server = port > 0 ? $"{host},{port}" : host;
-            connectionString = $"Server={server};Database={db};User ID={user};Password={pass};Encrypt=True;TrustServerCertificate=True;";
+            normalizedProvider = "sqlserver";
         }
-        else
-        {
-            connectionString = $"Server={host};Port={port};Database={db};User={user};Password={pass};SslMode=None;";
-            if (!string.IsNullOrWhiteSpace(codepage) &&
-                !connectionString.Contains("CharSet=", StringComparison.OrdinalIgnoreCase) &&
-                !connectionString.Contains("Charset=", StringComparison.OrdinalIgnoreCase))
-            {
-                connectionString += $"CharSet={codepage};";
-            }
-        }
+
+        var server = port > 0 ? $"{host},{port}" : host;
+        var connectionString = $"Server={server};Database={db};User ID={user};Password={pass};Encrypt=True;TrustServerCertificate=True;";
 
         return new InterConfig
         {
             LoginDbProvider = normalizedProvider,
             LoginDbConnectionString = connectionString,
-            LoginDbCodepage = codepage,
             LoginCaseSensitive = caseSensitive,
-            LoginAccountTable = loginAccountTable,
             IpBanTable = ipbanTable,
             LoginLogTable = loginLogTable,
             GlobalAccRegNumTable = globalAccRegNumTable,

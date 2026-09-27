@@ -41,7 +41,8 @@ public static class CharServerApp
             cts.Cancel();
         };
 
-        var loginConnector = new LoginServerConnector(configStore);
+        var serviceTokenProvider = new CharServerServiceTokenProvider(secrets);
+        var loginConnector = new LoginServerConnector(configStore, serviceTokenProvider);
         var charServer = new CharTcpServer(configStore, loginConnector, dbFactory, interConfig.StartStatusPoints);
 
         var loginTask = loginConnector.RunAsync(cts.Token);

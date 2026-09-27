@@ -8,11 +8,11 @@ public static class InterConfigLoader
     public static InterConfig Load(string path)
     {
         var host = "127.0.0.1";
-        var port = 3306;
+        var port = 0;
         var user = "";
         var pass = "";
         var db = "";
-        var provider = string.Empty;
+        var provider = "sqlserver";
         var charTable = "char";
         var inventoryTable = "inventory";
         var skillTable = "skill";
@@ -122,17 +122,14 @@ public static class InterConfigLoader
             };
         }
 
-        var normalizedProvider = string.IsNullOrWhiteSpace(provider) ? "mysql" : provider.Trim().ToLowerInvariant();
-        string connectionString;
-        if (normalizedProvider == "sqlserver" || normalizedProvider == "mssql")
+        var normalizedProvider = string.IsNullOrWhiteSpace(provider) ? "sqlserver" : provider.Trim().ToLowerInvariant();
+        if (normalizedProvider == "mssql")
         {
-            var server = port > 0 ? $"{host},{port}" : host;
-            connectionString = $"Server={server};Database={db};User ID={user};Password={pass};Encrypt=True;TrustServerCertificate=True;";
+            normalizedProvider = "sqlserver";
         }
-        else
-        {
-            connectionString = $"Server={host};Port={port};Database={db};User={user};Password={pass};SslMode=None;";
-        }
+
+        var server = port > 0 ? $"{host},{port}" : host;
+        var connectionString = $"Server={server};Database={db};User ID={user};Password={pass};Encrypt=True;TrustServerCertificate=True;";
 
         return new InterConfig
         {
