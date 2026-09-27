@@ -3,7 +3,9 @@ using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Athena.Net.LoginServer.Application;
+using Athena.Net.LoginServer.Config;
 using Athena.Net.LoginServer.Db.Identity;
+using Athena.Net.LoginServer.Net;
 using Athena.Net.LoginServer.Tests.TestSupport;
 
 namespace Athena.Net.LoginServer.Tests.Application;
@@ -25,20 +27,7 @@ public sealed class PlayerAccountProvisioningServiceTests : IDisposable
         _connection.Open();
 
         var services = new ServiceCollection();
-        services.AddDbContext<AthenaIdentityDbContext>(options => options.UseSqlite(_connection));
-        services.AddIdentityCore<AthenaIdentityUser>(options =>
-        {
-            options.User.RequireUniqueEmail = true;
-            options.Password.RequiredLength = 6;
-            options.Password.RequireDigit = false;
-            options.Password.RequireLowercase = false;
-            options.Password.RequireUppercase = false;
-            options.Password.RequireNonAlphanumeric = false;
-        })
-            .AddRoles<IdentityRole<Guid>>()
-            .AddEntityFrameworkStores<AthenaIdentityDbContext>();
-        services.AddScoped<IRagnarokAccountIdAllocator, SqliteMaxPlusOneRagnarokAccountIdAllocator>();
-        services.AddScoped<IPlayerAccountProvisioningService, PlayerAccountProvisioningService>();
+        AddProvisioningStack(services, _connection, new SqliteMaxPlusOneRagnarokAccountIdAllocator());
 
         _serviceProvider = services.BuildServiceProvider();
 
@@ -59,7 +48,7 @@ public sealed class PlayerAccountProvisioningServiceTests : IDisposable
         var provisioning = scope.ServiceProvider.GetRequiredService<IPlayerAccountProvisioningService>();
         var db = scope.ServiceProvider.GetRequiredService<AthenaIdentityDbContext>();
 
-        var result = await provisioning.ProvisionAsync("Marco", "marco@example.com", "hunter22", 'M', CancellationToken.None);
+        var result = await provisioning.ProvisionAsync("MarcoP", "marco@example.com", "hunter22", 'M', CancellationToken.None);
 
         Assert.True(result.Success);
         Assert.NotEqual(Guid.Empty, result.IdentityUserId);
@@ -67,7 +56,7 @@ public sealed class PlayerAccountProvisioningServiceTests : IDisposable
         Assert.True(result.RagnarokAccountId > 0);
 
         var user = await db.Users.SingleAsync(u => u.Id == result.IdentityUserId);
-        Assert.Equal("Marco", user.UserName);
+        Assert.Equal("MarcoP", user.UserName);
         Assert.Equal("marco@example.com", user.Email);
         Assert.NotNull(user.PasswordHash);
         Assert.NotEqual("hunter22", user.PasswordHash); // never stored in plaintext
@@ -117,10 +106,10 @@ public sealed class PlayerAccountProvisioningServiceTests : IDisposable
         var provisioning = scope.ServiceProvider.GetRequiredService<IPlayerAccountProvisioningService>();
         var db = scope.ServiceProvider.GetRequiredService<AthenaIdentityDbContext>();
 
-        var first = await provisioning.ProvisionAsync("UserA", "same@example.com", "password1", 'M', CancellationToken.None);
+        var first = await provisioning.ProvisionAsync("UserAlpha", "same@example.com", "password1", 'M', CancellationToken.None);
         Assert.True(first.Success);
 
-        var second = await provisioning.ProvisionAsync("UserB", "same@example.com", "password2", 'F', CancellationToken.None);
+        var second = await provisioning.ProvisionAsync("UserBeta", "same@example.com", "password2", 'F', CancellationToken.None);
 
         Assert.False(second.Success);
         Assert.Equal(1, await db.Users.CountAsync());
@@ -179,6 +168,99 @@ public sealed class PlayerAccountProvisioningServiceTests : IDisposable
         Assert.Equal(typeof(Guid), typeof(AthenaGameAccount).GetProperty("Id")!.PropertyType);
     }
 
+    // Credential-limit validation: the stock 0x0064 login packet's username and
+    // password fields are fixed-width, NUL-terminated PacketConstants.NameLength
+    // (24) byte buffers, so the longest usable value is 23 characters. The
+    // minimums come from the default LoginConfig (AccountNameMinLength =
+    // PasswordMinLength = 6), which every test in this file (via _serviceProvider)
+    // uses unless it builds its own stack.
+
+    [Theory]
+    [InlineData(5)] // one below the minimum
+    [InlineData(24)] // one above the maximum (PacketConstants.NameLength)
+    public async Task ProvisionAsync_UsernameOutOfBounds_FailsAndCreatesNothing(int length)
+    {
+        using var scope = _serviceProvider.CreateScope();
+        var provisioning = scope.ServiceProvider.GetRequiredService<IPlayerAccountProvisioningService>();
+        var db = scope.ServiceProvider.GetRequiredService<AthenaIdentityDbContext>();
+
+        var userName = new string('u', length);
+        var result = await provisioning.ProvisionAsync(userName, "boundary@example.com", "password1", 'M', CancellationToken.None);
+
+        Assert.False(result.Success);
+        Assert.False(await db.Users.AnyAsync(u => u.UserName == userName));
+    }
+
+    [Theory]
+    [InlineData(6)] // exactly AccountNameMinLength
+    [InlineData(23)] // exactly PacketConstants.NameLength - 1
+    public async Task ProvisionAsync_UsernameAtBoundary_Succeeds(int length)
+    {
+        using var scope = _serviceProvider.CreateScope();
+        var provisioning = scope.ServiceProvider.GetRequiredService<IPlayerAccountProvisioningService>();
+
+        var userName = new string('b', length);
+        var result = await provisioning.ProvisionAsync(userName, $"boundary{length}@example.com", "password1", 'M', CancellationToken.None);
+
+        Assert.True(result.Success, result.ErrorMessage);
+    }
+
+    [Theory]
+    [InlineData(5)]
+    [InlineData(24)]
+    public async Task ProvisionAsync_PasswordOutOfBounds_FailsAndCreatesNothing(int length)
+    {
+        using var scope = _serviceProvider.CreateScope();
+        var provisioning = scope.ServiceProvider.GetRequiredService<IPlayerAccountProvisioningService>();
+        var db = scope.ServiceProvider.GetRequiredService<AthenaIdentityDbContext>();
+
+        var userName = $"pwdbound{length}";
+        var password = new string('p', length);
+        var result = await provisioning.ProvisionAsync(userName, "pwdboundary@example.com", password, 'M', CancellationToken.None);
+
+        Assert.False(result.Success);
+        Assert.False(await db.Users.AnyAsync(u => u.UserName == userName));
+    }
+
+    [Theory]
+    [InlineData('X', false)]
+    [InlineData('Q', false)]
+    [InlineData('m', true)] // lowercase is normalized (char.ToUpperInvariant) before the M/F check
+    [InlineData('f', true)]
+    public async Task ProvisionAsync_SexValidation(char sex, bool expectedSuccess)
+    {
+        using var scope = _serviceProvider.CreateScope();
+        var provisioning = scope.ServiceProvider.GetRequiredService<IPlayerAccountProvisioningService>();
+        var db = scope.ServiceProvider.GetRequiredService<AthenaIdentityDbContext>();
+
+        var userName = $"sextest{(int)sex}";
+        var result = await provisioning.ProvisionAsync(userName, $"sextest{(int)sex}@example.com", "password1", sex, CancellationToken.None);
+
+        Assert.Equal(expectedSuccess, result.Success);
+        if (!expectedSuccess)
+        {
+            Assert.False(await db.Users.AnyAsync(u => u.UserName == userName));
+        }
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("not-an-email")]
+    [InlineData("missing-domain@")]
+    [InlineData("@missing-local.com")]
+    public async Task ProvisionAsync_InvalidEmail_FailsAndCreatesNothing(string email)
+    {
+        using var scope = _serviceProvider.CreateScope();
+        var provisioning = scope.ServiceProvider.GetRequiredService<IPlayerAccountProvisioningService>();
+        var db = scope.ServiceProvider.GetRequiredService<AthenaIdentityDbContext>();
+
+        var userName = $"emailtest{Math.Abs(email.GetHashCode())}";
+        var result = await provisioning.ProvisionAsync(userName, email, "password1", 'M', CancellationToken.None);
+
+        Assert.False(result.Success);
+        Assert.False(await db.Users.AnyAsync(u => u.UserName == userName));
+    }
+
     [Fact]
     public async Task ProvisionAsync_UsesTheAllocatedRagnarokAccountId()
     {
@@ -186,20 +268,7 @@ public sealed class PlayerAccountProvisioningServiceTests : IDisposable
         // is wired in: the provisioned game account's RagnarokAccountId must be
         // exactly whatever the allocator returned.
         var services = new ServiceCollection();
-        services.AddDbContext<AthenaIdentityDbContext>(options => options.UseSqlite(_connection));
-        services.AddIdentityCore<AthenaIdentityUser>(options =>
-        {
-            options.User.RequireUniqueEmail = true;
-            options.Password.RequiredLength = 6;
-            options.Password.RequireDigit = false;
-            options.Password.RequireLowercase = false;
-            options.Password.RequireUppercase = false;
-            options.Password.RequireNonAlphanumeric = false;
-        })
-            .AddRoles<IdentityRole<Guid>>()
-            .AddEntityFrameworkStores<AthenaIdentityDbContext>();
-        services.AddScoped<IRagnarokAccountIdAllocator>(_ => new FixedRagnarokAccountIdAllocator(9_000_042));
-        services.AddScoped<IPlayerAccountProvisioningService, PlayerAccountProvisioningService>();
+        AddProvisioningStack(services, _connection, new FixedRagnarokAccountIdAllocator(9_000_042));
         await using var provider = services.BuildServiceProvider();
 
         using var scope = provider.CreateScope();
@@ -221,20 +290,7 @@ public sealed class PlayerAccountProvisioningServiceTests : IDisposable
         // RagnarokAccountId must still reject the second insert and roll back
         // cleanly rather than silently colliding two accounts.
         var services = new ServiceCollection();
-        services.AddDbContext<AthenaIdentityDbContext>(options => options.UseSqlite(_connection));
-        services.AddIdentityCore<AthenaIdentityUser>(options =>
-        {
-            options.User.RequireUniqueEmail = true;
-            options.Password.RequiredLength = 6;
-            options.Password.RequireDigit = false;
-            options.Password.RequireLowercase = false;
-            options.Password.RequireUppercase = false;
-            options.Password.RequireNonAlphanumeric = false;
-        })
-            .AddRoles<IdentityRole<Guid>>()
-            .AddEntityFrameworkStores<AthenaIdentityDbContext>();
-        services.AddScoped<IRagnarokAccountIdAllocator>(_ => new FixedRagnarokAccountIdAllocator(9_000_099));
-        services.AddScoped<IPlayerAccountProvisioningService, PlayerAccountProvisioningService>();
+        AddProvisioningStack(services, _connection, new FixedRagnarokAccountIdAllocator(9_000_099));
         await using var provider = services.BuildServiceProvider();
 
         using (var firstScope = provider.CreateScope())
@@ -260,5 +316,24 @@ public sealed class PlayerAccountProvisioningServiceTests : IDisposable
         public FixedRagnarokAccountIdAllocator(uint value) => _value = value;
 
         public Task<uint> AllocateAsync(AthenaIdentityDbContext db, CancellationToken cancellationToken) => Task.FromResult(_value);
+    }
+
+    private static void AddProvisioningStack(ServiceCollection services, SqliteConnection connection, IRagnarokAccountIdAllocator allocator, LoginConfig? config = null)
+    {
+        services.AddDbContext<AthenaIdentityDbContext>(options => options.UseSqlite(connection));
+        services.AddIdentityCore<AthenaIdentityUser>(options =>
+        {
+            options.User.RequireUniqueEmail = true;
+            options.Password.RequiredLength = 6;
+            options.Password.RequireDigit = false;
+            options.Password.RequireLowercase = false;
+            options.Password.RequireUppercase = false;
+            options.Password.RequireNonAlphanumeric = false;
+        })
+            .AddRoles<IdentityRole<Guid>>()
+            .AddEntityFrameworkStores<AthenaIdentityDbContext>();
+        services.AddSingleton(new LoginConfigStore(config ?? new LoginConfig()));
+        services.AddScoped<IRagnarokAccountIdAllocator>(_ => allocator);
+        services.AddScoped<IPlayerAccountProvisioningService, PlayerAccountProvisioningService>();
     }
 }

@@ -56,6 +56,7 @@ public sealed class ClientSessionServiceAuthGateTests : IDisposable
         })
             .AddRoles<IdentityRole<Guid>>()
             .AddEntityFrameworkStores<AthenaIdentityDbContext>();
+        services.AddSingleton(new LoginConfigStore(new LoginConfig()));
         services.AddScoped<IRagnarokAccountIdAllocator, SqliteMaxPlusOneRagnarokAccountIdAllocator>();
         services.AddScoped<IPlayerAccountProvisioningService, PlayerAccountProvisioningService>();
 

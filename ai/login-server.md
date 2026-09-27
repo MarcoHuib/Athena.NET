@@ -99,6 +99,15 @@ configuration (`new_account`, `allowed_regs`/`time_allowed`,
 login for a name ending in `_M`/`_F` with no existing account is just an
 unknown-username failure, the same as any other unknown username.
 
+`PlayerAccountProvisioningService` is the single choke point every one of
+these entry points goes through, so it rejects credentials the stock client
+could never actually use before touching the database: username/password
+length (`AccountNameMinLength`/`PasswordMinLength` from `login_athena.conf`
+as the floor, `PacketConstants.NameLength - 1` = 23 characters as the ceiling
+- the stock `0x0064` username/password fields are fixed-width, NUL-terminated
+24-byte buffers), `sex` must be `M`/`F`, and `email` must be a syntactically
+valid address.
+
 ## Useful legacy reference areas
 Both repositories live under `legacy/` and should be treated as read-only reference material unless explicitly asked otherwise. For this server, use `legacy/rathena/` primarily for architecture/domain behavior and `legacy/openkore/` for packet naming or iRO/community protocol clues.
 
