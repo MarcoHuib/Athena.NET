@@ -22,6 +22,47 @@ Generic kRO/rAthena client compatibility is not a goal. `legacy/rathena/` is ref
 - Keep account/password verification, bans, auth-node lifecycle, server registration, and session ownership robust even when those internal concepts are borrowed from rAthena.
 - Treat world-list contents/configuration as server policy, but serialize them in the verified iRO format.
 
+## Identity architecture
+
+Player authentication and inter-server (CharServer) authentication are two
+separate domains that happen to both flow through LoginServer's TCP listener:
+
+- **Player accounts** are ASP.NET Core Identity users. `AthenaIdentityUser :
+  IdentityUser<Guid>` owns human authentication (`UserName` is the Ragnarok
+  login name exactly as sent in the stock `0x0064` request; `Email` is a
+  separate, independent identity reserved for a future website login and is
+  never derived from `UserName`). Each `AthenaIdentityUser` has exactly one
+  `AthenaGameAccount` (unique FK, 1:1, restrict-on-delete), which owns
+  Ragnarok game-account state (`Sex`, `GroupId`, `State`, ban/expiration,
+  VIP, pincode, character slots, web auth token, etc.) plus the legacy
+  compatibility identifier the stock wire protocol still needs:
+  `RagnarokAccountId uint32` (unique, separate from `AthenaGameAccount.Id`,
+  which is the canonical `Guid`). `IPlayerAuthenticationService`
+  (`IdentityPlayerAuthenticationService` in production) is the only thing
+  `ClientSession` depends on for player login - it never references
+  `UserManager`/`IdentityUser`/EF entities directly, so the wire-protocol
+  code stays Identity-independent. See `docs/architecture-roadmap.md`
+  ("Sequencing deviation" section) for why this was implemented ahead of
+  Athena.Client/Gateway/QUIC, and for the important caveat that Identity
+  protects server-side credential storage only - it does not encrypt the
+  Ragexe TCP transport.
+- **CharServer/service accounts** are unrelated to Identity and remain on
+  the legacy `LoginAccount`/`login` table exactly as before, verified by
+  `IServiceAuthenticationService`. CharServer is never an Identity user.
+  Every inter-server ("Lc*") packet that manages player game-account state
+  (ban, VIP, sex change, pincode, account info/data, email change, etc.) is
+  rejected unless the socket has already authenticated as a service account
+  (`IServiceAuthenticationService.IsAuthenticated`); LoginServer used to
+  process these packets without checking that first, which has been fixed
+  and is covered by regression tests
+  (`tests/LoginServer.Tests/Net/ClientSessionServiceAuthGate.test.cs`).
+  Those handlers read/write `AthenaGameAccount` by `RagnarokAccountId`
+  (the CharServer/MapServer-facing legacy id), not `AthenaGameAccount.Id`.
+- The legacy `LoginId1`/`LoginId2`/`AuthNode` game-session handoff
+  (`ILoginSessionService`/`LoginState`) is unchanged and independent of
+  Identity - it is how CharServer and MapServer confirm a session, and it
+  has nothing to do with human/Identity authentication.
+
 ## Development service-account provisioning
 
 CharServer authenticates to LoginServer with `CharServer.UserId` and
@@ -37,11 +78,22 @@ seed data. After creating or resetting `LoginDb`, provision it idempotently:
 The script reads configured credentials without printing them, reserves account ID
 1 by default, refreshes the configured password for an existing valid service row,
 and refuses to convert a player or non-reserved row into a server identity. Normal
-development player accounts remain explicit:
+development player accounts are provisioned through ASP.NET Core Identity, never
+by inserting rows directly:
 
 ```bash
-./scripts/create-player-account.sh <username> <password> M
+./scripts/create-player-account.sh <username> <password> [M|F] [email]
 ```
+
+This shells out to LoginServer's own one-shot `--create-account-*` startup mode
+(see `src/LoginServer/Startup/StartupOptions.cs` /
+`src/LoginServer/Startup/LoginServerApp.cs`), which provisions the
+`AthenaIdentityUser` + `AthenaGameAccount` pair transactionally through
+`IPlayerAccountProvisioningService` using the same configuration/connection-string
+resolution as the running server. The same console-driven flow is available while
+the server is running via the `create:` command in `ConsoleCommandLoop`. There is
+no legacy player auto-registration path anymore (the old `NewAccountFlag`
+auto-register-on-login behavior was removed with the legacy password system).
 
 ## Useful legacy reference areas
 Both repositories live under `legacy/` and should be treated as read-only reference material unless explicitly asked otherwise. For this server, use `legacy/rathena/` primarily for architecture/domain behavior and `legacy/openkore/` for packet naming or iRO/community protocol clues.

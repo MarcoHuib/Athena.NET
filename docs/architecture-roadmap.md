@@ -6,6 +6,19 @@ This document records the agreed implementation order for Athena.NET.
 
 The order is deliberate. Each phase must be stable and measurable before the next architectural layer is introduced. The goal is to avoid debugging the stock iRO protocol, transport changes, identity changes, and a distributed game-engine rewrite at the same time.
 
+### Sequencing deviation: Identity moved ahead of Gateway/QUIC
+
+This roadmap originally placed ASP.NET Core Identity (Phase 3) after Athena.Client and Athena.Gateway/QUIC (Phases 1-2). LoginServer's Identity migration was deliberately done first, ahead of the client/gateway/QUIC work, because:
+
+- server-side credential storage (plaintext/MD5 `UserPass`) was a standing security liability independent of transport, and
+- the migration is a self-contained change to LoginServer's authentication boundary that does not require Athena.Client or Athena.Gateway to exist first.
+
+This is a sequencing change only, not a scope change: the Phase 3 design below (Identity owns human authentication; `AthenaGameAccount` owns Ragnarok game-account state; the legacy uint32 wire identifier is preserved for the stock client/CharServer/MapServer) is what was actually implemented, with one refinement - `AthenaGameAccount`'s canonical id is a `Guid` (not the legacy uint32 reused as the modern id), with a separate unique `RagnarokAccountId uint32` compatibility column. See `ai/login-server.md` for the current implementation.
+
+**Important distinction, preserved from the original Phase 3 design:** ASP.NET Core Identity protects server-side credential storage/authentication. It does not, by itself, encrypt the stock Ragexe TCP connection - that is QUIC/TLS's job in Phase 2, which remains not yet implemented. Do not treat the Identity migration as having addressed network transport security.
+
+Phases 1, 2, and 4 remain in their original order and are not yet implemented.
+
 The supported target remains the **unmodified official International Ragnarok Online (iRO) client**.
 
 This roadmap is the parent document for:
@@ -313,6 +326,8 @@ Proceed only when:
 
 # Phase 3 — Add ASP.NET Core Identity and modern account mapping
 
+> **Status: the Identity/account-mapping portion of this phase is implemented in LoginServer, out of sequence.** See "Sequencing deviation" above and `ai/login-server.md`. The parts of this phase that depend on Athena.Client/Gateway/QUIC (below) are not yet implemented, since Phases 1-2 have not started.
+
 ## Purpose
 
 Replace legacy password storage/authentication with ASP.NET Core Identity while preserving the exact stock-iRO client request/response behavior that already works.
@@ -404,34 +419,35 @@ ASP.NET Core Identity owns **human authentication**.
 
 Ragnarok requires a numeric game account identity.
 
-Keep those separate:
+Keep those separate. **As implemented** (refined from this document's original sketch - see the sequencing note above):
 
 ```text
-AspNetUsers
+AthenaIdentityUser : IdentityUser<Guid>
 --------------------------
-Id = IdentityUserId
-UserName
+Id                 Guid
+UserName           = the Ragnarok login username, exactly as entered in the stock 0x0064 request
+Email              = separate identity for future website/account login (never coupled to UserName)
 PasswordHash
 ...
 
-          1 : 1
+          1 : 1  (unique FK, Restrict on delete)
 
 AthenaGameAccount
 --------------------------
-AccountId          uint32
-IdentityUserId
-RagnarokLoginName
+Id                 Guid    -- canonical modern Athena game-account identity
+IdentityUserId     Guid    -- FK to AthenaIdentityUser.Id, unique
+RagnarokAccountId  uint32  -- unique legacy compatibility id for the stock wire protocol
 Sex
-CharacterSlots
-game/account flags
+GroupId, State, UnbanTime, ExpirationTime
+CharacterSlots, Pincode, VipTime, WebAuthToken
 ...
 ```
 
-`AccountId` remains the stable numeric identifier used by the existing Ragnarok game data and wire protocol.
+`AthenaGameAccount.Id` (a `Guid`) is the canonical internal Athena game-account identity - not the legacy uint32. `RagnarokAccountId` is a separate, unique uint32 column that exists solely so the unmodified stock client, CharServer, and MapServer keep working against the existing wire protocol; it is not treated as the long-term canonical identity.
 
-`IdentityUserId` remains the Identity primary key.
+`IdentityUserId` is the Identity primary key (`AthenaIdentityUser.Id`).
 
-`RagnarokLoginName` can decouple the stock client's 24-byte username field from the Identity username/email model where useful.
+There is no separate `RagnarokLoginName`: `AthenaIdentityUser.UserName` (via Identity's own normalized-username lookup) already serves that role.
 
 ## Authentication result versus iRO response
 
@@ -568,15 +584,15 @@ Browser/OIDC/external IdP login is also **optional future functionality**, not r
 
 Proceed to Orleans only when:
 
-- ASP.NET Core Identity has replaced legacy password authentication/storage;
-- `0x0064` maps cleanly to a server-side `LoginRequest`;
-- password verification is server-side only;
-- `IdentityUserId <-> AthenaGameAccount.AccountId` mapping is stable;
-- successful authentication creates an Athena game session;
-- the iRO response is generated separately from the request model;
-- CharServer and MapServer can resolve the correct game session through their existing legacy identifiers;
-- Login -> Char -> Map still works through Athena.Client + QUIC + Gateway;
-- no client modification is required.
+- ASP.NET Core Identity has replaced legacy password authentication/storage; **done** - LoginServer authenticates players through `IPlayerAuthenticationService`/`IdentityPlayerAuthenticationService` backed by `AthenaIdentityUser`/`UserManager<AthenaIdentityUser>`; legacy plaintext/MD5 player password storage has been removed;
+- `0x0064` maps cleanly to a server-side `LoginRequest`; **done**;
+- password verification is server-side only; **done**;
+- `IdentityUserId <-> AthenaGameAccount` mapping is stable; **done** - implemented as `IdentityUserId <-> AthenaGameAccount.Id` (Guid, canonical) with a separate `RagnarokAccountId uint32` for the legacy wire protocol, rather than the `AccountId` sketch originally shown above (see "Sequencing deviation" and `ai/login-server.md`);
+- successful authentication creates an Athena game session; **partially done** - `ILoginSessionService`/`LoginState` continues to issue the legacy `LoginId1`/`LoginId2`/`AuthNode` session values used by CharServer/MapServer; there is no separate `AthenaGameSession` record beyond that, since one was not required for wire compatibility;
+- the iRO response is generated separately from the request model; **done**;
+- CharServer and MapServer can resolve the correct game session through their existing legacy identifiers; **done** - unchanged legacy `AccountId`/`LoginId1`/`LoginId2` flow, with CharServer's account-management side-channel (Lc* packets) now reading/writing `AthenaGameAccount` by `RagnarokAccountId` instead of the legacy `LoginAccount` table;
+- Login -> Char -> Map still works through Athena.Client + QUIC + Gateway; **not done** - Phases 1-2 (Athena.Client, Athena.Gateway, QUIC) have not started, so this still runs over direct legacy TCP only; Identity does not encrypt that transport (see "Important distinction" above);
+- no client modification is required. **done**.
 
 ---
 
@@ -683,6 +699,12 @@ Ragexe 0x0064 request
  -> iRO 0x0A4D response
  -> Ragexe
  -> normal Char/Map session continuation
+
+  (as implemented out of sequence: LoginServer already does
+   LoginRequest -> ASP.NET Core Identity -> AthenaGameAccount -> legacy
+   LoginId1/LoginId2 session -> iRO 0x0A4D response, over direct TCP;
+   the Athena.Client / QUIC / Gateway hops above are still Phase 1-2
+   work and do not exist yet. See "Sequencing deviation" above.)
 
 
 PHASE 4

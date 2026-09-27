@@ -15,7 +15,7 @@ if ! dotnet tool list --global | grep -q '^dotnet-ef'; then
 fi
 
 echo "Adding EF Design package..."
-dotnet add "$PROJECT" package Microsoft.EntityFrameworkCore.Design --version 9.0.0
+dotnet add "$PROJECT" package Microsoft.EntityFrameworkCore.Design --version 10.0.12
 
 echo "Creating initial migration..."
 dotnet ef migrations add Initial --project "$PROJECT"
