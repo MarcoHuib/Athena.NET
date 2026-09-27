@@ -348,15 +348,19 @@ public sealed class PendingMonsterDamageAttemptTests
     // ================================================================================
 
     // Scenario 6: the ACTUAL adversarial _attackExecutionGate ordering (item 2 of the substep-8
-    // correction round) - B installs due-now state and is suspended BEFORE it ever acquires
-    // _attackExecutionGate; A then acquires the gate first, creates its pending attempt, and
-    // releases the gate; only THEN is B released to finally acquire the gate itself. B's own
-    // prelude must observe the pending attempt that did not exist at the moment B was entered - this
-    // is the actual regression: the pending check must happen AFTER B acquires
-    // _attackExecutionGate, never based on state observed/decided earlier. Teardown avoids the CI
-    // "Broken pipe" race (item 1): B is cleared via the movement path (which the test waits to be
-    // processed) BEFORE A is ever resolved, so A's resolution can never race a legitimately-eligible
-    // fresh B execution against this test's own socket close.
+    // correction round, further corrected in the second review round) - B installs due-now state and
+    // is suspended BEFORE it ever acquires _attackExecutionGate; A then GENUINELY acquires
+    // _attackExecutionGate FIRST (via AllocatePendingDamageAttemptWhileHoldingExecutionGateForTestAsync,
+    // never merely allocating without the gate), allocates its pending attempt, performs its first
+    // dispatch (which transiently fails, so the pending attempt remains outstanding rather than
+    // being immediately retired), and only THEN releases the gate. Only after A has released the gate
+    // is B released to finally acquire it itself, strictly SECOND. B's own prelude must observe the
+    // pending attempt that did not exist at the moment B was entered - this is the actual regression:
+    // the pending check must happen AFTER B acquires _attackExecutionGate, never based on state
+    // observed/decided earlier, and never based on an allocation that bypassed the gate entirely.
+    // Teardown avoids the CI "Broken pipe" race (item 1 of the first correction round): B is cleared
+    // via the movement path (which the test waits to be processed) BEFORE A is ever fully resolved,
+    // so a legitimately-eligible fresh B execution can never race this test's own socket close.
     [Fact]
     public async Task Scenario6_RetargetWhileOtherPendingAttemptExists_NoFixposNoFreshAttack_FlagRemainsTrue()
     {
@@ -365,13 +369,23 @@ public sealed class PendingMonsterDamageAttemptTests
         using var _dispose = client;
 
         var otherLife = new WorldMonsterLifeReference("int_land03", _lastEpoch, ActorId: 9999, WorldMonsterIncarnationId.First);
-        var aSuspend = new TaskCompletionSource();
-        session.DebugApplyMonsterDamageDispatcher = async (_, _) => { await aSuspend.Task; return new WorldMonsterDamageResult(WorldMonsterDamageStatus.Applied, 0, 0, 0, false, null); };
+        var aDispatchCount = 0;
+        session.DebugApplyMonsterDamageDispatcher = (_, _) =>
+        {
+            var call = Interlocked.Increment(ref aDispatchCount);
+            // A's first dispatch transiently fails - the pending attempt remains outstanding (never
+            // immediately retired), exactly as the required ordering specifies. Any subsequent call
+            // (this scenario's own teardown-driven eventual retry) succeeds.
+            return call == 1
+                ? Task.FromException<WorldMonsterDamageResult>(new IOException("Simulated transient World RPC failure."))
+                : Task.FromResult(new WorldMonsterDamageResult(WorldMonsterDamageStatus.Applied, 0, 0, 0, false, null));
+        };
 
         // B's own coordination: reached BEFORE B's PerformDueRepeatAttackAsync call ever acquires
         // _attackExecutionGate. Signals this test that B has arrived at that point (bEntered), then
-        // blocks until the test says A has already created its pending attempt and released the gate
-        // (letBProceed) - forcing B to acquire the gate strictly SECOND.
+        // blocks until the test says A has already allocated its pending attempt, performed its
+        // first (transiently-failing) dispatch, AND released _attackExecutionGate (letBProceed) -
+        // forcing B to acquire the gate strictly SECOND, only after A has genuinely released it.
         var bEntered = new TaskCompletionSource();
         var letBProceed = new TaskCompletionSource();
         session.DebugBeforeAttackExecutionGateAsync = async () =>
@@ -386,25 +400,28 @@ public sealed class PendingMonsterDamageAttemptTests
         var writeB = stream.WriteAsync(AttackPacket(target.ActorId)).AsTask();
         await bEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
-        // Only NOW does A acquire the gate, create its pending attempt (occupying the one
-        // pending-attempt slot), and return - A's own dispatch call is left suspended (aSuspend),
-        // simulating "A is genuinely in flight" without needing A to hold _attackExecutionGate itself
-        // (allocation/dispatch of A never touches that gate - only PerformDueRepeatAttackAsync does).
-        var aTask = session.AllocatePendingDamageAttemptForTestAsync(otherLife, damage: 5, acquireEngagement: false, CancellationToken.None);
+        // A GENUINELY acquires _attackExecutionGate first, allocates its pending attempt, performs
+        // its first (transiently-failing) dispatch, and releases the gate - all inside this one call,
+        // fully completed BEFORE B is ever released below. This is the exact required ordering: A's
+        // entire allocate-plus-first-dispatch turn happens while holding the same production gate
+        // PerformDueRepeatAttackAsync itself uses, not merely "before B happens to check".
+        await session.AllocatePendingDamageAttemptWhileHoldingExecutionGateForTestAsync(otherLife, damage: 5, acquireEngagement: false, CancellationToken.None);
+        Assert.Equal(1, aDispatchCount);
 
-        // Release B - it now acquires _attackExecutionGate SECOND, after A's pending attempt already
-        // exists, which is the exact ordering this scenario must force.
+        // Release B - it now acquires _attackExecutionGate SECOND, only after A has already released
+        // it with a pending attempt on record, which is the exact ordering this scenario must force.
         letBProceed.TrySetResult();
         await writeB;
 
         // B must send NO fixpos and NO fresh damage - confirmed by a harmless ping landing next.
         await AssertNothingElseArrivesAsync(stream);
 
-        // Teardown (item 1): clear B via the real movement path and wait for it to be processed
-        // BEFORE resolving A - once A resolves, B's retained RepeatAttackState would otherwise become
-        // legitimately eligible to execute a fresh attack (Scenario 7's own job to prove), which would
-        // race this test's own socket close. Clearing B first removes that race entirely without
-        // weakening any assertion above.
+        // Teardown (item 1 of the first correction round): clear B via the real movement path and
+        // wait for it to be processed BEFORE letting A's own pending attempt resolve any further -
+        // once A resolves, B's retained RepeatAttackState would otherwise become legitimately
+        // eligible to execute a fresh attack (Scenario 7's own job to prove), which would race this
+        // test's own socket close. Clearing B first removes that race entirely without weakening any
+        // assertion above.
         var moveTo = new byte[6];
         BinaryPrimitives.WriteInt16LittleEndian(moveTo, 0x035f);
         ushort moveX = 76, moveY = 51;
@@ -415,8 +432,10 @@ public sealed class PendingMonsterDamageAttemptTests
         await stream.WriteAsync(moveTo);
         await Task.Delay(150); // Let the session's own packet loop actually process the movement request.
 
-        aSuspend.SetResult();
-        await aTask;
+        // Let A's own pending attempt resolve normally via its ordinary retry cadence, purely so
+        // RunAsync's own shutdown/join can complete cleanly - not load-bearing for this scenario's
+        // own assertions above, which are already fully proven by this point.
+        await session.RetirePendingDamageAttemptForTestAsync(CancellationToken.None);
         client.Close();
         await run.WaitAsync(TimeSpan.FromSeconds(5));
     }
@@ -627,9 +646,13 @@ public sealed class PendingMonsterDamageAttemptTests
     // Scenarios 11-15: signal/timing/gate-discipline and stale-projection behavior.
     // ================================================================================
 
-    // Scenario 11: repeated arbitrary early releases of _attackSignal/_pendingRetrySignal do not
-    // create orphaned-waiter/lost-wakeup behavior - a pending attempt created afterward is still
-    // correctly retried when due.
+    // Scenario 11 (corrected per the second substep-8 review round): repeated arbitrary early
+    // releases of BOTH _attackSignal and _pendingRetrySignal - explicitly pulsed via
+    // PulseBothWakeSignalsForTest, more than once per iteration, strictly BEFORE the actual stored
+    // NextRetryAt - do not create orphaned-waiter/lost-wakeup behavior. Proves both halves required:
+    // (1) no premature dispatch while pulsing early, and (2) the retry still genuinely fires once due,
+    // proving no earlier pulse left an orphaned waiter that could otherwise swallow the eventual
+    // legitimate wakeup.
     [Fact]
     public async Task Scenario11_RepeatedEarlySignalReleases_NoOrphanedWaiterOrLostWakeup()
     {
@@ -650,20 +673,45 @@ public sealed class PendingMonsterDamageAttemptTests
         await session.AllocatePendingDamageAttemptForTestAsync(LifeFor(target), damage: 10, acquireEngagement: false, CancellationToken.None);
         Assert.Equal(1, dispatchCount);
 
-        // Advance the clock in small increments strictly before the retry delay elapses, pumping the
-        // scheduler repeatedly without ever crossing NextRetryAt - no premature dispatch must occur,
-        // and no orphaned waiter should prevent the EVENTUAL correct dispatch once due.
+        // Read the ACTUAL stored NextRetryAt so this loop can reliably stay strictly before it while
+        // still pulsing both signals repeatedly (never an assumed delay constant).
+        DateTimeOffset? retryAt = null;
+        var pollDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        while (DateTime.UtcNow < pollDeadline)
+        {
+            retryAt = await session.SnapshotPendingNextRetryAtForTestAsync(CancellationToken.None);
+            if (retryAt is not null) break;
+            await Task.Delay(10);
+        }
+        Assert.NotNull(retryAt);
+
+        // Advance the clock in small increments strictly before the retry delay elapses, pulsing
+        // BOTH wake signals (more than once per iteration) at each step - no premature dispatch must
+        // occur, and no orphaned waiter should prevent the EVENTUAL correct dispatch once due.
         for (var i = 0; i < 3; i++)
         {
-            await clock.AdvanceAsync(TimeSpan.FromMilliseconds(100));
+            var now = clock.GetUtcNow();
+            var remaining = retryAt.Value - now;
+            // Advance by a third of the remaining time each iteration - stays strictly before
+            // retryAt across all 3 iterations while still making real forward progress.
+            var step = remaining / 4;
+            if (step > TimeSpan.Zero) await clock.AdvanceAsync(step);
+            session.PulseBothWakeSignalsForTest();
+            session.PulseBothWakeSignalsForTest();
+            session.PulseBothWakeSignalsForTest();
             await Task.Delay(20);
         }
         Assert.Equal(1, dispatchCount);
 
-        await clock.AdvanceAsync(TimeSpan.FromSeconds(5));
+        // Now genuinely cross NextRetryAt and pulse both signals once more - the retry must still
+        // fire, proving none of the earlier repeated early pulses above left an orphaned waiter that
+        // could otherwise have consumed/blocked this legitimate wakeup.
+        var stillNow = clock.GetUtcNow();
+        if (retryAt.Value > stillNow) await clock.AdvanceAsync(retryAt.Value - stillNow + TimeSpan.FromMilliseconds(1));
+        session.PulseBothWakeSignalsForTest();
         var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
         while (Volatile.Read(ref dispatchCount) <= 1 && DateTime.UtcNow < deadline) await Task.Delay(20);
-        Assert.True(dispatchCount > 1, "Expected the retry to eventually dispatch once genuinely due, despite earlier non-due wakeups.");
+        Assert.True(dispatchCount > 1, "Expected the retry to eventually dispatch once genuinely due, despite earlier repeated early pulses of both wake signals.");
 
         client.Close();
         await run.WaitAsync(TimeSpan.FromSeconds(5));

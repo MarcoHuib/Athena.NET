@@ -2363,12 +2363,41 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
                 AcquireEngagement = acquireEngagement,
                 NextRetryAt = _timeProvider.GetUtcNow().AddMilliseconds(AttackDelayCalculator.AttackDelayMs(_statusEffects.Recalculate(_gameplayState!.State), null)),
             };
+            // Item 3 of the second substep-8 correction round: BeginInFlight is synchronous/in-memory
+            // and must be part of the SAME critical section that publishes the pending attempt - not
+            // called after releasing _attackGate. Without this, a warp/disconnect could observe the
+            // published _pendingDamageAttempt, clear it, and call CompleteInFlight BEFORE this
+            // BeginInFlight below ever runs, leaving an orphaned arbiter registration that nothing
+            // will ever complete (CompleteInFlight already ran and found no registration to close).
+            _lethalDeathArbiter.BeginInFlight(life);
         }
         finally { _attackGate.Release(); }
-        _lethalDeathArbiter.BeginInFlight(life);
         try { _pendingRetrySignal.Release(); } catch (SemaphoreFullException) { }
 
         await DispatchPendingDamageAttemptAsync(life, sequence, damage, acquireEngagement, cancellationToken);
+    }
+
+    // Item 2 of the second substep-8 correction round: an isolated-test-only seam that performs the
+    // IDENTICAL allocation-then-first-dispatch sequence as AllocatePendingDamageAttemptForTestAsync
+    // above, but while GENUINELY holding _attackExecutionGate - the same production gate
+    // PerformDueRepeatAttackAsync itself acquires - for the entire duration of the call, released
+    // only after the first dispatch (and, for a transient failure, its own NextRetryAt-advancement
+    // handling) has fully completed. This is the smallest seam that lets Scenario 6 force the exact
+    // adversarial ordering the plan requires: A acquires _attackExecutionGate FIRST, allocates its
+    // pending attempt and performs its first (transiently-failing) dispatch while genuinely holding
+    // that gate, and only THEN releases it - so a concurrent B, suspended immediately before its own
+    // _attackExecutionGate acquisition (via DebugBeforeAttackExecutionGateAsync), can only ever
+    // acquire the gate strictly SECOND, after A's pending attempt already exists. Never called from
+    // any production code path; production code never acquires _attackExecutionGate to perform this
+    // allocation shape (that remains substep 9's job, wiring the real fresh-attempt path).
+    internal async Task AllocatePendingDamageAttemptWhileHoldingExecutionGateForTestAsync(WorldMonsterLifeReference life, uint damage, bool acquireEngagement, CancellationToken cancellationToken)
+    {
+        await _attackExecutionGate.WaitAsync(cancellationToken);
+        try
+        {
+            await AllocatePendingDamageAttemptForTestAsync(life, damage, acquireEngagement, cancellationToken);
+        }
+        finally { _attackExecutionGate.Release(); }
     }
 
     // Step 7 substep 8 isolated-test-only seam (item 3/8 of the substep-8 correction round): an
