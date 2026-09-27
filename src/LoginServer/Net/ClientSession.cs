@@ -23,6 +23,7 @@ public sealed class ClientSession : IDisposable
     private readonly LoginConfigStore _configStore;
     private readonly LoginMessageStore _messageStore;
     private readonly Func<LoginDbContext?> _dbFactory;
+    private readonly Func<Db.Identity.AthenaIdentityDbContext?> _identityDbFactory;
     private readonly CharServerRegistry _charServers;
     private readonly LoginState _state;
     private readonly Config.SubnetConfig _subnetConfig;
@@ -67,7 +68,7 @@ public sealed class ClientSession : IDisposable
     };
 
     public ClientSession(TcpClient client, LoginConfigStore configStore, LoginMessageStore messageStore, Func<LoginDbContext?> dbFactory, CharServerRegistry charServers, LoginState state, Config.SubnetConfig subnetConfig)
-        : this(client, configStore, messageStore, dbFactory, charServers, state, subnetConfig, new LegacyPlayerAuthenticationService(), new ServiceAuthenticationService())
+        : this(client, configStore, messageStore, dbFactory, () => null, charServers, state, subnetConfig, new UnavailablePlayerAuthenticationService(), new ServiceAuthenticationService())
     {
     }
 
@@ -76,6 +77,7 @@ public sealed class ClientSession : IDisposable
         LoginConfigStore configStore,
         LoginMessageStore messageStore,
         Func<LoginDbContext?> dbFactory,
+        Func<Db.Identity.AthenaIdentityDbContext?> identityDbFactory,
         CharServerRegistry charServers,
         LoginState state,
         Config.SubnetConfig subnetConfig,
@@ -86,6 +88,7 @@ public sealed class ClientSession : IDisposable
         _configStore = configStore;
         _messageStore = messageStore;
         _dbFactory = dbFactory;
+        _identityDbFactory = identityDbFactory;
         _charServers = charServers;
         _state = state;
         _subnetConfig = subnetConfig;
@@ -573,7 +576,7 @@ public sealed class ClientSession : IDisposable
     private async Task HandleAccountDataRequestAsync(byte[] packet, CancellationToken cancellationToken)
     {
         var accountId = BinaryPrimitives.ReadUInt32LittleEndian(packet.AsSpan(2, 4));
-        var db = _dbFactory();
+        var db = _identityDbFactory();
         if (db == null)
         {
             return;
@@ -581,16 +584,17 @@ public sealed class ClientSession : IDisposable
 
         await using (db)
         {
-            var account = await db.Accounts
+            var account = await db.GameAccounts
                 .AsNoTracking()
-                .FirstOrDefaultAsync(a => a.AccountId == accountId, cancellationToken);
+                .FirstOrDefaultAsync(a => a.RagnarokAccountId == accountId, cancellationToken);
 
             if (account == null)
             {
                 return;
             }
 
-            await SendAccountDataAsync(account, cancellationToken);
+            var email = await GetIdentityEmailAsync(db, account.IdentityUserId, cancellationToken);
+            await SendAccountDataAsync(account, email, cancellationToken);
         }
     }
 
@@ -605,7 +609,7 @@ public sealed class ClientSession : IDisposable
             return;
         }
 
-        var db = _dbFactory();
+        var db = _identityDbFactory();
         if (db == null)
         {
             return;
@@ -613,19 +617,23 @@ public sealed class ClientSession : IDisposable
 
         await using (db)
         {
-            var account = await db.Accounts.FirstOrDefaultAsync(a => a.AccountId == accountId, cancellationToken);
+            var account = await db.GameAccounts.AsNoTracking().FirstOrDefaultAsync(a => a.RagnarokAccountId == accountId, cancellationToken);
             if (account == null)
             {
                 return;
             }
 
-            if (!string.Equals(account.Email, actualEmail, StringComparison.OrdinalIgnoreCase))
+            var user = await db.Users.FirstOrDefaultAsync(u => u.Id == account.IdentityUserId, cancellationToken);
+            if (user == null || !string.Equals(user.Email, actualEmail, StringComparison.OrdinalIgnoreCase))
             {
                 return;
             }
 
-            account.Email = newEmail;
-            db.Entry(account).Property(a => a.Email).IsModified = true;
+            // Mirrors ASP.NET Core Identity's default UpperInvariantLookupNormalizer
+            // so NormalizedEmail (and its unique index) stay consistent with Email.
+            user.Email = newEmail;
+            user.NormalizedEmail = newEmail.ToUpperInvariant();
+            user.EmailConfirmed = false;
             await db.SaveChangesAsync(cancellationToken);
         }
     }
@@ -635,7 +643,7 @@ public sealed class ClientSession : IDisposable
         var accountId = BinaryPrimitives.ReadUInt32LittleEndian(packet.AsSpan(2, 4));
         var state = BinaryPrimitives.ReadUInt32LittleEndian(packet.AsSpan(6, 4));
 
-        var db = _dbFactory();
+        var db = _identityDbFactory();
         if (db == null)
         {
             return;
@@ -643,14 +651,13 @@ public sealed class ClientSession : IDisposable
 
         await using (db)
         {
-            var account = await db.Accounts.FirstOrDefaultAsync(a => a.AccountId == accountId, cancellationToken);
+            var account = await db.GameAccounts.FirstOrDefaultAsync(a => a.RagnarokAccountId == accountId, cancellationToken);
             if (account == null)
             {
                 return;
             }
 
             account.State = state;
-            db.Entry(account).Property(a => a.State).IsModified = true;
             await db.SaveChangesAsync(cancellationToken);
             await BroadcastAccountStatusAsync(accountId, 0, state, cancellationToken);
         }
@@ -666,7 +673,7 @@ public sealed class ClientSession : IDisposable
             return;
         }
 
-        var db = _dbFactory();
+        var db = _identityDbFactory();
         if (db == null)
         {
             return;
@@ -674,7 +681,7 @@ public sealed class ClientSession : IDisposable
 
         await using (db)
         {
-            var account = await db.Accounts.FirstOrDefaultAsync(a => a.AccountId == accountId, cancellationToken);
+            var account = await db.GameAccounts.FirstOrDefaultAsync(a => a.RagnarokAccountId == accountId, cancellationToken);
             if (account == null)
             {
                 return;
@@ -689,7 +696,6 @@ public sealed class ClientSession : IDisposable
             }
 
             account.UnbanTime = newTime;
-            db.Entry(account).Property(a => a.UnbanTime).IsModified = true;
             await db.SaveChangesAsync(cancellationToken);
             await BroadcastAccountStatusAsync(accountId, 1, newTime, cancellationToken);
         }
@@ -698,7 +704,7 @@ public sealed class ClientSession : IDisposable
     private async Task HandleChangeSexAsync(byte[] packet, CancellationToken cancellationToken)
     {
         var accountId = BinaryPrimitives.ReadUInt32LittleEndian(packet.AsSpan(2, 4));
-        var db = _dbFactory();
+        var db = _identityDbFactory();
         if (db == null)
         {
             return;
@@ -706,19 +712,13 @@ public sealed class ClientSession : IDisposable
 
         await using (db)
         {
-            var account = await db.Accounts.FirstOrDefaultAsync(a => a.AccountId == accountId, cancellationToken);
+            var account = await db.GameAccounts.FirstOrDefaultAsync(a => a.RagnarokAccountId == accountId, cancellationToken);
             if (account == null)
             {
                 return;
             }
 
-            if (string.Equals(account.Sex, "S", StringComparison.OrdinalIgnoreCase))
-            {
-                return;
-            }
-
             account.Sex = account.Sex.Equals("M", StringComparison.OrdinalIgnoreCase) ? "F" : "M";
-            db.Entry(account).Property(a => a.Sex).IsModified = true;
             await db.SaveChangesAsync(cancellationToken);
             await BroadcastSexChangeAsync(accountId, account.Sex, cancellationToken);
         }
@@ -727,7 +727,7 @@ public sealed class ClientSession : IDisposable
     private async Task HandleUnbanAccountAsync(byte[] packet, CancellationToken cancellationToken)
     {
         var accountId = BinaryPrimitives.ReadUInt32LittleEndian(packet.AsSpan(2, 4));
-        var db = _dbFactory();
+        var db = _identityDbFactory();
         if (db == null)
         {
             return;
@@ -735,7 +735,7 @@ public sealed class ClientSession : IDisposable
 
         await using (db)
         {
-            var account = await db.Accounts.FirstOrDefaultAsync(a => a.AccountId == accountId, cancellationToken);
+            var account = await db.GameAccounts.FirstOrDefaultAsync(a => a.RagnarokAccountId == accountId, cancellationToken);
             if (account == null)
             {
                 return;
@@ -747,7 +747,6 @@ public sealed class ClientSession : IDisposable
             }
 
             account.UnbanTime = 0;
-            db.Entry(account).Property(a => a.UnbanTime).IsModified = true;
             await db.SaveChangesAsync(cancellationToken);
         }
     }
@@ -759,7 +758,7 @@ public sealed class ClientSession : IDisposable
         var timeDiff = BinaryPrimitives.ReadInt32LittleEndian(packet.AsSpan(7, 4));
         var mapFd = BinaryPrimitives.ReadUInt32LittleEndian(packet.AsSpan(11, 4));
 
-        var db = _dbFactory();
+        var db = _identityDbFactory();
         if (db == null)
         {
             return;
@@ -767,7 +766,7 @@ public sealed class ClientSession : IDisposable
 
         await using (db)
         {
-            var account = await db.Accounts.FirstOrDefaultAsync(a => a.AccountId == accountId, cancellationToken);
+            var account = await db.GameAccounts.FirstOrDefaultAsync(a => a.RagnarokAccountId == accountId, cancellationToken);
             if (account == null)
             {
                 return;
@@ -822,10 +821,6 @@ public sealed class ClientSession : IDisposable
             }
 
             account.VipTime = vipTime;
-            db.Entry(account).Property(a => a.GroupId).IsModified = true;
-            db.Entry(account).Property(a => a.OldGroup).IsModified = true;
-            db.Entry(account).Property(a => a.CharacterSlots).IsModified = true;
-            db.Entry(account).Property(a => a.VipTime).IsModified = true;
             await db.SaveChangesAsync(cancellationToken);
 
             if ((flag & 0x1) != 0)
@@ -834,7 +829,8 @@ public sealed class ClientSession : IDisposable
                 await SendVipDataAsync(account, responseFlag, mapFd, cancellationToken);
             }
 
-            await SendAccountDataAsync(account, cancellationToken);
+            var email = await GetIdentityEmailAsync(db, account.IdentityUserId, cancellationToken);
+            await SendAccountDataAsync(account, email, cancellationToken);
         }
     }
 
@@ -908,7 +904,7 @@ public sealed class ClientSession : IDisposable
         var userAid = BinaryPrimitives.ReadUInt32LittleEndian(packet.AsSpan(10, 4));
         var accountId = BinaryPrimitives.ReadUInt32LittleEndian(packet.AsSpan(14, 4));
 
-        var db = _dbFactory();
+        var db = _identityDbFactory();
         if (db == null)
         {
             return;
@@ -916,17 +912,18 @@ public sealed class ClientSession : IDisposable
 
         await using (db)
         {
-            var account = await db.Accounts
+            var account = await db.GameAccounts
                 .AsNoTracking()
-                .FirstOrDefaultAsync(a => a.AccountId == accountId, cancellationToken);
+                .FirstOrDefaultAsync(a => a.RagnarokAccountId == accountId, cancellationToken);
 
             if (account == null)
             {
-                await SendAccountInfoResponseAsync(mapFd, userFd, userAid, accountId, null, cancellationToken);
+                await SendAccountInfoResponseAsync(mapFd, userFd, userAid, accountId, null, string.Empty, string.Empty, cancellationToken);
                 return;
             }
 
-            await SendAccountInfoResponseAsync(mapFd, userFd, userAid, accountId, account, cancellationToken);
+            var user = await db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == account.IdentityUserId, cancellationToken);
+            await SendAccountInfoResponseAsync(mapFd, userFd, userAid, accountId, account, user?.Email ?? string.Empty, user?.UserName ?? string.Empty, cancellationToken);
         }
     }
 
@@ -1080,7 +1077,7 @@ public sealed class ClientSession : IDisposable
 
         var accountId = BinaryPrimitives.ReadUInt32LittleEndian(packet.AsSpan(4, 4));
         var pin = ReadFixedString(packet, 8, 5);
-        var db = _dbFactory();
+        var db = _identityDbFactory();
         if (db == null)
         {
             return;
@@ -1088,7 +1085,7 @@ public sealed class ClientSession : IDisposable
 
         await using (db)
         {
-            var account = await db.Accounts.FirstOrDefaultAsync(a => a.AccountId == accountId, cancellationToken);
+            var account = await db.GameAccounts.FirstOrDefaultAsync(a => a.RagnarokAccountId == accountId, cancellationToken);
             if (account == null)
             {
                 return;
@@ -1096,8 +1093,6 @@ public sealed class ClientSession : IDisposable
 
             account.Pincode = pin;
             account.PincodeChange = ToUnixTime(DateTime.UtcNow);
-            db.Entry(account).Property(a => a.Pincode).IsModified = true;
-            db.Entry(account).Property(a => a.PincodeChange).IsModified = true;
             await db.SaveChangesAsync(cancellationToken);
         }
     }
@@ -1105,6 +1100,27 @@ public sealed class ClientSession : IDisposable
     private async Task HandlePincodeAuthFailAsync(byte[] packet, CancellationToken cancellationToken)
     {
         var accountId = BinaryPrimitives.ReadUInt32LittleEndian(packet.AsSpan(2, 4));
+        var identityDb = _identityDbFactory();
+        if (identityDb == null)
+        {
+            return;
+        }
+
+        string userName;
+        string lastIp;
+        await using (identityDb)
+        {
+            var account = await identityDb.GameAccounts.AsNoTracking().FirstOrDefaultAsync(a => a.RagnarokAccountId == accountId, cancellationToken);
+            if (account == null)
+            {
+                return;
+            }
+
+            var user = await identityDb.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == account.IdentityUserId, cancellationToken);
+            userName = user?.UserName ?? string.Empty;
+            lastIp = account.LastIp;
+        }
+
         var db = _dbFactory();
         if (db == null)
         {
@@ -1113,15 +1129,10 @@ public sealed class ClientSession : IDisposable
 
         await using (db)
         {
-            var account = await db.Accounts.AsNoTracking().FirstOrDefaultAsync(a => a.AccountId == accountId, cancellationToken);
-            if (account == null)
-            {
-                return;
-            }
-
-            await LogLoginAsync(db, account.UserId, account.LastIp, 100, "PIN Code check failed", cancellationToken);
-            _state.RemoveOnlineUser(accountId);
+            await LogLoginAsync(db, userName, lastIp, 100, "PIN Code check failed", cancellationToken);
         }
+
+        _state.RemoveOnlineUser(accountId);
     }
 
     private static async Task UpsertAccountRegNumAsync(LoginDbContext db, uint accountId, string key, uint index, long value)
@@ -1174,119 +1185,119 @@ public sealed class ClientSession : IDisposable
 
         await using (db)
         {
-            if (!isServer && Config.IpBanEnabled)
-            {
-                if (await IsIpBannedAsync(db, remoteIp, cancellationToken))
-                {
-                    return AuthResult.Fail(3);
-                }
-            }
+            return isServer
+                ? await AuthenticateServerAsync(db, request, remoteIp, cancellationToken)
+                : await AuthenticatePlayerAsync(db, request, remoteIp, cancellationToken);
+        }
+    }
 
-            if (!isServer && Config.UseDnsbl && Config.DnsblServers.Length > 0)
-            {
-                if (await IsDnsblListedAsync(remoteIp, cancellationToken))
-                {
-                    await LogLoginAsync(db, request.UserId, remoteIp, 3, string.Empty, cancellationToken);
-                    return AuthResult.Fail(3);
-                }
-            }
+    /// <summary>
+    /// Inter-server (CharServer) service-account login. Service accounts remain on
+    /// the legacy login table/UserPass storage - they are never migrated to
+    /// ASP.NET Core Identity, per the player/service authentication domain split.
+    /// </summary>
+    private async Task<AuthResult> AuthenticateServerAsync(LoginDbContext db, LoginRequest request, string remoteIp, CancellationToken cancellationToken)
+    {
+        var userId = request.UserId;
 
-            if (!isServer && Config.NewAccountFlag)
-            {
-                var regResult = await TryAutoRegisterAsync(db, request, remoteIp, cancellationToken);
-                if (regResult.HasValue && regResult.Value != -1)
-                {
-                    return AuthResult.Fail((uint)regResult.Value);
-                }
-            }
+        LoginAccount? account;
+        if (IsCaseSensitive)
+        {
+            account = await db.Accounts
+                .AsNoTracking()
+                .FirstOrDefaultAsync(a => a.UserId == userId, cancellationToken);
+        }
+        else
+        {
+            var normalizedUserId = userId.ToLowerInvariant();
+            account = await db.Accounts
+                .AsNoTracking()
+                .FirstOrDefaultAsync(a => a.UserId.ToLower() == normalizedUserId, cancellationToken);
+        }
 
-            var userId = request.AutoRegisterBaseId ?? request.UserId;
+        if (account == null)
+        {
+            await LogLoginAsync(db, userId, remoteIp, 0, string.Empty, cancellationToken);
+            return AuthResult.Fail(0, serviceAuthOutcome: ServiceAuthenticationOutcome.AccountNotFound);
+        }
 
-            LoginAccount? account;
-            if (IsCaseSensitive)
-            {
-                account = await db.Accounts
-                    .AsNoTracking()
-                    .FirstOrDefaultAsync(a => a.UserId == userId, cancellationToken);
-            }
-            else
-            {
-                var normalizedUserId = userId.ToLowerInvariant();
-                account = await db.Accounts
-                    .AsNoTracking()
-                    .FirstOrDefaultAsync(a => a.UserId.ToLower() == normalizedUserId, cancellationToken);
-            }
+        var serviceAuthResult = _serviceAuth.Authenticate(account, _serviceAuth.VerifyPassword(account, request.Password, request.PasswordEnc, _md5Key));
+        if (!serviceAuthResult.Success)
+        {
+            var errorCode = serviceAuthResult.Outcome == ServiceAuthenticationOutcome.InvalidCredential ? 1u : 0u;
+            await LogLoginAsync(db, userId, remoteIp, errorCode, string.Empty, cancellationToken);
+            return AuthResult.Fail(errorCode, serviceAuthOutcome: serviceAuthResult.Outcome);
+        }
 
-            if (account == null)
-            {
-                await LogLoginAsync(db, userId, remoteIp, 0, string.Empty, cancellationToken);
-                return AuthResult.Fail(0, serviceAuthOutcome: isServer ? ServiceAuthenticationOutcome.AccountNotFound : ServiceAuthenticationOutcome.NotApplicable);
-            }
+        var now = DateTime.UtcNow;
+        if (account.ExpirationTime != 0 && account.ExpirationTime < ToUnixTime(now))
+        {
+            await LogLoginAsync(db, userId, remoteIp, 2, string.Empty, cancellationToken);
+            return AuthResult.Fail(2);
+        }
 
-            if (isServer)
-            {
-                var serviceAuthResult = _serviceAuth.Authenticate(account, _playerAuth.VerifyPassword(account, request.Password, request.PasswordEnc, _md5Key));
-                if (!serviceAuthResult.Success)
-                {
-                    var errorCode = serviceAuthResult.Outcome == ServiceAuthenticationOutcome.InvalidCredential ? 1u : 0u;
-                    await LogLoginAsync(db, userId, remoteIp, errorCode, string.Empty, cancellationToken);
-                    return AuthResult.Fail(errorCode, serviceAuthOutcome: serviceAuthResult.Outcome);
-                }
-            }
+        if (account.UnbanTime != 0 && account.UnbanTime > ToUnixTime(now))
+        {
+            var unblock = FormatDate(FromUnixTime(account.UnbanTime));
+            await LogLoginAsync(db, userId, remoteIp, 6, string.Empty, cancellationToken);
+            return AuthResult.Fail(6, unblock);
+        }
 
-            if (!isServer)
-            {
-                var credentialOutcome = _playerAuth.VerifyCredentials(account, request.Password, request.PasswordEnc, _md5Key);
-                if (credentialOutcome == PlayerCredentialOutcome.SexRestricted)
-                {
-                    await LogLoginAsync(db, userId, remoteIp, 0, string.Empty, cancellationToken);
-                    return AuthResult.Fail(0);
-                }
-
-                if (credentialOutcome == PlayerCredentialOutcome.InvalidPassword)
-                {
-                    await LogLoginAsync(db, userId, remoteIp, 1, string.Empty, cancellationToken);
-                    return AuthResult.Fail(1);
-                }
-            }
-
-            var now = DateTime.UtcNow;
-            if (account.ExpirationTime != 0 && account.ExpirationTime < ToUnixTime(now))
-            {
-                await LogLoginAsync(db, userId, remoteIp, 2, string.Empty, cancellationToken);
-                return AuthResult.Fail(2);
-            }
-
-            if (account.UnbanTime != 0 && account.UnbanTime > ToUnixTime(now))
-            {
-                var unblock = FormatDate(FromUnixTime(account.UnbanTime));
-                await LogLoginAsync(db, userId, remoteIp, 6, string.Empty, cancellationToken);
-                return AuthResult.Fail(6, unblock);
-            }
-
-            if (account.State != 0)
-            {
-                var error = (uint)Math.Max(0, (int)account.State - 1);
-                await LogLoginAsync(db, userId, remoteIp, error, string.Empty, cancellationToken);
-                return AuthResult.Fail(error);
-            }
-
-            if (!isServer && Config.ClientHashCheck)
-            {
-                if (!IsClientHashAllowed(account.GroupId))
-                {
-                    await LogLoginAsync(db, userId, remoteIp, 5, string.Empty, cancellationToken);
-                    return AuthResult.Fail(5);
-                }
-            }
+        if (account.State != 0)
+        {
+            var error = (uint)Math.Max(0, (int)account.State - 1);
+            await LogLoginAsync(db, userId, remoteIp, error, string.Empty, cancellationToken);
+            return AuthResult.Fail(error);
+        }
 
         await UpdateAccountLoginAsync(db, account, remoteIp, cancellationToken);
         await LogLoginAsync(db, userId, remoteIp, 100, "login ok", cancellationToken);
 
-            var (loginId1, loginId2) = _state.GenerateLoginIds();
+        var (loginId1, loginId2) = _state.GenerateLoginIds();
+        return AuthResult.FromAccount(account, loginId1, loginId2, remoteIp);
+    }
 
-            return AuthResult.FromAccount(account, loginId1, loginId2, remoteIp);
+    /// <summary>
+    /// Player login through ASP.NET Core Identity (via <see cref="_playerAuth"/>).
+    /// IP ban/DNSBL checks and login audit logging stay here since they are
+    /// connection/audit concerns, not player-identity concerns. The legacy
+    /// "login as name_M/name_F to auto-create an account" convenience is not
+    /// reimplemented: it wrote directly into the legacy login table, which player
+    /// login no longer reads. Account creation now goes exclusively through
+    /// IPlayerAccountProvisioningService.
+    /// </summary>
+    private async Task<AuthResult> AuthenticatePlayerAsync(LoginDbContext db, LoginRequest request, string remoteIp, CancellationToken cancellationToken)
+    {
+        if (Config.IpBanEnabled && await IsIpBannedAsync(db, remoteIp, cancellationToken))
+        {
+            return AuthResult.Fail(3);
         }
+
+        if (Config.UseDnsbl && Config.DnsblServers.Length > 0 && await IsDnsblListedAsync(remoteIp, cancellationToken))
+        {
+            await LogLoginAsync(db, request.UserId, remoteIp, 3, string.Empty, cancellationToken);
+            return AuthResult.Fail(3);
+        }
+
+        var userId = request.UserId;
+        var playerResult = await _playerAuth.AuthenticateAsync(userId, request.Password, remoteIp, cancellationToken);
+        if (!playerResult.Success)
+        {
+            await LogLoginAsync(db, userId, remoteIp, playerResult.ErrorCode, string.Empty, cancellationToken);
+            var unblockTime = playerResult.UnblockAtLocal.HasValue ? FormatDate(playerResult.UnblockAtLocal.Value) : string.Empty;
+            return AuthResult.Fail(playerResult.ErrorCode, unblockTime);
+        }
+
+        if (Config.ClientHashCheck && !IsClientHashAllowed(playerResult.Account!.GroupId))
+        {
+            await LogLoginAsync(db, userId, remoteIp, 5, string.Empty, cancellationToken);
+            return AuthResult.Fail(5);
+        }
+
+        await LogLoginAsync(db, userId, remoteIp, 100, "login ok", cancellationToken);
+
+        var (loginId1, loginId2) = _state.GenerateLoginIds();
+        return AuthResult.FromGameAccount(playerResult.Account!, loginId1, loginId2, remoteIp);
     }
 
     private void RegisterCharServer(AuthResult result, LoginRequest request, CancellationToken cancellationToken)
@@ -1554,11 +1565,20 @@ public sealed class ClientSession : IDisposable
         await _stream.WriteAsync(buffer, cancellationToken);
     }
 
-    private async Task SendVipDataAsync(LoginAccount account, byte flag, uint mapFd, CancellationToken cancellationToken)
+    private static async Task<string> GetIdentityEmailAsync(Db.Identity.AthenaIdentityDbContext db, Guid identityUserId, CancellationToken cancellationToken)
+    {
+        return await db.Users
+            .AsNoTracking()
+            .Where(u => u.Id == identityUserId)
+            .Select(u => u.Email)
+            .FirstOrDefaultAsync(cancellationToken) ?? string.Empty;
+    }
+
+    private async Task SendVipDataAsync(Db.Identity.AthenaGameAccount account, byte flag, uint mapFd, CancellationToken cancellationToken)
     {
         var buffer = new byte[19];
         BinaryPrimitives.WriteInt16LittleEndian(buffer.AsSpan(0, 2), PacketConstants.LcVipResponse);
-        BinaryPrimitives.WriteUInt32LittleEndian(buffer.AsSpan(2, 4), account.AccountId);
+        BinaryPrimitives.WriteUInt32LittleEndian(buffer.AsSpan(2, 4), account.RagnarokAccountId);
         BinaryPrimitives.WriteUInt32LittleEndian(buffer.AsSpan(6, 4), account.VipTime);
         buffer[10] = flag;
         BinaryPrimitives.WriteUInt32LittleEndian(buffer.AsSpan(11, 4), (uint)account.GroupId);
@@ -1661,7 +1681,7 @@ public sealed class ClientSession : IDisposable
         await _charServers.SendToAllExceptAsync(_charServerId, buffer);
     }
 
-    private async Task SendAccountInfoResponseAsync(uint mapFd, uint userFd, uint userAid, uint accountId, LoginAccount? account, CancellationToken cancellationToken)
+    private async Task SendAccountInfoResponseAsync(uint mapFd, uint userFd, uint userAid, uint accountId, Db.Identity.AthenaGameAccount? account, string email, string userName, CancellationToken cancellationToken)
     {
         if (account == null)
         {
@@ -1686,22 +1706,22 @@ public sealed class ClientSession : IDisposable
         BinaryPrimitives.WriteUInt32LittleEndian(bufferSuccess.AsSpan(19, 4), (uint)account.GroupId);
         BinaryPrimitives.WriteUInt32LittleEndian(bufferSuccess.AsSpan(23, 4), (uint)Math.Max(0, account.LoginCount));
         BinaryPrimitives.WriteUInt32LittleEndian(bufferSuccess.AsSpan(27, 4), account.State);
-        WriteFixedString(bufferSuccess, 31, 40, account.Email);
+        WriteFixedString(bufferSuccess, 31, 40, email);
         WriteFixedString(bufferSuccess, 71, 16, account.LastIp);
         WriteFixedString(bufferSuccess, 87, 24, account.LastLogin?.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture) ?? string.Empty);
         WriteFixedString(bufferSuccess, 111, 11, account.Birthdate?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) ?? string.Empty);
-        WriteFixedString(bufferSuccess, 122, PacketConstants.NameLength, account.UserId);
+        WriteFixedString(bufferSuccess, 122, PacketConstants.NameLength, userName);
 
         await _stream.WriteAsync(bufferSuccess, cancellationToken);
     }
 
-    private async Task SendAccountDataAsync(LoginAccount account, CancellationToken cancellationToken)
+    private async Task SendAccountDataAsync(Db.Identity.AthenaGameAccount account, string email, CancellationToken cancellationToken)
     {
         var buffer = new byte[75];
         BinaryPrimitives.WriteInt16LittleEndian(buffer.AsSpan(0, 2), PacketConstants.LcAccountDataResponse);
-        BinaryPrimitives.WriteUInt32LittleEndian(buffer.AsSpan(2, 4), account.AccountId);
+        BinaryPrimitives.WriteUInt32LittleEndian(buffer.AsSpan(2, 4), account.RagnarokAccountId);
 
-        WriteFixedString(buffer, 6, 40, account.Email);
+        WriteFixedString(buffer, 6, 40, email);
 
         BinaryPrimitives.WriteUInt32LittleEndian(buffer.AsSpan(46, 4), account.ExpirationTime);
         buffer[50] = (byte)Math.Clamp(account.GroupId, 0, byte.MaxValue);
@@ -2045,11 +2065,21 @@ public sealed class ClientSession : IDisposable
 
         public static AuthResult FromAccount(LoginAccount account, uint loginId1, uint loginId2, string ip)
         {
-            var sex = (byte)(account.Sex.Equals("F", StringComparison.OrdinalIgnoreCase) ? 0 :
-                account.Sex.Equals("M", StringComparison.OrdinalIgnoreCase) ? 1 : 2);
+            var sex = MapSex(account.Sex);
             var parsedIp = ParseIp(ip);
             return new AuthResult(true, 0, string.Empty, account.AccountId, loginId1, loginId2, sex, account.GroupId, account.WebAuthToken ?? string.Empty, parsedIp, ServiceAuthenticationOutcome.Success);
         }
+
+        public static AuthResult FromGameAccount(AuthenticatedGameAccount account, uint loginId1, uint loginId2, string ip)
+        {
+            var sex = MapSex(account.Sex);
+            var parsedIp = ParseIp(ip);
+            return new AuthResult(true, 0, string.Empty, account.RagnarokAccountId, loginId1, loginId2, sex, account.GroupId, account.WebAuthToken, parsedIp, ServiceAuthenticationOutcome.Success);
+        }
+
+        private static byte MapSex(string sex) =>
+            (byte)(sex.Equals("F", StringComparison.OrdinalIgnoreCase) ? 0 :
+                sex.Equals("M", StringComparison.OrdinalIgnoreCase) ? 1 : 2);
     }
 
     private static uint ParseIp(string ip)

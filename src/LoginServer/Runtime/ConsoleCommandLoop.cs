@@ -1,7 +1,5 @@
-using System.Globalization;
-using System.Security.Cryptography;
-using System.Text;
-using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using Athena.Net.LoginServer.Application;
 using Athena.Net.LoginServer.Config;
 using Athena.Net.LoginServer.Db;
 using Athena.Net.LoginServer.Logging;
@@ -11,7 +9,7 @@ namespace Athena.Net.LoginServer.Runtime;
 
 public static class ConsoleCommandLoop
 {
-    public static Task StartAsync(LoginConfigStore configStore, LoginMessageStore loginMessages, string interConfigPath, CharServerRegistry charServers, LoginState state, Func<LoginDbContext?> dbFactory, CancellationTokenSource cts)
+    public static Task StartAsync(LoginConfigStore configStore, LoginMessageStore loginMessages, string interConfigPath, CharServerRegistry charServers, LoginState state, Func<LoginDbContext?> dbFactory, IServiceProvider serviceProvider, CancellationTokenSource cts)
     {
         if (!configStore.Current.ConsoleEnabled)
         {
@@ -73,7 +71,7 @@ public static class ConsoleCommandLoop
                 else if (cmd == "create" || cmd.StartsWith("create", StringComparison.OrdinalIgnoreCase))
                 {
                     var raw = colonIndex >= 0 ? $"create:{command}" : trimmed;
-                    await CreateAccountFromConsoleAsync(raw, configStore, dbFactory, cts.Token);
+                    await CreateAccountFromConsoleAsync(raw, serviceProvider, cts.Token);
                 }
                 else if (cmd == "quit" || cmd == "exit" || cmd == "shutdown")
                 {
@@ -111,7 +109,14 @@ public static class ConsoleCommandLoop
         LoginLogger.Status(ok && msgOk ? "Config reloaded." : "Config reload failed.");
     }
 
-    private static async Task CreateAccountFromConsoleAsync(string command, LoginConfigStore configStore, Func<LoginDbContext?> dbFactory, CancellationToken cancellationToken)
+    /// <summary>
+    /// Creates a player account through IPlayerAccountProvisioningService (Identity
+    /// user + AthenaGameAccount, one transaction) rather than writing directly into
+    /// the legacy login table, which player login no longer reads. A fresh DI scope
+    /// is created per invocation rather than resolving from a scope held for this
+    /// long-lived console loop's entire lifetime.
+    /// </summary>
+    private static async Task CreateAccountFromConsoleAsync(string command, IServiceProvider serviceProvider, CancellationToken cancellationToken)
     {
         var payload = command.StartsWith("create:", StringComparison.OrdinalIgnoreCase)
             ? command[7..].Trim()
@@ -120,98 +125,36 @@ public static class ConsoleCommandLoop
         var parts = payload.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         if (parts.Length < 3)
         {
-            LoginLogger.Status("Usage: create:<username> <password> <sex:M|F>");
+            LoginLogger.Status("Usage: create:<username> <password> <sex:M|F> [email]");
             return;
         }
 
         var user = parts[0];
         var pass = parts[1];
-        var sex = parts[2][0];
-        sex = char.ToUpperInvariant(sex);
+        var sex = char.ToUpperInvariant(parts[2][0]);
+        var email = parts.Length >= 4 ? parts[3] : $"{user}@players.athena.local";
 
         if (user.Length < 4 || pass.Length < 1 || (sex != 'M' && sex != 'F'))
         {
-            LoginLogger.Warning("Invalid parameters. Usage: create:<username> <password> <sex:M|F>");
+            LoginLogger.Warning("Invalid parameters. Usage: create:<username> <password> <sex:M|F> [email]");
             return;
         }
 
-        var db = dbFactory();
-        if (db == null)
+        using var scope = serviceProvider.CreateScope();
+        var provisioning = scope.ServiceProvider.GetService<IPlayerAccountProvisioningService>();
+        if (provisioning == null)
         {
-            LoginLogger.Error("DB: unable to create connection.");
+            LoginLogger.Error("Identity DB: unavailable, cannot create a player account.");
             return;
         }
 
-        await using (db)
+        var result = await provisioning.ProvisionAsync(user, email, pass, sex, cancellationToken);
+        if (!result.Success)
         {
-            var exists = await ExistsUserIdAsync(db, configStore, user, cancellationToken);
-            if (exists)
-            {
-                LoginLogger.Warning($"Account '{user}' already exists.");
-                return;
-            }
-
-            if (configStore.Current.UseMd5Passwords)
-            {
-                pass = Md5Hex(Encoding.ASCII.GetBytes(pass));
-            }
-
-            var expiration = 0u;
-            if (configStore.Current.StartLimitedTimeSeconds != -1)
-            {
-                expiration = (uint)new DateTimeOffset(DateTime.UtcNow.AddSeconds(configStore.Current.StartLimitedTimeSeconds))
-                    .ToUnixTimeSeconds();
-            }
-
-            var account = new Db.Entities.LoginAccount
-            {
-                UserId = user,
-                UserPass = pass,
-                Sex = sex.ToString(),
-                Email = "a@a.com",
-                ExpirationTime = expiration,
-                LastLogin = null,
-                LastIp = "0.0.0.0",
-                Birthdate = null,
-                Pincode = string.Empty,
-                PincodeChange = 0,
-                CharacterSlots = (byte)configStore.Current.CharPerAccount,
-                VipTime = 0,
-                OldGroup = 0,
-                GroupId = 0,
-                State = 0,
-                LoginCount = 0,
-                WebAuthToken = null,
-                WebAuthTokenEnabled = false,
-            };
-
-            db.Accounts.Add(account);
-            await db.SaveChangesAsync(cancellationToken);
-            LoginLogger.Status($"Account '{user}' created.");
-        }
-    }
-
-    private static async Task<bool> ExistsUserIdAsync(LoginDbContext db, LoginConfigStore configStore, string userId, CancellationToken cancellationToken)
-    {
-        if (configStore.LoginCaseSensitive)
-        {
-            return await db.Accounts.AsNoTracking().AnyAsync(a => a.UserId == userId, cancellationToken);
+            LoginLogger.Warning($"Account '{user}' was not created: {result.ErrorMessage}");
+            return;
         }
 
-        var normalizedUserId = userId.ToLowerInvariant();
-        return await db.Accounts.AsNoTracking().AnyAsync(a => a.UserId.ToLower() == normalizedUserId, cancellationToken);
-    }
-
-    private static string Md5Hex(byte[] data)
-    {
-        using var md5 = MD5.Create();
-        var hash = md5.ComputeHash(data);
-        var sb = new StringBuilder(hash.Length * 2);
-        foreach (var b in hash)
-        {
-            sb.Append(b.ToString("x2", CultureInfo.InvariantCulture));
-        }
-
-        return sb.ToString();
+        LoginLogger.Status($"Account '{user}' created (RagnarokAccountId={result.RagnarokAccountId}).");
     }
 }

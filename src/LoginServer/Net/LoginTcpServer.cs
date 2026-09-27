@@ -4,6 +4,7 @@ using System.Net.Sockets;
 using Microsoft.Extensions.DependencyInjection;
 using Athena.Net.LoginServer.Application;
 using Athena.Net.LoginServer.Config;
+using Athena.Net.LoginServer.Db.Identity;
 using Athena.Net.LoginServer.Logging;
 using Athena.Net.LoginServer.Telemetry;
 
@@ -14,6 +15,7 @@ public sealed class LoginTcpServer
     private readonly LoginConfigStore _configStore;
     private readonly LoginMessageStore _messageStore;
     private readonly Func<Db.LoginDbContext?> _dbFactory;
+    private readonly Func<AthenaIdentityDbContext?> _identityDbFactory;
     private readonly CharServerRegistry _charServers;
     private readonly LoginState _state;
     private readonly Config.SubnetConfig _subnetConfig;
@@ -26,6 +28,7 @@ public sealed class LoginTcpServer
         LoginConfigStore configStore,
         LoginMessageStore messageStore,
         Func<Db.LoginDbContext?> dbFactory,
+        Func<AthenaIdentityDbContext?> identityDbFactory,
         CharServerRegistry charServers,
         LoginState state,
         Config.SubnetConfig subnetConfig,
@@ -35,6 +38,7 @@ public sealed class LoginTcpServer
         _configStore = configStore;
         _messageStore = messageStore;
         _dbFactory = dbFactory;
+        _identityDbFactory = identityDbFactory;
         _charServers = charServers;
         _state = state;
         _subnetConfig = subnetConfig;
@@ -115,6 +119,7 @@ public sealed class LoginTcpServer
                     _configStore,
                     _messageStore,
                     _dbFactory,
+                    _identityDbFactory,
                     _charServers,
                     _state,
                     _subnetConfig,

@@ -18,12 +18,14 @@ namespace Athena.Net.LoginServer.Runtime;
 public static class IdentityDbSetup
 {
     /// <summary>
-    /// Registers <see cref="AthenaIdentityDbContext"/> as a scoped service (required
-    /// by ASP.NET Core Identity's AddEntityFrameworkStores). Unlike LoginDb's
-    /// IDbContextFactory registration, this context is resolved once per DI scope -
-    /// callers must create a short-lived scope per logical operation and must never
-    /// hold one open for a long-lived TCP connection (see IPlayerAuthenticationService's
-    /// Identity-backed implementation for the pattern).
+    /// Registers <see cref="AthenaIdentityDbContext"/> via AddDbContextFactory.
+    /// This also registers the context itself as a scoped service (required by
+    /// ASP.NET Core Identity's AddEntityFrameworkStores) - so the same
+    /// registration serves both Identity's per-authentication-attempt scoped
+    /// usage (see IdentityPlayerAuthenticationService) and short-lived,
+    /// per-operation contexts for callers on a long-lived connection (see the
+    /// CharServer Lc* AthenaGameAccount handlers in ClientSession), without ever
+    /// tying one context instance to a TCP connection's lifetime.
     /// </summary>
     public static bool TryAddAthenaIdentityDbContext(IServiceCollection services, InterConfig interConfig, SecretConfig secrets)
     {
@@ -41,7 +43,7 @@ public static class IdentityDbSetup
             return false;
         }
 
-        services.AddDbContext<AthenaIdentityDbContext>(optionsBuilder =>
+        services.AddDbContextFactory<AthenaIdentityDbContext>(optionsBuilder =>
         {
             optionsBuilder.UseSqlServer(connectionString, sql => sql.EnableRetryOnFailure());
             optionsBuilder.ConfigureWarnings(warnings =>
@@ -52,10 +54,29 @@ public static class IdentityDbSetup
     }
 
     /// <summary>
-    /// Applies migrations (if requested) and waits for connectivity, mirroring
-    /// DbSetup.ApplyMigrationsWithRetry's behavior for the scoped Identity context.
+    /// Resolves the registered <see cref="IDbContextFactory{AthenaIdentityDbContext}"/>,
+    /// applies migrations/waits for connectivity, and returns a short-lived-context
+    /// factory delegate, mirroring DbSetup.CreateDbFactoryAsync.
     /// </summary>
-    public static async Task EnsureReadyAsync(IServiceProvider serviceProvider, bool autoMigrate)
+    public static async Task<Func<AthenaIdentityDbContext?>> CreateDbFactoryAsync(IServiceProvider serviceProvider, bool autoMigrate)
+    {
+        try
+        {
+            var contextFactory = serviceProvider.GetRequiredService<IDbContextFactory<AthenaIdentityDbContext>>();
+            Func<AthenaIdentityDbContext> factory = () => contextFactory.CreateDbContext();
+
+            await ApplyMigrationsWithRetry(factory, autoMigrate);
+
+            return factory;
+        }
+        catch (Exception ex)
+        {
+            LoginLogger.Error($"Identity DB: connection check failed ({ex.Message}).");
+            return () => null;
+        }
+    }
+
+    private static async Task ApplyMigrationsWithRetry(Func<AthenaIdentityDbContext> factory, bool autoMigrate)
     {
         const int maxAttempts = 60;
         var delay = TimeSpan.FromSeconds(2);
@@ -65,25 +86,25 @@ public static class IdentityDbSetup
         {
             try
             {
-                using var scope = serviceProvider.CreateScope();
-                var db = scope.ServiceProvider.GetRequiredService<AthenaIdentityDbContext>();
+                await using var dbHandle = factory();
 
                 if (autoMigrate)
                 {
-                    var hasMigrations = db.Database.GetMigrations().Any();
+                    var hasMigrations = dbHandle.Database.GetMigrations().Any();
                     if (hasMigrations)
                     {
-                        await db.Database.MigrateAsync();
+                        await dbHandle.Database.MigrateAsync();
                         LoginLogger.Status("Identity DB: migrations applied.");
                     }
                     else
                     {
-                        await db.Database.EnsureCreatedAsync();
+                        await dbHandle.Database.EnsureCreatedAsync();
                         LoginLogger.Status("Identity DB: schema created (EnsureCreated).");
                     }
                 }
 
-                if (await db.Database.CanConnectAsync())
+                var canConnect = await dbHandle.Database.CanConnectAsync();
+                if (canConnect)
                 {
                     LoginLogger.Status("Identity DB: connected.");
                     return;

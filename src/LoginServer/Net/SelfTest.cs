@@ -24,7 +24,7 @@ public static class SelfTest
 
         using var cts = new CancellationTokenSource();
         var messageStore = new LoginMessageStore(new LoginMessageCatalog(new Dictionary<uint, string>()));
-        var server = new LoginTcpServer(configStore, messageStore, dbFactory, charServers, state, subnetConfig, serviceProvider);
+        var server = new LoginTcpServer(configStore, messageStore, dbFactory, () => null, charServers, state, subnetConfig, serviceProvider);
         var serverTask = server.RunAsync(cts.Token);
 
         var ready = await WaitForPortAsync(server, TimeSpan.FromSeconds(2));

@@ -48,12 +48,19 @@ public static class ServiceComposition
                 .AddEntityFrameworkStores<AthenaIdentityDbContext>();
 
             services.AddScoped<IPlayerAccountProvisioningService, PlayerAccountProvisioningService>();
-        }
 
-        // Legacy (pre-Identity) implementation. Stateless, so a single shared
-        // instance is safe across every connection. Switched to an
-        // Identity-backed implementation in a later commit.
-        services.AddSingleton<IPlayerAuthenticationService, LegacyPlayerAuthenticationService>();
+            // Singleton is safe: IdentityPlayerAuthenticationService holds no
+            // per-call state itself, it creates a fresh DI scope (and therefore a
+            // fresh UserManager/AthenaIdentityDbContext) per authentication call.
+            services.AddSingleton<IPlayerAuthenticationService, IdentityPlayerAuthenticationService>();
+        }
+        else
+        {
+            // Mirrors LoginDb's own Func<LoginDbContext?> returning null instead
+            // of crashing: every player login safely fails rather than the server
+            // bypassing authentication.
+            services.AddSingleton<IPlayerAuthenticationService, UnavailablePlayerAuthenticationService>();
+        }
 
         // Each TCP connection needs its own "has this socket authenticated as a
         // service?" state, so this is transient rather than a shared singleton.

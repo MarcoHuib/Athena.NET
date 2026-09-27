@@ -1,5 +1,8 @@
+using Microsoft.Extensions.DependencyInjection;
+using Athena.Net.LoginServer.Application;
 using Athena.Net.LoginServer.Config;
 using Athena.Net.LoginServer.Db;
+using Athena.Net.LoginServer.Db.Identity;
 using Athena.Net.LoginServer.Logging;
 using Athena.Net.LoginServer.Net;
 using Athena.Net.LoginServer.Runtime;
@@ -40,15 +43,19 @@ public static class LoginServerApp
             ? await DbSetup.CreateDbFactoryAsync(serviceProvider, options.AutoMigrate)
             : (Func<LoginDbContext?>)(() => null);
 
-        if (composition.IdentityDbAvailable)
-        {
-            await IdentityDbSetup.EnsureReadyAsync(serviceProvider, options.AutoMigrate);
-        }
+        var identityDbFactory = composition.IdentityDbAvailable
+            ? await IdentityDbSetup.CreateDbFactoryAsync(serviceProvider, options.AutoMigrate)
+            : (Func<AthenaIdentityDbContext?>)(() => null);
 
         if (options.SelfTest)
         {
             var exitCode = await SelfTest.RunAsync(config, dbFactory, serviceProvider);
             return exitCode;
+        }
+
+        if (options.CreateAccountUserName != null)
+        {
+            return await CreateAccountAsync(options, serviceProvider);
         }
 
         using var cts = new CancellationTokenSource();
@@ -62,8 +69,8 @@ public static class LoginServerApp
         var state = new LoginState();
         state.OnAutoDisconnect = accountId => BackgroundTasks.DisableWebAuthTokenAsync(accountId, configStore, state, dbFactory, cts.Token);
 
-        var consoleTask = ConsoleCommandLoop.StartAsync(configStore, loginMessages, options.InterConfigPath, charServers, state, dbFactory, cts);
-        var server = new LoginTcpServer(configStore, loginMessages, dbFactory, charServers, state, subnetConfig, serviceProvider);
+        var consoleTask = ConsoleCommandLoop.StartAsync(configStore, loginMessages, options.InterConfigPath, charServers, state, dbFactory, serviceProvider, cts);
+        var server = new LoginTcpServer(configStore, loginMessages, dbFactory, identityDbFactory, charServers, state, subnetConfig, serviceProvider);
         var cleanupTask = BackgroundTasks.StartIpBanCleanupAsync(configStore, dbFactory, cts.Token);
         var ipSyncTask = BackgroundTasks.StartIpSyncAsync(configStore, charServers, cts.Token);
         var onlineCleanupTask = BackgroundTasks.StartOnlineCleanupAsync(state, cts.Token);
@@ -74,6 +81,34 @@ public static class LoginServerApp
         await onlineCleanupTask;
         await consoleTask;
 
+        return 0;
+    }
+
+    private static async Task<int> CreateAccountAsync(StartupOptions options, IServiceProvider serviceProvider)
+    {
+        if (string.IsNullOrWhiteSpace(options.CreateAccountUserName) || string.IsNullOrWhiteSpace(options.CreateAccountPassword))
+        {
+            LoginLogger.Error("--create-account-username and --create-account-password are required.");
+            return 1;
+        }
+
+        using var scope = serviceProvider.CreateScope();
+        var provisioning = scope.ServiceProvider.GetService<IPlayerAccountProvisioningService>();
+        if (provisioning == null)
+        {
+            LoginLogger.Error("Identity DB: unavailable, cannot create a player account.");
+            return 1;
+        }
+
+        var email = options.CreateAccountEmail ?? $"{options.CreateAccountUserName}@players.athena.local";
+        var result = await provisioning.ProvisionAsync(options.CreateAccountUserName, email, options.CreateAccountPassword, options.CreateAccountSex, CancellationToken.None);
+        if (!result.Success)
+        {
+            LoginLogger.Error($"Account '{options.CreateAccountUserName}' was not created: {result.ErrorMessage}");
+            return 1;
+        }
+
+        LoginLogger.Status($"Account '{options.CreateAccountUserName}' created (RagnarokAccountId={result.RagnarokAccountId}).");
         return 0;
     }
 }
