@@ -2318,15 +2318,16 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
             // Transient failure: registration stays open across the retry - never CompleteInFlight
             // here. Only advance NextRetryAt, and ONLY if the stored pending attempt is still THIS
             // exact logical attempt (compared by AttackSequence - guards against a retire-then-
-            // reallocate race).
+            // reallocate race). Uses the IMMUTABLE attackDelayMs already captured on the pending
+            // attempt at allocation time (this method's own `attackDelayMs` parameter) - never
+            // re-reads current status effects/equipment or recomputes cadence from a null weapon; a
+            // retry must reproduce the exact same logical hit's own delay, not a fresh one computed
+            // against whatever state happens to be current at retry time.
             await _attackGate.WaitAsync(cancellationToken);
             try
             {
                 if (_pendingDamageAttempt is { } current && current.AttackSequence == sequence)
-                {
-                    var delayMs = AttackDelayCalculator.AttackDelayMs(_statusEffects.Recalculate(_gameplayState!.State), null);
-                    current.NextRetryAt = _timeProvider.GetUtcNow().AddMilliseconds(delayMs);
-                }
+                    current.NextRetryAt = _timeProvider.GetUtcNow().AddMilliseconds(attackDelayMs);
             }
             finally { _attackGate.Release(); }
             try { _pendingRetrySignal.Release(); } catch (SemaphoreFullException) { }
@@ -2441,10 +2442,13 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
             }
 
             case WorldMonsterDamageStatus.Conflict:
-                _lethalDeathArbiter.CompleteInFlight(life, markProjected: false);
+            {
+                var diedObserved = _lethalDeathArbiter.CompleteInFlight(life, markProjected: false);
+                if (diedObserved) await PerformDeferredAuthoritativeDiedAsync(life.ActorId, cancellationToken);
                 MapLogger.Warning($"[iRO MAP DEBUG] ApplyMonsterDamageAsync returned Conflict mobActorId={life.ActorId} - fail-closed, never rearmed.");
                 if (ReferenceEquals(_repeatAttack, originRepeatAttackState)) ClearRepeatAttackIfCurrent(originRepeatAttackState);
                 return;
+            }
 
             case WorldMonsterDamageStatus.StaleLifeReference:
             {
@@ -2457,9 +2461,12 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
 
             case WorldMonsterDamageStatus.StaleAttackerPresence:
             case WorldMonsterDamageStatus.AttackerNotEngageable:
-                _lethalDeathArbiter.CompleteInFlight(life, markProjected: false);
+            {
+                var diedObserved = _lethalDeathArbiter.CompleteInFlight(life, markProjected: false);
+                if (diedObserved) await PerformDeferredAuthoritativeDiedAsync(life.ActorId, cancellationToken);
                 if (ReferenceEquals(_repeatAttack, originRepeatAttackState)) ClearRepeatAttackIfCurrent(originRepeatAttackState);
                 return;
+            }
 
             case WorldMonsterDamageStatus.AlreadyDead:
             {

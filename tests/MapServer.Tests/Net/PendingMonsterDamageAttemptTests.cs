@@ -357,6 +357,76 @@ public sealed class PendingMonsterDamageAttemptTests
         await run.WaitAsync(TimeSpan.FromSeconds(5));
     }
 
+    // Correction (online review of substep-9's own HEAD): DispatchPendingDamageAttemptAsync's
+    // transient-failure branch must advance NextRetryAt using the IMMUTABLE attackDelayMs already
+    // captured on the pending attempt at allocation time (the same effectiveStats/equippedWeapon the
+    // logical hit itself was calculated against) - never a value recomputed from whatever character/
+    // status/equipment state happens to be current at retry time. This proves it: the same session's
+    // gameplay state is changed (a fresh Increase AGI buff, which measurably changes
+    // AttackDelayCalculator.AttackDelayMs's own AttackSpeedBonus-dependent result) AFTER the fresh
+    // attempt has already captured its own delay but BEFORE the transient failure/retry-scheduling
+    // branch runs - the stored NextRetryAt must still advance by exactly the ORIGINAL captured delay,
+    // never a freshly-recomputed (now different) one.
+    [Fact]
+    public async Task TransientRetry_UsesImmutableCapturedAttackDelayMs_NeverRecomputesFromCurrentState()
+    {
+        var clock = new ControllableTimeProvider();
+        var (client, stream, session, run, target, _, _) = await SetupAsync(playerX: 75, playerY: 51, monsterX: 75, monsterY: 51, clock);
+        using var _dispose = client;
+
+        // Capture the delay the UNBUFFED attacker's own first allocation will use - this is the
+        // exact same calculation AllocatePendingDamageAttemptForTestAsync's own allocation performs
+        // internally (unarmed, per that seam's own fixed `null` weapon type).
+        var unbuffedStats = session.StatusEffects.Recalculate(WeakFreshNovice());
+        var originalDelayMs = AttackDelayCalculator.AttackDelayMs(unbuffedStats, null);
+
+        var dispatchCount = 0;
+        session.DebugApplyMonsterDamageDispatcher = (_, _) =>
+        {
+            Interlocked.Increment(ref dispatchCount);
+            throw new IOException("Simulated transient World RPC failure.");
+        };
+
+        var allocatedAt = clock.GetUtcNow();
+        await session.AllocatePendingDamageAttemptForTestAsync(LifeFor(target), damage: 10, acquireEngagement: false, CancellationToken.None);
+        Assert.Equal(1, dispatchCount);
+
+        var nextRetryAtBeforeStateChange = await session.SnapshotPendingNextRetryAtForTestAsync(CancellationToken.None);
+        Assert.NotNull(nextRetryAtBeforeStateChange);
+        Assert.Equal(allocatedAt.AddMilliseconds(originalDelayMs), nextRetryAtBeforeStateChange!.Value);
+
+        // Now change character/status state BEFORE the transient retry-scheduling branch runs again -
+        // a real Increase AGI buff measurably changes AttackSpeedBonus, which changes what
+        // AttackDelayCalculator.AttackDelayMs would compute if (incorrectly) re-read live. Confirm
+        // the buff genuinely produces a DIFFERENT delay for this exact attacker, so this test cannot
+        // pass merely because the buff happened to be a no-op.
+        session.StatusEffects.Start(CharacterStatusEffectState.StatusIds.IncreaseAgi, durationMilliseconds: 60_000, val1: 10);
+        var buffedStats = session.StatusEffects.Recalculate(WeakFreshNovice());
+        var recomputedDelayMsIfBugPresent = AttackDelayCalculator.AttackDelayMs(buffedStats, null);
+        Assert.NotEqual(originalDelayMs, recomputedDelayMsIfBugPresent);
+
+        // Advance the clock to trigger another transient-failure retry, and capture the instant the
+        // retry actually fires (never assumed equal to allocatedAt - the loop's own wake happens some
+        // real time after the clock advance).
+        await clock.AdvanceAsync(TimeSpan.FromMilliseconds(originalDelayMs));
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        while (DateTime.UtcNow < deadline && dispatchCount < 2) await Task.Delay(20);
+        Assert.True(dispatchCount >= 2, "Expected the transient failure to be retried.");
+
+        var retryFiredAt = clock.GetUtcNow();
+        var nextRetryAtAfterRetry = await session.SnapshotPendingNextRetryAtForTestAsync(CancellationToken.None);
+        Assert.NotNull(nextRetryAtAfterRetry);
+
+        // The stored NextRetryAt must have advanced by EXACTLY the original captured delay from the
+        // instant this retry actually fired - never by the buffed/recomputed value, and never by a
+        // fresh AttackDelayCalculator call against the now-different live state.
+        Assert.Equal(retryFiredAt.AddMilliseconds(originalDelayMs), nextRetryAtAfterRetry!.Value);
+        Assert.NotEqual(retryFiredAt.AddMilliseconds(recomputedDelayMsIfBugPresent), nextRetryAtAfterRetry!.Value);
+
+        client.Close();
+        await run.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
     // ================================================================================
     // Scenarios 6-9: the adversarial retarget-while-pending interleaving.
     // ================================================================================

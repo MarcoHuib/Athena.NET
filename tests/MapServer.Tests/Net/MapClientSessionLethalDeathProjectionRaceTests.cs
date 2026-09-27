@@ -314,6 +314,77 @@ public sealed class MapClientSessionLethalDeathProjectionRaceTests
         await scenario.RunTask.WaitAsync(TimeSpan.FromSeconds(5));
     }
 
+    // Correction (online review of substep-9's own HEAD): HandleDamageResultAsync's rejection
+    // handling for Conflict/StaleAttackerPresence/AttackerNotEngageable was discarding the bool
+    // CompleteInFlight returns, so a Died feed for the EXACT SAME life arriving while the attempt was
+    // in flight would never trigger the deferred authoritative vanish - violating the universal
+    // arbiter invariant every OTHER rejection status (StaleLifeReference/AlreadyDead/StaleSequence)
+    // already honored. These three facts prove each of the three previously-broken statuses now
+    // correctly replays the deferred Died: exactly one authoritative vanish is produced, no damage/
+    // HP/reward packet is produced, the repeat target is cleared, and the arbiter registration does
+    // not leak (proven by a SECOND NotifyMonsterDiedAsync call for the same life, after the rejection
+    // has fully resolved, completing promptly without hanging or throwing - if the registration had
+    // leaked open, TryDeferDiedWhileInFlight would incorrectly suppress or the session would remain
+    // stuck in an inconsistent state).
+    [Theory]
+    [InlineData(WorldMonsterDamageStatus.Conflict)]
+    [InlineData(WorldMonsterDamageStatus.StaleAttackerPresence)]
+    [InlineData(WorldMonsterDamageStatus.AttackerNotEngageable)]
+    public async Task RejectionStatus_DiedFeedArrivesWhileRpcInFlight_DeferredVanishIsReplayed_NoRewardTail_RepeatTargetCleared_NoLeakedRegistration(WorldMonsterDamageStatus rejectedStatus)
+    {
+        var fakeWorld = new FakeCombatWorldRuntime();
+        var scenario = await SetupAsync(fakeWorld, maxHp: 9999); // Not guaranteed-lethal - the override below decides the outcome regardless of real HP.
+        using var disposableClient = scenario.Client;
+
+        var life = new WorldMonsterLifeReference(scenario.MapId, scenario.Epoch, scenario.ActorId, scenario.Incarnation);
+        fakeWorld.ApplyMonsterDamageResultOverride = new WorldMonsterDamageResult(rejectedStatus, 0, 0, 0, false, null);
+        fakeWorld.BeforeApplyMonsterDamageReturns = async () =>
+        {
+            // Simulate the SEPARATE MapTcpServer monster-tick loop observing World's own Died feed
+            // for this EXACT life while ApplyMonsterDamageAsync is still "in flight" (BeginInFlight
+            // was already called by the allocation path before this RPC call started) - even though
+            // THIS session's own attempt is about to be rejected, a DIFFERENT attacker's kill (or an
+            // otherwise-independent authoritative Died) may have genuinely landed at World in the
+            // meantime, and that fact must never be silently dropped merely because this attempt's
+            // own result happens to be a rejection.
+            await scenario.Session.NotifyMonsterDiedAsync(life, CancellationToken.None);
+        };
+
+        await scenario.Stream.WriteAsync(AttackPacket(scenario.ActorId));
+
+        // Live-acceptance wire-fidelity fix: the due-now fixpos precedes this due-now hit regardless
+        // of the rejection/Died race exercised below.
+        var fixposPacket = await ReadExact(scenario.Stream, PacketConstants.ZcStopMoveLength);
+        Assert.Equal((short)PacketConstants.ZcStopMove, BinaryPrimitives.ReadInt16LittleEndian(fixposPacket));
+        Assert.Equal(AccountId, BinaryPrimitives.ReadUInt32LittleEndian(fixposPacket.AsSpan(2)));
+
+        // The deferred authoritative vanish must arrive - reason=Died, exactly once - even though
+        // this session's own attempt was rejected with `rejectedStatus`, never any lethal reward tail
+        // for this session's own (rejected) attempt.
+        var vanishPacket = await ReadExact(scenario.Stream, PacketConstants.ZcNotifyVanishLength);
+        Assert.Equal((short)PacketConstants.ZcNotifyVanish, BinaryPrimitives.ReadInt16LittleEndian(vanishPacket));
+        Assert.Equal(scenario.ActorId, BinaryPrimitives.ReadUInt32LittleEndian(vanishPacket.AsSpan(2)));
+        Assert.Equal(PacketConstants.ZcNotifyVanishReasonDied, vanishPacket[6]);
+
+        // No damage/HP-info/reward packet must EVER arrive for this session's own rejected attempt,
+        // and no SECOND vanish either - confirmed by a harmless ping landing next.
+        await scenario.Stream.WriteAsync(new byte[] { 0x1c, 0x0b });
+        var pingReply = await ReadExact(scenario.Stream, 2);
+        Assert.Equal((short)PacketConstants.ZcPingLive, BinaryPrimitives.ReadInt16LittleEndian(pingReply));
+
+        // No leaked arbiter registration: a SECOND, later Died delivery for the exact same life must
+        // still complete promptly (never hang, never throw) - if BeginInFlight's own registration had
+        // leaked open (never completed by the rejection handling above), this call could behave
+        // incorrectly or the session could become stuck.
+        await scenario.Session.NotifyMonsterDiedAsync(life, CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(5));
+        await scenario.Stream.WriteAsync(new byte[] { 0x1c, 0x0b });
+        var secondPingReply = await ReadExact(scenario.Stream, 2);
+        Assert.Equal((short)PacketConstants.ZcPingLive, BinaryPrimitives.ReadInt16LittleEndian(secondPingReply));
+
+        scenario.Client.Close();
+        await scenario.RunTask.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
     // Interleaving 3: a Died feed entry for a DIFFERENT incarnation of the SAME ActorId must NOT be
     // suppressed by an in-flight lethal projection registered for another (already-superseded)
     // incarnation - proven directly against LethalDeathProjectionArbiter, the exact type this
