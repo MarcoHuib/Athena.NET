@@ -413,20 +413,11 @@ public sealed class WorldPartitionGrain(IWorldPartitionResolver resolver, IMovem
         return Task.FromResult(page);
     }
 
-    public Task<WorldMonsterDeathResult> TryMarkMonsterDeadAsync(WorldMonsterLifeReference reference)
-    {
-        var mapId = RequireOwnedMap(reference.MapId);
-        var simulation = MonsterSimulation(mapId);
-        if (!simulation.SimulationEpoch.Equals(reference.SimulationEpoch) || !simulation.TryFind(reference.ActorId, out var instance) || !simulation.MatchesLife(instance, reference))
-            return Task.FromResult(new WorldMonsterDeathResult(WorldMonsterDeathStatus.StaleLifeReference));
-        return Task.FromResult(new WorldMonsterDeathResult(simulation.MarkDead(instance)));
-    }
-
-    // Step 7: the sole atomic HP-mutation RPC. Non-async, zero-await - the entire chain (validate
-    // -> sequence decision -> HP mutation -> Alive/Dead transition -> feed/death/engagement
-    // updates -> store AttackSequence result -> return) is one uninterruptible grain turn, relying
-    // on the same per-activation Orleans turn-serialization guarantee TryMarkMonsterDeadAsync/
-    // NotifyMonsterAttackedAsync above already document (no [Reentrant] attribute on this grain).
+    // Step 7 substep 9: the sole atomic HP-mutation RPC. Non-async, zero-await - the entire chain
+    // (validate -> sequence decision -> HP mutation -> Alive/Dead transition -> feed/death/
+    // engagement updates -> store AttackSequence result -> return) is one uninterruptible grain
+    // turn, relying on the same per-activation Orleans turn-serialization guarantee
+    // NotifyMonsterAttackedAsync above already documents (no [Reentrant] attribute on this grain).
     //
     // Validation order is load-bearing, not incidental - each step's rejection is checked BEFORE
     // the next, and the AttackSequence ledger is consulted ONLY after presence/liveness pass:

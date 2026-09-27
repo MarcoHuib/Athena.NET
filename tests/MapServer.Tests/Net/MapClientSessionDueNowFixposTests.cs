@@ -106,8 +106,9 @@ public sealed class MapClientSessionDueNowFixposTests
     }
 
     private WorldSimulationEpoch _lastEpoch;
+    private FakeCombatWorldRuntime? _lastFakeWorld;
 
-    private async Task<(TcpClient Client, NetworkStream Stream, MapClientSession Session, Task RunTask, MobInstance Target, MonsterCombatStateStore CombatState, MonsterFeedProjectionRegistry Projections)> SetupAsync(
+    private async Task<(TcpClient Client, NetworkStream Stream, MapClientSession Session, Task RunTask, MobInstance Target, MonsterAttackCadenceStore CombatState, MonsterFeedProjectionRegistry Projections)> SetupAsync(
         ushort playerX, ushort playerY, ushort monsterX, ushort monsterY, TimeProvider? timeProvider = null)
     {
         var listener = new TcpListener(IPAddress.Loopback, 0);
@@ -126,10 +127,12 @@ public sealed class MapClientSessionDueNowFixposTests
         var target = registry.AllInstances[0];
         var epoch = WorldSimulationEpoch.NewEpoch();
         _lastEpoch = epoch;
-        var combatState = new MonsterCombatStateStore();
-        combatState.Register(target.Map, epoch, target.ActorId, new WorldMonsterIncarnationId(target.IncarnationId.Value), target.Spawn.Mob.MaxHp);
-        var combat = new MonsterCombatCoordinator(questDrops, new RenewalBasicAttackRules(MinWeaponAtkRoll), combatState);
-        var monsterProjections = WorldMonsterProjectionTestHelper.SeedProjection(target.Map, epoch, combatState, registry.AllInstances);
+        var combatState = new MonsterAttackCadenceStore();
+        combatState.Register(target.Map, epoch, target.ActorId, new WorldMonsterIncarnationId(target.IncarnationId.Value));
+        var combat = new MonsterCombatCoordinator(questDrops, new RenewalBasicAttackRules(MinWeaponAtkRoll));
+        var fakeWorld = new FakeCombatWorldRuntime();
+        _lastFakeWorld = fakeWorld;
+        var monsterProjections = WorldMonsterProjectionTestHelper.SeedProjection(target.Map, epoch, combatState, registry.AllInstances, fakeWorld);
 
         var gameplayPersistence = new RecordingGameplayStatePersistence(WeakFreshNovice());
         var inventoryListPersistence = new FixedInventoryListPersistence(KnifeEquipped());
@@ -141,7 +144,7 @@ public sealed class MapClientSessionDueNowFixposTests
             gameplayStatePersistence: gameplayPersistence,
             accountId: AccountId, charId: CharId, monsterProjections: monsterProjections, combat: combat,
             inventoryPersistence: inventoryPersistence, inventoryListPersistence: inventoryListPersistence,
-            timeProvider: timeProvider, combatState: combatState, distributedWorld: new FakeCombatWorldRuntime());
+            timeProvider: timeProvider, combatState: combatState, distributedWorld: fakeWorld);
         var run = session.RunAsync(CancellationToken.None);
         await session.CompleteIroAuthenticationAsync(new(AccountId, CharId, 1, 2, 0, 0, false, "int_land03", playerX, playerY, 0, 0, 0, CharacterName: "TestNovice"));
 
@@ -162,8 +165,8 @@ public sealed class MapClientSessionDueNowFixposTests
         return (client, stream, session, run, target, combatState, monsterProjections);
     }
 
-    private uint CurrentHpOf(MonsterCombatStateStore combatState, MobInstance target) =>
-        combatState.TryGet(new MonsterCombatKey(target.Map, _lastEpoch, target.ActorId, new WorldMonsterIncarnationId(target.IncarnationId.Value)), out var state) ? state.CurrentHp : 0u;
+    private uint CurrentHpOf(MonsterAttackCadenceStore combatState, MobInstance target) =>
+        _lastFakeWorld!.TryGetCurrentHp(new WorldMonsterLifeReference(target.Map, _lastEpoch, target.ActorId, new WorldMonsterIncarnationId(target.IncarnationId.Value))) ?? 0u;
 
     // Test 1: due-now, OUT-OF-RANGE attack -> wire order must be exactly 0x0088 (player fixpos) THEN
     // 0x0139 (attack-failure-for-distance) - never the reverse, never omitted. No damage, no HP

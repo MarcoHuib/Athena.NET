@@ -62,7 +62,7 @@ public sealed class MonsterSpatialInspectorTests
 
         var projections = new MonsterFeedProjectionRegistry();
         var projection = projections.GetOrCreate(instance.Map);
-        projection.ApplySnapshot([wireInstance], WorldSimulationEpoch.NewEpoch(), new MonsterCombatStateStore());
+        projection.ApplySnapshot([wireInstance], WorldSimulationEpoch.NewEpoch(), new MonsterAttackCadenceStore());
         return projections;
     }
 

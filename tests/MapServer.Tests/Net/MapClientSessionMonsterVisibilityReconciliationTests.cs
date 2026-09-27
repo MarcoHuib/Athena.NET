@@ -99,7 +99,7 @@ public sealed class MapClientSessionMonsterVisibilityReconciliationTests
         var (client, stream, session, run) = await SetupViewerAsync();
         using var _ = client;
 
-        var combatState = new MonsterCombatStateStore();
+        var combatState = new MonsterAttackCadenceStore();
         var epoch = WorldSimulationEpoch.NewEpoch();
         var incarnation = WorldMonsterIncarnationId.First;
         const uint actorId = 1;
@@ -133,7 +133,7 @@ public sealed class MapClientSessionMonsterVisibilityReconciliationTests
         var (client, stream, session, run) = await SetupViewerAsync();
         using var _ = client;
 
-        var combatState = new MonsterCombatStateStore();
+        var combatState = new MonsterAttackCadenceStore();
         var epoch = WorldSimulationEpoch.NewEpoch();
         var oldIncarnation = WorldMonsterIncarnationId.First;
         const uint actorId = 1;
@@ -170,7 +170,7 @@ public sealed class MapClientSessionMonsterVisibilityReconciliationTests
         var (client, stream, session, run) = await SetupViewerAsync();
         using var _ = client;
 
-        var combatState = new MonsterCombatStateStore();
+        var combatState = new MonsterAttackCadenceStore();
         var oldEpoch = WorldSimulationEpoch.NewEpoch();
         var incarnation = WorldMonsterIncarnationId.First;
         const uint actorId = 1;
@@ -268,7 +268,7 @@ public sealed class MapClientSessionMonsterVisibilityReconciliationTests
         var (client, stream, session, run) = await SetupViewerAsync();
         using var _ = client;
 
-        var combatState = new MonsterCombatStateStore();
+        var combatState = new MonsterAttackCadenceStore();
         var epoch = WorldSimulationEpoch.NewEpoch();
         var oldIncarnation = WorldMonsterIncarnationId.First;
         const uint actorId = 1;
@@ -363,13 +363,13 @@ public sealed class MapClientSessionMonsterVisibilityReconciliationTests
         var (client, stream, session, run) = await SetupViewerAsync();
         using var _ = client;
 
-        var combatState = new MonsterCombatStateStore();
+        var combatState = new MonsterAttackCadenceStore();
         var epoch = WorldSimulationEpoch.NewEpoch();
         var incarnation = WorldMonsterIncarnationId.First;
         const uint actorId = 1;
         // Legacy local store deliberately registered at FULL hp (55/55) - genuinely different from
         // the fresh World snapshot's own damaged value (28/55) below.
-        combatState.Register(MapId, epoch, actorId, incarnation, maxHp: 55);
+        combatState.Register(MapId, epoch, actorId, incarnation);
         var instance = AliveWithHp(actorId, incarnation, x: ViewerX, y: ViewerY, currentHp: 28, maxHp: 55);
 
         var projections = new MonsterFeedProjectionRegistry();
@@ -429,7 +429,7 @@ public sealed class MapClientSessionMonsterVisibilityReconciliationTests
         var (client, stream, session, run) = await SetupViewerAsync();
         using var _ = client;
 
-        var combatState = new MonsterCombatStateStore();
+        var combatState = new MonsterAttackCadenceStore();
         var epoch = WorldSimulationEpoch.NewEpoch();
         var incarnation = WorldMonsterIncarnationId.First;
         const uint actorId = 1;
@@ -521,7 +521,7 @@ public sealed class MapClientSessionMonsterVisibilityReconciliationTests
         var (client, stream, session, run) = await SetupViewerAsync();
         using var _ = client;
 
-        var combatState = new MonsterCombatStateStore();
+        var combatState = new MonsterAttackCadenceStore();
         var epoch = WorldSimulationEpoch.NewEpoch();
         var incarnation = WorldMonsterIncarnationId.First;
         const uint actorId = 1;

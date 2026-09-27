@@ -66,14 +66,14 @@ public sealed class MapClientSessionPendingLifeStateReconciliationTests
         listener.Stop();
         var stream = client.GetStream();
 
-        var combatState = new MonsterCombatStateStore();
+        var combatState = new MonsterAttackCadenceStore();
         var gameplayPersistence = new RecordingGameplayStatePersistence(initialState);
         var session = new MapClientSession(
             1, serverClient, new CharServerConnector(new MapConfigStore(new MapConfig(), "unused.conf")), true,
             "int_land03", 75, 51, WorldMapRegistry.Tutorial,
             gameplayStatePersistence: gameplayPersistence,
             accountId: AccountId, charId: CharId, monsterProjections: new MonsterFeedProjectionRegistry(),
-            combat: new MonsterCombatCoordinator(new QuestDropResolver([]), new Athena.Net.MapServer.Gameplay.Rules.Renewal.RenewalBasicAttackRules(), combatState),
+            combat: new MonsterCombatCoordinator(new QuestDropResolver([]), new Athena.Net.MapServer.Gameplay.Rules.Renewal.RenewalBasicAttackRules()),
             combatState: combatState, distributedWorld: fakeWorld);
         var run = session.RunAsync(CancellationToken.None);
         await session.CompleteIroAuthenticationAsync(new(AccountId, CharId, 1, 2, 0, 0, false, "int_land03", 75, 51, 0, 0, 0));

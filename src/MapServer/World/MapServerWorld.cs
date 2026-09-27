@@ -29,7 +29,7 @@ public sealed record MapServerWorld(
     IMapCollisionProvider Collision,
     IMovementPathProvider MovementPathProvider,
     MonsterFeedProjectionRegistry MonsterProjections,
-    MonsterCombatStateStore CombatState,
+    MonsterAttackCadenceStore CombatState,
     PlayerPresenceRegistry Players,
     PlayerVisibilityCoordinator PlayerVisibility,
     WorldVisibilityOptions Visibility,
@@ -40,7 +40,7 @@ public sealed record MapServerWorld(
     // leaves the new live components null.
     public MapServerWorld(WorldMapRegistry maps, IReadOnlyList<MobSpawnDefinition> monsterSpawns, MonsterCombatCoordinator combat,
         IMapCollisionProvider collision, IMovementPathProvider movementPathProvider,
-        MonsterFeedProjectionRegistry monsterProjections, MonsterCombatStateStore combatState,
+        MonsterFeedProjectionRegistry monsterProjections, MonsterAttackCadenceStore combatState,
         GameplayRateOptions? rates = null)
         : this(maps, monsterSpawns, combat, collision, movementPathProvider, monsterProjections, combatState, CreatePlayerWorld(), rates)
     {
@@ -48,7 +48,7 @@ public sealed record MapServerWorld(
 
     private MapServerWorld(WorldMapRegistry maps, IReadOnlyList<MobSpawnDefinition> monsterSpawns, MonsterCombatCoordinator combat,
         IMapCollisionProvider collision, IMovementPathProvider movementPathProvider,
-        MonsterFeedProjectionRegistry monsterProjections, MonsterCombatStateStore combatState,
+        MonsterFeedProjectionRegistry monsterProjections, MonsterAttackCadenceStore combatState,
         (PlayerPresenceRegistry Players, PlayerVisibilityCoordinator Coordinator, WorldVisibilityOptions Options) playerWorld,
         GameplayRateOptions? rates)
         : this(maps, monsterSpawns, combat, collision, movementPathProvider, monsterProjections, combatState,
@@ -97,8 +97,8 @@ public sealed record MapServerWorld(
         var effectiveMobSpawnMaps = mobSpawnMaps ?? servedMaps;
         var servedMobSpawns = effectiveMobSpawnMaps is null ? world.MobSpawns : world.MobSpawns.Where(spawn => effectiveMobSpawnMaps.Contains(spawn.Map)).ToArray();
         var questDrops = new QuestDropResolver(GeneratedQuestDrops.All);
-        var combatState = new MonsterCombatStateStore();
-        var combat = new MonsterCombatCoordinator(questDrops, gameplayRules.BasicAttackRules, combatState);
+        var combatState = new MonsterAttackCadenceStore();
+        var combat = new MonsterCombatCoordinator(questDrops, gameplayRules.BasicAttackRules);
         // Same either/or composition rule the old cell-selector/movement-provider split used:
         // EmptyMapCollisionProvider.Instance keeps the collision-less placeholder path provider
         // (tests/dev fixtures); any real provider gets the collision-backed A* implementation.

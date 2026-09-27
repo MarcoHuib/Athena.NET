@@ -17,26 +17,21 @@ public interface IWorldPartitionGrain : IGrainWithStringKey
     Task<OutgoingTransferResult> FinalizeOutgoingTransferAsync(Guid transferId);
     Task<WorldMapSnapshot> GetMapSnapshotAsync(string mapId);
 
-    // Step 7: World is the sole authority for monster CurrentHp and the Alive->Dead transition.
-    // Damage calculation (weapon/ATK/DEF formula) and quest-drop orchestration remain MapServer-
-    // local - only the atomic clamped-subtract + Alive->Dead compare, and the exactly-once
-    // idempotency ledger that guards it (AttackSequence), live here. ApplyMonsterDamageAsync is
-    // the sole seam MapServer-local combat crosses into World for actually mutating HP/lifecycle;
-    // NotifyMonsterAttackedAsync remains the separate, narrower seam for target
-    // acquisition/refresh only. TryMarkMonsterDeadAsync (below) is retained ONLY until the live
-    // MapServer call site is cut over to ApplyMonsterDamageAsync - see that member's own doc
-    // comment. ValidateMonsterAttackWindowAsync is a read-only just-in-time recheck immediately
-    // before a locally-cadenced attack actually executes (never an executable command, never a
-    // reservation/claim), UpdatePresenceLifeStateAsync feeds World's own engagement rules, and
-    // PollMonsterFeedAsync is the per-map sequenced feed of pure state transitions a MapServer
-    // instance polls to project monster movement/lifecycle/engagement/HP to its connected
-    // sessions.
+    // Step 7 substep 9: World is the sole authority for monster CurrentHp and the Alive->Dead
+    // transition. Damage calculation (weapon/ATK/DEF formula) and quest-drop orchestration remain
+    // MapServer-local - only the atomic clamped-subtract + Alive->Dead compare, and the
+    // exactly-once idempotency ledger that guards it (AttackSequence), live here.
+    // ApplyMonsterDamageAsync is the sole seam MapServer-local combat crosses into World for
+    // actually mutating HP/lifecycle - the live MapClientSession attack path is fully cut over to
+    // it. NotifyMonsterAttackedAsync remains the separate, narrower seam for target
+    // acquisition/refresh only. ValidateMonsterAttackWindowAsync is a read-only just-in-time
+    // recheck immediately before a locally-cadenced attack actually executes (never an executable
+    // command, never a reservation/claim), UpdatePresenceLifeStateAsync feeds World's own
+    // engagement rules, and PollMonsterFeedAsync is the per-map sequenced feed of pure state
+    // transitions a MapServer instance polls to project monster movement/lifecycle/engagement/HP to
+    // its connected sessions.
     Task<WorldMonsterSpawnLoadResult> LoadMonsterSpawnsAsync(WorldMonsterSpawnBatch batch);
     Task<WorldMonsterFeedPage> PollMonsterFeedAsync(WorldMonsterFeedCursor? cursor, string mapId);
-    // TEMPORARY: retained only until the live MapServer attack path (MapClientSession's
-    // PerformDueRepeatAttackCoreAsync) is cut over to ApplyMonsterDamageAsync - scheduled removal
-    // in that same substep. Do not add new callers.
-    Task<WorldMonsterDeathResult> TryMarkMonsterDeadAsync(WorldMonsterLifeReference reference);
     Task<WorldMonsterDamageResult> ApplyMonsterDamageAsync(WorldMonsterDamageCommand command);
     Task<WorldMonsterAttackedResult> NotifyMonsterAttackedAsync(WorldMonsterAttackedCommand command);
     Task<WorldMonsterAttackWindowResult> ValidateMonsterAttackWindowAsync(WorldMonsterAttackWindowQuery query);
@@ -452,11 +447,6 @@ public sealed record WorldMonsterFeedPage(
     public bool ResyncRequired => Status != WorldMonsterFeedStatus.Ready;
 }
 
-public enum WorldMonsterDeathStatus { MarkedDead, AlreadyDead, StaleLifeReference }
-
-[GenerateSerializer]
-public sealed record WorldMonsterDeathResult([property: Id(0)] WorldMonsterDeathStatus Status);
-
 // Step 7: the sole atomic HP-mutation command. AttackSequence is a per-attacker monotonic long
 // (NOT a Guid/TTL cache - see AttackSequenceState's own doc comment for why a time-evicted dedup
 // key is unsound for a non-lethal command), minted client-side by the same MapClientSession that
@@ -490,7 +480,7 @@ public sealed record WorldMonsterDamageResult(
 
 // Deliberately absent: MonsterNotAttackable (a passive/no-CanAttack mob is still fully damageable -
 // only engagement acquisition cares about CanAttack) and NotFound (folded into StaleLifeReference,
-// matching how TryMarkMonsterDeadAsync already collapses "not found" into the same status).
+// matching how a stale-life lookup collapses "not found" into the same status elsewhere).
 public enum WorldMonsterDamageStatus
 {
     Applied,

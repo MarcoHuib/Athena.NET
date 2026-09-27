@@ -60,10 +60,10 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     // together by the production MapServerWorld-based constructor.
     private readonly MonsterCombatCoordinator? _combat;
     // The authoritative CurrentHp/NextAttackAt owner on the live combat path (see
-    // MonsterCombatStateStore's own doc comment) - null alongside _monsterProjections/_combat on
+    // MonsterAttackCadenceStore's own doc comment) - null alongside _monsterProjections/_combat on
     // the test-facing default path, populated together with them by the production
     // MapServerWorld-based constructor.
-    private readonly MonsterCombatStateStore? _combatState;
+    private readonly MonsterAttackCadenceStore? _combatState;
     // Diagnostic-only for now (0x0368 actor-info click/hover logging) - see LogMonsterCellDiagnostics.
     // Backed by the World projection post-cutover (see MonsterSpatialInspector's own doc comment) -
     // null on the test-facing default path, same as _monsterProjections/_combat.
@@ -125,12 +125,12 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         public bool DueNowFixposPending { get; set; }
     }
 
-    // Step 7 substep 8 (§16-§22): the pending idempotency-carrying damage attempt mechanism, built
-    // and tested here entirely in ISOLATION against a scriptable test seam (DispatchPendingDamageAttemptAsync's
-    // own doc comment) - substep 9 wires this to the real World.ApplyMonsterDamageAsync RPC and
-    // replaces PerformDueRepeatAttackCoreAsync's legacy CalculateAttack/CommitAttack/CommitConfirmedDeath/
-    // TryMarkMonsterDeadAsync chain with it. That legacy chain remains the ONLY path that currently
-    // reaches a live monster hit; nothing here is wired into it yet.
+    // Step 7 substep 9: the pending idempotency-carrying damage attempt mechanism (built and tested
+    // in isolation in substep 8, against a scriptable test seam) is now the LIVE player->monster
+    // attack path - PerformDueRepeatAttackCoreAsync's fresh-attempt branch allocates one of these
+    // and DispatchPendingDamageAttemptAsync dispatches it against the real
+    // World.ApplyMonsterDamageAsync RPC. The legacy CalculateAttack/CommitAttack/CommitConfirmedDeath/
+    // TryMarkMonsterDeadAsync chain is gone entirely.
     //
     // The governing invariant (§16, §18): a PendingMonsterDamageAttempt is not "attack intent that
     // needs special retry handling" - it is a committed idempotency operation already past every
@@ -138,12 +138,42 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     // outcome from World. Its lifecycle is fully decoupled from RepeatAttackState, the current
     // target, and player movement - see the pending-first control flow's own doc comment
     // (DispatchPendingDamageAttemptAsync) for the exact priority rule this implies.
+    //
+    // Substep 9 additions - all `required`, set ONCE at allocation, NEVER mutated afterward:
+    //   IsMiss: lets a retry/replay reproduce the damage packet's miss flag without recomputing the
+    //     roll.
+    //   OriginRepeatAttackState: the RepeatAttackState instance active at allocation time - lets
+    //     result-handling find the right instance to reschedule/clear via ReferenceEquals ONLY,
+    //     never by TargetActorId (a stale/superseded RepeatAttackState must never be mutated by a
+    //     result belonging to an earlier logical attempt). Read-only for post-result bookkeeping -
+    //     never consulted to decide whether a retry may proceed (that remains AttackSequence/
+    //     NextRetryAt alone).
+    //   TargetSnapshot: a WorldMonsterActorView captured once at allocation time - lets a retry/
+    //     replay project the wire/reward tail (DamageMotion, BaseExp/JobExp, MobId, name/logging)
+    //     WITHOUT a second MonsterFeedProjection lookup, which may no longer contain the monster by
+    //     the time a lost response's retry/replay finally resolves. Permitted uses: result-projection
+    //     metadata only (via MonsterCombatCoordinator.BuildOutcome). Forbidden: revalidating range/
+    //     LoS, choosing/redirecting a retry target, recomputing damage/engagement/RNG, or
+    //     substituting for WorldMonsterDamageResult's own authoritative HP/death fields.
+    //   AttackDelayMs: computed once at allocation time from the SAME effectiveStats/equippedWeapon
+    //     already resolved for that hit - reused verbatim by every retry/replay's reschedule, never
+    //     recomputed from current equipment/status state.
+    //   QuestStatusSnapshot: resolved and captured BEFORE this pending attempt is ever published
+    //     (§4b) - a lethal result's quest-drop tail reads this stored snapshot only, never performs a
+    //     fresh persistence lookup, so a partially-committed World state (HP=0/Dead/Died feed/respawn
+    //     already committed) can never be left behind by a quest-persistence failure that happens
+    //     AFTER World has already confirmed the kill.
     private sealed class PendingMonsterDamageAttempt
     {
         public required WorldMonsterLifeReference Life { get; init; }
         public required long AttackSequence { get; init; }
         public required uint Damage { get; init; }
+        public required bool IsMiss { get; init; }
         public required bool AcquireEngagement { get; init; }
+        public required RepeatAttackState OriginRepeatAttackState { get; init; }
+        public required WorldMonsterActorView TargetSnapshot { get; init; }
+        public required double AttackDelayMs { get; init; }
+        public required Func<uint, CharacterQuestStatus> QuestStatusSnapshot { get; init; }
         // Governs a POSSIBLE retry only - never the first send (§18/§17.1: creating this record does
         // not itself schedule a send; the fresh-attempt turn that creates it performs the first
         // dispatch call itself, synchronously, inline, as part of that same turn). Mutated in place,
@@ -237,28 +267,17 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     // MapTcpServer's separate monster-tick loop for the SAME exact life - see
     // LethalDeathProjectionArbiter's own doc comment for the full race this exists to close.
     private readonly LethalDeathProjectionArbiter _lethalDeathArbiter = new();
-    // Step 6 final race closure, item 1: set (within PerformDueRepeatAttackAsync only) to the exact
-    // life the moment CommitConfirmedDeath confirms THIS call owns the kill, and read-and-cleared
-    // exactly once - either at the death-vanish send call site (the success path, once the vanish has
-    // actually been sent) or by that same method's own surrounding try/finally if an unexpected
-    // exception escapes anywhere in between (a WriteAsync failure, EXP persistence, etc.) - so the
-    // arbiter's own in-flight registration can never leak open forever. Never read/written from more
-    // than one place concurrently: PerformDueRepeatAttackAsync only ever runs one hit at a time for
-    // this session (RunRepeatAttackLoopAsync's own single-loop-at-a-time shape), so a plain field
-    // (not a Lock-guarded one) is sufficient here - this is NOT shared state with
-    // LethalDeathProjectionArbiter's own internal dictionary, which remains the single source of
-    // truth for cross-session/cross-call-path arbitration; this field only remembers whether THIS
-    // call still owes that store a completion call.
-    private WorldMonsterLifeReference? _lethalCommitLife;
     // Test-only seam (always null in production - never set by any production constructor/call
     // site): lets MapClientSessionLethalDeathProjectionRaceTests force the exact, otherwise
-    // unreachable-by-timing interleaving of "World has ALREADY returned MarkedDead for this exact
-    // life, but CommitConfirmedDeath has not yet run" - proving the arbiter registration set up by
-    // BeginInFlight (still open at this point, per item 1's own final race closure) correctly defers
-    // a Died feed entry arriving in that specific window, distinct from the earlier
-    // "TryMarkMonsterDeadAsync itself still in flight" window FakeCombatWorldRuntime's own
-    // BeforeTryMarkMonsterDeadReturns hook already covers.
-    internal Func<Task>? DebugBeforeCommitConfirmedDeathAsync { get; set; }
+    // unreachable-by-timing interleaving of "World's Died feed for this exact life has ALREADY been
+    // observed, but this session's own HandleLethalDamageResultAsync has not yet reached its own
+    // death-vanish send" - proving the arbiter registration set up by BeginInFlight (still open at
+    // this point, per HandleLethalDamageResultAsync's own doc comment) correctly defers a Died feed
+    // entry arriving in that specific window. Awaited immediately before SendMonsterVanishAsync
+    // inside HandleLethalDamageResultAsync's own try block - distinct from the earlier
+    // "ApplyMonsterDamageAsync itself still in flight" window FakeCombatWorldRuntime's own
+    // BeforeApplyMonsterDamageReturns hook already covers.
+    internal Func<Task>? DebugBeforeMonsterVanishSendAsync { get; set; }
 
     // Step 7 substep 8 (§22): the ISOLATED test seam standing in for the real World.ApplyMonsterDamageAsync
     // RPC while the pending-damage-attempt mechanism is built and tested on its own, against a fake
@@ -388,7 +407,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         PlayerVisibilityCoordinator? playerVisibility = null,
         WorldVisibilityOptions? visibilityOptions = null,
         IWorldRuntime? distributedWorld = null,
-        MonsterCombatStateStore? combatState = null)
+        MonsterAttackCadenceStore? combatState = null)
     {
         SessionId = sessionId;
         _client = client;
@@ -447,7 +466,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         PlayerVisibilityCoordinator? playerVisibility = null,
         WorldVisibilityOptions? visibilityOptions = null,
         IWorldRuntime? distributedWorld = null,
-        MonsterCombatStateStore? combatState = null)
+        MonsterAttackCadenceStore? combatState = null)
         : this(
             sessionId,
             client,
@@ -2037,11 +2056,10 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
                 // actually warrant transient-retry treatment, so it could silently swallow a genuine
                 // local programming/invariant defect (a NullReferenceException, an ArgumentException,
                 // an unrelated CharServer/persistence failure) and mislabel it "transient World RPC
-                // failure" forever. PerformDueRepeatAttackAsync's own two narrow try/catch blocks
-                // (around NotifyMonsterAttackedAsync and TryMarkMonsterDeadAsync specifically) already
-                // fully handle the legitimate transient-World-RPC-failure case, including re-arming
-                // NextAttackAt via RearmAfterTransientFailureAsync so this loop never spins hot on an
-                // already-due RepeatAttackState. Anything that still escapes PerformDueRepeatAttackAsync
+                // failure" forever. DispatchPendingDamageAttemptAsync's own narrow try/catch around
+                // ApplyMonsterDamageAsync already fully handles the legitimate transient-World-RPC-
+                // failure case, including re-arming NextRetryAt so this loop never spins hot on an
+                // already-due pending attempt. Anything that still escapes PerformDueRepeatAttackAsync
                 // here is therefore either genuine cancellation (propagates, handled below) or a real
                 // defect that must fail loudly rather than being caught and hidden - it faults this
                 // session's own RunAsync (contained by HandleClientAsync's own outer catch/session
@@ -2081,16 +2099,29 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         }
     }
 
-    // Resolves each distinct QuestId GeneratedQuestDrops.All mentions through the real persistence
-    // interface (see QuestDropResolver's own doc comment) - Athena has no materialized "all active
-    // quests" concept anywhere else either. Only called from MonsterCombatCoordinator.AttackAsync's
-    // own `killed` branch (see PerformDueRepeatAttackAsync's own call site) - never on an ordinary
-    // non-lethal hit, which is the section 15 optimization this extraction exists for.
-    private async Task<Func<uint, CharacterQuestStatus>> ResolveActiveQuestStatesAsync(CancellationToken cancellationToken)
+    // Resolves each distinct QuestId GeneratedQuestDrops.All mentions FOR THIS mobId through the
+    // real persistence interface (see QuestDropResolver's own doc comment) - Athena has no
+    // materialized "all active quests" concept anywhere else either. Filtered to `mobId` (§4b): this
+    // now runs unconditionally on EVERY fresh attack attempt (never only inside an
+    // already-confirmed-lethal branch, unlike the pre-substep-9 shape) since its result must be
+    // captured and stored on PendingMonsterDamageAttempt.QuestStatusSnapshot BEFORE the attempt is
+    // ever published - the mobId filter keeps the number of persistence calls this now performs
+    // bounded to whatever quests actually reference the specific monster being attacked, not every
+    // quest drop rule in the game.
+    //
+    // §4b's correctness property: this resolution MUST complete successfully before
+    // _pendingDamageAttempt is published, BeginInFlight runs, or ApplyMonsterDamageAsync is called -
+    // if it throws, nothing has been touched yet (exactly like the existing range/LoS rejection
+    // branches' "clean failure before any state was touched" shape). A lethal result's quest-drop
+    // tail later reads ONLY the stored snapshot this method produced at allocation time - it never
+    // re-resolves quest state, so a persistence failure can never happen AFTER World has already
+    // committed a kill.
+    private async Task<Func<uint, CharacterQuestStatus>> ResolveActiveQuestStatesAsync(int mobId, CancellationToken cancellationToken)
     {
         var questStates = new Dictionary<uint, CharacterQuestStatus>();
         foreach (var rule in GeneratedQuestDrops.All)
         {
+            if (rule.MobId != mobId) continue;
             if (questStates.ContainsKey(rule.QuestId)) continue;
             questStates[rule.QuestId] = await _questPersistence.GetQuestStateAsync(_accountId, _charId, rule.QuestId, cancellationToken) ?? CharacterQuestStatus.Absent;
         }
@@ -2204,7 +2235,12 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         WorldMonsterLifeReference? pendingLife;
         long pendingSequence = 0;
         uint pendingDamage = 0;
+        bool pendingIsMiss = false;
         bool pendingAcquireEngagement = false;
+        RepeatAttackState? pendingOriginRepeatAttackState = null;
+        WorldMonsterActorView pendingTargetSnapshot = default;
+        double pendingAttackDelayMs = 0;
+        Func<uint, CharacterQuestStatus>? pendingQuestStatusSnapshot = null;
         DateTimeOffset? pendingNextRetryAt;
 
         await _attackGate.WaitAsync(cancellationToken);
@@ -2216,7 +2252,12 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
             {
                 pendingSequence = pending.AttackSequence;
                 pendingDamage = pending.Damage;
+                pendingIsMiss = pending.IsMiss;
                 pendingAcquireEngagement = pending.AcquireEngagement;
+                pendingOriginRepeatAttackState = pending.OriginRepeatAttackState;
+                pendingTargetSnapshot = pending.TargetSnapshot;
+                pendingAttackDelayMs = pending.AttackDelayMs;
+                pendingQuestStatusSnapshot = pending.QuestStatusSnapshot;
             }
             pendingNextRetryAt = pending?.NextRetryAt;
         }
@@ -2229,49 +2270,55 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
             // Due: resend the exact stored payload verbatim - never resolve the current
             // RepeatAttackState/target, never call MonsterFeedProjection.TryGetLife, never resolve
             // weapon/range/CalculateAttack again.
-            await DispatchPendingDamageAttemptAsync(life, pendingSequence, pendingDamage, pendingAcquireEngagement, cancellationToken);
+            await DispatchPendingDamageAttemptAsync(
+                life, pendingSequence, pendingDamage, pendingIsMiss, pendingAcquireEngagement,
+                pendingOriginRepeatAttackState!, pendingTargetSnapshot, pendingAttackDelayMs, pendingQuestStatusSnapshot!, cancellationToken);
             return;
         }
 
-        // No pending attempt blocks this turn - fall through to the existing, unchanged legacy
-        // fresh-attempt path (still the only path that reaches a live production hit; substep 9
-        // replaces this call with the real ApplyMonsterDamageAsync-driven flow).
+        // No pending attempt blocks this turn - fall through to the fresh-attempt path (substep 9:
+        // now the real ApplyMonsterDamageAsync-driven flow).
         await PerformDueRepeatAttackCoreAsync(expected, cancellationToken);
     }
 
-    // Step 7 substep 8 (§8/§9/§10/§22): the SOLE call site through which both the first send (from a
-    // freshly-allocated PendingMonsterDamageAttempt, §7) and every internal retry (from
-    // PerformPendingOrFreshAttackTurnAsync's own due-retry branch above) funnel - substep 9 will
-    // point this at the real World.ApplyMonsterDamageAsync RPC; for now it calls the isolated test
-    // seam (DebugApplyMonsterDamageDispatcher), which is null in production, matching the fact that
-    // nothing yet actually ALLOCATES a PendingMonsterDamageAttempt on the live path either (only this
-    // substep's own isolated tests do, via AllocatePendingDamageAttemptForTestAsync below).
+    // The sole call site through which both the first send (from a freshly-allocated
+    // PendingMonsterDamageAttempt) and every internal retry (from
+    // PerformPendingOrFreshAttackTurnAsync's own due-retry branch above) funnel. Substep 9: dispatches
+    // against the real World.ApplyMonsterDamageAsync RPC by default - DebugApplyMonsterDamageDispatcher
+    // remains available as a test-only override (always null in production) that takes priority when set.
     //
-    // `life`/`sequence`/`damage`/`acquireEngagement` are the pending attempt's own immutable,
-    // already-snapshotted payload - never re-derived here. On an unambiguous result (any status, or
-    // a thrown non-transient exception), the pending attempt is retired under _attackGate. On a
-    // transient exception, the SAME logical attempt's NextRetryAt is advanced under _attackGate,
+    // `life`/`sequence`/`damage`/`isMiss`/`acquireEngagement`/`targetSnapshot`/`attackDelayMs`/
+    // `questStatusSnapshot`/`originRepeatAttackState` are the pending attempt's own immutable,
+    // already-snapshotted payload - never re-derived here, never re-resolved via MonsterFeedProjection.
+    // On a transient exception, the SAME logical attempt's NextRetryAt is advanced under _attackGate,
     // ONLY if the stored pending attempt is still THIS exact logical attempt (compared by
-    // AttackSequence - guards against a retire-then-reallocate race that could otherwise happen
-    // between releasing the gate before this call and reacquiring it in the catch below) - and
-    // _pendingRetrySignal is released so the scheduler wakes and re-evaluates. Never mutates a
-    // DIFFERENT/newer pending attempt that may have replaced this one while this call was in flight.
-    private async Task DispatchPendingDamageAttemptAsync(WorldMonsterLifeReference life, long sequence, uint damage, bool acquireEngagement, CancellationToken cancellationToken)
+    // AttackSequence - guards against a retire-then-reallocate race). On a fatal exception, the
+    // pending attempt is retired and the arbiter registration completed (markProjected:false) before
+    // rethrowing. On a normal return, the pending slot is retired (AttackSequence-guarded
+    // compare-and-clear) and - only if this call is still the attempt's owner - HandleDamageResultAsync
+    // is called with the result and the same immutable snapshot, which owns the full per-status table.
+    private Func<WorldMonsterDamageCommand, CancellationToken, Task<WorldMonsterDamageResult>> RealApplyMonsterDamageDispatcher =>
+        (command, ct) => _distributedWorld!.ApplyMonsterDamageAsync(command, ct);
+
+    private async Task DispatchPendingDamageAttemptAsync(
+        WorldMonsterLifeReference life, long sequence, uint damage, bool isMiss, bool acquireEngagement,
+        RepeatAttackState originRepeatAttackState, WorldMonsterActorView targetSnapshot, double attackDelayMs,
+        Func<uint, CharacterQuestStatus> questStatusSnapshot, CancellationToken cancellationToken)
     {
-        var dispatcher = DebugApplyMonsterDamageDispatcher;
-        if (dispatcher is null) return; // No seam wired (production, pre-substep-9) - nothing to do yet.
+        var dispatcher = DebugApplyMonsterDamageDispatcher ?? RealApplyMonsterDamageDispatcher;
 
         var command = new WorldMonsterDamageCommand(life, CharacterId, _presenceId ?? Guid.Empty, sequence, damage, acquireEngagement);
+        WorldMonsterDamageResult result;
         try
         {
-            await dispatcher(command, cancellationToken);
+            result = await dispatcher(command, cancellationToken);
         }
         catch (Exception ex) when (IsTransientWorldRpcFailure(ex, cancellationToken))
         {
             // Transient failure: registration stays open across the retry - never CompleteInFlight
-            // here (§8/§19 of the substep-8 correction round). Only advance NextRetryAt, and ONLY if
-            // the stored pending attempt is still THIS exact logical attempt (compared by
-            // AttackSequence - guards against the retire-then-reallocate race Scenario 15 exercises).
+            // here. Only advance NextRetryAt, and ONLY if the stored pending attempt is still THIS
+            // exact logical attempt (compared by AttackSequence - guards against a retire-then-
+            // reallocate race).
             await _attackGate.WaitAsync(cancellationToken);
             try
             {
@@ -2287,12 +2334,12 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         }
         catch
         {
-            // Fatal/non-transient exception (item 3 of the substep-8 correction round): this attempt
-            // is unambiguously resolved from this session's own perspective, exactly like a normal
-            // returned result - retire the pending slot and complete the arbiter registration BEFORE
-            // rethrowing, so a fatal seam failure can never leak an open pending/in-flight
-            // registration. Retirement is still guarded by the same AttackSequence comparison as the
-            // ordinary success path below, for the identical retire-then-reallocate reason.
+            // Fatal/non-transient exception: this attempt is unambiguously resolved from this
+            // session's own perspective - retire the pending slot and complete the arbiter
+            // registration BEFORE rethrowing, so a fatal dispatch failure can never leak an open
+            // pending/in-flight registration. Retirement is still guarded by the same AttackSequence
+            // comparison as the ordinary success path below, for the identical retire-then-reallocate
+            // reason.
             WorldMonsterLifeReference? retiredLife = null;
             await _attackGate.WaitAsync(CancellationToken.None);
             try
@@ -2309,44 +2356,307 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
             throw;
         }
 
-        // Any unambiguous result (the seam returned normally) retires the pending attempt and
-        // completes the arbiter registration, but ONLY if it is still THIS exact logical attempt - a
-        // concurrent retire/reallocate must never be clobbered.
-        WorldMonsterLifeReference? completedLife = null;
+        // Normal return (a real WorldMonsterDamageStatus result): retire the pending slot, but ONLY
+        // if it is still THIS exact logical attempt - a concurrent retire/reallocate must never be
+        // clobbered. Only the owner of the retirement proceeds to HandleDamageResultAsync.
+        var retired = false;
         await _attackGate.WaitAsync(CancellationToken.None);
         try
         {
             if (_pendingDamageAttempt is { } current && current.AttackSequence == sequence)
             {
-                completedLife = current.Life;
+                retired = true;
                 _pendingDamageAttempt = null;
             }
         }
         finally { _attackGate.Release(); }
-        if (completedLife is { } completedLifeValue) _lethalDeathArbiter.CompleteInFlight(completedLifeValue, markProjected: false);
         try { _pendingRetrySignal.Release(); } catch (SemaphoreFullException) { }
+
+        if (!retired) return;
+        await HandleDamageResultAsync(life, result, isMiss, originRepeatAttackState, targetSnapshot, attackDelayMs, questStatusSnapshot, cancellationToken);
     }
 
-    // Step 7 substep 8 isolated-test-only helper (never called from any production code path):
-    // allocates a fresh PendingMonsterDamageAttempt with the next monotonic AttackSequence and
-    // performs the FIRST dispatch inline, synchronously, as part of this same call - exactly
-    // matching §7/§17 step 3's "creating this record does not itself schedule a send; the first
-    // send happens immediately, as the last action of the very turn that allocates it" rule.
-    // NextRetryAt is set at allocation time but governs only a POSSIBLE later retry, never this
-    // first call. Real production allocation (substep 9) happens inline inside the fresh-attempt
-    // branch of PerformDueRepeatAttackCoreAsync's eventual replacement, using this exact shape -
-    // including the BeginInFlight call below, which this helper now models faithfully so the
-    // isolated substep-8 tests actually exercise the arbiter lifecycle the final plan requires
-    // (§7/§17 step 3: "allocate PendingMonsterDamageAttempt, call BeginInFlight(life), release
-    // _attackGate, first dispatch inline").
+    // Owns the full per-WorldMonsterDamageStatus side-effect table (§2 of the substep-9 plan). Never
+    // calls MonsterFeedProjection.TryGetLife/TryGetInstance or any other projection lookup - every
+    // piece of static wire/reward metadata comes from `targetSnapshot`; every authoritative HP/death
+    // field comes from `result`. This is what makes a ReplayedSequence lethal result correctly
+    // project its reward tail even if the local projection has since removed the monster entirely.
+    private async Task HandleDamageResultAsync(
+        WorldMonsterLifeReference life, WorldMonsterDamageResult result, bool isMiss, RepeatAttackState originRepeatAttackState,
+        WorldMonsterActorView targetSnapshot, double attackDelayMs, Func<uint, CharacterQuestStatus> questStatusSnapshot, CancellationToken cancellationToken)
+    {
+        switch (result.Status)
+        {
+            case WorldMonsterDamageStatus.Applied or WorldMonsterDamageStatus.ReplayedSequence when result.KilledByThisHit:
+                await HandleLethalDamageResultAsync(life, result, isMiss, originRepeatAttackState, targetSnapshot, questStatusSnapshot, cancellationToken);
+                return;
+
+            case WorldMonsterDamageStatus.Applied or WorldMonsterDamageStatus.ReplayedSequence:
+            {
+                var diedObserved = _lethalDeathArbiter.CompleteInFlight(life, markProjected: false);
+                if (diedObserved)
+                {
+                    await PerformDeferredAuthoritativeDiedAsync(life.ActorId, cancellationToken);
+                    if (ReferenceEquals(_repeatAttack, originRepeatAttackState)) ClearRepeatAttackIfCurrent(originRepeatAttackState);
+                    return; // no damage packet, no HP packet, no reschedule
+                }
+                if (ReferenceEquals(_repeatAttack, originRepeatAttackState))
+                {
+                    await _attackGate.WaitAsync(cancellationToken);
+                    try { if (ReferenceEquals(_repeatAttack, originRepeatAttackState)) originRepeatAttackState.NextAttackAt = _timeProvider.GetUtcNow().AddMilliseconds(attackDelayMs); }
+                    finally { _attackGate.Release(); }
+                }
+
+                var tick = unchecked((uint)Environment.TickCount);
+                var damageDealt = result.HpBefore - result.HpAfter;
+                var damagePacket = IroMonsterCombatPackets.BuildNotifyAct3(_accountId, life.ActorId, tick, srcSpeed: 460, dstSpeed: (uint)targetSnapshot.StaticMob.DamageMotion, damage: damageDealt, div: 1, actionType: 0);
+                await WriteAsync(damagePacket, cancellationToken);
+
+                if (_visibleActorIds.IsActorVisible(life.ActorId))
+                {
+                    var hpInfoPacket = IroMonsterCombatPackets.BuildHpInfo(life.ActorId, result.HpAfter, result.MaxHp);
+                    await WriteAsync(hpInfoPacket, cancellationToken);
+                }
+                return;
+            }
+
+            case WorldMonsterDamageStatus.StaleSequence:
+            {
+                var diedObserved = _lethalDeathArbiter.CompleteInFlight(life, markProjected: false);
+                if (diedObserved)
+                {
+                    await PerformDeferredAuthoritativeDiedAsync(life.ActorId, cancellationToken);
+                    if (ReferenceEquals(_repeatAttack, originRepeatAttackState)) ClearRepeatAttackIfCurrent(originRepeatAttackState);
+                    return; // no rearm - a dead life must never get a new AttackSequence
+                }
+                MapLogger.Warning($"[iRO MAP DEBUG] ApplyMonsterDamageAsync returned StaleSequence mobActorId={life.ActorId} - rearming for a fresh attempt.");
+                if (ReferenceEquals(_repeatAttack, originRepeatAttackState))
+                {
+                    await _attackGate.WaitAsync(cancellationToken);
+                    try { if (ReferenceEquals(_repeatAttack, originRepeatAttackState)) originRepeatAttackState.NextAttackAt = _timeProvider.GetUtcNow(); }
+                    finally { _attackGate.Release(); }
+                    try { _attackSignal.Release(); } catch (SemaphoreFullException) { }
+                }
+                return;
+            }
+
+            case WorldMonsterDamageStatus.Conflict:
+                _lethalDeathArbiter.CompleteInFlight(life, markProjected: false);
+                MapLogger.Warning($"[iRO MAP DEBUG] ApplyMonsterDamageAsync returned Conflict mobActorId={life.ActorId} - fail-closed, never rearmed.");
+                if (ReferenceEquals(_repeatAttack, originRepeatAttackState)) ClearRepeatAttackIfCurrent(originRepeatAttackState);
+                return;
+
+            case WorldMonsterDamageStatus.StaleLifeReference:
+            {
+                var diedObserved = _lethalDeathArbiter.CompleteInFlight(life, markProjected: false);
+                if (diedObserved) await PerformDeferredAuthoritativeDiedAsync(life.ActorId, cancellationToken);
+                if (ReferenceEquals(_repeatAttack, originRepeatAttackState)) ClearRepeatAttackIfCurrent(originRepeatAttackState);
+                _combatState?.Remove(MonsterCombatKey.From(life));
+                return;
+            }
+
+            case WorldMonsterDamageStatus.StaleAttackerPresence:
+            case WorldMonsterDamageStatus.AttackerNotEngageable:
+                _lethalDeathArbiter.CompleteInFlight(life, markProjected: false);
+                if (ReferenceEquals(_repeatAttack, originRepeatAttackState)) ClearRepeatAttackIfCurrent(originRepeatAttackState);
+                return;
+
+            case WorldMonsterDamageStatus.AlreadyDead:
+            {
+                var diedObserved = _lethalDeathArbiter.CompleteInFlight(life, markProjected: false);
+                if (diedObserved) await PerformDeferredAuthoritativeDiedAsync(life.ActorId, cancellationToken);
+                if (ReferenceEquals(_repeatAttack, originRepeatAttackState)) ClearRepeatAttackIfCurrent(originRepeatAttackState);
+                return;
+            }
+
+            default:
+                throw new InvalidOperationException($"Unhandled WorldMonsterDamageStatus: {result.Status}");
+        }
+    }
+
+    // The lethal tail (Applied/ReplayedSequence with KilledByThisHit). The arbiter registration
+    // (BeginInFlight from allocation time) is DELIBERATELY not completed via the uniform
+    // retire-first pattern the other statuses use - it stays open across this entire tail, closed
+    // once, only after this session's own death-vanish write has actually succeeded. Mirrors the
+    // legacy lethal-tail try/finally safety net exactly (see the `finally` below).
+    private async Task HandleLethalDamageResultAsync(
+        WorldMonsterLifeReference life, WorldMonsterDamageResult result, bool isMiss, RepeatAttackState originRepeatAttackState,
+        WorldMonsterActorView targetSnapshot, Func<uint, CharacterQuestStatus> questStatusSnapshot, CancellationToken cancellationToken)
+    {
+        if (ReferenceEquals(_repeatAttack, originRepeatAttackState)) ClearRepeatAttackIfCurrent(originRepeatAttackState); // no reschedule for a lethal hit
+
+        var lethalCommitLife = life;
+        try
+        {
+            var tick = unchecked((uint)Environment.TickCount);
+            var damageDealt = result.HpBefore - result.HpAfter;
+            var damagePacket = IroMonsterCombatPackets.BuildNotifyAct3(_accountId, life.ActorId, tick, srcSpeed: 460, dstSpeed: (uint)targetSnapshot.StaticMob.DamageMotion, damage: damageDealt, div: 1, actionType: 0);
+            await WriteAsync(damagePacket, cancellationToken);
+
+            if (_visibleActorIds.IsActorVisible(life.ActorId))
+            {
+                var hpInfoPacket = IroMonsterCombatPackets.BuildHpInfo(life.ActorId, 0, result.MaxHp);
+                await WriteAsync(hpInfoPacket, cancellationToken);
+            }
+
+            var (ratedBaseExp, ratedJobExp) = ExperienceRewardService.ResolveReward(_rates, targetSnapshot.StaticMob.BaseExp, targetSnapshot.StaticMob.JobExp, ExperienceSource.Monster);
+            var progression = await new CharacterProgressionService(_gameplayState!).AddExperienceAsync(ratedBaseExp, ratedJobExp, cancellationToken);
+            if (progression is null)
+            {
+                MapLogger.Warning($"[iRO MAP DEBUG] Monster EXP persistence failed actorId={life.ActorId}; no progression packets sent.");
+            }
+            else
+            {
+                foreach (var packet in IroCharacterProgressionPackets.Build(_accountId, progression.Value))
+                    await WriteAsync(packet, cancellationToken);
+            }
+
+            MapLogger.Info($"[iRO MAP DEBUG] Monster died actorId={life.ActorId} mob={targetSnapshot.StaticMob.AegisName}");
+            if (DebugBeforeMonsterVanishSendAsync is { } beforeVanishHook) await beforeVanishHook(); // Test-only seam - see that field's own doc comment. Always null in production.
+            await SendMonsterVanishAsync(life.ActorId, PacketConstants.ZcNotifyVanishReasonDied, cancellationToken);
+
+            lethalCommitLife = null;
+            _lethalDeathArbiter.CompleteInFlight(life, markProjected: true);
+
+            var outcome = _combat!.BuildOutcome(result, targetSnapshot, isMiss, questStatusSnapshot);
+            foreach (var drop in outcome.QuestDrops)
+            {
+                if (!GeneratedItems.ById.TryGetValue(drop.ItemId, out var itemDefinition))
+                {
+                    MapLogger.Warning($"[iRO MAP DEBUG] Quest drop references unregistered itemId={drop.ItemId}; skipping client notification.");
+                    continue;
+                }
+
+                var inventorySession = new CharacterInventorySession(_accountId, _charId, _inventoryPersistence);
+                var addResult = await inventorySession.AddItemAsync(itemDefinition, (uint)drop.Count, cancellationToken);
+                if (!addResult.Success || addResult.Item is not { } addedRow || _inventory is not { } inventory)
+                {
+                    MapLogger.Warning($"[iRO MAP DEBUG] Inventory persistence failed for itemId={drop.ItemId}; not notifying client.");
+                    continue;
+                }
+
+                _inventory = addResult.IsNewRow
+                    ? inventory.WithNewItem(addResult.DurableId, addedRow.ItemId, addedRow.Amount, addedRow.Equip, addedRow.Identified, addedRow.Refine, addedRow.Favorite, addedRow.Bound)
+                    : inventory.WithUpdatedItem(addResult.DurableId, addedRow.ItemId, addedRow.Amount, addedRow.Equip, addedRow.Identified, addedRow.Refine, addedRow.Favorite, addedRow.Bound);
+                _equipment = CharacterEquipmentSnapshot.FromInventory(_inventory);
+
+                var slotIndex = _inventory.Items.Single(i => i.DurableId == addResult.DurableId).SlotIndex;
+                var clientIndex = (ushort)(slotIndex + 2);
+                var pickupPacket = IroMonsterCombatPackets.BuildItemPickupAck(clientIndex, (ushort)drop.Count, itemDefinition.Id, itemType: 3);
+                MapLogger.Info($"[iRO MAP DEBUG] Sending 0x0B41 itemId={itemDefinition.Id} count={drop.Count} clientIndex={clientIndex}");
+                await WriteAsync(pickupPacket, cancellationToken);
+            }
+        }
+        catch
+        {
+            if (lethalCommitLife is { } leaked) _lethalDeathArbiter.CompleteInFlight(leaked, markProjected: false);
+            throw;
+        }
+    }
+
+    // The shared allocate-then-first-dispatch implementation (§1 of the substep-9 plan): allocates a
+    // fresh PendingMonsterDamageAttempt with the next monotonic AttackSequence, under ONE _attackGate
+    // critical section (re-verify ReferenceEquals(_repeatAttack, originRepeatAttackState), verify
+    // _pendingDamageAttempt is null, allocate sequence, store the attempt with every field, call
+    // BeginInFlight(life) inside the SAME critical section), then performs the FIRST dispatch inline,
+    // synchronously, as part of this same call - creating the record does not itself schedule a send;
+    // the first send happens immediately, as the last action of the very turn that allocates it.
+    // NextRetryAt is set at allocation time but governs only a POSSIBLE later retry, never this first
+    // call. Both the production fresh-attempt path (PerformDueRepeatAttackCoreAsync) and the isolated
+    // test seam (AllocatePendingDamageAttemptForTestAsync) funnel through this ONE implementation.
+    private async Task AllocateAndDispatchFreshDamageAttemptAsync(
+        RepeatAttackState originRepeatAttackState, WorldMonsterLifeReference life, uint damage, bool isMiss, bool acquireEngagement,
+        WorldMonsterActorView targetSnapshot, double attackDelayMs, Func<uint, CharacterQuestStatus> questStatusSnapshot, CancellationToken cancellationToken)
+    {
+        long sequence;
+        await _attackGate.WaitAsync(cancellationToken);
+        try
+        {
+            if (!ReferenceEquals(_repeatAttack, originRepeatAttackState)) return;
+            if (_pendingDamageAttempt is not null) return; // Benign race - structurally should not happen on the production path.
+
+            // Claim this turn NOW, optimistically, using the same attackDelayMs the pending attempt
+            // itself stores - this is what makes PerformDueRepeatAttackCoreAsync's own top-of-method
+            // "already executed" re-check (expected.NextAttackAt > now) correctly reject a second,
+            // independently-scheduled caller reaching this same due turn (HandleIroAttackRequestAsync's
+            // own inline due-now execution racing RunRepeatAttackLoopAsync's background wake) even if
+            // the dispatch that follows fails fatally before ever reaching HandleDamageResultAsync's
+            // own later reschedule. A subsequent successful non-lethal result reschedules again with
+            // the authoritative post-hit delay (a harmless overwrite, same value in practice since
+            // attackDelayMs is captured once here and reused verbatim); a lethal result clears the
+            // repeat state outright, making this claim moot either way.
+            originRepeatAttackState.NextAttackAt = _timeProvider.GetUtcNow().AddMilliseconds(attackDelayMs);
+
+            sequence = _nextAttackSequence++;
+            _pendingDamageAttempt = new PendingMonsterDamageAttempt
+            {
+                Life = life,
+                AttackSequence = sequence,
+                Damage = damage,
+                IsMiss = isMiss,
+                AcquireEngagement = acquireEngagement,
+                OriginRepeatAttackState = originRepeatAttackState,
+                TargetSnapshot = targetSnapshot,
+                AttackDelayMs = attackDelayMs,
+                QuestStatusSnapshot = questStatusSnapshot,
+                NextRetryAt = _timeProvider.GetUtcNow().AddMilliseconds(attackDelayMs),
+            };
+            // BeginInFlight is synchronous/in-memory and must be part of the SAME critical section
+            // that publishes the pending attempt - not called after releasing _attackGate. Without
+            // this, a warp/disconnect could observe the published _pendingDamageAttempt, clear it,
+            // and call CompleteInFlight BEFORE this BeginInFlight below ever runs, leaving an
+            // orphaned arbiter registration that nothing will ever complete.
+            _lethalDeathArbiter.BeginInFlight(life);
+        }
+        finally { _attackGate.Release(); }
+        try { _pendingRetrySignal.Release(); } catch (SemaphoreFullException) { }
+
+        await DispatchPendingDamageAttemptAsync(life, sequence, damage, isMiss, acquireEngagement, originRepeatAttackState, targetSnapshot, attackDelayMs, questStatusSnapshot, cancellationToken);
+    }
+
+    // Isolated-test-only helper (never called from any production code path): thin wrapper around
+    // AllocateAndDispatchFreshDamageAttemptAsync that synthesizes a RepeatAttackState/TargetSnapshot/
+    // QuestStatusSnapshot the test itself has no direct way to construct (RepeatAttackState is a
+    // private nested type; WorldMonsterActorView requires a resolvable MobId). Resolves the target
+    // via _monsterProjections for the given life's ActorId when available (matching production); a
+    // test that has not seeded a projection entry gets a synthesized RepeatAttackState only - callers
+    // exercising TargetSnapshot-dependent behavior (EXP/DamageMotion projection, Scenario 18) must
+    // seed the projection first via WorldMonsterProjectionTestHelper, exactly like production would
+    // have resolved a real target before ever reaching allocation.
     //
     // Enforces the "at most one unresolved logical damage attempt per session" invariant (§16) by
-    // construction: throws if a pending attempt is already outstanding, rather than silently
-    // overwriting it - a caller that genuinely needs to model "the old attempt was retired and a
-    // new one allocated" (Scenario 15's adversarial retire-then-reallocate race) must retire the
-    // old one first, via RetirePendingDamageAttemptForTestAsync below.
+    // construction (delegated to AllocateAndDispatchFreshDamageAttemptAsync's own guard): a caller
+    // that genuinely needs to model "the old attempt was retired and a new one allocated" (Scenario
+    // 15's adversarial retire-then-reallocate race) must retire the old one first, via
+    // RetirePendingDamageAttemptForTestAsync below.
     internal async Task AllocatePendingDamageAttemptForTestAsync(WorldMonsterLifeReference life, uint damage, bool acquireEngagement, CancellationToken cancellationToken)
     {
+        WorldMonsterActorView targetSnapshot = default;
+        if (_monsterProjections is not null && _monsterProjections.TryGet(_mapName, out var projection) && projection.TryGetInstance(life.ActorId, out var instance))
+            targetSnapshot = new WorldMonsterActorView(instance);
+
+        var attackDelayMs = AttackDelayCalculator.AttackDelayMs(_statusEffects.Recalculate(_gameplayState!.State), null);
+        Func<uint, CharacterQuestStatus> questStatusSnapshot = _ => CharacterQuestStatus.Absent;
+
+        if (_repeatAttack is { } existing)
+        {
+            // A real RepeatAttackState already exists (e.g. a prior attack request installed it) -
+            // funnel through the SAME shared production implementation the live path uses, so this
+            // test seam exercises identical allocation/gate/ReferenceEquals semantics.
+            await AllocateAndDispatchFreshDamageAttemptAsync(existing, life, damage, isMiss: false, acquireEngagement, targetSnapshot, attackDelayMs, questStatusSnapshot, cancellationToken);
+            return;
+        }
+
+        // No RepeatAttackState exists at all - this seam models "a pending attempt exists in total
+        // isolation from _repeatAttack" (the substep-8 contract this helper has always provided;
+        // never installs a synthetic RepeatAttackState into the live field, since production never
+        // reaches this allocation path without one already set by HandleIroAttackRequestAsync).
+        // OriginRepeatAttackState still needs SOME non-null RepeatAttackState instance to satisfy the
+        // record's own `required` field - a throwaway, deliberately never-installed one is used
+        // purely as an inert placeholder; every ReferenceEquals(_repeatAttack, originRepeatAttackState)
+        // check elsewhere therefore correctly evaluates false (since _repeatAttack stays null) and
+        // this placeholder is never treated as "the current repeat-attack target."
+        var placeholderOrigin = new RepeatAttackState(life.ActorId);
         long sequence;
         await _attackGate.WaitAsync(cancellationToken);
         try
@@ -2360,21 +2670,20 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
                 Life = life,
                 AttackSequence = sequence,
                 Damage = damage,
+                IsMiss = false,
                 AcquireEngagement = acquireEngagement,
-                NextRetryAt = _timeProvider.GetUtcNow().AddMilliseconds(AttackDelayCalculator.AttackDelayMs(_statusEffects.Recalculate(_gameplayState!.State), null)),
+                OriginRepeatAttackState = placeholderOrigin,
+                TargetSnapshot = targetSnapshot,
+                AttackDelayMs = attackDelayMs,
+                QuestStatusSnapshot = questStatusSnapshot,
+                NextRetryAt = _timeProvider.GetUtcNow().AddMilliseconds(attackDelayMs),
             };
-            // Item 3 of the second substep-8 correction round: BeginInFlight is synchronous/in-memory
-            // and must be part of the SAME critical section that publishes the pending attempt - not
-            // called after releasing _attackGate. Without this, a warp/disconnect could observe the
-            // published _pendingDamageAttempt, clear it, and call CompleteInFlight BEFORE this
-            // BeginInFlight below ever runs, leaving an orphaned arbiter registration that nothing
-            // will ever complete (CompleteInFlight already ran and found no registration to close).
             _lethalDeathArbiter.BeginInFlight(life);
         }
         finally { _attackGate.Release(); }
         try { _pendingRetrySignal.Release(); } catch (SemaphoreFullException) { }
 
-        await DispatchPendingDamageAttemptAsync(life, sequence, damage, acquireEngagement, cancellationToken);
+        await DispatchPendingDamageAttemptAsync(life, sequence, damage, isMiss: false, acquireEngagement, placeholderOrigin, targetSnapshot, attackDelayMs, questStatusSnapshot, cancellationToken);
     }
 
     // Item 2 of the second substep-8 correction round: an isolated-test-only seam that performs the
@@ -2616,424 +2925,21 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
             return;
         }
 
-        // Item 2 of the Step 6 correctness-hardening pass: calculate the candidate hit WITHOUT
-        // mutating combatState (MonsterCombatCoordinator.CalculateAttack -> MonsterCombatStateStore
-        // .Peek, both read-only) - the local HP mutation must not happen before a required World
-        // confirmation lands (see CommitAttack/CommitAttackAsync's own doc comment for the CAS-style
-        // commit this candidate feeds into). `WouldAcquireEngagement` decides whether this specific
-        // hit needs NotifyMonsterAttackedAsync's confirmation before commit at all - a passive
-        // (non-CanAttack) mob never goes through that RPC, so it is never gated by it either
-        // (engagement authority and damage legality are not the same concept - a monster that never
-        // acquires an engagement target must remain attackable).
+        // Substep 9 cutover (§1): calculate the candidate hit against the target's static
+        // definition only - no local HP/lethality guess, no store lookup. A live feed-Alive target
+        // is attackable by definition, so there is no Attackable early-return any more.
         var effectiveStats = _statusEffects.Recalculate(_gameplayState.State);
-        var candidate = _combat.CalculateAttack(target, life, effectiveStats, _gameplayState.State.BaseLevel, equippedWeapon);
-        if (!candidate.Attackable) { ClearRepeatAttackIfCurrent(expected); return; }
+        var candidate = _combat.CalculateAttack(target, effectiveStats, _gameplayState.State.BaseLevel, equippedWeapon);
+        var acquireEngagement = target.StaticMob.Mode.HasFlag(MobMode.CanAttack);
+        var attackDelayMs = AttackDelayCalculator.AttackDelayMs(effectiveStats, equippedWeapon?.WeaponType);
 
-        MonsterAttackOutcome outcome;
-        if (!candidate.WouldBeLethal && candidate.WouldAcquireEngagement && _presenceId is { } attackerPresenceId)
-        {
-            // Requirement 10: for a hit that would acquire/refresh engagement, tell World to
-            // (re)acquire the target BEFORE committing any local HP mutation - World owns
-            // authoritative target/engagement state, so a World-rejected hit must leave no invisible
-            // local HP damage behind (item 2's own core fix). This command is idempotent
-            // (re-acquiring an already-current target is a harmless no-op, AlreadyCurrentTarget), so
-            // ordinary at-least-once delivery is safe. combatState is untouched at this point - there
-            // is nothing to roll back on rejection/failure.
-            //
-            // Item 2 of the Step 6 final correctness pass: a TRANSIENT transport/RPC failure calling
-            // this RPC must NOT fault RunRepeatAttackLoopAsync's own background task (killing the
-            // scheduler for every future attack this session ever makes) - it is caught here, logged,
-            // and this attempt is abandoned with the schedule re-armed for a normal later attempt
-            // (never a tight retry loop). Local HP remains completely untouched either way.
-            WorldMonsterAttackedResult attackedResult;
-            try
-            {
-                attackedResult = await _distributedWorld.NotifyMonsterAttackedAsync(
-                    new WorldMonsterAttackedCommand(life, CharacterId, attackerPresenceId), cancellationToken);
-            }
-            catch (Exception ex) when (IsTransientWorldRpcFailure(ex, cancellationToken))
-            {
-                MapLogger.Warning($"[iRO MAP DEBUG] Transient NotifyMonsterAttackedAsync failure mobActorId={target.ActorId} targetCharacterId={CharacterId} - no local HP mutation, retrying on the ordinary attack cadence: {ex.Message}");
-                await RearmAfterTransientFailureAsync(expected, effectiveStats, equippedWeapon, cancellationToken);
-                return;
-            }
-            MapLogger.Info($"[iRO MAP DEBUG] Mob engagement NotifyMonsterAttackedAsync mobActorId={target.ActorId} targetCharacterId={CharacterId} result={attackedResult.Status}");
+        // Resolve the quest-status snapshot BEFORE anything below runs (§4b) - must succeed before
+        // _pendingDamageAttempt is published, BeginInFlight runs, or ApplyMonsterDamageAsync is
+        // called. If this throws, propagate exactly as today's pre-checks: no pending attempt
+        // exists, World is never called, nothing needs to be cleaned up.
+        var questStatusSnapshot = await ResolveActiveQuestStatesAsync(target.MobId, cancellationToken);
 
-            if (attackedResult.Status is not (WorldMonsterAttackedStatus.Acquired or WorldMonsterAttackedStatus.AlreadyCurrentTarget))
-            {
-                // Only StaleLifeReference proves the MONSTER LIFE itself is stale - discard that
-                // life's combat-state key so a later stale read can never resurface it.
-                // StaleAttackerPresence/AttackerNotEngageable/MonsterNotAttackable describe the
-                // ATTACKER or the mob's own mode, never the monster life's own validity - the local
-                // combat-state key for a perfectly valid monster life must not be destroyed merely
-                // because THIS attacker's presence/engagement was rejected (a different, still-valid
-                // attacker could legitimately hit the same life next). No local HP mutation has
-                // happened at all yet, so there is nothing to reconcile beyond clearing this
-                // session's own repeat-attack target.
-                MapLogger.Warning($"[iRO MAP DEBUG] NotifyMonsterAttackedAsync rejected {attackedResult.Status} mobActorId={target.ActorId} - no local HP mutation, no wire-visible hit projected.");
-                if (attackedResult.Status == WorldMonsterAttackedStatus.StaleLifeReference)
-                    _combatState.Remove(MonsterCombatKey.From(life));
-                ClearRepeatAttackIfCurrent(expected);
-                return;
-            }
-        }
-
-        // Item 1 of the Step 6 final correctness pass: for a candidate that WOULD be lethal, World's
-        // death confirmation must be obtained BEFORE any local combat-state mutation happens at all -
-        // not merely before the wire/reward projection (the earlier "commit locally, then confirm"
-        // shape left a real gap: if TryMarkMonsterDeadAsync never reached World, local HP was already
-        // 0 while World still considered the life Alive, and a same-life resync/feed poll
-        // deliberately PRESERVES local combat HP - so the monster could remain World-Alive but
-        // permanently MapServer-dead forever). The REQUIRED shape is: CalculateAttack (already done,
-        // read-only, above) -> resolve quest states (read-only, item 2's own correction - see
-        // MonsterCombatCoordinator.CommitConfirmedDeath's own doc comment for why this must happen
-        // BEFORE the death confirmation, never after) -> TryMarkMonsterDeadAsync -> ONLY MarkedDead ->
-        // CommitConfirmedDeath (atomically finalizes local HP=0 using whatever HP is ACTUALLY present
-        // at that moment, never the earlier candidate's own pre-image) -> wire projection.
-        if (candidate.WouldBeLethal)
-        {
-            // Item 2's own correction: resolve quest state BEFORE calling TryMarkMonsterDeadAsync,
-            // while this attack is still entirely read-only/uncommitted - a fallible CharServer
-            // lookup can safely throw here with zero cleanup required (nothing has been mutated or
-            // confirmed yet). Doing this AFTER World already confirmed the death would risk a
-            // fallible RPC throwing while local HP is already 0 and World already Dead, with the
-            // successful lethal wire sequence never projected and the repeat-loop's own catch
-            // potentially misclassifying the failure as a "World transient failure" it is not.
-            var attackerQuestStatus = await ResolveActiveQuestStatesAsync(cancellationToken);
-
-            // Item 1: register this session's own in-flight lethal projection for the EXACT life
-            // BEFORE starting TryMarkMonsterDeadAsync - see LethalDeathProjectionArbiter's own doc
-            // comment for the full race this closes (World's independent Died feed reaching this
-            // SAME session's NotifyMonsterDiedAsync, via MapTcpServer's separate monster-tick loop,
-            // concurrently with this method still completing its own wire/reward projection).
-            _lethalDeathArbiter.BeginInFlight(life);
-
-            // Item 2 of the Step 6 final correctness pass: a TRANSIENT transport/RPC failure here
-            // must NOT fault RunRepeatAttackLoopAsync's own background task - caught, logged, and
-            // this attempt is abandoned with the schedule re-armed for a normal later attempt. Local
-            // HP is STILL completely untouched at this point (no combat-state mutation has happened
-            // yet for a lethal candidate - see this block's own doc comment above), so there is
-            // nothing to roll back.
-            WorldMonsterDeathResult deathResult;
-            try
-            {
-                deathResult = await _distributedWorld.TryMarkMonsterDeadAsync(life, cancellationToken);
-            }
-            catch (Exception ex) when (IsTransientWorldRpcFailure(ex, cancellationToken))
-            {
-                // Item 1's own requirement E: "the request actually reached World but the response
-                // was lost" case - if an authoritative Died for this EXACT life was already observed
-                // while this RPC's own result was ambiguous, World's Died feed already reached this
-                // session (via NotifyMonsterDiedAsync's own deferral) and the deferred authoritative
-                // vanish/cleanup must now be performed exactly once, and the repeat target must STOP
-                // (never keep attacking an already-dead life) - this is intentionally fail-closed and
-                // may conservatively lose THIS attacker's own reward in that ambiguous case; no
-                // operation-id/exactly-once protocol is introduced here. Otherwise (no Died observed
-                // yet), local HP remains untouched and the ordinary attack cadence re-arms normally.
-                var diedObservedWhilePending = _lethalDeathArbiter.CompleteInFlight(life, markProjected: false);
-                if (diedObservedWhilePending)
-                {
-                    MapLogger.Warning($"[iRO MAP DEBUG] Transient TryMarkMonsterDeadAsync failure mobActorId={expected.TargetActorId}, but an authoritative Died feed for this exact life was already observed while pending - performing the deferred authoritative vanish now and stopping this repeat target.");
-                    await PerformDeferredAuthoritativeDiedAsync(expected.TargetActorId, cancellationToken);
-                    ClearRepeatAttackIfCurrent(expected);
-                    return;
-                }
-                MapLogger.Warning($"[iRO MAP DEBUG] Transient TryMarkMonsterDeadAsync failure mobActorId={expected.TargetActorId} - no local HP mutation, no lethal wire/reward projection, retrying on the ordinary attack cadence: {ex.Message}");
-                await RearmAfterTransientFailureAsync(expected, effectiveStats, equippedWeapon, cancellationToken);
-                return;
-            }
-
-            if (deathResult.Status != WorldMonsterDeathStatus.MarkedDead)
-            {
-                // StaleLifeReference (a resync/incarnation change raced this attack) or AlreadyDead
-                // (treated conservatively - there is no operation-identity mechanism in this project
-                // proving a given AlreadyDead result is merely replaying OUR OWN earlier confirmed
-                // death rather than racing a different attacker's kill, and inventing one is
-                // explicitly out of scope for this pass): local combat state was NEVER mutated for
-                // this attempt, so there is nothing to roll back - no EXP/quest drops, no 0x08C8/
-                // 0x0977/death-vanish. Only StaleLifeReference proves the monster life itself is
-                // stale; discard that life's combat-state key so a later stale read can never
-                // resurface it (AlreadyDead does NOT warrant discarding a key that may still be
-                // legitimately current for a different attacker's own already-confirmed kill).
-                //
-                // Item 1's own requirement F: release the in-flight state, and if a deferred matching
-                // Died was already observed while this call was pending, process that authoritative
-                // vanish exactly once now (this life IS genuinely Dead from World's own perspective
-                // either way - AlreadyDead/StaleLifeReference both mean SOME death already happened,
-                // just not one this call itself gets to claim ownership/reward for).
-                MapLogger.Warning($"[iRO MAP DEBUG] TryMarkMonsterDeadAsync did not confirm a fresh death ({deathResult.Status}) mobActorId={expected.TargetActorId} - no local HP mutation, no damage/HP/death wire projection, no quest/EXP.");
-                if (deathResult.Status == WorldMonsterDeathStatus.StaleLifeReference)
-                    _combatState.Remove(MonsterCombatKey.From(life));
-                if (_lethalDeathArbiter.CompleteInFlight(life, markProjected: false))
-                    await PerformDeferredAuthoritativeDiedAsync(expected.TargetActorId, cancellationToken);
-                ClearRepeatAttackIfCurrent(expected);
-                return;
-            }
-
-            // Item 1's own final race closure: the arbiter registration is DELIBERATELY kept alive
-            // past MarkedDead - it is NOT completed here. Completing it immediately after MarkedDead
-            // (the earlier shape) left a real race window: World's Died feed reaching this SAME
-            // session's NotifyMonsterDiedAsync between that early completion and this method's own
-            // death-vanish send below would see NO in-flight registration, send its own 0x0080
-            // immediately (clearing visibility before this method's own 0x0977 hp=0 could even check
-            // it), and this method would then send a SECOND 0x0080 - corrupting the packet sequence.
-            // The registration now stays open through CommitConfirmedDeath AND the full wire
-            // projection tail below, and is completed by _lethalCommitLife's own try/finally-guarded
-            // cleanup (see that field's own doc comment) only once this session's own death vanish has
-            // actually been sent (or, per requirement F below, immediately here if CommitConfirmedDeath
-            // itself does not actually confirm a local death - in that case this session never reaches
-            // the vanish send at all, so there is nothing further to keep the registration open for).
-            if (DebugBeforeCommitConfirmedDeathAsync is { } hook) await hook(); // Test-only seam - see that field's own doc comment. Always null in production.
-            outcome = _combat.CommitConfirmedDeath(candidate, life, target, attackerQuestStatus);
-            if (outcome.Accepted && outcome.KilledByThisHit)
-            {
-                // This session WILL send the attacker-owned death vanish further down in this same
-                // method (the shared `if (outcome.KilledByThisHit)` tail) - keep the registration open
-                // until that actually happens. _lethalCommitLife is read-and-cleared exactly once,
-                // immediately after that vanish send succeeds (see that call site).
-                _lethalCommitLife = life;
-            }
-            else
-            {
-                // Item 1's own requirement F: CommitConfirmedDeath returned non-Applied for some
-                // unexpected local-state reason even though World already confirmed MarkedDead - this
-                // session does NOT own a successful local lethal projection and will NOT reach the
-                // vanish send below. Release the arbiter registration now; if a Died was deferred while
-                // pending, process that deferred authoritative vanish exactly once so it is never
-                // silently discarded - otherwise leave ordinary future Died feed delivery (this
-                // session no longer has an in-flight registration) able to remove the actor normally.
-                MapLogger.Warning($"[iRO MAP DEBUG] World confirmed MarkedDead but local CommitConfirmedDeath did not itself confirm a kill (unexpected local-state mismatch) mobActorId={expected.TargetActorId} - no local reward/wire projection from this call.");
-                if (_lethalDeathArbiter.CompleteInFlight(life, markProjected: false))
-                    await PerformDeferredAuthoritativeDiedAsync(expected.TargetActorId, cancellationToken);
-            }
-        }
-        else
-        {
-            // Commit the candidate now - either World just confirmed engagement above, or this hit
-            // never needed that confirmation (a passive mob). TryCommitDamage's own CAS check
-            // (against candidate.ExpectedCurrentHp) rejects a commit if a same-process concurrent
-            // hit already changed CurrentHp while the confirmation RPC above was in flight -
-            // Accepted=false in that case, exactly like StaleLife/AlreadyDead; this repeat-attack
-            // loop simply tries again on its own next scheduled attempt rather than retrying inline.
-            outcome = _combat.CommitAttack(candidate, life, target, _ => CharacterQuestStatus.Absent);
-        }
-        if (!outcome.Accepted)
-        {
-            ClearRepeatAttackIfCurrent(expected);
-            // _lethalCommitLife can only be non-null here if CommitConfirmedDeath itself set it while
-            // ALSO reporting outcome.Accepted=true (see that call site) - Accepted=false at this point
-            // therefore means it was never set on this call path, so there is nothing to release. This
-            // branch is reachable from the non-lethal CommitAttack path too, where the field is always
-            // still null from a previous call (already cleared - see the vanish-send call site below).
-            return;
-        }
-
-        // Step 6 final race closure, item 1: from this point through the death-vanish send below, a
-        // try/finally guarantees _lethalCommitLife's own arbiter registration (if this call is the one
-        // that owns a confirmed lethal projection - see the CommitConfirmedDeath call site above) is
-        // released exactly once even if an unexpected exception escapes anywhere in this span (a
-        // WriteAsync failure, EXP persistence, quest-drop persistence). The `finally` here never
-        // awaits anything itself (CompleteInFlight is synchronous) and never suppresses the original
-        // exception - it only ensures the registration cannot leak open forever.
-        try
-        {
-
-        // Reschedule (or clear, on death) the repeat-attack runtime state BEFORE any wire
-        // notification for this hit - matching this project's validate -> persist -> update
-        // runtime state -> notify ordering (AGENTS.md). This also closes a real race: a client
-        // that reads the damage packet and immediately sends a NEW attack request
-        // (HandleIroAttackRequestAsync, which inherits _repeatAttack?.NextAttackAt when a repeat
-        // is already active) must observe the schedule this hit just computed, never the stale
-        // pre-hit value - which it would if the reschedule happened only after WriteAsync below.
-        if (outcome.KilledByThisHit)
-        {
-            // Pinned unit_attack_timer_sub only re-arms the timer "if (ud->state.attack_continue
-            // && !status_isdead(*src))" (unit.cpp:3333) - a dead target never reschedules.
-            ClearRepeatAttackIfCurrent(expected);
-        }
-        else
-        {
-            var weaponTypeForDelay = equippedWeapon?.WeaponType;
-            var delayMs = AttackDelayCalculator.AttackDelayMs(effectiveStats, weaponTypeForDelay);
-            await _attackGate.WaitAsync(cancellationToken);
-            try
-            {
-                if (ReferenceEquals(_repeatAttack, expected)) expected.NextAttackAt = _timeProvider.GetUtcNow().AddMilliseconds(delayMs);
-            }
-            finally { _attackGate.Release(); }
-        }
-
-        var tick = unchecked((uint)Environment.TickCount);
-        var damageDealt = outcome.HpBefore - outcome.HpAfter;
-        MapLogger.Info(
-            $"[iRO MAP DEBUG] Attack accepted attackerAccountId={_accountId} targetActorId={expected.TargetActorId} damage={damageDealt} hpBefore={outcome.HpBefore} hpAfter={outcome.HpAfter} killed={outcome.KilledByThisHit} range={effectiveRangeForRangeCheck} clientDistance={ClientDistance.DistanceClient(dxForRangeCheck, dyForRangeCheck)}");
-
-        // dstSpeed is the TARGET's own dmotion (clif_damage's ddelay) - for a mob target that is
-        // MobDefinition.DamageMotion directly (see that field's own doc comment for the pinned
-        // trace); srcSpeed remains the existing capture-verified player-attacker value (460) -
-        // deriving the player's own real amotion is a separate, larger, weapon-speed-dependent
-        // pinned formula (status_base_amotion) out of this task's scope, not touched here.
-        var damagePacket = IroMonsterCombatPackets.BuildNotifyAct3(
-            _accountId,
-            expected.TargetActorId,
-            tick,
-            srcSpeed: 460,
-            dstSpeed: (uint)target.StaticMob.DamageMotion,
-            damage: damageDealt,
-            div: 1,
-            actionType: 0);
-        await WriteAsync(damagePacket, cancellationToken);
-
-        // ZC_HP_INFO (0x0977) immediately follows the damage packet, matching pinned
-        // status_damage -> mob_damage's own ordering (status.cpp:1629-1657): HP is already
-        // decremented and mob_damage (which unconditionally sends the HP bar, gated only on
-        // battle_config.monster_hp_bars_info/MF_HIDEMOBHPBAR, both left at their pinned defaults
-        // here - no such config exists in this codebase yet) runs BEFORE the death check/vanish
-        // packet - see PacketConstants.ZcHpInfo's own doc comment for the exact trace. This is why
-        // the killing blow's own HP-info packet correctly shows hp=0, sent BEFORE the vanish
-        // packet below, never after (and, per item 1 above, only ever reached once World has already
-        // confirmed the death for a lethal hit). Visibility is scoped to exactly this session,
-        // mirroring pinned mob_damage's own dmglog+AREA_SIZE loop: the attacking session is
-        // definitionally in range (it just landed a hit) and already has the target marked visible
-        // via the existing _visibleActorIds set (the same discovery mechanism
-        // SendVisibleMonsterActorsAsync uses) - IsActorVisible is a pure query here, this call must
-        // never itself mark the actor visible (that would be wrong for an attacker who somehow has
-        // no discovery packet yet, which should not happen in the supported single-attacker-session
-        // combat path today).
-        if (_visibleActorIds.IsActorVisible(expected.TargetActorId))
-        {
-            var hpInfoPacket = IroMonsterCombatPackets.BuildHpInfo(expected.TargetActorId, outcome.HpAfter, target.StaticMob.MaxHp);
-            await WriteAsync(hpInfoPacket, cancellationToken);
-        }
-
-        if (outcome.KilledByThisHit)
-        {
-            // Pinned mob_dead awards generated monster EXP before clearing the dead unit.
-            // This currently-supported session is the authoritative single recipient: the
-            // accepted attack was made by this authenticated account, with no party/contribution
-            // policy invented. Zero-valued generated EXP produces no persistence and no packets.
-            var (ratedBaseExp, ratedJobExp) = ExperienceRewardService.ResolveReward(
-                _rates,
-                target.StaticMob.BaseExp,
-                target.StaticMob.JobExp,
-                ExperienceSource.Monster);
-            var progression = await new CharacterProgressionService(_gameplayState).AddExperienceAsync(
-                ratedBaseExp,
-                ratedJobExp,
-                cancellationToken);
-            if (progression is null)
-            {
-                MapLogger.Warning($"[iRO MAP DEBUG] Monster EXP persistence failed actorId={expected.TargetActorId}; no progression packets sent.");
-            }
-            else
-            {
-                foreach (var packet in IroCharacterProgressionPackets.Build(_accountId, progression.Value))
-                    await WriteAsync(packet, cancellationToken);
-            }
-
-            MapLogger.Info($"[iRO MAP DEBUG] Monster died actorId={expected.TargetActorId} mob={target.StaticMob.AegisName}");
-            // Item 1: routed through the same SendMonsterVanishAsync helper every other death-vanish
-            // send in this class uses, so this session's own _monsterVisibility metadata (not only
-            // the generic _visibleActorIds tracker) is cleaned up exactly once here too - never a
-            // second, inconsistent inline vanish-and-mark-not-visible sequence.
-            await SendMonsterVanishAsync(expected.TargetActorId, PacketConstants.ZcNotifyVanishReasonDied, cancellationToken);
-
-            // Step 6 final race closure, item 1: THIS session's own attacker-owned death vanish has
-            // now actually been sent - the arbiter registration (if this call owns a confirmed lethal
-            // projection - see _lethalCommitLife's own doc comment) is released HERE, immediately
-            // after, never before. Any Died feed for this exact life that arrived while pending is
-            // discarded without a second send: this vanish just performed the SAME authoritative
-            // cleanup a deferred Died would have performed, so there is nothing further to do with
-            // that flag - MapTcpServer.FanOutEntryAsync's own future Died dispatch for this life finds
-            // this session's visibility already cleared and sends nothing (see SendMonsterVanishAsync's
-            // own IsActorVisible-gated no-duplicate-send behavior).
-            if (_lethalCommitLife is { } committedLife)
-            {
-                _lethalCommitLife = null;
-                // Step 7 substep 6 (§14.2): markProjected: true - this session's own authoritative
-                // death vanish was JUST sent successfully (the WriteAsync above already completed),
-                // so a LATER duplicate Died for this exact life must be suppressed even after this
-                // in-flight registration is gone - see TryDeferDiedWhileInFlight's own "already
-                // projected" branch. Never called with true before the vanish write succeeds (see
-                // this call's position, strictly after SendMonsterVanishAsync above).
-                //
-                // The return value here is intentionally discarded, not ignored by oversight: it
-                // means ONLY "was an authoritative Died for this exact life observed WHILE this
-                // registration was in flight" - true or false, this session already just performed
-                // the equivalent authoritative death-vanish/cleanup itself (the SendMonsterVanishAsync
-                // call above), so there is nothing further this call site would ever need to DO with
-                // that signal either way; a `true` here does not mean a second vanish is owed.
-                _lethalDeathArbiter.CompleteInFlight(committedLife, markProjected: true);
-            }
-
-            foreach (var drop in outcome.QuestDrops)
-            {
-                if (!GeneratedItems.ById.TryGetValue(drop.ItemId, out var itemDefinition))
-                {
-                    MapLogger.Warning($"[iRO MAP DEBUG] Quest drop references unregistered itemId={drop.ItemId}; skipping client notification.");
-                    continue;
-                }
-
-                var inventorySession = new CharacterInventorySession(_accountId, _charId, _inventoryPersistence);
-                var addResult = await inventorySession.AddItemAsync(itemDefinition, (uint)drop.Count, cancellationToken);
-                if (!addResult.Success || addResult.Item is not { } addedRow || _inventory is not { } inventory)
-                {
-                    MapLogger.Warning($"[iRO MAP DEBUG] Inventory persistence failed for itemId={drop.ItemId}; not notifying client.");
-                    continue;
-                }
-
-                // Persistence succeeded - update the authoritative MapServer runtime snapshot with the
-                // CharServer-confirmed row BEFORE notifying the client (never the other way around: a
-                // client-visible 0x0B41 must never be sent while _inventory is left stale). IsNewRow
-                // decides slot assignment: a brand-new row gets the first free runtime slot (reusing
-                // a hole left by an earlier consume, mirroring pinned pc_additem); an existing stack's
-                // amount update preserves whatever slot its DurableId already occupies. _equipment is
-                // re-derived from the SAME updated snapshot for consistency, even though an ordinary
-                // Etc/Usable drop like Wood never changes the right-hand slot - there is exactly one
-                // place _equipment is derived from _inventory, never a second independently-maintained
-                // copy.
-                _inventory = addResult.IsNewRow
-                    ? inventory.WithNewItem(addResult.DurableId, addedRow.ItemId, addedRow.Amount, addedRow.Equip, addedRow.Identified, addedRow.Refine, addedRow.Favorite, addedRow.Bound)
-                    : inventory.WithUpdatedItem(addResult.DurableId, addedRow.ItemId, addedRow.Amount, addedRow.Equip, addedRow.Identified, addedRow.Refine, addedRow.Favorite, addedRow.Bound);
-                _equipment = CharacterEquipmentSnapshot.FromInventory(_inventory);
-
-                // client_index(): server-side runtime array position + 2 (clif.cpp:122-124). Read
-                // back from the snapshot by DurableId - the authoritative source of truth for this
-                // row's CURRENT runtime slot, never re-derived from anything CharServer returned.
-                var slotIndex = _inventory.Items.Single(i => i.DurableId == addResult.DurableId).SlotIndex;
-                var clientIndex = (ushort)(slotIndex + 2);
-                var pickupPacket = IroMonsterCombatPackets.BuildItemPickupAck(clientIndex, (ushort)drop.Count, itemDefinition.Id, itemType: 3);
-                MapLogger.Info($"[iRO MAP DEBUG] Sending 0x0B41 itemId={itemDefinition.Id} count={drop.Count} clientIndex={clientIndex}");
-                await WriteAsync(pickupPacket, cancellationToken);
-            }
-        }
-        }
-        finally
-        {
-            // Step 6 final race closure, item 1's own "make sure the in-flight registration cannot
-            // leak if an unexpected exception occurs after MarkedDead" requirement: if
-            // _lethalCommitLife is STILL non-null here, the death-vanish send above never actually
-            // completed (an exception escaped somewhere in this try block before reaching it) - the
-            // arbiter registration must still be released rather than left open forever. A deferred
-            // Died observed at that point is intentionally NOT specially replayed here: this session's
-            // own wire state is already in an unknown/partially-written condition once an exception
-            // has escaped this far, so the caller's own IOException/cancellation handling around this
-            // whole operation, and World's own next feed poll/resync, are what correctly recover
-            // client-visible state - inventing a second recovery path inside a `finally` (which must
-            // never await) would itself risk the exact kind of duplicate/out-of-order send this fix
-            // exists to prevent. CompleteInFlight is synchronous and never awaits, so this `finally`
-            // never holds anything across an await, and it never suppresses the original exception
-            // (no `catch` here - only cleanup).
-            if (_lethalCommitLife is { } leakedLife)
-            {
-                _lethalCommitLife = null;
-                // markProjected: false - the vanish write never successfully completed (an exception
-                // escaped before reaching it, or during it), so this session did NOT actually project
-                // its own authoritative death - never mark it projected merely because World had
-                // already confirmed the death.
-                _lethalDeathArbiter.CompleteInFlight(leakedLife, markProjected: false);
-            }
-        }
+        await AllocateAndDispatchFreshDamageAttemptAsync(expected, life, candidate.Damage, candidate.IsMiss, acquireEngagement, target, attackDelayMs, questStatusSnapshot, cancellationToken);
     }
 
     // Clears _repeatAttack only if it is STILL the exact instance this hit was computed for -
@@ -3068,25 +2974,6 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         ex is OperationCanceledException
             ? !sessionCancellation.IsCancellationRequested
             : WorldRpcFailureClassifier.IsTransientWorldRpcFailure(ex);
-
-    // Abandons the CURRENT attack attempt after a transient World RPC failure without leaving the
-    // repeat-attack scheduler permanently dead: local HP/repeat-attack TARGET are both left
-    // completely untouched (this is NOT ClearRepeatAttackIfCurrent - the session should keep trying
-    // to attack the SAME target), only NextAttackAt is pushed out by the ordinary attack-delay
-    // cadence (never an immediate/tight retry) so RunRepeatAttackLoopAsync's own sleep-until-
-    // NextAttackAt shape naturally re-attempts this exact hit later, exactly like an ordinary
-    // successful non-lethal hit's own reschedule - just without any of the reward/wire/HP side
-    // effects a genuine hit would have produced.
-    private async Task RearmAfterTransientFailureAsync(RepeatAttackState expected, EffectiveCharacterStats effectiveStats, WeaponItemDefinition? equippedWeapon, CancellationToken cancellationToken)
-    {
-        var delayMs = AttackDelayCalculator.AttackDelayMs(effectiveStats, equippedWeapon?.WeaponType);
-        await _attackGate.WaitAsync(cancellationToken);
-        try
-        {
-            if (ReferenceEquals(_repeatAttack, expected)) expected.NextAttackAt = _timeProvider.GetUtcNow().AddMilliseconds(delayMs);
-        }
-        finally { _attackGate.Release(); }
-    }
 
     // Narrow, synchronized read for the world monster-tick orchestrator (MapTcpServer) to pass
     // into MonsterEngagementDomain.Evaluate - see PlayerCombatSnapshot's own doc comment for why
@@ -4666,7 +4553,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
 
             // Step 7 substep 5: HP read-model conversion - CurrentHp/MaxHp now come exclusively from
             // the World-authoritative WorldMonsterInstance already in hand (instance.CurrentHp/
-            // MaxHp), never from the transitional local MonsterCombatStateStore. A live World-
+            // MaxHp), never from the transitional local MonsterAttackCadenceStore. A live World-
             // projected Alive monster is discoverable regardless of whether a local combat-state
             // entry exists for it - packet visibility is no longer gated on local HP-state existence.
             var actor = new WorldMonsterActorView(instance);
@@ -4754,7 +4641,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     // projecting that stale captured HP here could regress the client's already-correct HP
     // knowledge, or even re-show the full-HP -1/-1 sentinel for a monster that was just damaged.
     // World is the sole authority for CurrentHp/MaxHp (see WorldMonsterInstance's own doc comment) -
-    // this method no longer consults the transitional local MonsterCombatStateStore for HP at all.
+    // this method no longer consults the transitional local MonsterAttackCadenceStore for HP at all.
     //
     // Validated against `actor` before any packet is built: a caller that accidentally supplies
     // an instance for a DIFFERENT actor or a DIFFERENT life (stale IncarnationId spanning a
@@ -4976,7 +4863,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     //   - Still Alive in the fresh snapshot but now outside this session's own AOI -> vanish it.
     //   - Newly in-AOI/not previously visible -> discovered via the existing NotifyMonsterMovedAsync
     //     discovery path (movementKind: null), unchanged.
-    // Step 7 substep 5: HP is no longer sourced from the transitional local MonsterCombatStateStore
+    // Step 7 substep 5: HP is no longer sourced from the transitional local MonsterAttackCadenceStore
     // here - each instance's own CurrentHp/MaxHp (World-authoritative) is passed straight through to
     // NotifyMonsterMovedAsync. Epoch + the instance list are captured from ONE MonsterFeedProjection
     // lock acquisition (SnapshotForProjection, item 4) rather than as two separate property reads.

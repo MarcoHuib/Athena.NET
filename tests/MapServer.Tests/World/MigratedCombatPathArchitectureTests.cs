@@ -5,7 +5,7 @@ namespace Athena.Net.MapServer.Tests.World;
 // Step 5/6 architectural regression: the migrated live combat path (MonsterCombatCoordinator,
 // MonsterAttackCadenceExecutor - Step 6 cutover's replacement for the retired
 // MonsterEngagementTickProcessor, see that file's own doc comment) must route CurrentHp/
-// NextAttackAt exclusively through MonsterCombatStateStore - never MobInstance.ApplyDamage/
+// NextAttackAt exclusively through MonsterAttackCadenceStore - never MobInstance.ApplyDamage/
 // ScheduleNextAttack directly (those are superseded on this path, retained only for
 // MobInstanceTests' own direct unit coverage). This scans the actual production source files
 // rather than relying on developer discipline, so a future edit that reintroduces a direct
@@ -25,7 +25,7 @@ public sealed class MigratedCombatPathArchitectureTests
 
     // Matches a call of the form `<identifier>.ApplyDamage(` or `<identifier>.ScheduleNextAttack(`
     // where the receiver is NOT `combatState`/`combatEntry`-shaped (the store's own methods share
-    // these exact names by design - MonsterCombatStateStore.ApplyDamage/ScheduleNextAttack are the
+    // these exact names by design - MonsterAttackCadenceStore.ApplyDamage/ScheduleNextAttack are the
     // correct, intended call sites this test must NOT flag). Only a receiver that could plausibly
     // be a MobInstance (e.g. `target`, `mob`, `instance`) reaching these method names is a
     // violation - this project's own convention consistently uses `combatState` as the store
@@ -49,7 +49,7 @@ public sealed class MigratedCombatPathArchitectureTests
                 var line = source.Split('\n')[lineNumber - 1].Trim();
                 Assert.Fail(
                     $"{relativePath}:{lineNumber} calls a superseded MobInstance combat method directly: '{line}'. " +
-                    "The migrated combat path must route CurrentHp/NextAttackAt through MonsterCombatStateStore " +
+                    "The migrated combat path must route CurrentHp/NextAttackAt through MonsterAttackCadenceStore " +
                     "(combatState.ApplyDamage/ScheduleNextAttack), never MobInstance.ApplyDamage/ScheduleNextAttack.");
             }
         }

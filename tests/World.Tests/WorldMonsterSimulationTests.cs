@@ -252,60 +252,14 @@ public sealed class WorldMonsterSimulationTests : IAsyncLifetime
         Assert.Equal(WorldMonsterAttackedStatus.StaleAttackerPresence, staleAttack.Status);
     }
 
-    [Fact]
-    public async Task TryMarkMonsterDead_StaleSimulationEpoch_IsRejected_NeverMutatesCurrentMonster()
-    {
-        var grain = Partition("world-rest");
-        var mapId = "izlude";
-        var load = await grain.LoadMonsterSpawnsAsync(SingleMonsterBatch(mapId));
-        var bootstrap = await grain.PollMonsterFeedAsync(cursor: null, mapId);
-        var actorId = bootstrap.Snapshot!.Single().ActorId;
-
-        var staleReference = new WorldMonsterLifeReference(mapId, new WorldSimulationEpoch(Guid.NewGuid()), actorId, WorldMonsterIncarnationId.First);
-        var result = await grain.TryMarkMonsterDeadAsync(staleReference);
-        Assert.Equal(WorldMonsterDeathStatus.StaleLifeReference, result.Status);
-
-        var afterAttempt = await grain.PollMonsterFeedAsync(cursor: null, mapId);
-        Assert.Equal(WorldMonsterLifecycleState.Alive, afterAttempt.Snapshot!.Single().Lifecycle);
-    }
-
-    [Fact]
-    public async Task TryMarkMonsterDead_StaleIncarnationId_IsRejected_NeverMutatesCurrentMonster()
-    {
-        var grain = Partition("world-rest");
-        var mapId = "izlude";
-        var load = await grain.LoadMonsterSpawnsAsync(SingleMonsterBatch(mapId));
-        var bootstrap = await grain.PollMonsterFeedAsync(cursor: null, mapId);
-        var actorId = bootstrap.Snapshot!.Single().ActorId;
-
-        var staleIncarnation = WorldMonsterIncarnationId.First.Next(); // Not the current (First) incarnation.
-        var staleReference = new WorldMonsterLifeReference(mapId, load.SimulationEpoch, actorId, staleIncarnation);
-        var result = await grain.TryMarkMonsterDeadAsync(staleReference);
-        Assert.Equal(WorldMonsterDeathStatus.StaleLifeReference, result.Status);
-
-        var afterAttempt = await grain.PollMonsterFeedAsync(cursor: null, mapId);
-        Assert.Equal(WorldMonsterLifecycleState.Alive, afterAttempt.Snapshot!.Single().Lifecycle);
-    }
-
-    [Fact]
-    public async Task TryMarkMonsterDead_ValidLifeReference_TransitionsToDeadAndFeedsDiedEntry()
-    {
-        var grain = Partition("world-rest");
-        var mapId = "izlude";
-        var load = await grain.LoadMonsterSpawnsAsync(SingleMonsterBatch(mapId));
-        var bootstrap = await grain.PollMonsterFeedAsync(cursor: null, mapId);
-        var actorId = bootstrap.Snapshot!.Single().ActorId;
-        var life = new WorldMonsterLifeReference(mapId, load.SimulationEpoch, actorId, WorldMonsterIncarnationId.First);
-
-        var result = await grain.TryMarkMonsterDeadAsync(life);
-        Assert.Equal(WorldMonsterDeathStatus.MarkedDead, result.Status);
-
-        var again = await grain.TryMarkMonsterDeadAsync(life);
-        Assert.Equal(WorldMonsterDeathStatus.AlreadyDead, again.Status);
-
-        var page = await grain.PollMonsterFeedAsync(new WorldMonsterFeedCursor(load.SimulationEpoch, bootstrap.AsOfSequence), mapId);
-        Assert.Contains(page.Entries!, entry => entry.Kind == WorldMonsterFeedEntryKind.Died && entry.ActorId == actorId);
-    }
+    // Step 7 substep 9: the temporary TryMarkMonsterDeadAsync RPC and its dedicated coverage above
+    // (stale-epoch rejection, stale-incarnation rejection, lethal transition + repeat-call
+    // AlreadyDead, Died feed entry) were removed - equivalent coverage already exists via the real
+    // ApplyMonsterDamageAsync RPC below: ApplyMonsterDamage_StaleLifeReference_WrongEpoch_IsRejected,
+    // ApplyMonsterDamage_StaleLifeReference_WrongIncarnation_IsRejected,
+    // ApplyMonsterDamage_SecondAttackAfterLethalTransition_ReturnsAlreadyDead, and
+    // ApplyMonsterDamage_LethalHit_AppendsDiedExactlyOnce_NeverHealthChanged (spot-checked before
+    // deletion per the substep-9 plan's own hard-blocker requirement).
 
     // Step 7: World-side HP authority + AttackSequence idempotency ledger. Every test below
     // exercises the real ApplyMonsterDamageAsync RPC through the real Orleans grain boundary -
@@ -2037,7 +1991,11 @@ public sealed class WorldMonsterSimulationTests : IAsyncLifetime
         Assert.Equal(WorldMonsterIncarnationId.First, bootstrap.Snapshot![0].IncarnationId);
 
         var originalLife = new WorldMonsterLifeReference(mapId, load.SimulationEpoch, actorId, WorldMonsterIncarnationId.First);
-        Assert.Equal(WorldMonsterDeathStatus.MarkedDead, (await grain.TryMarkMonsterDeadAsync(originalLife)).Status);
+        var killerPresenceId = Guid.NewGuid();
+        await grain.RegisterPresenceAsync(Presence(killerPresenceId, AttackerCharacterId, mapId, x: MonsterX, y: MonsterY));
+        var lethalHit = await grain.ApplyMonsterDamageAsync(new WorldMonsterDamageCommand(originalLife, AttackerCharacterId, killerPresenceId, AttackSequence: 1, Damage: 9999, AcquireEngagement: false));
+        Assert.Equal(WorldMonsterDamageStatus.Applied, lethalHit.Status);
+        Assert.True(lethalHit.KilledByThisHit);
 
         // Wait for the real grain timer to observe the due respawn (500ms delay, 100ms tick cadence).
         var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
@@ -2059,12 +2017,14 @@ public sealed class WorldMonsterSimulationTests : IAsyncLifetime
         Assert.Equal(respawned.IncarnationId, respawnedEntry.Instance.IncarnationId);
 
         // A life reference built against the OLD (pre-respawn) incarnation must now be rejected.
-        var staleResult = await grain.TryMarkMonsterDeadAsync(originalLife);
-        Assert.Equal(WorldMonsterDeathStatus.StaleLifeReference, staleResult.Status);
+        var staleAttack = await grain.ApplyMonsterDamageAsync(new WorldMonsterDamageCommand(originalLife, AttackerCharacterId, killerPresenceId, AttackSequence: 2, Damage: 9999, AcquireEngagement: false));
+        Assert.Equal(WorldMonsterDamageStatus.StaleLifeReference, staleAttack.Status);
 
         // The current (new-incarnation) life reference works correctly.
         var currentLife = originalLife with { IncarnationId = respawned.IncarnationId };
-        Assert.Equal(WorldMonsterDeathStatus.MarkedDead, (await grain.TryMarkMonsterDeadAsync(currentLife)).Status);
+        var currentAttack = await grain.ApplyMonsterDamageAsync(new WorldMonsterDamageCommand(currentLife, AttackerCharacterId, killerPresenceId, AttackSequence: 2, Damage: 9999, AcquireEngagement: false));
+        Assert.Equal(WorldMonsterDamageStatus.Applied, currentAttack.Status);
+        Assert.True(currentAttack.KilledByThisHit);
     }
 
     // Correction #3: a bare feed poll against a map whose simulation has never been loaded must

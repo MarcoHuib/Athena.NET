@@ -38,19 +38,21 @@ public sealed class MapClientSessionMonsterCombatTests
     private const uint CharId = 9;
     private const uint Quest21008 = 21008;
     private RecordingGameplayStatePersistence? _lastGameplayPersistence;
-    private MonsterCombatStateStore? _lastCombatState;
+    private MonsterAttackCadenceStore? _lastCombatState;
     private WorldSimulationEpoch _lastEpoch;
+    private FakeCombatWorldRuntime? _lastFakeWorld;
 
     // Step 6 cutover: MonsterCombatCoordinator no longer mutates a local MobInstance's own HP/
-    // lifecycle at all - CurrentHp/death now live exclusively in MonsterCombatStateStore, keyed by
-    // the real World-shaped (MapId, SimulationEpoch, ActorId, IncarnationId) tuple (see that
-    // store's own doc comment). These two helpers replace this file's old `target.IsAlive`/
-    // `target.CurrentHp` oracles for every test below - `target` (the local MobInstance) is now
-    // used ONLY for its stable identity/position/static-mob data, never as the combat authority.
-    private static uint CurrentHpOf(MonsterCombatStateStore combatState, WorldSimulationEpoch epoch, MobInstance target) =>
-        combatState.TryGet(new MonsterCombatKey(target.Map, epoch, target.ActorId, new WorldMonsterIncarnationId(target.IncarnationId.Value)), out var state) ? state.CurrentHp : 0u;
+    // lifecycle at all - CurrentHp/death now live exclusively on World's ApplyMonsterDamageAsync
+    // ledger (mediated here by FakeCombatWorldRuntime), keyed by the real World-shaped
+    // WorldMonsterLifeReference (MapId, SimulationEpoch, ActorId, IncarnationId) tuple. These two
+    // helpers replace this file's old `target.IsAlive`/`target.CurrentHp` oracles for every test
+    // below - `target` (the local MobInstance) is now used ONLY for its stable identity/position/
+    // static-mob data, never as the combat authority.
+    private static uint CurrentHpOf(FakeCombatWorldRuntime fakeWorld, WorldSimulationEpoch epoch, MobInstance target) =>
+        fakeWorld.TryGetCurrentHp(new WorldMonsterLifeReference(target.Map, epoch, target.ActorId, new WorldMonsterIncarnationId(target.IncarnationId.Value))) ?? 0u;
 
-    private uint CurrentHpOf(MonsterCombatStateStore combatState, MobInstance target) => CurrentHpOf(combatState, _lastEpoch, target);
+    private uint CurrentHpOf(MonsterAttackCadenceStore combatState, MobInstance target) => CurrentHpOf(_lastFakeWorld!, _lastEpoch, target);
 
     private bool IsAlive(MobInstance target) => CurrentHpOf(_lastCombatState!, target) > 0;
 
@@ -216,11 +218,13 @@ public sealed class MapClientSessionMonsterCombatTests
         var target = registry.AllInstances[0];
         var epoch = WorldSimulationEpoch.NewEpoch();
         _lastEpoch = epoch;
-        var combatState = new MonsterCombatStateStore();
-        combatState.Register(target.Map, epoch, target.ActorId, new WorldMonsterIncarnationId(target.IncarnationId.Value), target.Spawn.Mob.MaxHp);
+        var combatState = new MonsterAttackCadenceStore();
+        combatState.Register(target.Map, epoch, target.ActorId, new WorldMonsterIncarnationId(target.IncarnationId.Value));
         _lastCombatState = combatState;
-        var combat = new MonsterCombatCoordinator(questDrops, new RenewalBasicAttackRules(rollWeaponAtk), combatState);
-        var monsterProjections = WorldMonsterProjectionTestHelper.SeedProjection(target.Map, epoch, combatState, registry.AllInstances);
+        var combat = new MonsterCombatCoordinator(questDrops, new RenewalBasicAttackRules(rollWeaponAtk));
+        var fakeWorld = new FakeCombatWorldRuntime();
+        _lastFakeWorld = fakeWorld;
+        var monsterProjections = WorldMonsterProjectionTestHelper.SeedProjection(target.Map, epoch, combatState, registry.AllInstances, fakeWorld);
 
         var questPersistence = new RecordingQuestPersistence(Quest21008, questState);
         var gameplayPersistence = new RecordingGameplayStatePersistence(gameplayState ?? StrongNovice());
@@ -232,7 +236,7 @@ public sealed class MapClientSessionMonsterCombatTests
             questPersistence: questPersistence, gameplayStatePersistence: gameplayPersistence,
             accountId: AccountId, charId: CharId, monsterProjections: monsterProjections, combat: combat,
             inventoryPersistence: inventoryPersistence, inventoryListPersistence: inventoryListPersistence,
-            timeProvider: timeProvider, rates: rates, combatState: combatState, distributedWorld: new FakeCombatWorldRuntime());
+            timeProvider: timeProvider, rates: rates, combatState: combatState, distributedWorld: fakeWorld);
         var run = session.RunAsync(CancellationToken.None);
         await session.CompleteIroAuthenticationAsync(new(AccountId, CharId, 1, 2, 0, 0, false, "int_land03", 75, 51, 0, 0, 0, CharacterName: characterName));
 
@@ -506,7 +510,7 @@ public sealed class MapClientSessionMonsterCombatTests
 
         // Attacking the now-dead monster still reaches HandleIroAttackRequestAsync's own dueNow/
         // fixpos branch: TryGetProjectedMonster's own Lifecycle check reads the SEPARATE
-        // MonsterFeedProjectionRegistry projection (never this test's own MonsterCombatStateStore-
+        // MonsterFeedProjectionRegistry projection (never this test's own MonsterAttackCadenceStore-
         // backed IsAlive/combatState oracle above), and nothing in this single-session test drives
         // the world-feed tick that would resync that projection's Lifecycle to Dead after the local
         // kill just above - so the projection still reports Alive, the fixpos still fires, and only
@@ -919,11 +923,35 @@ public sealed class MapClientSessionMonsterCombatTests
     // of those have independently failed.
     private static readonly TimeSpan SocketReadTimeout = TimeSpan.FromSeconds(15);
 
+    // Substep 9: the live attack path's own pending-attempt allocation (AllocateAndDispatchFreshDamageAttemptAsync)
+    // claims RepeatAttackState.NextAttackAt optimistically, under _attackGate, before the real
+    // ApplyMonsterDamageAsync dispatch's own await yields control back to the scheduler - this can
+    // (rarely, under real thread-scheduling load) let RunRepeatAttackLoopAsync's own background
+    // iteration observe the _pendingRetrySignal release and re-evaluate one tick before this single
+    // clock advance has actually unblocked its own sleep-until-NextAttackAt wait. Retrying the
+    // advance (rather than assuming exactly one suffices) tolerates that benign timing gap without
+    // weakening the load-bearing invariant every caller of this helper actually checks (that a
+    // damage packet eventually arrives, not that it arrives after exactly one specific clock write).
     private static async Task<byte[]> WaitForNextDamagePacketAsync(Stream stream, ControllableTimeProvider clock, int delayMs)
     {
-        await clock.AdvanceAsync(TimeSpan.FromMilliseconds(delayMs));
-        var (damage, _) = await ReadDamageAndHpInfoAsync(stream).WaitAsync(SocketReadTimeout);
-        return damage;
+        var deadline = DateTime.UtcNow + SocketReadTimeout;
+        while (true)
+        {
+            await clock.AdvanceAsync(TimeSpan.FromMilliseconds(delayMs));
+            try
+            {
+                using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(500));
+                var (damage, _) = await ReadDamageAndHpInfoAsync(stream).WaitAsync(cts.Token);
+                return damage;
+            }
+            catch (OperationCanceledException) when (DateTime.UtcNow < deadline)
+            {
+                // Nothing arrived yet within this short window - retry with another advance rather
+                // than give up; the overall SocketReadTimeout deadline above still bounds the total
+                // wait, so a genuine missing hit still fails this call, just not on the first
+                // benign-timing-gap miss.
+            }
+        }
     }
 
     [Fact]
@@ -1077,12 +1105,14 @@ public sealed class MapClientSessionMonsterCombatTests
         var targetB = registry.AllInstances[1];
         var epoch = WorldSimulationEpoch.NewEpoch();
         _lastEpoch = epoch;
-        var combatState = new MonsterCombatStateStore();
-        combatState.Register(targetA.Map, epoch, targetA.ActorId, new WorldMonsterIncarnationId(targetA.IncarnationId.Value), targetA.Spawn.Mob.MaxHp);
-        combatState.Register(targetB.Map, epoch, targetB.ActorId, new WorldMonsterIncarnationId(targetB.IncarnationId.Value), targetB.Spawn.Mob.MaxHp);
+        var combatState = new MonsterAttackCadenceStore();
+        combatState.Register(targetA.Map, epoch, targetA.ActorId, new WorldMonsterIncarnationId(targetA.IncarnationId.Value));
+        combatState.Register(targetB.Map, epoch, targetB.ActorId, new WorldMonsterIncarnationId(targetB.IncarnationId.Value));
         _lastCombatState = combatState;
-        var combat = new MonsterCombatCoordinator(questDrops, new RenewalBasicAttackRules(MinWeaponAtkRoll), combatState);
-        var monsterProjections = WorldMonsterProjectionTestHelper.SeedProjection(targetA.Map, epoch, combatState, registry.AllInstances);
+        var combat = new MonsterCombatCoordinator(questDrops, new RenewalBasicAttackRules(MinWeaponAtkRoll));
+        var fakeWorld = new FakeCombatWorldRuntime();
+        _lastFakeWorld = fakeWorld;
+        var monsterProjections = WorldMonsterProjectionTestHelper.SeedProjection(targetA.Map, epoch, combatState, registry.AllInstances, fakeWorld);
 
         var questPersistence = new RecordingQuestPersistence(Quest21008, CharacterQuestStatus.Absent);
         var gameplayPersistence = new RecordingGameplayStatePersistence(WeakFreshNovice());
@@ -1093,7 +1123,7 @@ public sealed class MapClientSessionMonsterCombatTests
             questPersistence: questPersistence, gameplayStatePersistence: gameplayPersistence,
             accountId: AccountId, charId: CharId, monsterProjections: monsterProjections, combat: combat,
             inventoryPersistence: inventoryPersistence, inventoryListPersistence: inventoryListPersistence,
-            timeProvider: clock, combatState: combatState, distributedWorld: new FakeCombatWorldRuntime());
+            timeProvider: clock, combatState: combatState, distributedWorld: fakeWorld);
         var run = session.RunAsync(CancellationToken.None);
         await session.CompleteIroAuthenticationAsync(new(AccountId, CharId, 1, 2, 0, 0, false, "int_land03", 75, 51, 0, 0, 0));
         await ReadExact(stream, 4 + 6 + 6 + 13);

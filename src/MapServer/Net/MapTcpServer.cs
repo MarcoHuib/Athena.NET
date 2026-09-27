@@ -200,8 +200,6 @@ public sealed class MapTcpServer
             throw new NotSupportedException("InMemoryTestWorldRuntime does not implement monster-authority RPCs - use a real Orleans TestCluster with OrleansWorldRuntime for tests that need monster behavior.");
         public Task<WorldMonsterFeedPage> PollMonsterFeedAsync(WorldMonsterFeedCursor? cursor, string mapId, CancellationToken cancellationToken) =>
             throw new NotSupportedException("InMemoryTestWorldRuntime does not implement monster-authority RPCs - use a real Orleans TestCluster with OrleansWorldRuntime for tests that need monster behavior.");
-        public Task<WorldMonsterDeathResult> TryMarkMonsterDeadAsync(WorldMonsterLifeReference reference, CancellationToken cancellationToken) =>
-            throw new NotSupportedException("InMemoryTestWorldRuntime does not implement monster-authority RPCs - use a real Orleans TestCluster with OrleansWorldRuntime for tests that need monster behavior.");
         public Task<WorldMonsterDamageResult> ApplyMonsterDamageAsync(WorldMonsterDamageCommand command, CancellationToken cancellationToken) =>
             throw new NotSupportedException("InMemoryTestWorldRuntime does not implement monster-authority RPCs - use a real Orleans TestCluster with OrleansWorldRuntime for tests that need monster behavior.");
         public Task<WorldMonsterAttackedResult> NotifyMonsterAttackedAsync(WorldMonsterAttackedCommand command, CancellationToken cancellationToken) =>
@@ -387,9 +385,8 @@ public sealed class MapTcpServer
     // codebase has no reliable way to tell those apart by type alone - misclassifying a transient
     // Orleans failure as permanent would incorrectly stop retrying a map that could have recovered
     // on its own. KeyNotFoundException is the concrete example this pass DOES classify as
-    // deterministic: GeneratedMobRegistry.Get (used by WorldMonsterActorView and
-    // MonsterFeedProjection's own GeneratedMobRegistryLookup) throws it specifically when a
-    // referenced MobId has no corresponding generated static definition at all - a purely local,
+    // deterministic: GeneratedMobRegistry.Get (used by WorldMonsterActorView) throws it
+    // specifically when a referenced MobId has no corresponding generated static definition at all - a purely local,
     // in-process static-data lookup with no I/O involved, so it can never be a transient failure by
     // construction, and retrying the exact same poll can never fix it either.
     private static bool IsDeterministicInvariantFailure(Exception ex) =>

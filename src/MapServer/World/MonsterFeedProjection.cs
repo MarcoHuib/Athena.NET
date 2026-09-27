@@ -133,15 +133,15 @@ public sealed class MonsterFeedProjection(string mapId)
     // type deliberately has no access to) and step 5 (advancing Cursor, via CommitCursor below -
     // never done automatically by this method, since the caller must confirm step 4 succeeded first).
     //
-    // Same life (MapId+Epoch+ActorId+IncarnationId unchanged) -> combat state is preserved
-    // untouched (a damaged monster's HP must never reset merely because a resync/bootstrap
-    // happened to re-observe it). New incarnation -> fresh full-HP combat state, resetting cadence.
-    // New epoch (different from CurrentEpoch) -> EVERY old-epoch combat-state entry for this map is
+    // Same life (MapId+Epoch+ActorId+IncarnationId unchanged) -> cadence state is preserved
+    // untouched (a monster's NextAttackAt must never reset merely because a resync/bootstrap
+    // happened to re-observe it). New incarnation -> fresh cadence entry (no scheduled attack).
+    // New epoch (different from CurrentEpoch) -> EVERY old-epoch cadence entry for this map is
     // discarded outright before the new snapshot's own entries are registered - never merged.
     // A World-reported DEAD life observed for the FIRST time (this map's projection has never seen
-    // this ActorId before) never gets a fresh full-HP combat-state entry registered at all - only a
-    // genuinely Alive first-observed life does.
-    public void ApplySnapshot(IReadOnlyList<WorldMonsterInstance> snapshot, WorldSimulationEpoch epoch, MonsterCombatStateStore combatState)
+    // this ActorId before) never gets a fresh cadence entry registered at all - only a genuinely
+    // Alive first-observed life does.
+    public void ApplySnapshot(IReadOnlyList<WorldMonsterInstance> snapshot, WorldSimulationEpoch epoch, MonsterAttackCadenceStore combatState)
     {
         lock (_gate)
         {
@@ -183,7 +183,7 @@ public sealed class MonsterFeedProjection(string mapId)
                 // resolving the static MobDefinition here (once per snapshot entry) is the same
                 // GeneratedMobRegistry-backed lookup WorldMonsterActorView itself performs.
                 if (!combatState.TryGet(key, out _) && instance.Lifecycle == WorldMonsterLifecycleState.Alive)
-                    combatState.Register(MapId, epoch, instance.ActorId, instance.IncarnationId, GeneratedMobRegistryLookup.MaxHpFor(instance.MobId));
+                    combatState.Register(MapId, epoch, instance.ActorId, instance.IncarnationId);
             }
 
             _currentEpoch = epoch;
@@ -201,7 +201,7 @@ public sealed class MonsterFeedProjection(string mapId)
     // commit) and the SAME entry is later replayed on a fresh poll, applying it again must be fully
     // idempotent - in particular, a replayed Respawned entry must never reset an already-damaged
     // life's HP a second time (see the Respawned case below for the exact TryGet-guarded fix).
-    public void ApplyEntry(WorldMonsterFeedEntry entry, MonsterCombatStateStore combatState, WorldSimulationEpoch epoch)
+    public void ApplyEntry(WorldMonsterFeedEntry entry, MonsterAttackCadenceStore combatState, WorldSimulationEpoch epoch)
     {
         lock (_gate)
         {
@@ -235,7 +235,7 @@ public sealed class MonsterFeedProjection(string mapId)
                         combatState.Remove(new MonsterCombatKey(MapId, epoch, instance.ActorId, previous.IncarnationId));
                     var respawnKey = new MonsterCombatKey(MapId, epoch, instance.ActorId, instance.IncarnationId);
                     if (!combatState.TryGet(respawnKey, out _))
-                        combatState.Register(MapId, epoch, instance.ActorId, instance.IncarnationId, GeneratedMobRegistryLookup.MaxHpFor(instance.MobId));
+                        combatState.Register(MapId, epoch, instance.ActorId, instance.IncarnationId);
                     break;
 
                 case WorldMonsterFeedEntryKind.EngagementAcquired:
@@ -267,14 +267,4 @@ public sealed class MonsterFeedProjection(string mapId)
     {
         lock (_gate) _cursor = new WorldMonsterFeedCursor(epoch, asOfSequence);
     }
-}
-
-// Small, explicit static helper resolving a WorldMonsterInstance's own MobId against the same
-// generated static mob table WorldMonsterActorView itself uses - kept as its own named helper
-// (rather than inlined at each call site) so MonsterFeedProjection's own registration logic reads
-// as "look up the static MaxHp for a fresh combat-state entry", matching WorldMonsterActorView's
-// identical "fail loudly, never silently substitute a placeholder" contract for an unresolvable MobId.
-internal static class GeneratedMobRegistryLookup
-{
-    public static uint MaxHpFor(int mobId) => (uint)Athena.Net.MapServer.Generated.GameData.Mobs.GeneratedMobRegistry.Get(mobId).MaxHp;
 }

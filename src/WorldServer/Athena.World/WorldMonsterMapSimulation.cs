@@ -305,26 +305,10 @@ internal sealed class WorldMonsterMapSimulation
         instance.ActorId == reference.ActorId &&
         instance.IncarnationId.Value == reference.IncarnationId.Value;
 
-    public WorldMonsterDeathStatus MarkDead(MobInstance instance)
-    {
-        if (!instance.IsAlive || Registry is null) return WorldMonsterDeathStatus.AlreadyDead;
-        // World does not own HP/damage (see this type's own doc comment) - ApplyDamage is reused
-        // here purely for its Alive->Dead transition (and its own existing target-unlock-on-death
-        // side effect, mob.cpp:3863), passing the instance's CURRENT Hp as the damage amount so the
-        // call is unconditionally lethal regardless of whatever HP MapServer's own local combat
-        // state most recently had, without this type ever needing to know or care what that value
-        // was. The (HpBefore, HpAfter, killed) return is intentionally discarded - a wire-facing
-        // WorldMonsterInstance never carries HP at all.
-        instance.ApplyDamage(instance.CurrentHp);
-        AppendDeathTail(instance);
-        return WorldMonsterDeathStatus.MarkedDead;
-    }
-
-    // Step 7: the shared death tail every lethal transition performs, regardless of which caller
-    // (this TEMPORARY MarkDead, or ApplyDamage's own lethal branch below) triggered it - schedule
-    // respawn exactly once, remove engagement, append Died exactly once. Extracted here so
-    // ApplyDamage's authoritative lethal path and MarkDead's own (temporary, HP-agnostic) path
-    // never diverge and there is never a second independent lethal-mutation code path.
+    // Step 7 substep 9: the shared death tail every lethal transition performs - schedule respawn
+    // exactly once, remove engagement, append Died exactly once. Called only from ApplyDamage's own
+    // lethal branch below (the sole remaining lethal-mutation code path since the temporary
+    // MarkDead/TryMarkMonsterDeadAsync RPC was removed in this substep).
     private void AppendDeathTail(MobInstance instance)
     {
         // World owns respawn TIMING (per the approved scope boundary) - reuse MonsterRegistry's

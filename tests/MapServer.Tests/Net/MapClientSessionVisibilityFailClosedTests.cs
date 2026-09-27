@@ -15,7 +15,7 @@ namespace Athena.Net.MapServer.Tests.Net;
 //
 // Step 7 substep 5 SUPERSEDES that guard: CurrentHp/MaxHp packet projection now reads exclusively
 // from the World-authoritative WorldMonsterInstance already carried by the projection snapshot/feed
-// entry - it never needs (and never reads) the transitional local MonsterCombatStateStore for HP at
+// entry - it never needs (and never reads) the transitional local MonsterAttackCadenceStore for HP at
 // all. There is therefore no fabricated-HP risk left to guard against, and gating discovery on a
 // local store entry existing would incorrectly suppress a genuinely valid, Alive, World-projected
 // monster merely because MapServer's OWN transitional bookkeeping (still required only for the
@@ -67,7 +67,7 @@ public sealed class MapClientSessionVisibilityFailClosedTests
         var stream = client.GetStream();
         using var disposableClient = client;
 
-        var combatState = new MonsterCombatStateStore(); // Deliberately empty - no Register call for the projected monster below.
+        var combatState = new MonsterAttackCadenceStore(); // Deliberately empty - no Register call for the projected monster below.
         var projections = new MonsterFeedProjectionRegistry();
         var projection = projections.GetOrCreate(MapId);
         var epoch = WorldSimulationEpoch.NewEpoch();
@@ -89,7 +89,7 @@ public sealed class MapClientSessionVisibilityFailClosedTests
         combatState.Remove(new MonsterCombatKey(MapId, epoch, actorId, WorldMonsterIncarnationId.First));
 
         var gameplayPersistence = new FixedGameplayStatePersistence(FreshNovice());
-        var combat = new MonsterCombatCoordinator(new QuestDropResolver([]), new RenewalBasicAttackRules(), combatState);
+        var combat = new MonsterCombatCoordinator(new QuestDropResolver([]), new RenewalBasicAttackRules());
         var session = new MapClientSession(
             1, serverClient, new CharServerConnector(new MapConfigStore(new MapConfig(), "unused.conf")), true,
             MapId, 75, 51, WorldMapRegistry.Tutorial,

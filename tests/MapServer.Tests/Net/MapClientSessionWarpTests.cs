@@ -262,8 +262,8 @@ public sealed class MapClientSessionWarpTests
         // packet's own HP fields; see MapClientSessionMonsterMovementTests.SetupAsync's own doc
         // comment for the identical fix.
         var warpTestEpoch = WorldSimulationEpoch.NewEpoch();
-        var warpTestCombatState = new MonsterCombatStateStore();
-        warpTestCombatState.Register(monsters.AllInstances[0].Map, warpTestEpoch, monsters.AllInstances[0].ActorId, new WorldMonsterIncarnationId(monsters.AllInstances[0].IncarnationId.Value), monsters.AllInstances[0].Spawn.Mob.MaxHp);
+        var warpTestCombatState = new MonsterAttackCadenceStore();
+        warpTestCombatState.Register(monsters.AllInstances[0].Map, warpTestEpoch, monsters.AllInstances[0].ActorId, new WorldMonsterIncarnationId(monsters.AllInstances[0].IncarnationId.Value));
         var warpTestProjections = WorldMonsterProjectionTestHelper.SeedProjection(monsters.AllInstances[0].Map, warpTestEpoch, warpTestCombatState, monsters.AllInstances);
         await using var session = new MapClientSession(
             1, serverClient, connector, iroAuthenticated: true, mapName: "test-warp-map", x: 10, y: 0,
@@ -378,8 +378,8 @@ public sealed class MapClientSessionWarpTests
         // Step 6 cutover: SendVisibleMonsterActorsAsync requires a non-null combatState too - see
         // this file's own sibling fixture above for the identical reasoning.
         var aoiEpoch = WorldSimulationEpoch.NewEpoch();
-        var aoiCombatState = new MonsterCombatStateStore();
-        aoiCombatState.Register(monsters.AllInstances[0].Map, aoiEpoch, monsters.AllInstances[0].ActorId, new WorldMonsterIncarnationId(monsters.AllInstances[0].IncarnationId.Value), monsters.AllInstances[0].Spawn.Mob.MaxHp);
+        var aoiCombatState = new MonsterAttackCadenceStore();
+        aoiCombatState.Register(monsters.AllInstances[0].Map, aoiEpoch, monsters.AllInstances[0].ActorId, new WorldMonsterIncarnationId(monsters.AllInstances[0].IncarnationId.Value));
         var aoiProjections = WorldMonsterProjectionTestHelper.SeedProjection(monsters.AllInstances[0].Map, aoiEpoch, aoiCombatState, monsters.AllInstances);
         await using var session = new MapClientSession(
             1, serverClient, connector, iroAuthenticated: true, mapName: "aoi-map", x: 0, y: 0,

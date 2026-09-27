@@ -139,7 +139,7 @@ public sealed class MapClientSessionAttackSchedulingRaceTests
 
     private WorldSimulationEpoch _lastEpoch;
 
-    private async Task<(TcpClient Client, NetworkStream Stream, MapClientSession Session, Task RunTask, MobInstance Target, MonsterCombatStateStore CombatState)> SetupAsync(
+    private async Task<(TcpClient Client, NetworkStream Stream, MapClientSession Session, Task RunTask, MobInstance Target, MonsterAttackCadenceStore CombatState, FakeCombatWorldRuntime FakeWorld)> SetupAsync(
         ushort playerX, ushort playerY, ushort monsterX, ushort monsterY, TimeProvider? timeProvider = null, CharacterGameplayState? gameplayState = null)
     {
         var listener = new TcpListener(IPAddress.Loopback, 0);
@@ -158,10 +158,11 @@ public sealed class MapClientSessionAttackSchedulingRaceTests
         var target = registry.AllInstances[0];
         var epoch = WorldSimulationEpoch.NewEpoch();
         _lastEpoch = epoch;
-        var combatState = new MonsterCombatStateStore();
-        combatState.Register(target.Map, epoch, target.ActorId, new WorldMonsterIncarnationId(target.IncarnationId.Value), target.Spawn.Mob.MaxHp);
-        var combat = new MonsterCombatCoordinator(questDrops, new RenewalBasicAttackRules(MinWeaponAtkRoll), combatState);
-        var monsterProjections = WorldMonsterProjectionTestHelper.SeedProjection(target.Map, epoch, combatState, registry.AllInstances);
+        var combatState = new MonsterAttackCadenceStore();
+        combatState.Register(target.Map, epoch, target.ActorId, new WorldMonsterIncarnationId(target.IncarnationId.Value));
+        var combat = new MonsterCombatCoordinator(questDrops, new RenewalBasicAttackRules(MinWeaponAtkRoll));
+        var fakeWorld = new FakeCombatWorldRuntime();
+        var monsterProjections = WorldMonsterProjectionTestHelper.SeedProjection(target.Map, epoch, combatState, registry.AllInstances, fakeWorld);
 
         var gameplayPersistence = new RecordingGameplayStatePersistence(gameplayState ?? WeakFreshNovice());
         var inventoryListPersistence = new FixedInventoryListPersistence(KnifeEquipped());
@@ -173,7 +174,7 @@ public sealed class MapClientSessionAttackSchedulingRaceTests
             gameplayStatePersistence: gameplayPersistence,
             accountId: AccountId, charId: CharId, monsterProjections: monsterProjections, combat: combat,
             inventoryPersistence: inventoryPersistence, inventoryListPersistence: inventoryListPersistence,
-            timeProvider: timeProvider, combatState: combatState, distributedWorld: new FakeCombatWorldRuntime());
+            timeProvider: timeProvider, combatState: combatState, distributedWorld: fakeWorld);
         var run = session.RunAsync(CancellationToken.None);
         // A real World presence is required for HandleIroMovementAsync's own fresh-movement path
         // (test D exercises movement) - CharacterName must be non-empty for
@@ -194,11 +195,11 @@ public sealed class MapClientSessionAttackSchedulingRaceTests
         var actorId = BinaryPrimitives.ReadUInt32LittleEndian(spawn.AsSpan(5));
         Assert.Equal(target.ActorId, actorId);
 
-        return (client, stream, session, run, target, combatState);
+        return (client, stream, session, run, target, combatState, fakeWorld);
     }
 
-    private uint CurrentHpOf(MonsterCombatStateStore combatState, MobInstance target) =>
-        combatState.TryGet(new MonsterCombatKey(target.Map, _lastEpoch, target.ActorId, new WorldMonsterIncarnationId(target.IncarnationId.Value)), out var state) ? state.CurrentHp : 0u;
+    private uint CurrentHpOf(FakeCombatWorldRuntime fakeWorld, MobInstance target) =>
+        fakeWorld.TryGetCurrentHp(new WorldMonsterLifeReference(target.Map, _lastEpoch, target.ActorId, new WorldMonsterIncarnationId(target.IncarnationId.Value))) ?? 0u;
 
     // Test A: attack is currently due -> client sends a valid 0x0437 for an IN-RANGE monster ->
     // immediately afterward client sends 0x035F -> the 0x0437 handler must complete the first
@@ -209,10 +210,10 @@ public sealed class MapClientSessionAttackSchedulingRaceTests
     public async Task DueNowAttack_ImmediatelyFollowedByMovement_CompletesFirstHitBeforeCancellation_ExactlyOneHit()
     {
         var clock = new ControllableTimeProvider();
-        var (client, stream, session, run, target, combatState) = await SetupAsync(playerX: 75, playerY: 51, monsterX: 75, monsterY: 51, timeProvider: clock);
+        var (client, stream, session, run, target, combatState, fakeWorld) = await SetupAsync(playerX: 75, playerY: 51, monsterX: 75, monsterY: 51, timeProvider: clock);
         using var _dispose = client;
 
-        var hpBefore = CurrentHpOf(combatState, target);
+        var hpBefore = CurrentHpOf(fakeWorld, target);
 
         // Fire the attack and the movement request back-to-back, exactly like the live pcap's own
         // 0x0437 -> (auto-walk) -> 0x035F pattern - the movement packet is sent WITHOUT waiting for
@@ -240,7 +241,7 @@ public sealed class MapClientSessionAttackSchedulingRaceTests
         Assert.Equal((short)PacketConstants.ZcHpInfo, BinaryPrimitives.ReadInt16LittleEndian(hpInfoPacket));
         var hpAfterFirstHit = BinaryPrimitives.ReadUInt32LittleEndian(hpInfoPacket.AsSpan(6));
         Assert.Equal(hpBefore - damage, hpAfterFirstHit);
-        Assert.Equal(hpAfterFirstHit, CurrentHpOf(combatState, target));
+        Assert.Equal(hpAfterFirstHit, CurrentHpOf(fakeWorld, target));
 
         // The movement response follows - proving the movement request WAS processed (and, per the
         // existing, unchanged Attack_MovementRequest_CancelsActiveRepeatAttack behavior, cancelled
@@ -257,7 +258,7 @@ public sealed class MapClientSessionAttackSchedulingRaceTests
         await stream.WriteAsync(new byte[] { 0x1c, 0x0b });
         var pingReply = await ReadExact(stream, 2);
         Assert.Equal((short)PacketConstants.ZcPingLive, BinaryPrimitives.ReadInt16LittleEndian(pingReply));
-        Assert.Equal(hpAfterFirstHit, CurrentHpOf(combatState, target));
+        Assert.Equal(hpAfterFirstHit, CurrentHpOf(fakeWorld, target));
 
         client.Close();
         await run.WaitAsync(TimeSpan.FromSeconds(5));
@@ -269,10 +270,10 @@ public sealed class MapClientSessionAttackSchedulingRaceTests
     [Fact]
     public async Task DueNowAttack_TargetOutOfRange_SendsExactlyOne0x0139_NoDamage_SubsequentMovementStillAllowed()
     {
-        var (client, stream, session, run, target, combatState) = await SetupAsync(playerX: 81, playerY: 64, monsterX: 72, monsterY: 78);
+        var (client, stream, session, run, target, combatState, fakeWorld) = await SetupAsync(playerX: 81, playerY: 64, monsterX: 72, monsterY: 78);
         using var _dispose = client;
 
-        var hpBefore = CurrentHpOf(combatState, target);
+        var hpBefore = CurrentHpOf(fakeWorld, target);
 
         await stream.WriteAsync(AttackPacket(target.ActorId));
 
@@ -285,7 +286,7 @@ public sealed class MapClientSessionAttackSchedulingRaceTests
         var failurePacket = await ReadExact(stream, PacketConstants.ZcAttackFailureForDistanceLength);
         Assert.Equal((short)PacketConstants.ZcAttackFailureForDistance, BinaryPrimitives.ReadInt16LittleEndian(failurePacket));
         Assert.Equal(target.ActorId, BinaryPrimitives.ReadUInt32LittleEndian(failurePacket.AsSpan(2)));
-        Assert.Equal(hpBefore, CurrentHpOf(combatState, target));
+        Assert.Equal(hpBefore, CurrentHpOf(fakeWorld, target));
 
         // A subsequent movement request (the client's own real auto-walk-toward-target response to
         // 0x0139) must still be processed normally - no exception, no hang, ordinary movement ack.
@@ -297,7 +298,7 @@ public sealed class MapClientSessionAttackSchedulingRaceTests
         await stream.WriteAsync(new byte[] { 0x1c, 0x0b });
         var pingReply = await ReadExact(stream, 2);
         Assert.Equal((short)PacketConstants.ZcPingLive, BinaryPrimitives.ReadInt16LittleEndian(pingReply));
-        Assert.Equal(hpBefore, CurrentHpOf(combatState, target));
+        Assert.Equal(hpBefore, CurrentHpOf(fakeWorld, target));
 
         client.Close();
         await run.WaitAsync(TimeSpan.FromSeconds(5));
@@ -311,7 +312,7 @@ public sealed class MapClientSessionAttackSchedulingRaceTests
     public async Task RetargetDuringExistingCooldown_DoesNotExecuteImmediateHit_InheritedCadenceIntact()
     {
         var clock = new ControllableTimeProvider();
-        var (client, stream, session, run, target, combatState) = await SetupAsync(playerX: 75, playerY: 51, monsterX: 75, monsterY: 51, timeProvider: clock);
+        var (client, stream, session, run, target, combatState, fakeWorld) = await SetupAsync(playerX: 75, playerY: 51, monsterX: 75, monsterY: 51, timeProvider: clock);
         using var _dispose = client;
 
         // First attack: executes immediately (dueNow), establishing a real future NextAttackAt.
@@ -323,7 +324,7 @@ public sealed class MapClientSessionAttackSchedulingRaceTests
         var firstDamage = await ReadExact(stream, PacketConstants.ZcNotifyAct3Length);
         Assert.Equal((short)PacketConstants.ZcNotifyAct3, BinaryPrimitives.ReadInt16LittleEndian(firstDamage));
         await ReadExact(stream, PacketConstants.ZcHpInfoLength);
-        var hpAfterFirstHit = CurrentHpOf(combatState, target);
+        var hpAfterFirstHit = CurrentHpOf(fakeWorld, target);
         Assert.True(hpAfterFirstHit > 0, "WeakFreshNovice's Knife hit must not one-shot G_PORING for this test to observe an intact cooldown.");
 
         // Immediately retarget the SAME target while the cooldown from the first hit is still
@@ -338,7 +339,7 @@ public sealed class MapClientSessionAttackSchedulingRaceTests
         await stream.WriteAsync(new byte[] { 0x1c, 0x0b });
         var pingReply = await ReadExact(stream, 2);
         Assert.Equal((short)PacketConstants.ZcPingLive, BinaryPrimitives.ReadInt16LittleEndian(pingReply));
-        Assert.Equal(hpAfterFirstHit, CurrentHpOf(combatState, target));
+        Assert.Equal(hpAfterFirstHit, CurrentHpOf(fakeWorld, target));
 
         client.Close();
         await run.WaitAsync(TimeSpan.FromSeconds(5));
@@ -357,10 +358,10 @@ public sealed class MapClientSessionAttackSchedulingRaceTests
     public async Task DueNowAttackAndBackgroundLoopWake_Overlap_ProducesExactlyOneExecution_NeverTwo()
     {
         var clock = new ControllableTimeProvider();
-        var (client, stream, session, run, target, combatState) = await SetupAsync(playerX: 75, playerY: 51, monsterX: 75, monsterY: 51, timeProvider: clock);
+        var (client, stream, session, run, target, combatState, fakeWorld) = await SetupAsync(playerX: 75, playerY: 51, monsterX: 75, monsterY: 51, timeProvider: clock);
         using var _dispose = client;
 
-        var hpBefore = CurrentHpOf(combatState, target);
+        var hpBefore = CurrentHpOf(fakeWorld, target);
 
         // The inline dueNow execution below both executes the turn AND (per this fix's own design)
         // wakes RunRepeatAttackLoopAsync via _attackSignal.Release() immediately afterward - the
@@ -375,7 +376,7 @@ public sealed class MapClientSessionAttackSchedulingRaceTests
         await ReadExact(stream, PacketConstants.ZcHpInfoLength);
 
         var hpAfterOneHit = hpBefore - damage;
-        Assert.Equal(hpAfterOneHit, CurrentHpOf(combatState, target));
+        Assert.Equal(hpAfterOneHit, CurrentHpOf(fakeWorld, target));
         Assert.True(hpAfterOneHit > 0, "WeakFreshNovice's Knife hit must not one-shot G_PORING for this test to observe a bounded single hit.");
 
         // Give the background loop ample real wall-clock time to react to the wake signal and
@@ -388,7 +389,7 @@ public sealed class MapClientSessionAttackSchedulingRaceTests
         await stream.WriteAsync(new byte[] { 0x1c, 0x0b });
         var pingReply = await ReadExact(stream, 2);
         Assert.Equal((short)PacketConstants.ZcPingLive, BinaryPrimitives.ReadInt16LittleEndian(pingReply));
-        Assert.Equal(hpAfterOneHit, CurrentHpOf(combatState, target));
+        Assert.Equal(hpAfterOneHit, CurrentHpOf(fakeWorld, target));
 
         client.Close();
         await run.WaitAsync(TimeSpan.FromSeconds(5));

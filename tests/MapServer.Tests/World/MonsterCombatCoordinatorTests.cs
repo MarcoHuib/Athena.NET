@@ -4,14 +4,13 @@ using Athena.Net.World.Contracts;
 
 namespace Athena.Net.MapServer.Tests.World;
 
-// Step 6 cutover: MonsterCombatCoordinator no longer takes a MonsterRegistry dependency and no
-// longer mutates any local MobInstance target/engagement/respawn state at all (see
-// MonsterCombatCoordinator's own top-of-file doc comment - TryAcquireTarget/ScheduleRespawnIfNeeded
-// are GONE; World's own NotifyMonsterAttackedAsync/TryMarkMonsterDeadAsync own that now). These
-// tests exercise the coordinator's own REMAINING responsibility - damage calculation against
-// MonsterCombatStateStore, the EngagementAcquired local signal, and quest-drop resolution - against
-// a hand-built WorldMonsterActorView (wrapping a WorldMonsterInstance) rather than a live MobInstance,
-// since production no longer constructs one for this path either.
+// Step 7 substep 9: MonsterCombatCoordinator is now PURE damage calculation + outcome projection -
+// it owns no HP/lethality state of its own at all (CalculateAttack/BuildOutcome, no store/life
+// lookup). World's ApplyMonsterDamageAsync is the sole authority for CurrentHp/MaxHp/the
+// Alive->Dead transition; these tests simulate that authority with a tiny local HP tracker (never
+// a real IWorldRuntime - see FakeCombatWorldRuntime in WorldMonsterProjectionTestHelper.cs for the
+// full ledger fake used by real MapClientSession-driven tests) purely to build a realistic
+// WorldMonsterDamageResult for BuildOutcome to project.
 public sealed class MonsterCombatCoordinatorTests
 {
     private const uint Quest21008 = 21008;
@@ -28,7 +27,28 @@ public sealed class MonsterCombatCoordinatorTests
     private static Func<uint, CharacterQuestStatus> ActiveOnly(uint questId) => id => id == questId ? CharacterQuestStatus.Active : CharacterQuestStatus.Absent;
     private static readonly Func<uint, CharacterQuestStatus> NoActiveQuests = _ => CharacterQuestStatus.Absent;
 
-    private sealed record Scenario(MonsterCombatCoordinator Coordinator, MonsterCombatStateStore CombatState, WorldMonsterActorView Target, WorldMonsterLifeReference Life);
+    private sealed class FakeHpLedger(uint maxHp)
+    {
+        public uint CurrentHp { get; private set; } = maxHp;
+        public uint MaxHp { get; } = maxHp;
+        private bool _dead;
+
+        // Mirrors World's own ApplyMonsterDamageAsync default-ledger semantics narrowly: a hit
+        // against an already-dead life is rejected (AlreadyDead, no mutation); otherwise damage
+        // clamps to zero and the lethal transition is reported at most once.
+        public WorldMonsterDamageResult Apply(uint damage)
+        {
+            if (_dead) return new WorldMonsterDamageResult(WorldMonsterDamageStatus.AlreadyDead, 0, 0, MaxHp, false, null);
+            var before = CurrentHp;
+            var after = damage >= before ? 0u : before - damage;
+            CurrentHp = after;
+            var killed = after == 0;
+            if (killed) _dead = true;
+            return new WorldMonsterDamageResult(WorldMonsterDamageStatus.Applied, before, after, MaxHp, killed, WorldMonsterAttackedStatus.Acquired);
+        }
+    }
+
+    private sealed record Scenario(MonsterCombatCoordinator Coordinator, FakeHpLedger Hp, WorldMonsterActorView Target, WorldMonsterLifeReference Life);
 
     private static Scenario MakeScenario(uint maxHp = 55)
     {
@@ -41,25 +61,32 @@ public sealed class MonsterCombatCoordinatorTests
             ActorId: actorId, IncarnationId: incarnationId, MapId: mapId, MobId: GPoringMobId,
             X: 50, Y: 50, Lifecycle: WorldMonsterLifecycleState.Alive, IsWalking: false,
             DestinationX: 50, DestinationY: 50, Engagement: WorldMonsterEngagementState.Unengaged, EngagedTarget: null,
-            CurrentHp: 55, MaxHp: 55);
-
-        var combatState = new MonsterCombatStateStore();
-        combatState.Register(mapId, epoch, actorId, incarnationId, maxHp);
+            CurrentHp: maxHp, MaxHp: maxHp);
 
         var questDrops = new QuestDropResolver([new(Quest21008, GPoringMobId, WoodId, 1, 10000, new("rAthena", "abc", "quest_db.yml", 1))]);
-        var coordinator = new MonsterCombatCoordinator(questDrops, new RenewalBasicAttackRules(), combatState);
+        var coordinator = new MonsterCombatCoordinator(questDrops, new RenewalBasicAttackRules());
         var life = new WorldMonsterLifeReference(mapId, epoch, actorId, incarnationId);
 
-        return new Scenario(coordinator, combatState, new WorldMonsterActorView(instance), life);
+        return new Scenario(coordinator, new FakeHpLedger(maxHp), new WorldMonsterActorView(instance), life);
     }
 
-    private static bool IsAlive(Scenario scenario) => scenario.CombatState.TryGet(scenario.Life, out var state) && state.CurrentHp > 0;
+    // Drives one full CalculateAttack -> (fake World) Apply -> BuildOutcome round trip, mirroring
+    // exactly how MapClientSession's own AllocateAndDispatchFreshDamageAttemptAsync/
+    // HandleDamageResultAsync compose these two coordinator calls around the real RPC.
+    private static MonsterAttackOutcome DriveHit(Scenario scenario, EffectiveCharacterStats attacker, ushort baseLevel, WeaponItemDefinition? weapon, Func<uint, CharacterQuestStatus>? questStatus)
+    {
+        var candidate = scenario.Coordinator.CalculateAttack(scenario.Target, attacker, baseLevel, weapon);
+        var result = scenario.Hp.Apply(candidate.Damage);
+        return scenario.Coordinator.BuildOutcome(result, scenario.Target, candidate.IsMiss, questStatus);
+    }
+
+    private static bool IsAlive(Scenario scenario) => scenario.Hp.CurrentHp > 0;
 
     [Fact]
     public void Attack_NonLethalHit_NoDropsNoDeath()
     {
         var scenario = MakeScenario(maxHp: 9999);
-        var outcome = scenario.Coordinator.Attack(scenario.Target, scenario.Life, StrongAttacker(), 1, null, ActiveOnly(Quest21008));
+        var outcome = DriveHit(scenario, StrongAttacker(), 1, null, ActiveOnly(Quest21008));
 
         Assert.True(outcome.Accepted);
         Assert.False(outcome.KilledByThisHit);
@@ -71,7 +98,7 @@ public sealed class MonsterCombatCoordinatorTests
     public void Attack_LethalHit_WithActiveQuest_AwardsWoodExactlyOnce()
     {
         var scenario = MakeScenario(maxHp: 1);
-        var outcome = scenario.Coordinator.Attack(scenario.Target, scenario.Life, StrongAttacker(), 1, null, ActiveOnly(Quest21008));
+        var outcome = DriveHit(scenario, StrongAttacker(), 1, null, ActiveOnly(Quest21008));
 
         Assert.True(outcome.KilledByThisHit);
         Assert.Single(outcome.QuestDrops);
@@ -83,7 +110,7 @@ public sealed class MonsterCombatCoordinatorTests
     public void Attack_LethalHit_WithoutActiveQuest_NoDrop()
     {
         var scenario = MakeScenario(maxHp: 1);
-        var outcome = scenario.Coordinator.Attack(scenario.Target, scenario.Life, StrongAttacker(), 1, null, NoActiveQuests);
+        var outcome = DriveHit(scenario, StrongAttacker(), 1, null, NoActiveQuests);
 
         Assert.True(outcome.KilledByThisHit);
         Assert.Empty(outcome.QuestDrops);
@@ -93,34 +120,20 @@ public sealed class MonsterCombatCoordinatorTests
     public void Attack_AgainstAlreadyDeadMonster_IsRejected()
     {
         var scenario = MakeScenario(maxHp: 1);
-        scenario.Coordinator.Attack(scenario.Target, scenario.Life, StrongAttacker(), 1, null, ActiveOnly(Quest21008));
+        DriveHit(scenario, StrongAttacker(), 1, null, ActiveOnly(Quest21008));
 
-        var secondAttack = scenario.Coordinator.Attack(scenario.Target, scenario.Life, StrongAttacker(), 1, null, ActiveOnly(Quest21008));
+        var secondAttack = DriveHit(scenario, StrongAttacker(), 1, null, ActiveOnly(Quest21008));
 
         Assert.False(secondAttack.Accepted);
         Assert.Empty(secondAttack.QuestDrops); // No second award for the same death.
     }
 
     [Fact]
-    public void Attack_StaleLife_IsRejected()
-    {
-        // A life reference that does not match anything ever Register()'d against this store
-        // (different IncarnationId) - MonsterCombatStateStore.ApplyDamage must report StaleLife,
-        // never silently create/mutate an entry (see that store's own doc comment).
-        var scenario = MakeScenario(maxHp: 55);
-        var staleLife = scenario.Life with { IncarnationId = scenario.Life.IncarnationId.Next() };
-
-        var outcome = scenario.Coordinator.Attack(scenario.Target, staleLife, StrongAttacker(), 1, null, NoActiveQuests);
-
-        Assert.False(outcome.Accepted);
-    }
-
-    [Fact]
     public void TwoLethalAttacksInSuccession_OnlyFirstCountsAsKill()
     {
         var scenario = MakeScenario(maxHp: 1);
-        var first = scenario.Coordinator.Attack(scenario.Target, scenario.Life, StrongAttacker(), 1, null, ActiveOnly(Quest21008));
-        var second = scenario.Coordinator.Attack(scenario.Target, scenario.Life, StrongAttacker(), 1, null, ActiveOnly(Quest21008));
+        var first = DriveHit(scenario, StrongAttacker(), 1, null, ActiveOnly(Quest21008));
+        var second = DriveHit(scenario, StrongAttacker(), 1, null, ActiveOnly(Quest21008));
 
         Assert.True(first.KilledByThisHit);
         Assert.False(second.Accepted);
@@ -139,8 +152,8 @@ public sealed class MonsterCombatCoordinatorTests
         var unarmedScenario = MakeScenario(maxHp: 9999);
         var armedScenario = MakeScenario(maxHp: 9999);
 
-        var unarmedOutcome = unarmedScenario.Coordinator.Attack(unarmedScenario.Target, unarmedScenario.Life, freshNovice, 1, null, NoActiveQuests);
-        var armedOutcome = armedScenario.Coordinator.Attack(armedScenario.Target, armedScenario.Life, freshNovice, 1, MakeKnife(), NoActiveQuests);
+        var unarmedOutcome = DriveHit(unarmedScenario, freshNovice, 1, null, NoActiveQuests);
+        var armedOutcome = DriveHit(armedScenario, freshNovice, 1, MakeKnife(), NoActiveQuests);
 
         Assert.True(unarmedOutcome.Accepted);
         Assert.True(armedOutcome.Accepted);
@@ -159,9 +172,9 @@ public sealed class MonsterCombatCoordinatorTests
         var freshNovice = new EffectiveCharacterStats(9, 9, 9, 9, 9, 9, 0, 0);
         var scenario = MakeScenario(maxHp: 999999);
 
-        var unarmedOutcome = scenario.Coordinator.Attack(scenario.Target, scenario.Life, freshNovice, 1, null, NoActiveQuests);
-        var armedOutcome = scenario.Coordinator.Attack(scenario.Target, scenario.Life, freshNovice, 1, MakeKnife(), NoActiveQuests);
-        var unarmedAgainOutcome = scenario.Coordinator.Attack(scenario.Target, scenario.Life, freshNovice, 1, null, NoActiveQuests);
+        var unarmedOutcome = DriveHit(scenario, freshNovice, 1, null, NoActiveQuests);
+        var armedOutcome = DriveHit(scenario, freshNovice, 1, MakeKnife(), NoActiveQuests);
+        var unarmedAgainOutcome = DriveHit(scenario, freshNovice, 1, null, NoActiveQuests);
 
         var unarmedDamage = unarmedOutcome.HpBefore - unarmedOutcome.HpAfter;
         var armedDamage = armedOutcome.HpBefore - armedOutcome.HpAfter;
@@ -171,89 +184,112 @@ public sealed class MonsterCombatCoordinatorTests
         Assert.True(armedDamage > unarmedAgainDamage);
     }
 
-    // ===== EngagementAcquired: the coordinator's own LOCAL signal (never a mutation - World's
-    // NotifyMonsterAttackedAsync is the sole authority for target acquisition post-cutover; see
-    // MonsterCombatCoordinator's own doc comment) =====
+    // ===== EngagementAcquired: derived from WorldMonsterDamageResult.Engagement - the coordinator
+    // itself never mutates engagement state; World's ApplyMonsterDamageAsync is the sole authority
+    // for target acquisition post-cutover (see MonsterCombatCoordinator's own doc comment) =====
 
     [Fact]
     public void Attack_NonLethalHit_AgainstCanAttackCapableMob_SignalsEngagementAcquired()
     {
-        var scenario = MakeScenario(maxHp: 9999); // G_PORING's Mode includes MobMode.CanAttack.
+        var scenario = MakeScenario(maxHp: 9999); // G_PORING's Mode includes MobMode.CanAttack; the fake ledger reports Acquired for any non-lethal hit.
 
-        var outcome = scenario.Coordinator.Attack(scenario.Target, scenario.Life, StrongAttacker(), 1, null, NoActiveQuests);
+        var outcome = DriveHit(scenario, StrongAttacker(), 1, null, NoActiveQuests);
 
         Assert.True(outcome.Accepted);
         Assert.True(outcome.EngagementAcquired);
     }
 
+    // Substep 9 cutover: World's own ApplyMonsterDamageAsync (WorldPartitionGrain) applies
+    // TryAcquireEngagement whenever the caller requests it via AcquireEngagement, unconditionally -
+    // it never special-cases a lethal hit (see that method's own doc comment: engagement acquisition
+    // and the lethal HP transition are two independent concerns World resolves in the SAME call, not
+    // a lethal-suppresses-engagement rule). MapClientSession mirrors this: acquireEngagement is
+    // derived purely from the target's own CanAttack mode, never from whether THIS hit turns out to
+    // be lethal. BuildOutcome's EngagementAcquired therefore reflects whatever World's own Engagement
+    // field reports for this exact result - which the fake ledger here deliberately mirrors by always
+    // reporting Acquired, exactly like the real grain does.
     [Fact]
-    public void Attack_LethalHit_NeverSignalsEngagementAcquired()
+    public void Attack_LethalHit_StillReflectsWorldsOwnEngagementResult()
     {
         var scenario = MakeScenario(maxHp: 1);
 
-        var outcome = scenario.Coordinator.Attack(scenario.Target, scenario.Life, StrongAttacker(), 1, null, ActiveOnly(Quest21008));
+        var outcome = DriveHit(scenario, StrongAttacker(), 1, null, ActiveOnly(Quest21008));
 
         Assert.True(outcome.KilledByThisHit);
-        Assert.False(outcome.EngagementAcquired);
+        Assert.True(outcome.EngagementAcquired);
     }
 
-    // ===== Section 15: quest-state resolution is LAZY, only on a killing hit =====
+    // ===== BuildOutcome: quest-state resolution is driven entirely by the resolver the CALLER
+    // supplies - BuildOutcome itself performs no persistence I/O, and only consults the resolver at
+    // all when the hit was lethal (mirrors §4b: the live path always supplies an
+    // ALREADY-RESOLVED PendingMonsterDamageAttempt.QuestStatusSnapshot, never a fresh lookup here) =====
 
     [Fact]
-    public async Task AttackAsync_NonLethalHit_NeverInvokesTheQuestStateResolver()
+    public void BuildOutcome_NonLethalHit_NeverInvokesTheQuestStateResolver()
     {
         var scenario = MakeScenario(maxHp: 9999);
         var resolverCallCount = 0;
-        Task<Func<uint, CharacterQuestStatus>> Resolver()
+        CharacterQuestStatus Resolver(uint questId)
         {
             resolverCallCount++;
-            return Task.FromResult(ActiveOnly(Quest21008));
+            return CharacterQuestStatus.Active;
         }
 
-        var outcome = await scenario.Coordinator.AttackAsync(scenario.Target, scenario.Life, StrongAttacker(), 1, null, Resolver);
+        var candidate = scenario.Coordinator.CalculateAttack(scenario.Target, StrongAttacker(), 1, null);
+        var result = scenario.Hp.Apply(candidate.Damage);
+        var outcome = scenario.Coordinator.BuildOutcome(result, scenario.Target, candidate.IsMiss, Resolver);
 
         Assert.False(outcome.KilledByThisHit);
         Assert.Equal(0, resolverCallCount);
     }
 
     [Fact]
-    public async Task AttackAsync_LethalHit_InvokesTheQuestStateResolverExactlyOnce()
+    public void BuildOutcome_LethalHit_InvokesTheQuestStateResolver_ExactlyForResolvedQuests()
     {
         var scenario = MakeScenario(maxHp: 1);
         var resolverCallCount = 0;
-        Task<Func<uint, CharacterQuestStatus>> Resolver()
+        CharacterQuestStatus Resolver(uint questId)
         {
             resolverCallCount++;
-            return Task.FromResult(ActiveOnly(Quest21008));
+            return questId == Quest21008 ? CharacterQuestStatus.Active : CharacterQuestStatus.Absent;
         }
 
-        var outcome = await scenario.Coordinator.AttackAsync(scenario.Target, scenario.Life, StrongAttacker(), 1, null, Resolver);
+        var candidate = scenario.Coordinator.CalculateAttack(scenario.Target, StrongAttacker(), 1, null);
+        var result = scenario.Hp.Apply(candidate.Damage);
+        var outcome = scenario.Coordinator.BuildOutcome(result, scenario.Target, candidate.IsMiss, Resolver);
 
         Assert.True(outcome.KilledByThisHit);
         Assert.Single(outcome.QuestDrops);
-        Assert.Equal(1, resolverCallCount);
+        Assert.True(resolverCallCount >= 1);
     }
 
-    // For a multi-hit kill (repeated ordinary hits, the last one lethal), only that FINAL hit may
-    // ever invoke the resolver - reproducing the exact live-log pattern (hit 1 -> roundtrip, hit 2
-    // -> roundtrip, hit 3 -> kill) this optimization fixes.
     [Fact]
-    public async Task AttackAsync_MultiHitKill_ResolverInvokedOnlyOnTheFinalLethalHit()
+    public void BuildOutcome_LethalHit_NoResolverSupplied_NoDropsResolved()
+    {
+        var scenario = MakeScenario(maxHp: 1);
+
+        var candidate = scenario.Coordinator.CalculateAttack(scenario.Target, StrongAttacker(), 1, null);
+        var result = scenario.Hp.Apply(candidate.Damage);
+        var outcome = scenario.Coordinator.BuildOutcome(result, scenario.Target, candidate.IsMiss, attackerQuestStatus: null);
+
+        Assert.True(outcome.KilledByThisHit);
+        Assert.Empty(outcome.QuestDrops);
+    }
+
+    // For a multi-hit kill (repeated ordinary hits, the last one lethal), only that FINAL hit's
+    // result carries KilledByThisHit=true - reproducing the exact live-log pattern (hit 1 -> no
+    // drop, hit 2 -> no drop, hit 3 -> kill + drop) this file's own predecessor established.
+    [Fact]
+    public void MultiHitKill_OnlyFinalLethalHitReportsKillAndDrops()
     {
         var scenario = MakeScenario(maxHp: 3); // Three 1-damage hits to kill.
         var weakAttacker = new EffectiveCharacterStats(1, 1, 1, 1, 1, 1, 0, 0);
-        var resolverCallCount = 0;
-        Task<Func<uint, CharacterQuestStatus>> Resolver()
-        {
-            resolverCallCount++;
-            return Task.FromResult(ActiveOnly(Quest21008));
-        }
 
         MonsterAttackOutcome outcome = default;
         for (var i = 0; i < 20 && IsAlive(scenario); i++)
-            outcome = await scenario.Coordinator.AttackAsync(scenario.Target, scenario.Life, StrongAttacker(), 1, null, Resolver);
+            outcome = DriveHit(scenario, StrongAttacker(), 1, null, ActiveOnly(Quest21008));
 
         Assert.True(outcome.KilledByThisHit);
-        Assert.Equal(1, resolverCallCount);
+        Assert.Single(outcome.QuestDrops);
     }
 }

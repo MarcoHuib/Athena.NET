@@ -120,7 +120,7 @@ public sealed class MonsterVisibilityStateTests
 
     // Concurrency: this type exists specifically because it used to be mutated from two
     // independently-scheduled callers with no shared synchronization - proves every operation is
-    // safe under genuine concurrent use (mirrors VisibleActorTrackerTests'/MonsterCombatStateStoreTests'
+    // safe under genuine concurrent use (mirrors VisibleActorTrackerTests'/MonsterAttackCadenceStoreTests'
     // own established concurrency-test idiom).
     [Fact]
     public async Task ConcurrentMarkVisibleAndReset_NoExceptionAndNoCorruption()

@@ -79,7 +79,7 @@ public sealed class MapClientSessionAttackerIdentityTests
 
     private WorldSimulationEpoch _lastEpoch;
 
-    private async Task<(TcpClient Client, NetworkStream Stream, MapClientSession Session, Task RunTask, MobInstance Target, MonsterCombatStateStore CombatState, FakeCombatWorldRuntime FakeWorld)> SetupAsync(FakeCombatWorldRuntime fakeWorld)
+    private async Task<(TcpClient Client, NetworkStream Stream, MapClientSession Session, Task RunTask, MobInstance Target, MonsterAttackCadenceStore CombatState, FakeCombatWorldRuntime FakeWorld)> SetupAsync(FakeCombatWorldRuntime fakeWorld)
     {
         var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
@@ -97,10 +97,10 @@ public sealed class MapClientSessionAttackerIdentityTests
         var target = registry.AllInstances[0];
         var epoch = WorldSimulationEpoch.NewEpoch();
         _lastEpoch = epoch;
-        var combatState = new MonsterCombatStateStore();
-        combatState.Register(target.Map, epoch, target.ActorId, new WorldMonsterIncarnationId(target.IncarnationId.Value), target.Spawn.Mob.MaxHp);
-        var combat = new MonsterCombatCoordinator(questDrops, new RenewalBasicAttackRules(), combatState);
-        var monsterProjections = WorldMonsterProjectionTestHelper.SeedProjection(target.Map, epoch, combatState, registry.AllInstances);
+        var combatState = new MonsterAttackCadenceStore();
+        combatState.Register(target.Map, epoch, target.ActorId, new WorldMonsterIncarnationId(target.IncarnationId.Value));
+        var combat = new MonsterCombatCoordinator(questDrops, new RenewalBasicAttackRules());
+        var monsterProjections = WorldMonsterProjectionTestHelper.SeedProjection(target.Map, epoch, combatState, registry.AllInstances, fakeWorld);
 
         var gameplayPersistence = new FixedGameplayStatePersistence(WeakFreshNovice());
         var session = new MapClientSession(
@@ -134,8 +134,8 @@ public sealed class MapClientSessionAttackerIdentityTests
         return (client, stream, session, run, target, combatState, fakeWorld);
     }
 
-    private uint CurrentHpOf(MonsterCombatStateStore combatState, MobInstance target) =>
-        combatState.TryGet(new MonsterCombatKey(target.Map, _lastEpoch, target.ActorId, new WorldMonsterIncarnationId(target.IncarnationId.Value)), out var state) ? state.CurrentHp : 0u;
+    private uint CurrentHpOf(FakeCombatWorldRuntime fakeWorld, MobInstance target) =>
+        fakeWorld.TryGetCurrentHp(new WorldMonsterLifeReference(target.Map, _lastEpoch, target.ActorId, new WorldMonsterIncarnationId(target.IncarnationId.Value))) ?? 0u;
 
     // Test 1: player -> monster engagement identity. Registers a real World presence (via the
     // session's own genuine RegisterPresenceAsync call, driven through EnterPlayerWorldAsync - not
@@ -151,7 +151,7 @@ public sealed class MapClientSessionAttackerIdentityTests
         var (client, stream, session, run, target, combatState, _) = await SetupAsync(fakeWorld);
         using var _dispose = client;
 
-        var hpBefore = CurrentHpOf(combatState, target);
+        var hpBefore = CurrentHpOf(fakeWorld, target);
         Assert.Equal(LiveCharId, session.CharacterId);
         Assert.NotEqual(LiveAccountId, session.CharacterId);
 
@@ -176,10 +176,14 @@ public sealed class MapClientSessionAttackerIdentityTests
         Assert.Equal(hpBefore - damage, BinaryPrimitives.ReadUInt32LittleEndian(hpInfoPacket.AsSpan(6)));
 
         // The exact command World received must carry the REAL CharacterId, never the AccountId.
-        Assert.NotNull(fakeWorld.LastNotifyMonsterAttackedCommand);
-        Assert.Equal(LiveCharId, fakeWorld.LastNotifyMonsterAttackedCommand!.AttackerCharacterId);
-        Assert.NotEqual(LiveAccountId, fakeWorld.LastNotifyMonsterAttackedCommand.AttackerCharacterId);
-        Assert.Equal(session.PresenceId, fakeWorld.LastNotifyMonsterAttackedCommand.AttackerPresenceId);
+        // Substep 9 cutover: engagement acquisition is folded into ApplyMonsterDamageAsync's own
+        // AcquireEngagement flag - NotifyMonsterAttackedAsync is no longer called by the live
+        // non-lethal attack path at all, so the identity this test proves now lives on
+        // LastApplyMonsterDamageCommand instead of the retired LastNotifyMonsterAttackedCommand.
+        Assert.NotNull(fakeWorld.LastApplyMonsterDamageCommand);
+        Assert.Equal(LiveCharId, fakeWorld.LastApplyMonsterDamageCommand!.AttackerCharacterId);
+        Assert.NotEqual(LiveAccountId, fakeWorld.LastApplyMonsterDamageCommand.AttackerCharacterId);
+        Assert.Equal(session.PresenceId, fakeWorld.LastApplyMonsterDamageCommand.AttackerPresenceId);
 
         client.Close();
         await run.WaitAsync(TimeSpan.FromSeconds(5));
@@ -264,13 +268,15 @@ public sealed class MapClientSessionAttackerIdentityTests
 
         var server2 = new MapTcpServer(ConfigStore(), new CharServerConnector(ConfigStore()), world2, scripted2);
         await server2.ProcessOneMonsterTickAsync([wrongSession], CancellationToken.None);
-        Assert.True(world2.CombatState.TryGet(key2, out var combatBefore));
+        Assert.True(world2.CombatState.TryGet(key2, out _));
 
         await server2.ProcessOneMonsterTickAsync([wrongSession], CancellationToken.None);
 
+        // The mismatched-CharId session must never be selected as the attack target - proven by
+        // ValidateMonsterAttackWindowAsync never being reached for it (HP is no longer local
+        // MapServer state to assert against post-substep-9; World's own ApplyMonsterDamageAsync
+        // ledger is the sole HP authority and is untouched by this player<-monster attack path).
         Assert.Equal(0, validateCallsWrongChar);
-        Assert.True(world2.CombatState.TryGet(key2, out var combatAfter));
-        Assert.Equal(combatBefore.CurrentHp, combatAfter.CurrentHp);
 
         await wrongSession.DisposeAsync();
     }
@@ -325,8 +331,8 @@ public sealed class MapClientSessionAttackerIdentityTests
 
     private static MapServerWorld MakeWorld()
     {
-        var combatState = new MonsterCombatStateStore();
-        var combat = new MonsterCombatCoordinator(new QuestDropResolver([]), new RenewalBasicAttackRules(), combatState);
+        var combatState = new MonsterAttackCadenceStore();
+        var combat = new MonsterCombatCoordinator(new QuestDropResolver([]), new RenewalBasicAttackRules());
         return new MapServerWorld(
             WorldMapRegistry.Tutorial,
             [],
@@ -415,8 +421,6 @@ public sealed class MapClientSessionAttackerIdentityTests
         public Task<WorldMonsterAttackWindowResult> ValidateMonsterAttackWindowAsync(WorldMonsterAttackWindowQuery query, CancellationToken cancellationToken) =>
             Task.FromResult(OnValidateMonsterAttackWindow?.Invoke(query) ?? new WorldMonsterAttackWindowResult(WorldMonsterAttackWindowStatus.StaleLifeReference));
 
-        public Task<WorldMonsterDeathResult> TryMarkMonsterDeadAsync(WorldMonsterLifeReference reference, CancellationToken cancellationToken) =>
-            throw new NotSupportedException();
         public Task<WorldMonsterDamageResult> ApplyMonsterDamageAsync(WorldMonsterDamageCommand command, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
         public Task<WorldMonsterAttackedResult> NotifyMonsterAttackedAsync(WorldMonsterAttackedCommand command, CancellationToken cancellationToken) =>

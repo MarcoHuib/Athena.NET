@@ -10,11 +10,11 @@ namespace Athena.Net.MapServer.Net;
 // owns identity/position/movement/lifecycle/engagement/chase decisions entirely (per the approved
 // Phase 2B authority boundary) - this type NEVER advances monster movement, retargets chase,
 // decides Unlock/Chase, or mutates any engagement state; it only reads the shared
-// MonsterFeedProjection (World-authoritative) plus its own local MonsterCombatStateStore
+// MonsterFeedProjection (World-authoritative) plus its own local MonsterAttackCadenceStore
 // (MapServer-authoritative cadence/HP), and decides purely WHEN a locally-cadenced attack fires.
 //
 // For every monster the projection reports as Alive + InAttackRange + with a current EngagedTarget:
-//   read local NextAttackAt (MonsterCombatStateStore)
+//   read local NextAttackAt (MonsterAttackCadenceStore)
 //   if due:
 //     call World's ValidateMonsterAttackWindowAsync (a plain read-only recheck against CURRENT
 //     World state, never a reservation/claim/exactly-once protocol - see that RPC's own doc
@@ -30,7 +30,7 @@ namespace Athena.Net.MapServer.Net;
 // target - this is a deliberate, mechanical enforcement of "World decides Unlock/Chase/InAttackRange,
 // MapServer only decides Attack/Wait cadence on top of an already-InAttackRange projection".
 internal sealed class MonsterAttackCadenceExecutor(
-    MonsterFeedProjectionRegistry projections, MonsterCombatStateStore combatState, IWorldRuntime worldRuntime, TimeProvider timeProvider,
+    MonsterFeedProjectionRegistry projections, MonsterAttackCadenceStore combatState, IWorldRuntime worldRuntime, TimeProvider timeProvider,
     Func<Task>? beforeFinalAttackRevalidation = null)
 {
     private readonly Func<Task> _beforeFinalAttackRevalidation = beforeFinalAttackRevalidation ?? (() => Task.CompletedTask);

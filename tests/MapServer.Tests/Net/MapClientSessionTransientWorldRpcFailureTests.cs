@@ -11,13 +11,13 @@ using Athena.Net.World.Contracts;
 namespace Athena.Net.MapServer.Tests.Net;
 
 // Step 6 hardening (final correctness pass), item 2: a TRANSIENT World RPC failure
-// (NotifyMonsterAttackedAsync for a non-lethal hit, TryMarkMonsterDeadAsync for a lethal hit) must
-// not fault MapClientSession's own background repeat-attack loop task - it is caught, logged, local
-// combat state is left completely untouched, the schedule is re-armed for a normal LATER attempt
-// (never a tight retry loop), and the loop itself stays alive so that later attempt can actually run
-// and succeed. Built as its own minimal wiring mirroring
-// MapClientSessionNonLethalAttackFailClosedTests.cs/MapClientSessionLethalAttackFailClosedTests.cs's
-// own established pattern.
+// (ApplyMonsterDamageAsync, for both a non-lethal and a lethal hit - substep 9 cutover: engagement
+// acquisition is folded into ApplyMonsterDamageAsync's own AcquireEngagement flag, and
+// NotifyMonsterAttackedAsync is no longer called by the live attack path at all, so both scenarios in
+// this file now exercise the SAME RPC) must not fault MapClientSession's own background repeat-attack
+// loop task - it is caught, logged, local combat state (World's own HP ledger, via the fake) is left
+// completely untouched, the schedule is re-armed for a normal LATER attempt (never a tight retry
+// loop), and the loop itself stays alive so that later attempt can actually run and succeed.
 public sealed class MapClientSessionTransientWorldRpcFailureTests
 {
     private const uint AccountId = 41;
@@ -75,7 +75,7 @@ public sealed class MapClientSessionTransientWorldRpcFailureTests
         }
     }
 
-    private static async Task<(TcpClient Client, NetworkStream Stream, MapClientSession Session, Task RunTask, MonsterCombatStateStore CombatState, FakeCombatWorldRuntime FakeWorld, string MapId, WorldSimulationEpoch Epoch, uint ActorId, WorldMonsterIncarnationId Incarnation)> SetupAsync(
+    private static async Task<(TcpClient Client, NetworkStream Stream, MapClientSession Session, Task RunTask, MonsterAttackCadenceStore CombatState, FakeCombatWorldRuntime FakeWorld, string MapId, WorldSimulationEpoch Epoch, uint ActorId, WorldMonsterIncarnationId Incarnation)> SetupAsync(
         CharacterGameplayState attackerState, uint maxHp, FakeCombatWorldRuntime fakeWorld)
     {
         var listener = new TcpListener(IPAddress.Loopback, 0);
@@ -93,11 +93,16 @@ public sealed class MapClientSessionTransientWorldRpcFailureTests
         var questDrops = new QuestDropResolver([]);
         var target = registry.AllInstances[0];
         var epoch = WorldSimulationEpoch.NewEpoch();
-        var combatState = new MonsterCombatStateStore();
+        var combatState = new MonsterAttackCadenceStore();
         var incarnation = new WorldMonsterIncarnationId(target.IncarnationId.Value);
-        combatState.Register(target.Map, epoch, target.ActorId, incarnation, maxHp);
-        var combat = new MonsterCombatCoordinator(questDrops, new RenewalBasicAttackRules(), combatState);
-        var monsterProjections = WorldMonsterProjectionTestHelper.SeedProjection(target.Map, epoch, combatState, registry.AllInstances);
+        combatState.Register(target.Map, epoch, target.ActorId, incarnation);
+        var combat = new MonsterCombatCoordinator(questDrops, new RenewalBasicAttackRules());
+        var monsterProjections = WorldMonsterProjectionTestHelper.SeedProjection(target.Map, epoch, combatState, registry.AllInstances, fakeWorld);
+        // Explicitly (re)seed the fake's own ledger at the CALLER's requested maxHp - the projection's
+        // own snapshot HP (from registry.AllInstances, G_Poring's real MaxHp) may not match what this
+        // specific test needs (a guaranteed-lethal 1 HP, or a guaranteed-non-lethal 55 HP).
+        var life = new WorldMonsterLifeReference(target.Map, epoch, target.ActorId, incarnation);
+        fakeWorld.SeedMonster(life, maxHp, maxHp);
 
         var gameplayPersistence = new RecordingGameplayStatePersistence(attackerState);
 
@@ -124,13 +129,17 @@ public sealed class MapClientSessionTransientWorldRpcFailureTests
     }
 
     [Fact]
-    public async Task NonLethalHit_NotifyMonsterAttackedTransientFailure_HpUnchanged_LoopSurvives_LaterAttemptSucceeds()
+    public async Task NonLethalHit_ApplyMonsterDamageTransientFailure_HpUnchanged_LoopSurvives_LaterAttemptSucceeds()
     {
-        var fakeWorld = new FakeCombatWorldRuntime { ThrowTransientNotifyMonsterAttackedCount = 1 };
-        var (client, stream, _, run, combatState, world, mapId, epoch, actorId, incarnation) = await SetupAsync(WeakFreshNovice(), maxHp: 55, fakeWorld);
+        // Substep 9 cutover: NotifyMonsterAttackedAsync is no longer called by the live attack path
+        // at all (engagement acquisition now rides on ApplyMonsterDamageAsync's own AcquireEngagement
+        // flag) - this test now exercises the SAME RPC/failure seam as the lethal test below, just
+        // with a weak attacker/high-HP target so the hit is guaranteed non-lethal.
+        var fakeWorld = new FakeCombatWorldRuntime { ThrowTransientApplyMonsterDamageCount = 1 };
+        var (client, stream, _, run, _, world, mapId, epoch, actorId, incarnation) = await SetupAsync(WeakFreshNovice(), maxHp: 55, fakeWorld);
         using var disposableClient = client;
 
-        var key = new MonsterCombatKey(mapId, epoch, actorId, incarnation);
+        var life = new WorldMonsterLifeReference(mapId, epoch, actorId, incarnation);
 
         await stream.WriteAsync(AttackPacket(actorId));
 
@@ -138,45 +147,42 @@ public sealed class MapClientSessionTransientWorldRpcFailureTests
         // actually mutate HP - the repeat-attack loop's own re-armed cadence must produce a second
         // attempt on its own, without any further client action.
         var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(15);
-        while (DateTime.UtcNow < deadline && world.NotifyMonsterAttackedCallCount < 2) await Task.Delay(20);
-        Assert.True(world.NotifyMonsterAttackedCallCount >= 2, "Expected the transient failure to be retried by a later scheduled attempt (the loop must not have died).");
+        while (DateTime.UtcNow < deadline && world.ApplyMonsterDamageCallCount < 2) await Task.Delay(20);
+        Assert.True(world.ApplyMonsterDamageCallCount >= 2, "Expected the transient failure to be retried by a later scheduled attempt (the loop must not have died).");
 
         // Bounded wait for the eventual successful hit's own HP mutation to land.
-        while (DateTime.UtcNow < deadline && combatState.TryGet(key, out var current) && current.CurrentHp == 55) await Task.Delay(20);
+        while (DateTime.UtcNow < deadline && world.TryGetCurrentHp(life) == 55) await Task.Delay(20);
 
-        Assert.True(combatState.TryGet(key, out var final));
-        Assert.True(final.CurrentHp < 55, "Expected the later successful retry to eventually apply real damage.");
+        Assert.True(world.TryGetCurrentHp(life) < 55, "Expected the later successful retry to eventually apply real damage.");
 
         client.Close();
         await run.WaitAsync(TimeSpan.FromSeconds(5));
     }
 
     [Fact]
-    public async Task LethalHit_TryMarkMonsterDeadTransientFailure_HpUnchanged_NoLethalPacketsOrRewards_LoopSurvives_LaterResolutionWorks()
+    public async Task LethalHit_ApplyMonsterDamageTransientFailure_HpUnchanged_NoLethalPacketsOrRewards_LoopSurvives_LaterResolutionWorks()
     {
-        var fakeWorld = new FakeCombatWorldRuntime { ThrowTransientTryMarkMonsterDeadCount = 1 };
-        var (client, stream, _, run, combatState, world, mapId, epoch, actorId, incarnation) = await SetupAsync(StrongAttacker(), maxHp: 1, fakeWorld);
+        var fakeWorld = new FakeCombatWorldRuntime { ThrowTransientApplyMonsterDamageCount = 1 };
+        var (client, stream, _, run, _, world, mapId, epoch, actorId, incarnation) = await SetupAsync(StrongAttacker(), maxHp: 1, fakeWorld);
         using var disposableClient = client;
 
-        var key = new MonsterCombatKey(mapId, epoch, actorId, incarnation);
+        var life = new WorldMonsterLifeReference(mapId, epoch, actorId, incarnation);
 
         await stream.WriteAsync(AttackPacket(actorId));
 
         // The FIRST attempt hits the transient failure - local HP must remain untouched (item 1's
         // own "confirm before commit" ordering means the transient RPC failure happens BEFORE any
         // local combat-state mutation at all) and the loop must survive to make a SECOND attempt on
-        // its own re-armed cadence, which this time reaches the fake's own real MarkedDead path and
-        // actually confirms the death.
+        // its own re-armed cadence, which this time reaches the fake's own real ApplyMonsterDamage
+        // path and actually confirms the death.
         var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(15);
-        while (DateTime.UtcNow < deadline && world.TryMarkMonsterDeadCallCount < 2) await Task.Delay(20);
-        Assert.True(world.TryMarkMonsterDeadCallCount >= 2, "Expected the transient failure to be retried by a later scheduled attempt (the loop must not have died).");
+        while (DateTime.UtcNow < deadline && world.ApplyMonsterDamageCallCount < 2) await Task.Delay(20);
+        Assert.True(world.ApplyMonsterDamageCallCount >= 2, "Expected the transient failure to be retried by a later scheduled attempt (the loop must not have died).");
 
         // Bounded wait for the eventual successful confirmed-death commit to land.
-        while (DateTime.UtcNow < deadline && combatState.TryGet(key, out var current) && current.CurrentHp != 0) await Task.Delay(20);
+        while (DateTime.UtcNow < deadline && world.TryGetCurrentHp(life) != 0) await Task.Delay(20);
 
-        Assert.True(combatState.TryGet(key, out var final));
-        Assert.Equal(0u, final.CurrentHp); // Eventually confirmed and committed by the later successful retry.
-        Assert.True(world.IsConfirmedDead(new WorldMonsterLifeReference(mapId, epoch, actorId, incarnation)));
+        Assert.Equal(0u, world.TryGetCurrentHp(life)); // Eventually confirmed and committed by the later successful retry.
 
         client.Close();
         await run.WaitAsync(TimeSpan.FromSeconds(5));

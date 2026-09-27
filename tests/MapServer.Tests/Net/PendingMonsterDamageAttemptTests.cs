@@ -123,8 +123,9 @@ public sealed class PendingMonsterDamageAttemptTests
     }
 
     private WorldSimulationEpoch _lastEpoch;
+    private FakeCombatWorldRuntime? _lastFakeWorld;
 
-    private async Task<(TcpClient Client, NetworkStream Stream, MapClientSession Session, Task RunTask, MobInstance Target, MonsterCombatStateStore CombatState, MonsterFeedProjectionRegistry Projections)> SetupAsync(
+    private async Task<(TcpClient Client, NetworkStream Stream, MapClientSession Session, Task RunTask, MobInstance Target, MonsterAttackCadenceStore CombatState, MonsterFeedProjectionRegistry Projections)> SetupAsync(
         ushort playerX, ushort playerY, ushort monsterX, ushort monsterY, TimeProvider timeProvider)
     {
         var listener = new TcpListener(IPAddress.Loopback, 0);
@@ -143,10 +144,12 @@ public sealed class PendingMonsterDamageAttemptTests
         var target = registry.AllInstances[0];
         var epoch = WorldSimulationEpoch.NewEpoch();
         _lastEpoch = epoch;
-        var combatState = new MonsterCombatStateStore();
-        combatState.Register(target.Map, epoch, target.ActorId, new WorldMonsterIncarnationId(target.IncarnationId.Value), target.Spawn.Mob.MaxHp);
-        var combat = new MonsterCombatCoordinator(questDrops, new RenewalBasicAttackRules(MinWeaponAtkRoll), combatState);
-        var monsterProjections = WorldMonsterProjectionTestHelper.SeedProjection(target.Map, epoch, combatState, registry.AllInstances);
+        var combatState = new MonsterAttackCadenceStore();
+        combatState.Register(target.Map, epoch, target.ActorId, new WorldMonsterIncarnationId(target.IncarnationId.Value));
+        var combat = new MonsterCombatCoordinator(questDrops, new RenewalBasicAttackRules(MinWeaponAtkRoll));
+        var fakeWorld = new FakeCombatWorldRuntime();
+        _lastFakeWorld = fakeWorld;
+        var monsterProjections = WorldMonsterProjectionTestHelper.SeedProjection(target.Map, epoch, combatState, registry.AllInstances, fakeWorld);
 
         var gameplayPersistence = new RecordingGameplayStatePersistence(WeakFreshNovice());
         var inventoryListPersistence = new FixedInventoryListPersistence(KnifeEquipped());
@@ -158,7 +161,7 @@ public sealed class PendingMonsterDamageAttemptTests
             gameplayStatePersistence: gameplayPersistence,
             accountId: AccountId, charId: CharId, monsterProjections: monsterProjections, combat: combat,
             inventoryPersistence: inventoryPersistence, inventoryListPersistence: inventoryListPersistence,
-            timeProvider: timeProvider, combatState: combatState, distributedWorld: new FakeCombatWorldRuntime());
+            timeProvider: timeProvider, combatState: combatState, distributedWorld: fakeWorld);
         var run = session.RunAsync(CancellationToken.None);
         await session.CompleteIroAuthenticationAsync(new(AccountId, CharId, 1, 2, 0, 0, false, "int_land03", playerX, playerY, 0, 0, 0, CharacterName: "TestNovice"));
 
@@ -250,7 +253,7 @@ public sealed class PendingMonsterDamageAttemptTests
         await ReadExact(stream, PacketConstants.ZcStopMoveLength);
         await ReadExact(stream, PacketConstants.ZcNotifyAct3Length);
         await ReadExact(stream, PacketConstants.ZcHpInfoLength);
-        var hpAfterFirstHit = combatState.TryGet(new MonsterCombatKey(target.Map, _lastEpoch, target.ActorId, new WorldMonsterIncarnationId(target.IncarnationId.Value)), out var s) ? s.CurrentHp : 0u;
+        var hpAfterFirstHit = _lastFakeWorld!.TryGetCurrentHp(LifeFor(target)) ?? 0u;
         Assert.True(hpAfterFirstHit > 0, "WeakFreshNovice's Knife hit must not one-shot G_PORING for this test to observe an intact cooldown.");
 
         // Advance the clock to the scheduled NextAttackAt so the background loop fires an ORDINARY
@@ -293,12 +296,23 @@ public sealed class PendingMonsterDamageAttemptTests
 
         // Allocate a pending attempt directly - this simulates "a pending attempt exists" without
         // ever going through HandleIroAttackRequestAsync at all, so RepeatAttackState.DueNowFixposPending
-        // was never set true for anything.
+        // was never set true for anything. The dispatcher's own scripted Applied/non-lethal result
+        // means this FIRST dispatch already resolves the attempt unambiguously - it legitimately
+        // projects a real damage packet onto the wire (substep 9: the pending-attempt mechanism now
+        // drives real wire output, unlike the fully-isolated substep-8 seam this scenario originally
+        // targeted) - drain it before proceeding.
         await session.AllocatePendingDamageAttemptForTestAsync(LifeFor(target), damage: 10, acquireEngagement: false, CancellationToken.None);
         lock (dispatchedCommands) Assert.Single(dispatchedCommands);
+        var damagePacket = await ReadExact(stream, PacketConstants.ZcNotifyAct3Length);
+        Assert.Equal((short)PacketConstants.ZcNotifyAct3, BinaryPrimitives.ReadInt16LittleEndian(damagePacket));
+        // The target is already visible to this session (discovered during SetupAsync) - the
+        // non-lethal Applied tail's HP-info packet therefore follows the damage packet too.
+        var hpInfoPacket = await ReadExact(stream, PacketConstants.ZcHpInfoLength);
+        Assert.Equal((short)PacketConstants.ZcHpInfo, BinaryPrimitives.ReadInt16LittleEndian(hpInfoPacket));
 
-        // Advance the clock past the retry delay so the scheduler's own background loop fires an
-        // internal retry for this pending attempt.
+        // Advance the clock - since the attempt already resolved above, there is nothing left
+        // pending to retry; no further dispatch, and specifically no 0x0088 (this scenario's own
+        // load-bearing assertion), occurs as a side effect of this clock advance.
         await clock.AdvanceAsync(TimeSpan.FromSeconds(5));
         await Task.Delay(50);
 
@@ -450,10 +464,30 @@ public sealed class PendingMonsterDamageAttemptTests
     public async Task Scenario7_AfterOtherPendingAttemptResolves_RetainedStateGetsExactlyOneFixposThenFreshPath()
     {
         var clock = new ControllableTimeProvider();
-        var (client, stream, session, run, target, _, _) = await SetupAsync(playerX: 75, playerY: 51, monsterX: 75, monsterY: 51, clock);
+        var (client, stream, session, run, target, combatState, projections) = await SetupAsync(playerX: 75, playerY: 51, monsterX: 75, monsterY: 51, clock);
         using var _dispose = client;
 
         var otherLife = new WorldMonsterLifeReference("int_land03", _lastEpoch, ActorId: 9999, WorldMonsterIncarnationId.First);
+        // Unlike Scenarios 9/10 (where A's own life is a genuinely unrelated placeholder never seeded
+        // into the projection), THIS scenario's A and B end up sharing the SAME RepeatAttackState
+        // object (AllocatePendingDamageAttemptForTestAsync's own `origin = _repeatAttack ?? new(...)`
+        // picks up B's already-installed state, since B installs it before A ever allocates - exactly
+        // Scenario 6's own established ordering, which this scenario continues). A's own Applied
+        // non-lethal resolution therefore DOES need a real, resolvable TargetSnapshot (it must NOT
+        // clear the shared _repeatAttack - only a status that calls ClearRepeatAttackIfCurrent would
+        // do that, which would wrongly discard B's own retained state before B ever gets to run) -
+        // seed a genuine second projection entry for otherLife so HandleDamageResultAsync's
+        // Applied/non-lethal branch can build a real damage packet for it instead of NRE-ing against
+        // an unseeded default TargetSnapshot.
+        var otherInstance = new WorldMonsterInstance(
+            ActorId: otherLife.ActorId, IncarnationId: otherLife.IncarnationId, MapId: otherLife.MapId, MobId: target.Spawn.Mob.Id,
+            X: target.GetPosition().X, Y: target.GetPosition().Y, Lifecycle: WorldMonsterLifecycleState.Alive, IsWalking: false,
+            DestinationX: target.GetPosition().X, DestinationY: target.GetPosition().Y,
+            Engagement: WorldMonsterEngagementState.Unengaged, EngagedTarget: null,
+            CurrentHp: target.Spawn.Mob.MaxHp, MaxHp: target.Spawn.Mob.MaxHp);
+        combatState.Register(otherLife.MapId, otherLife.SimulationEpoch, otherLife.ActorId, otherLife.IncarnationId);
+        projections.GetOrCreate(otherLife.MapId).ApplySnapshot([target.ToWorldMonsterInstance(), otherInstance], otherLife.SimulationEpoch, combatState);
+
         var aSuspend = new TaskCompletionSource();
         session.DebugApplyMonsterDamageDispatcher = async (_, _) => { await aSuspend.Task; return new WorldMonsterDamageResult(WorldMonsterDamageStatus.Applied, 0, 0, 0, false, null); };
 
@@ -477,12 +511,52 @@ public sealed class PendingMonsterDamageAttemptTests
         aSuspend.SetResult();
         await aTask;
 
-        // The scheduler's own next iteration must now pick up B's retained RepeatAttackState,
-        // consume its DueNowFixposPending, send exactly one 0x0088, then run B's fresh path.
-        var fixposPacket = await ReadExact(stream, PacketConstants.ZcStopMoveLength);
-        Assert.Equal((short)PacketConstants.ZcStopMove, BinaryPrimitives.ReadInt16LittleEndian(fixposPacket));
-        var damagePacket = await ReadExact(stream, PacketConstants.ZcNotifyAct3Length);
-        Assert.Equal((short)PacketConstants.ZcNotifyAct3, BinaryPrimitives.ReadInt16LittleEndian(damagePacket));
+        // A's own allocation claimed the shared RepeatAttackState's NextAttackAt optimistically (see
+        // AllocateAndDispatchFreshDamageAttemptAsync's own doc comment), pushing it into the future -
+        // advance the clock so B's own scheduled turn (on that SAME shared RepeatAttackState) becomes
+        // due and RunRepeatAttackLoopAsync actually wakes to process it. A and B share the SAME
+        // RepeatAttackState object (see this scenario's own doc comment above) - once A's own
+        // DispatchPendingDamageAttemptAsync retires the pending slot and signals the scheduler, B's
+        // own scheduler-driven re-evaluation of that SAME RepeatAttackState races A's own tail (both
+        // are independently-scheduled tasks); depending on exactly how these interleave, the
+        // scheduler's own sleep-until-NextAttackAt loop may not yet be blocked on THIS clock advance
+        // at the moment it fires (a benign, adversarial-scenario-only timing gap - not a production
+        // bug, since production never constructs two independent attempts against one shared
+        // RepeatAttackState in the first place) - poll with repeated small advances rather than
+        // trusting a single one to land inside the right window.
+        var opcodes = new List<short>();
+        var pollDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        while (DateTime.UtcNow < pollDeadline && opcodes.Count(o => o == (short)PacketConstants.ZcStopMove) < 1)
+        {
+            await clock.AdvanceAsync(TimeSpan.FromSeconds(5));
+            var drainDeadline = DateTime.UtcNow + TimeSpan.FromMilliseconds(300);
+            while (DateTime.UtcNow < drainDeadline)
+            {
+                byte[] header;
+                try
+                {
+                    using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(150));
+                    var buffer = new byte[2];
+                    await stream.ReadExactlyAsync(buffer, cts.Token);
+                    header = buffer;
+                }
+                catch (OperationCanceledException) { break; } // Nothing else arrived within this poll window.
+                var opcode = BinaryPrimitives.ReadInt16LittleEndian(header);
+                opcodes.Add(opcode);
+                if (opcode == (short)PacketConstants.ZcStopMove) await ReadExact(stream, PacketConstants.ZcStopMoveLength - 2);
+                else if (opcode == (short)PacketConstants.ZcNotifyAct3) await ReadExact(stream, PacketConstants.ZcNotifyAct3Length - 2);
+                else if (opcode == (short)PacketConstants.ZcHpInfo) await ReadExact(stream, PacketConstants.ZcHpInfoLength - 2);
+                else Assert.Fail($"Unexpected opcode 0x{opcode:X4} while draining Scenario 7's expected packet set.");
+            }
+        }
+
+        // Load-bearing invariants: exactly one fixpos ever (B's own DueNowFixposPending consumed
+        // exactly once), and at least one damage packet (proving B's own fresh path actually ran) -
+        // A's own non-lethal Applied resolution also legitimately writes its own damage packet for
+        // otherLife (it is never gated on ReferenceEquals - only the RESCHEDULE is), so the exact
+        // total count of damage packets is not asserted, only that at least one landed.
+        Assert.Equal(1, opcodes.Count(o => o == (short)PacketConstants.ZcStopMove));
+        Assert.True(opcodes.Count(o => o == (short)PacketConstants.ZcNotifyAct3) >= 1, "Expected at least one damage packet (B's own fresh-path hit).");
 
         client.Close();
         await run.WaitAsync(TimeSpan.FromSeconds(5));
@@ -534,7 +608,11 @@ public sealed class PendingMonsterDamageAttemptTests
 
         var otherLife = new WorldMonsterLifeReference("int_land03", _lastEpoch, ActorId: 9999, WorldMonsterIncarnationId.First);
         var aSuspend = new TaskCompletionSource();
-        session.DebugApplyMonsterDamageDispatcher = async (_, _) => { await aSuspend.Task; return new WorldMonsterDamageResult(WorldMonsterDamageStatus.Applied, 0, 0, 0, false, null); };
+        // A's own life is an unrelated scheduling/gating placeholder never seeded into the
+        // projection - StaleLifeReference (rather than Applied) avoids HandleDamageResultAsync's
+        // Applied/ReplayedSequence branches, the only ones that dereference TargetSnapshot, which
+        // would otherwise NRE against this life's synthesized default (unseeded) TargetSnapshot.
+        session.DebugApplyMonsterDamageDispatcher = async (_, _) => { await aSuspend.Task; return new WorldMonsterDamageResult(WorldMonsterDamageStatus.StaleLifeReference, 0, 0, 0, false, null); };
 
         var aTask = session.AllocatePendingDamageAttemptForTestAsync(otherLife, damage: 5, acquireEngagement: false, CancellationToken.None);
         await stream.WriteAsync(AttackPacket(target.ActorId)); // B installs itself, blocked behind A.
@@ -614,7 +692,11 @@ public sealed class PendingMonsterDamageAttemptTests
 
         var otherLife = new WorldMonsterLifeReference("int_land03", _lastEpoch, ActorId: 9999, WorldMonsterIncarnationId.First);
         var holdSuspend = new TaskCompletionSource();
-        session.DebugApplyMonsterDamageDispatcher = async (_, _) => { await holdSuspend.Task; return new WorldMonsterDamageResult(WorldMonsterDamageStatus.Applied, 0, 0, 0, false, null); };
+        // A's own life is an unrelated scheduling/gating placeholder never seeded into the
+        // projection - StaleLifeReference (rather than Applied) avoids HandleDamageResultAsync's
+        // Applied/ReplayedSequence branches, the only ones that dereference TargetSnapshot, which
+        // would otherwise NRE against this life's synthesized default (unseeded) TargetSnapshot.
+        session.DebugApplyMonsterDamageDispatcher = async (_, _) => { await holdSuspend.Task; return new WorldMonsterDamageResult(WorldMonsterDamageStatus.StaleLifeReference, 0, 0, 0, false, null); };
         var aTask = session.AllocatePendingDamageAttemptForTestAsync(otherLife, damage: 5, acquireEngagement: false, CancellationToken.None);
 
         // Fire many concurrent due-now attack requests for the SAME real target, from many

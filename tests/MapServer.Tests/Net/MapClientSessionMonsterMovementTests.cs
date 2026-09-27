@@ -134,13 +134,13 @@ public sealed class MapClientSessionMonsterMovementTests
         // to be non-null (it reads CurrentHp from the combat store for the spawn packet's own HP
         // fields) - a null combatState makes it return immediately with no packet sent at all,
         // which is what silently hung this file's tests until this fix. A fresh, empty
-        // MonsterCombatStateStore is registered here for every instance in the shared registry, at
+        // MonsterAttackCadenceStore is registered here for every instance in the shared registry, at
         // a throwaway epoch matching whatever the projection above was seeded with - these tests
         // never assert on HP values through this path, only identity/position/movement.
         var epochForVisibility = WorldSimulationEpoch.NewEpoch();
-        var combatStateForVisibility = new MonsterCombatStateStore();
+        var combatStateForVisibility = new MonsterAttackCadenceStore();
         foreach (var instance in registry.AllInstances)
-            combatStateForVisibility.Register(instance.Map, epochForVisibility, instance.ActorId, new WorldMonsterIncarnationId(instance.IncarnationId.Value), instance.Spawn.Mob.MaxHp);
+            combatStateForVisibility.Register(instance.Map, epochForVisibility, instance.ActorId, new WorldMonsterIncarnationId(instance.IncarnationId.Value));
         var monsterProjections = WorldMonsterProjectionTestHelper.SeedProjection(target.Map, epochForVisibility, combatStateForVisibility, registry.AllInstances);
 
         var session = new MapClientSession(
@@ -525,10 +525,11 @@ public sealed class MapClientSessionMonsterMovementTests
         var questDrops = new QuestDropResolver(GeneratedQuestDrops.All);
         var target = registry.AllInstances[0];
         var epoch = WorldSimulationEpoch.NewEpoch();
-        var combatState = new MonsterCombatStateStore();
-        combatState.Register(target.Map, epoch, target.ActorId, new WorldMonsterIncarnationId(target.IncarnationId.Value), target.Spawn.Mob.MaxHp);
-        var combat = new MonsterCombatCoordinator(questDrops, new RenewalBasicAttackRules(), combatState);
-        var monsterProjections = WorldMonsterProjectionTestHelper.SeedProjection(target.Map, epoch, combatState, registry.AllInstances);
+        var combatState = new MonsterAttackCadenceStore();
+        combatState.Register(target.Map, epoch, target.ActorId, new WorldMonsterIncarnationId(target.IncarnationId.Value));
+        var combat = new MonsterCombatCoordinator(questDrops, new RenewalBasicAttackRules());
+        var fakeWorld = new FakeCombatWorldRuntime();
+        var monsterProjections = WorldMonsterProjectionTestHelper.SeedProjection(target.Map, epoch, combatState, registry.AllInstances, fakeWorld);
 
         var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
@@ -545,7 +546,7 @@ public sealed class MapClientSessionMonsterMovementTests
             "int_land03", 75, 51, WorldMapRegistry.Tutorial,
             gameplayStatePersistence: new FixedGameplayStatePersistence(StrongNovice()),
             accountId: AccountId, charId: CharId, monsterProjections: monsterProjections, combat: combat, timeProvider: clock, combatState: combatState,
-            distributedWorld: new FakeCombatWorldRuntime());
+            distributedWorld: fakeWorld);
         var run = session.RunAsync(CancellationToken.None);
         await session.CompleteIroAuthenticationAsync(new(AccountId, CharId, 1, 2, 0, 0, false, "int_land03", 75, 51, 0, 0, 0));
         await ReadExact(stream, 4 + 6 + 6 + 13);
@@ -577,13 +578,13 @@ public sealed class MapClientSessionMonsterMovementTests
         var vanishPacket = await ReadExact(stream, PacketConstants.ZcNotifyVanishLength);
         Assert.Equal((short)PacketConstants.ZcNotifyVanish, BinaryPrimitives.ReadInt16LittleEndian(vanishPacket));
 
-        // The coordinator's own kill mutation lands in MonsterCombatStateStore, never on the local
+        // The coordinator's own kill mutation lands in MonsterAttackCadenceStore, never on the local
         // MobInstance (there is no local MobInstance for a production monster post-cutover) - the
         // local MobInstance driving this test's own generated-spawn/respawn-delay data must be
         // independently killed too, mirroring what a real World life transition would have already
         // done, so ScheduleRespawnIfNeeded/ProcessDueRespawns below have a genuinely dead instance
         // to work with.
-        Assert.Equal(0u, combatState.TryGet(new MonsterCombatKey(target.Map, epoch, target.ActorId, new WorldMonsterIncarnationId(target.IncarnationId.Value)), out var deadState) ? deadState.CurrentHp : 1u);
+        Assert.Equal(0u, fakeWorld.TryGetCurrentHp(new WorldMonsterLifeReference(target.Map, epoch, target.ActorId, new WorldMonsterIncarnationId(target.IncarnationId.Value))) ?? 1u);
         target.ApplyDamage(target.CurrentHp);
         Assert.False(target.IsAlive);
 

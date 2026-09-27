@@ -11,12 +11,19 @@ using Athena.Net.World.Contracts;
 namespace Athena.Net.MapServer.Tests.Net;
 
 // Step 6 hardening (final correctness pass), item 3: exception classification around
-// TryMarkMonsterDeadAsync/NotifyMonsterAttackedAsync must be NARROW. A genuinely local
+// ApplyMonsterDamageAsync/NotifyMonsterAttackedAsync must be NARROW. A genuinely local
 // programming/invariant defect (ArgumentException, an unexpected InvalidOperationException) must
 // NEVER be caught and treated as "transient World RPC failure, retry later" - it must propagate and
 // fault the session's own repeat-attack loop task, exactly like any other uncaught bug would. This is
 // the deliberate opposite of MapClientSessionTransientWorldRpcFailureTests.cs, which proves the
 // legitimate transient case (IOException) IS retried.
+//
+// FakeCombatWorldRuntime's own ApplyMonsterDamageAsync scripting (ThrowTransientApplyMonsterDamageCount)
+// only supports injecting IOException (the legitimate transient case) - there is no fake-level
+// mechanism to script an arbitrary exception TYPE. To inject a genuinely non-transient exception type
+// here, these tests instead use MapClientSession.DebugApplyMonsterDamageDispatcher, a settable
+// dispatcher override that takes priority over the real _distributedWorld.ApplyMonsterDamageAsync
+// call - assigning it a lambda that throws the scripted exception type directly at the dispatch seam.
 public sealed class MapClientSessionWorldRpcFailureClassificationTests
 {
     private const uint AccountId = 51;
@@ -71,7 +78,7 @@ public sealed class MapClientSessionWorldRpcFailureClassificationTests
     [Theory]
     [InlineData(typeof(ArgumentException))]
     [InlineData(typeof(InvalidOperationException))]
-    public async Task LethalHit_TryMarkMonsterDeadThrowsLocalProgrammingDefect_PropagatesAndFaultsTheRepeatAttackLoop_NeverSwallowedAsTransient(Type exceptionType)
+    public async Task LethalHit_ApplyMonsterDamageThrowsLocalProgrammingDefect_PropagatesAndFaultsTheRepeatAttackLoop_NeverSwallowedAsTransient(Type exceptionType)
     {
         var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
@@ -89,25 +96,35 @@ public sealed class MapClientSessionWorldRpcFailureClassificationTests
         var questDrops = new QuestDropResolver([]);
         var target = registry.AllInstances[0];
         var epoch = WorldSimulationEpoch.NewEpoch();
-        var combatState = new MonsterCombatStateStore();
+        var combatState = new MonsterAttackCadenceStore();
         var incarnation = new WorldMonsterIncarnationId(target.IncarnationId.Value);
-        combatState.Register(target.Map, epoch, target.ActorId, incarnation, maxHp: 1); // 1 HP - guaranteed lethal.
-        var combat = new MonsterCombatCoordinator(questDrops, new RenewalBasicAttackRules(), combatState);
-        var monsterProjections = WorldMonsterProjectionTestHelper.SeedProjection(target.Map, epoch, combatState, registry.AllInstances);
+        combatState.Register(target.Map, epoch, target.ActorId, incarnation);
+        var combat = new MonsterCombatCoordinator(questDrops, new RenewalBasicAttackRules());
+        var fakeWorld = new FakeCombatWorldRuntime();
+        var monsterProjections = WorldMonsterProjectionTestHelper.SeedProjection(target.Map, epoch, combatState, registry.AllInstances, fakeWorld);
 
         var gameplayPersistence = new RecordingGameplayStatePersistence(StrongAttacker());
-        var fakeWorld = new FakeCombatWorldRuntime
-        {
-            TryMarkMonsterDeadThrows = () => (Exception)Activator.CreateInstance(exceptionType, "Simulated local programming defect.")!,
-            ThrowTransientTryMarkMonsterDeadCount = int.MaxValue, // Every call throws - a "retry later" would hot-loop forever if this were misclassified as transient.
-        };
 
+        // No fake-level mechanism scripts an arbitrary exception TYPE (only IOException, via
+        // ThrowTransientApplyMonsterDamageCount) - inject the scripted local-programming-defect
+        // exception directly at the dispatch seam instead, bypassing the fake's ledger entirely.
+        // Every call throws - a "retry later" would hot-loop forever if this were misclassified as
+        // transient. Since this bypasses the fake, its own ApplyMonsterDamageCallCount can never
+        // observe these calls - track the count locally at the dispatch seam instead.
+        var dispatchCallCount = 0;
         var session = new MapClientSession(
             1, serverClient, new CharServerConnector(new MapConfigStore(new MapConfig(), "unused.conf")), true,
             "int_land03", 75, 51, WorldMapRegistry.Tutorial,
             gameplayStatePersistence: gameplayPersistence,
             accountId: AccountId, charId: CharId, monsterProjections: monsterProjections, combat: combat,
-            combatState: combatState, distributedWorld: fakeWorld);
+            combatState: combatState, distributedWorld: fakeWorld)
+        {
+            DebugApplyMonsterDamageDispatcher = (_, _) =>
+            {
+                Interlocked.Increment(ref dispatchCallCount);
+                throw (Exception)Activator.CreateInstance(exceptionType, "Simulated local programming defect.")!;
+            },
+        };
         var run = session.RunAsync(CancellationToken.None);
         await session.CompleteIroAuthenticationAsync(new(AccountId, CharId, 1, 2, 0, 0, false, "int_land03", 75, 51, 0, 0, 0));
 
@@ -138,14 +155,16 @@ public sealed class MapClientSessionWorldRpcFailureClassificationTests
         Assert.IsType(exceptionType, thrown);
 
         // Exactly ONE call happened - a misclassified "transient" retry would have kept calling
-        // TryMarkMonsterDeadAsync repeatedly instead of faulting the loop on the very first attempt.
-        Assert.Equal(1, fakeWorld.TryMarkMonsterDeadCallCount);
+        // the dispatch seam repeatedly instead of faulting the loop on the very first attempt.
+        Assert.Equal(1, dispatchCallCount);
 
-        // Local combat state must remain untouched - the defect happened before any HP mutation
-        // could occur (TryMarkMonsterDeadAsync throws BEFORE CommitConfirmedDeath is ever reached).
-        var key = new MonsterCombatKey(target.Map, epoch, target.ActorId, incarnation);
-        Assert.True(combatState.TryGet(key, out var state));
-        Assert.Equal(1u, state.CurrentHp);
+        // Local HP ledger (World's own, via the fake) must remain untouched - the defect happened
+        // before any HP mutation could occur (the dispatcher throws BEFORE the real
+        // ApplyMonsterDamageAsync/ledger mutation is ever reached). G_Poring's own real MaxHp (as
+        // seeded by SeedProjection's fakeWorld param from the target's own MobInstance snapshot) is
+        // the untouched baseline to compare against - never a hardcoded value.
+        var life = new WorldMonsterLifeReference(target.Map, epoch, target.ActorId, incarnation);
+        Assert.Equal(target.Spawn.Mob.MaxHp, fakeWorld.TryGetCurrentHp(life));
 
         // `run` has already faulted and been awaited above (proving RunAsync itself terminated
         // promptly without needing an external DisposeAsync call) - DisposeAsync would simply
@@ -178,16 +197,16 @@ public sealed class MapClientSessionWorldRpcFailureClassificationTests
         var questDrops = new QuestDropResolver([]);
         var target = registry.AllInstances[0];
         var epoch = WorldSimulationEpoch.NewEpoch();
-        var combatState = new MonsterCombatStateStore();
+        var combatState = new MonsterAttackCadenceStore();
         var incarnation = new WorldMonsterIncarnationId(target.IncarnationId.Value);
-        combatState.Register(target.Map, epoch, target.ActorId, incarnation, maxHp: 1);
-        var combat = new MonsterCombatCoordinator(questDrops, new RenewalBasicAttackRules(), combatState);
+        combatState.Register(target.Map, epoch, target.ActorId, incarnation);
+        var combat = new MonsterCombatCoordinator(questDrops, new RenewalBasicAttackRules());
         var monsterProjections = WorldMonsterProjectionTestHelper.SeedProjection(target.Map, epoch, combatState, registry.AllInstances);
 
         var gameplayPersistence = new RecordingGameplayStatePersistence(StrongAttacker());
         // Always throws IOException (transient) - if the caller failed to re-arm NextAttackAt to a
-        // FUTURE time, the loop would call TryMarkMonsterDeadAsync as fast as the CPU allows.
-        var fakeWorld = new FakeCombatWorldRuntime { ThrowTransientTryMarkMonsterDeadCount = int.MaxValue };
+        // FUTURE time, the loop would call ApplyMonsterDamageAsync as fast as the CPU allows.
+        var fakeWorld = new FakeCombatWorldRuntime { ThrowTransientApplyMonsterDamageCount = int.MaxValue };
 
         var session = new MapClientSession(
             1, serverClient, new CharServerConnector(new MapConfigStore(new MapConfig(), "unused.conf")), true,
@@ -214,13 +233,13 @@ public sealed class MapClientSessionWorldRpcFailureClassificationTests
         // would produce many calls within milliseconds; a correctly-paced retry uses the ordinary
         // attack-delay cadence (hundreds of ms at minimum for a real weapon/stat combination).
         var firstSeenDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
-        while (fakeWorld.TryMarkMonsterDeadCallCount < 1 && DateTime.UtcNow < firstSeenDeadline) await Task.Delay(5);
-        Assert.True(fakeWorld.TryMarkMonsterDeadCallCount >= 1);
+        while (fakeWorld.ApplyMonsterDamageCallCount < 1 && DateTime.UtcNow < firstSeenDeadline) await Task.Delay(5);
+        Assert.True(fakeWorld.ApplyMonsterDamageCallCount >= 1);
         var firstObservedAt = DateTime.UtcNow;
 
         var secondSeenDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
-        while (fakeWorld.TryMarkMonsterDeadCallCount < 2 && DateTime.UtcNow < secondSeenDeadline) await Task.Delay(5);
-        Assert.True(fakeWorld.TryMarkMonsterDeadCallCount >= 2, "Expected the loop to keep retrying (not die) after a transient failure.");
+        while (fakeWorld.ApplyMonsterDamageCallCount < 2 && DateTime.UtcNow < secondSeenDeadline) await Task.Delay(5);
+        Assert.True(fakeWorld.ApplyMonsterDamageCallCount >= 2, "Expected the loop to keep retrying (not die) after a transient failure.");
         var elapsed = DateTime.UtcNow - firstObservedAt;
 
         // A genuine hot loop would produce the second call within a handful of milliseconds; the

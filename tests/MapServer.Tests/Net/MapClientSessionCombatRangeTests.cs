@@ -143,8 +143,9 @@ public sealed class MapClientSessionCombatRangeTests
 
     private WorldSimulationEpoch _lastEpoch;
     private MonsterFeedProjectionRegistry? _lastProjections;
+    private FakeCombatWorldRuntime? _lastFakeWorld;
 
-    private async Task<(TcpClient Client, NetworkStream Stream, MapClientSession Session, Task RunTask, MobInstance Target, MonsterRegistry Registry, MonsterCombatStateStore CombatState)> SetupAsync(
+    private async Task<(TcpClient Client, NetworkStream Stream, MapClientSession Session, Task RunTask, MobInstance Target, MonsterRegistry Registry, MonsterAttackCadenceStore CombatState)> SetupAsync(
         ushort playerX, ushort playerY, ushort monsterX, ushort monsterY,
         IMapCollisionProvider? collisionProvider = null, TimeProvider? timeProvider = null, Func<int, int, int>? rollWeaponAtk = null,
         CharacterGameplayState? gameplayState = null)
@@ -165,11 +166,13 @@ public sealed class MapClientSessionCombatRangeTests
         var target = registry.AllInstances[0];
         var epoch = WorldSimulationEpoch.NewEpoch();
         _lastEpoch = epoch;
-        var combatState = new MonsterCombatStateStore();
-        combatState.Register(target.Map, epoch, target.ActorId, new WorldMonsterIncarnationId(target.IncarnationId.Value), target.Spawn.Mob.MaxHp);
-        var combat = new MonsterCombatCoordinator(questDrops, new RenewalBasicAttackRules(rollWeaponAtk), combatState);
-        var monsterProjections = WorldMonsterProjectionTestHelper.SeedProjection(target.Map, epoch, combatState, registry.AllInstances);
+        var combatState = new MonsterAttackCadenceStore();
+        combatState.Register(target.Map, epoch, target.ActorId, new WorldMonsterIncarnationId(target.IncarnationId.Value));
+        var combat = new MonsterCombatCoordinator(questDrops, new RenewalBasicAttackRules(rollWeaponAtk));
+        var fakeWorld = new FakeCombatWorldRuntime();
+        var monsterProjections = WorldMonsterProjectionTestHelper.SeedProjection(target.Map, epoch, combatState, registry.AllInstances, fakeWorld);
         _lastProjections = monsterProjections;
+        _lastFakeWorld = fakeWorld;
 
         var gameplayPersistence = new RecordingGameplayStatePersistence(gameplayState ?? StrongNovice());
         var inventoryListPersistence = new FixedInventoryListPersistence(KnifeEquipped());
@@ -181,7 +184,7 @@ public sealed class MapClientSessionCombatRangeTests
             gameplayStatePersistence: gameplayPersistence,
             accountId: AccountId, charId: CharId, monsterProjections: monsterProjections, combat: combat,
             inventoryPersistence: inventoryPersistence, inventoryListPersistence: inventoryListPersistence,
-            timeProvider: timeProvider, collisionProvider: collisionProvider, combatState: combatState, distributedWorld: new FakeCombatWorldRuntime());
+            timeProvider: timeProvider, collisionProvider: collisionProvider, combatState: combatState, distributedWorld: fakeWorld);
         var run = session.RunAsync(CancellationToken.None);
         await session.CompleteIroAuthenticationAsync(new(AccountId, CharId, 1, 2, 0, 0, false, "int_land03", playerX, playerY, 0, 0, 0));
 
@@ -209,14 +212,15 @@ public sealed class MapClientSessionCombatRangeTests
         return (client, stream, session, run, actualTarget ?? target, registry, combatState);
     }
 
-    // Reads the CURRENT HP from the SAME MonsterCombatStateStore instance this session's combat
-    // was constructed with - the store (not MobInstance's own now-superseded CurrentHp field) is
-    // the sole authoritative HP owner on the migrated combat path (see MonsterCombatStateStore's
-    // own doc comment), so this is the correct oracle for this file's damage assertions.
-    private uint CurrentHpOf(MonsterCombatStateStore combatState, MobInstance target) =>
-        combatState.TryGet(new MonsterCombatKey(target.Map, _lastEpoch, target.ActorId, new WorldMonsterIncarnationId(target.IncarnationId.Value)), out var state) ? state.CurrentHp : 0u;
+    // Reads the CURRENT HP from the SAME FakeCombatWorldRuntime instance this session's combat was
+    // constructed with - HP/death authority now lives solely on World's ApplyMonsterDamageAsync
+    // ledger (mediated here by FakeCombatWorldRuntime), never in MonsterAttackCadenceStore (which no
+    // longer carries HP at all) or MobInstance's own now-superseded CurrentHp field, so this is the
+    // correct oracle for this file's damage assertions.
+    private uint CurrentHpOf(MonsterAttackCadenceStore combatState, MobInstance target) =>
+        _lastFakeWorld!.TryGetCurrentHp(new WorldMonsterLifeReference(target.Map, _lastEpoch, target.ActorId, new WorldMonsterIncarnationId(target.IncarnationId.Value))) ?? 0u;
 
-    private bool IsAlive(MonsterCombatStateStore combatState, MobInstance target) => CurrentHpOf(combatState, target) > 0;
+    private bool IsAlive(MonsterAttackCadenceStore combatState, MobInstance target) => CurrentHpOf(combatState, target) > 0;
 
     // Live evidence reproduced: player far from a Range=1 Knife-equipped G_PORING must never take
     // damage on the very first 0x0437, and must instead receive the pinned 0x0139
@@ -329,7 +333,11 @@ public sealed class MapClientSessionCombatRangeTests
         // recheck reads the LIVE MonsterFeedProjectionRegistry, never the local MobInstance
         // directly, so this test's simulated "walked away" position must be re-published into the
         // SAME projection/epoch/combatState this session was set up with before the deferred hit
-        // fires, mirroring what a real Moved feed entry would have already reconciled.
+        // fires, mirroring what a real Moved feed entry would have already reconciled. Deliberately
+        // omits the fakeWorld parameter here - this resync is purely a position update; MobInstance's
+        // own CurrentHp is never mutated by the live attack path any more (post-cutover, only the
+        // fake World's own ledger tracks it), so re-seeding from MobInstance.CurrentHp here would
+        // wrongly reset the fake ledger's already-correctly-decremented HP back to full.
         WorldMonsterProjectionTestHelper.ResyncProjection(_lastProjections!, target.Map, _lastEpoch, combatState, registry.AllInstances);
 
         // Advance the clock far enough for the next repeat-attack hit to become due.

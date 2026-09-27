@@ -163,22 +163,6 @@ public sealed class MobInstance : IMonsterActorView
     public MobLifecycleState State { get { lock (_gate) return _state; } }
     public bool IsAlive => State == MobLifecycleState.Alive;
 
-    // The ONE atomic way to read every MapServer-local combat field together - IncarnationId,
-    // CurrentHp, and NextAttackAt are all read under the SAME lock acquisition, so no concurrent
-    // respawn/lifecycle transition can ever be observed as a torn mix (e.g. the OLD IncarnationId
-    // paired with the NEW life's already-reset full HP and cleared NextAttackAt, or vice versa -
-    // TryRespawn resets _currentHp/_nextAttackAt and bumps _incarnationId together under its own
-    // lock, so any caller reading these three fields via separate property getters could observe
-    // an in-between state that never corresponds to any single life). Returns a plain tuple (not
-    // MonsterCombatState itself) so this file - shared unmodified into Athena.World.Monsters, see
-    // this file's own top-of-file doc comment - never needs a dependency on
-    // Athena.Net.World.Contracts merely to express MonsterCombatState's own WorldMonsterIncarnationId
-    // field; MonsterCombatState.FromInstance (a MapServer-only file) does that one conversion.
-    public (uint ActorId, MonsterIncarnationId IncarnationId, uint CurrentHp, uint MaxHp, DateTimeOffset? NextAttackAt) CaptureCombatState()
-    {
-        lock (_gate) return (ActorId, _incarnationId, _currentHp, Spawn.Mob.MaxHp, _nextAttackAt);
-    }
-
     // One atomic read of target/state together - see MobEngagement's own doc comment for why this
     // must be a single snapshot rather than two separate property reads.
     public MobEngagement Engagement { get { lock (_gate) return new MobEngagement(_targetAccountId, _combatState); } }

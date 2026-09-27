@@ -5,7 +5,7 @@ namespace Athena.Net.MapServer.Tests.World;
 
 // Step 6 hardening (items 2 and 5): MonsterFeedProjection's own thread-safety and replay-safety
 // contracts, exercised directly against the type (never through a real Orleans grain, which is
-// unnecessary for proving these purely local invariants - mirrors MonsterCombatStateStoreTests'
+// unnecessary for proving these purely local invariants - mirrors MonsterAttackCadenceStoreTests'
 // own "exercise the store directly" scope).
 public sealed class MonsterFeedProjectionTests
 {
@@ -15,7 +15,7 @@ public sealed class MonsterFeedProjectionTests
     private static WorldMonsterInstance Alive(uint actorId, WorldMonsterIncarnationId incarnation, ushort x = 10, ushort y = 10, WorldMonsterLifecycleState lifecycle = WorldMonsterLifecycleState.Alive) =>
         new(actorId, incarnation, MapId, PoringMobId, x, y, lifecycle, IsWalking: false, DestinationX: x, DestinationY: y, WorldMonsterEngagementState.Unengaged, EngagedTarget: null, CurrentHp: 55, MaxHp: 55);
 
-    // Mirrors MonsterCombatStateStoreTests' own Barrier-synchronized concurrency-test idiom exactly:
+    // Mirrors MonsterAttackCadenceStoreTests' own Barrier-synchronized concurrency-test idiom exactly:
     // one writer thread hammering ApplySnapshot/ApplyEntry while several reader threads concurrently
     // call TryGetLife/AllInstances/EngagementOf in a tight loop, asserting no exception and that
     // every observed (epoch, instance) pair is internally consistent (the instance's own ActorId
@@ -25,7 +25,7 @@ public sealed class MonsterFeedProjectionTests
     public async Task ConcurrentReadsAndWrites_NoExceptionAndNoTornReads()
     {
         var projection = new MonsterFeedProjection(MapId);
-        var combatState = new MonsterCombatStateStore();
+        var combatState = new MonsterAttackCadenceStore();
         const uint actorId = 1;
         var incarnation = WorldMonsterIncarnationId.First;
         projection.ApplySnapshot([Alive(actorId, incarnation)], WorldSimulationEpoch.NewEpoch(), combatState);
@@ -83,7 +83,7 @@ public sealed class MonsterFeedProjectionTests
     public void ReplayedRespawnedEntry_DoesNotResetAlreadyDamagedHp()
     {
         var projection = new MonsterFeedProjection(MapId);
-        var combatState = new MonsterCombatStateStore();
+        var combatState = new MonsterAttackCadenceStore();
         var epoch = WorldSimulationEpoch.NewEpoch();
         const uint actorId = 1;
         var incarnation = WorldMonsterIncarnationId.First;
@@ -93,23 +93,24 @@ public sealed class MonsterFeedProjectionTests
         projection.ApplyEntry(entry, combatState, epoch);
 
         var key = new MonsterCombatKey(MapId, epoch, actorId, incarnation);
-        combatState.ApplyDamage(key, damage: 20);
-        Assert.True(combatState.TryGet(key, out var damaged));
-        Assert.True(damaged.CurrentHp < damaged.MaxHp);
+        var scheduledAt = DateTimeOffset.UnixEpoch.AddSeconds(30);
+        combatState.ScheduleNextAttack(key, scheduledAt);
+        Assert.True(combatState.TryGet(key, out var scheduled));
+        Assert.Equal(scheduledAt, scheduled.NextAttackAt);
 
         // Replay the EXACT same Respawned entry again (simulating a crash between apply and commit,
-        // then the same page being re-polled) - must be a complete no-op: no HP reset, no exception.
+        // then the same page being re-polled) - must be a complete no-op: no cadence reset, no exception.
         projection.ApplyEntry(entry, combatState, epoch);
 
         Assert.True(combatState.TryGet(key, out var afterReplay));
-        Assert.Equal(damaged.CurrentHp, afterReplay.CurrentHp);
+        Assert.Equal(scheduled.NextAttackAt, afterReplay.NextAttackAt);
     }
 
     [Fact]
     public void RepeatedIdenticalApplySnapshot_PreservesHp()
     {
         var projection = new MonsterFeedProjection(MapId);
-        var combatState = new MonsterCombatStateStore();
+        var combatState = new MonsterAttackCadenceStore();
         var epoch = WorldSimulationEpoch.NewEpoch();
         const uint actorId = 1;
         var incarnation = WorldMonsterIncarnationId.First;
@@ -117,23 +118,25 @@ public sealed class MonsterFeedProjectionTests
 
         projection.ApplySnapshot([instance], epoch, combatState);
         var key = new MonsterCombatKey(MapId, epoch, actorId, incarnation);
-        combatState.ApplyDamage(key, damage: 15);
-        Assert.True(combatState.TryGet(key, out var damaged));
+        var scheduledAt = DateTimeOffset.UnixEpoch.AddSeconds(15);
+        combatState.ScheduleNextAttack(key, scheduledAt);
+        Assert.True(combatState.TryGet(key, out var scheduled));
+        Assert.Equal(scheduledAt, scheduled.NextAttackAt);
 
         // Re-applying the IDENTICAL snapshot content (same epoch, same actor, same incarnation) must
-        // preserve the already-damaged HP untouched - a resync re-observing an unchanged life is not
-        // a fresh registration.
+        // preserve the already-scheduled cadence untouched - a resync re-observing an unchanged life
+        // is not a fresh registration.
         projection.ApplySnapshot([instance], epoch, combatState);
 
         Assert.True(combatState.TryGet(key, out var afterResync));
-        Assert.Equal(damaged.CurrentHp, afterResync.CurrentHp);
+        Assert.Equal(scheduled.NextAttackAt, afterResync.NextAttackAt);
     }
 
     [Fact]
     public void NewIncarnationInFreshSnapshot_RemovesOldIncarnationCombatStateKey()
     {
         var projection = new MonsterFeedProjection(MapId);
-        var combatState = new MonsterCombatStateStore();
+        var combatState = new MonsterAttackCadenceStore();
         var epoch = WorldSimulationEpoch.NewEpoch();
         const uint actorId = 1;
         var oldIncarnation = WorldMonsterIncarnationId.First;
@@ -151,14 +154,14 @@ public sealed class MonsterFeedProjectionTests
         Assert.False(combatState.TryGet(oldKey, out _));
         var newKey = new MonsterCombatKey(MapId, epoch, actorId, newIncarnation);
         Assert.True(combatState.TryGet(newKey, out var freshState));
-        Assert.Equal(freshState.MaxHp, freshState.CurrentHp);
+        Assert.Null(freshState.NextAttackAt); // A fresh registration for the new incarnation has no cadence scheduled yet.
     }
 
     [Fact]
     public void FirstBootstrapObservationOfDeadLife_DoesNotRegisterFreshHpEntry()
     {
         var projection = new MonsterFeedProjection(MapId);
-        var combatState = new MonsterCombatStateStore();
+        var combatState = new MonsterAttackCadenceStore();
         var epoch = WorldSimulationEpoch.NewEpoch();
         const uint actorId = 1;
         var incarnation = WorldMonsterIncarnationId.First;
@@ -177,7 +180,7 @@ public sealed class MonsterFeedProjectionTests
     public void NewEpoch_RemovesAllOldEpochCombatState_ViaApplySnapshot()
     {
         var projection = new MonsterFeedProjection(MapId);
-        var combatState = new MonsterCombatStateStore();
+        var combatState = new MonsterAttackCadenceStore();
         var oldEpoch = WorldSimulationEpoch.NewEpoch();
         const uint actorId = 1;
         var incarnation = WorldMonsterIncarnationId.First;
@@ -196,7 +199,7 @@ public sealed class MonsterFeedProjectionTests
     public void TryGetLife_ReturnsEpochAndInstanceFromOneAtomicRead()
     {
         var projection = new MonsterFeedProjection(MapId);
-        var combatState = new MonsterCombatStateStore();
+        var combatState = new MonsterAttackCadenceStore();
         var epoch = WorldSimulationEpoch.NewEpoch();
         const uint actorId = 1;
         var incarnation = WorldMonsterIncarnationId.First;
@@ -213,7 +216,7 @@ public sealed class MonsterFeedProjectionTests
     public void SnapshotForCadence_ReturnsEpochInstancesAndEngagementTogether()
     {
         var projection = new MonsterFeedProjection(MapId);
-        var combatState = new MonsterCombatStateStore();
+        var combatState = new MonsterAttackCadenceStore();
         var epoch = WorldSimulationEpoch.NewEpoch();
         const uint actorId = 1;
         var incarnation = WorldMonsterIncarnationId.First;
@@ -238,7 +241,7 @@ public sealed class MonsterFeedProjectionTests
     public void SnapshotForProjection_ReturnsEpochAndInstancesFromOneAtomicRead()
     {
         var projection = new MonsterFeedProjection(MapId);
-        var combatState = new MonsterCombatStateStore();
+        var combatState = new MonsterAttackCadenceStore();
         var epoch = WorldSimulationEpoch.NewEpoch();
         projection.ApplySnapshot([Alive(1, WorldMonsterIncarnationId.First)], epoch, combatState);
 
@@ -260,7 +263,7 @@ public sealed class MonsterFeedProjectionTests
     public void AllInstances_ReturnsImmutableSnapshot_NotLiveDictionaryView()
     {
         var projection = new MonsterFeedProjection(MapId);
-        var combatState = new MonsterCombatStateStore();
+        var combatState = new MonsterAttackCadenceStore();
         var epoch = WorldSimulationEpoch.NewEpoch();
         projection.ApplySnapshot([Alive(1, WorldMonsterIncarnationId.First)], epoch, combatState);
 

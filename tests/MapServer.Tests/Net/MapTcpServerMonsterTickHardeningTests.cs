@@ -22,8 +22,8 @@ public sealed class MapTcpServerMonsterTickHardeningTests
 
     private static MapServerWorld MakeWorld()
     {
-        var combatState = new MonsterCombatStateStore();
-        var combat = new MonsterCombatCoordinator(new QuestDropResolver([]), new RenewalBasicAttackRules(), combatState);
+        var combatState = new MonsterAttackCadenceStore();
+        var combat = new MonsterCombatCoordinator(new QuestDropResolver([]), new RenewalBasicAttackRules());
         return new MapServerWorld(
             WorldMapRegistry.Tutorial,
             [],
@@ -274,7 +274,7 @@ public sealed class MapTcpServerMonsterTickHardeningTests
         var key = new MonsterCombatKey(mapId, epoch, monsterActorId, monsterIncarnation);
 
         var (localSession, client) = await MakeWorldVisibleSessionAsync(world, scripted, mapId, characterId, localSessionPresenceId);
-        using var _ = client;
+        using var disposableClient = client;
 
         var server = new MapTcpServer(ConfigStore(), new CharServerConnector(ConfigStore()), world, scripted);
         // First tick: bootstraps the projection/combat-state from the scripted snapshot (this is
@@ -282,7 +282,7 @@ public sealed class MapTcpServerMonsterTickHardeningTests
         // required IsWorldMapEligible for, so this reuses the identical epoch/monster/target setup
         // rather than needing a separate priming tick).
         await server.ProcessOneMonsterTickAsync([localSession], CancellationToken.None);
-        Assert.True(world.CombatState.TryGet(key, out var combatBefore));
+        Assert.True(world.CombatState.TryGet(key, out _));
 
         // Second tick: the monster is now Alive+InAttackRange with a target - this is the tick that
         // actually exercises MonsterAttackCadenceExecutor's own local session-selection guard.
@@ -290,10 +290,8 @@ public sealed class MapTcpServerMonsterTickHardeningTests
 
         // The mismatched local session must never have been selected as the attack target -
         // ValidateMonsterAttackWindowAsync is never even called (session-selection rejects before
-        // reaching World), and no HP mutation occurs on the local combat-state entry.
+        // reaching World). HP is no longer local MapServer state to assert against post-substep-9.
         Assert.Equal(0, validateCalls);
-        Assert.True(world.CombatState.TryGet(key, out var combatAfter));
-        Assert.Equal(combatBefore.CurrentHp, combatAfter.CurrentHp);
 
         await localSession.DisposeAsync();
     }
@@ -427,8 +425,6 @@ public sealed class MapTcpServerMonsterTickHardeningTests
         public Task<WorldPresenceUnregistration> UnregisterPresenceAsync(string mapId, uint characterId, Guid presenceId, CancellationToken cancellationToken) =>
             Task.FromResult(new WorldPresenceUnregistration("test-partition", mapId, WorldPresenceUnregistrationStatus.Removed, 0));
 
-        public Task<WorldMonsterDeathResult> TryMarkMonsterDeadAsync(WorldMonsterLifeReference reference, CancellationToken cancellationToken) =>
-            throw new NotSupportedException("ScriptedWorldRuntime does not script TryMarkMonsterDeadAsync for these tests.");
         public Task<WorldMonsterDamageResult> ApplyMonsterDamageAsync(WorldMonsterDamageCommand command, CancellationToken cancellationToken) =>
             throw new NotSupportedException("ScriptedWorldRuntime does not script ApplyMonsterDamageAsync for these tests.");
         public Task<WorldMonsterAttackedResult> NotifyMonsterAttackedAsync(WorldMonsterAttackedCommand command, CancellationToken cancellationToken) =>

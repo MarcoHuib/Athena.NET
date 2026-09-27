@@ -60,8 +60,6 @@ public sealed class MapTcpServerRunAsyncSupervisionTests
             Task.FromResult(new WorldPresenceUnregistration("test-partition", mapId, WorldPresenceUnregistrationStatus.Removed, 0));
         public Task<WorldMonsterSpawnLoadResult> LoadMonsterSpawnsAsync(WorldMonsterSpawnBatch batch, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
-        public Task<WorldMonsterDeathResult> TryMarkMonsterDeadAsync(WorldMonsterLifeReference reference, CancellationToken cancellationToken) =>
-            throw new NotSupportedException();
         public Task<WorldMonsterDamageResult> ApplyMonsterDamageAsync(WorldMonsterDamageCommand command, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
         public Task<WorldMonsterAttackedResult> NotifyMonsterAttackedAsync(WorldMonsterAttackedCommand command, CancellationToken cancellationToken) =>
@@ -167,8 +165,8 @@ public sealed class MapTcpServerRunAsyncSupervisionTests
     [Fact]
     public async Task DeterministicMonsterLoopFailure_RunAsyncFaultsPromptly_DoesNotSitWaitingForAnotherAccept()
     {
-        var combatState = new MonsterCombatStateStore();
-        var combat = new MonsterCombatCoordinator(new QuestDropResolver([]), new RenewalBasicAttackRules(), combatState);
+        var combatState = new MonsterAttackCadenceStore();
+        var combat = new MonsterCombatCoordinator(new QuestDropResolver([]), new RenewalBasicAttackRules());
         var world = new MapServerWorld(
             WorldMapRegistry.Tutorial,
             [],

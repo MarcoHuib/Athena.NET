@@ -45,8 +45,8 @@ public sealed class MapTcpServerMonsterAuthorityIntegrationTests : IAsyncLifetim
 
     private static MapServerWorld MakeWorld(string mapId, int count = 1, int respawnDelayMs = 5000)
     {
-        var combatState = new MonsterCombatStateStore();
-        var combat = new MonsterCombatCoordinator(new QuestDropResolver([]), new RenewalBasicAttackRules(), combatState);
+        var combatState = new MonsterAttackCadenceStore();
+        var combat = new MonsterCombatCoordinator(new QuestDropResolver([]), new RenewalBasicAttackRules());
         return new MapServerWorld(
             WorldMapRegistry.Tutorial,
             [PoringSpawn(mapId, count, respawnDelayMs)],
@@ -259,8 +259,6 @@ public sealed class MapTcpServerMonsterAuthorityIntegrationTests : IAsyncLifetim
 
         Assert.True(world.MonsterProjections.TryGet(mapId, out var projection));
         var monster = Assert.Single(projection.AllInstances);
-        var epoch = projection.CurrentEpoch!.Value;
-        var key = new MonsterCombatKey(mapId, epoch, monster.ActorId, monster.IncarnationId);
 
         // A single attack REQUEST (0x0437) merely registers/keeps a repeat-attack target - the
         // session's own background repeat-attack loop then executes hits on the real attack-delay
@@ -277,22 +275,14 @@ public sealed class MapTcpServerMonsterAuthorityIntegrationTests : IAsyncLifetim
         });
 
         await stream.WriteAsync(BuildAttackPacket(monster.ActorId));
-        var deadlineForDamage = DateTime.UtcNow + TimeSpan.FromSeconds(10);
-        while (DateTime.UtcNow < deadlineForDamage)
-        {
-            await Task.Delay(150);
-            if (world.CombatState.TryGet(key, out var s) && s.CurrentHp == 0) break;
-        }
-        drainCts.Cancel();
-        try { await drainTask; } catch { /* Expected once the stream is torn down. */ }
 
-        // World itself must report the life as Dead once MapServer's local hit reached HP==0 and
-        // called TryMarkMonsterDeadAsync - proving the death transition genuinely reached World,
-        // not merely a local combat-state zero with no World-side effect. Verified PURELY via the
-        // read-only PollMonsterFeedAsync (never by calling the mutating TryMarkMonsterDeadAsync RPC
-        // from this test as a "verification" step - that would be a false positive, since the
-        // test's OWN call could be the one that actually marks the life dead even if MapServer's
-        // production path never reached World at all).
+        // World itself must report the life as Dead once MapServer's production attack path called
+        // the real ApplyMonsterDamageAsync RPC and it committed a lethal hit - proving the death
+        // transition genuinely reached World, not merely projected client-side with no World-side
+        // effect. Verified PURELY via the read-only PollMonsterFeedAsync (never by calling the
+        // mutating ApplyMonsterDamageAsync RPC from this test as a "verification" step - that would
+        // be a false positive, since the test's OWN call could be the one that actually marks the
+        // life dead even if MapServer's production path never reached World at all).
         var grain = _cluster.GrainFactory.GetGrain<IWorldPartitionGrain>(Resolver().ResolvePartition(mapId));
         var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
         var confirmedDead = false;
@@ -303,7 +293,9 @@ public sealed class MapTcpServerMonsterAuthorityIntegrationTests : IAsyncLifetim
             var candidate = page.Snapshot!.SingleOrDefault(instance => instance.ActorId == monster.ActorId);
             confirmedDead = candidate is { Lifecycle: WorldMonsterLifecycleState.Dead };
         }
-        Assert.True(confirmedDead, "Expected World's own feed to report this life's Lifecycle as Dead after MapServer's production attack path called TryMarkMonsterDeadAsync.");
+        drainCts.Cancel();
+        try { await drainTask; } catch { /* Expected once the stream is torn down. */ }
+        Assert.True(confirmedDead, "Expected World's own feed to report this life's Lifecycle as Dead after MapServer's production attack path called ApplyMonsterDamageAsync.");
 
         client.Close();
         await run.WaitAsync(TimeSpan.FromSeconds(5));
@@ -352,7 +344,11 @@ public sealed class MapTcpServerMonsterAuthorityIntegrationTests : IAsyncLifetim
         // this schedules the real World-side respawn, whose real 100ms grain timer will observe the
         // due respawn and append a genuine Respawned feed entry on its own.
         var grain = _cluster.GrainFactory.GetGrain<IWorldPartitionGrain>(Resolver().ResolvePartition(mapId));
-        Assert.Equal(WorldMonsterDeathStatus.MarkedDead, (await grain.TryMarkMonsterDeadAsync(oldLife)).Status);
+        var killerPresenceId = Guid.NewGuid();
+        await grain.RegisterPresenceAsync(new WorldPlayerPresence(killerPresenceId, ActorId: 999, CharacterId: 999, mapId, X: original.X, Y: original.Y));
+        var lethalHit = await grain.ApplyMonsterDamageAsync(new WorldMonsterDamageCommand(oldLife, AttackerCharacterId: 999, killerPresenceId, AttackSequence: 1, Damage: 9999, AcquireEngagement: false));
+        Assert.Equal(WorldMonsterDamageStatus.Applied, lethalHit.Status);
+        Assert.True(lethalHit.KilledByThisHit);
 
         // Drive ProcessOneMonsterTickAsync repeatedly (the real production polling loop's own unit
         // of work) until the death vanish (0x0080 reason=Died) reaches the wire - this is World's own
@@ -421,14 +417,18 @@ public sealed class MapTcpServerMonsterAuthorityIntegrationTests : IAsyncLifetim
         var bootstrap = await grain.PollMonsterFeedAsync(cursor: null, mapId);
         var actorId = bootstrap.Snapshot!.Single().ActorId;
         var staleLife = new WorldMonsterLifeReference(mapId, load.SimulationEpoch, actorId, WorldMonsterIncarnationId.First);
+        var killerPresenceId = Guid.NewGuid();
+        await grain.RegisterPresenceAsync(new WorldPlayerPresence(killerPresenceId, ActorId: 999, CharacterId: 999, mapId, X: MonsterX, Y: MonsterY));
 
-        Assert.Equal(WorldMonsterDeathStatus.MarkedDead, (await grain.TryMarkMonsterDeadAsync(staleLife)).Status);
+        var firstHit = await grain.ApplyMonsterDamageAsync(new WorldMonsterDamageCommand(staleLife, AttackerCharacterId: 999, killerPresenceId, AttackSequence: 1, Damage: 9999, AcquireEngagement: false));
+        Assert.Equal(WorldMonsterDamageStatus.Applied, firstHit.Status);
+        Assert.True(firstHit.KilledByThisHit);
 
-        // A second call with the SAME (now stale, since it's already dead) life reference is
-        // AlreadyDead, not a fresh MarkedDead - proving no duplicate death/respawn scheduling
-        // side effect occurs from a stale re-submission.
-        var secondAttempt = await grain.TryMarkMonsterDeadAsync(staleLife);
-        Assert.Equal(WorldMonsterDeathStatus.AlreadyDead, secondAttempt.Status);
+        // A second, genuinely NEW attempt (higher sequence) against the SAME (now stale, since it's
+        // already dead) life reference is AlreadyDead, not a fresh Applied - proving no duplicate
+        // death/respawn scheduling side effect occurs from a stale re-submission.
+        var secondAttempt = await grain.ApplyMonsterDamageAsync(new WorldMonsterDamageCommand(staleLife, AttackerCharacterId: 999, killerPresenceId, AttackSequence: 2, Damage: 9999, AcquireEngagement: false));
+        Assert.Equal(WorldMonsterDamageStatus.AlreadyDead, secondAttempt.Status);
     }
 
     [Fact]
