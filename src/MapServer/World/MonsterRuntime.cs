@@ -20,7 +20,21 @@ namespace Athena.Net.MapServer.World;
 //     withholds) a wire packet.
 public enum MonsterMovementChangeKind { WalkStarted, CellCrossed, WalkFinished, ChaseInterrupted }
 
-public readonly record struct MonsterMovementChange(MobInstance Instance, MonsterMovementChangeKind Kind);
+// `Instance` is IMonsterActorView (position/identity/movement only, per that interface's own doc
+// comment) - NOT MobInstance directly, so a consumer's own signature makes clear it depends only
+// on actor/simulation-shaped data.
+//
+// Deliberately carries NO MonsterCombatState of its own (a prior revision of this type did, and
+// that was a real correctness bug: a MonsterMovementChange is often queued/fanned-out across
+// several sessions before MapClientSession.NotifyMonsterMovedAsync actually builds a packet from
+// it, and HP captured at CHANGE-CREATION time can already be stale by PROJECTION time - e.g. a
+// player's hit lands, correctly publishing fresh HP via 0x0977, while a movement change created
+// moments earlier still carries the OLD pre-hit HP and would overwrite the client's already-correct
+// HP knowledge with stale data, or even re-trigger the full-HP -1/-1 sentinel after the monster was
+// just damaged). Combat state must be read FRESH, immediately before each individual projection
+// call - see NotifyMonsterMovedAsync's own `combat` parameter and doc comment for where that fresh
+// read now happens instead.
+public readonly record struct MonsterMovementChange(IMonsterActorView Instance, MonsterMovementChangeKind Kind);
 
 // World-owned mob AI/movement scheduler - the "one scheduler/tick loop" this project's runtime
 // architecture requires instead of one Timer/Task per monster (matching MonsterRegistry.

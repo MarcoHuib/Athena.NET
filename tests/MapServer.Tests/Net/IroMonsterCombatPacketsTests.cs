@@ -38,6 +38,33 @@ public sealed class IroMonsterCombatPacketsTests
         Assert.Equal(0u, BinaryPrimitives.ReadUInt32LittleEndian(packet.AsSpan(30)));
     }
 
+    // PINNED-SOURCE-BACKED, NOT capture-verified - see PacketConstants.ZcHpInfo's own doc
+    // comment for the clif_monster_hp_bar (clif.cpp:19958-19969) trace: fixed 14 bytes,
+    // id.L hp.L maxHp.L.
+    [Fact]
+    public void BuildHpInfo_MatchesPinnedSourceLayout()
+    {
+        var packet = IroMonsterCombatPackets.BuildHpInfo(actorId: 0x00001E9D, currentHp: 18, maxHp: 55);
+
+        Assert.Equal(14, packet.Length);
+        Assert.Equal((short)0x0977, BinaryPrimitives.ReadInt16LittleEndian(packet));
+        Assert.Equal(0x00001E9Du, BinaryPrimitives.ReadUInt32LittleEndian(packet.AsSpan(2)));
+        Assert.Equal(18u, BinaryPrimitives.ReadUInt32LittleEndian(packet.AsSpan(6)));
+        Assert.Equal(55u, BinaryPrimitives.ReadUInt32LittleEndian(packet.AsSpan(10)));
+    }
+
+    // Lethal hit: pinned status_damage decrements HP to 0 BEFORE mob_damage sends the HP bar
+    // (status.cpp:1629-1657) - the killing blow's own HP-info packet correctly encodes hp=0,
+    // never a negative/wrapped value and never the pre-hit HP.
+    [Fact]
+    public void BuildHpInfo_LethalHit_EncodesZeroHp()
+    {
+        var packet = IroMonsterCombatPackets.BuildHpInfo(actorId: 0x00001E9D, currentHp: 0, maxHp: 55);
+
+        Assert.Equal(0u, BinaryPrimitives.ReadUInt32LittleEndian(packet.AsSpan(6)));
+        Assert.Equal(55u, BinaryPrimitives.ReadUInt32LittleEndian(packet.AsSpan(10)));
+    }
+
     [Fact]
     public void BuildNotifyVanish_MatchesCapturedDeathLayout()
     {

@@ -18,5 +18,11 @@
     <ProjectReference Include="../../src/WorldServer/Athena.World/Athena.World.csproj" />
     <ProjectReference Include="../../src/WorldServer/Athena.World.Contracts/Athena.World.Contracts.csproj" />
     <ProjectReference Include="../../src/WorldServer/Athena.World.Runtime/Athena.World.Runtime.csproj" />
+    <!-- Needed directly (not merely transitively through Athena.World.csproj, which deliberately
+         marks its own reference to this PrivateAssets="all" - see that .csproj's own comment) for
+         test-only monster-domain types (UnverifiedGridLineMovementPathProvider, etc.) this test
+         project's silo configurators construct. World.Tests never also references MapServer.csproj
+         (unlike MapServer.Tests), so no CS0433 ambiguity risk exists here. -->
+    <ProjectReference Include="../../src/WorldServer/Athena.World.Monsters/Athena.World.Monsters.csproj" />
   </ItemGroup>
 </Project>

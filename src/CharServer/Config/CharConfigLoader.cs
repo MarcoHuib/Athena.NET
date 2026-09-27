@@ -557,8 +557,9 @@ public static class CharConfigLoader
 
     private static bool TryResolveIp(string value, out IPAddress ip)
     {
-        if (IPAddress.TryParse(value, out ip))
+        if (IPAddress.TryParse(value, out var parsed))
         {
+            ip = parsed;
             return true;
         }
 

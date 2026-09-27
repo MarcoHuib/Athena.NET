@@ -33,7 +33,7 @@ public sealed class MonsterEngagementDomainTests
     {
         var mob = MakeEngagedInstance(10, 10);
 
-        var decision = MonsterEngagementDomain.Evaluate(mob, target: null, Epoch);
+        var decision = MonsterEngagementDomain.Evaluate(mob, target: null, Epoch, mob.NextAttackAt);
 
         Assert.IsType<MonsterEngagementDecision.Unlock>(decision);
     }
@@ -44,7 +44,7 @@ public sealed class MonsterEngagementDomainTests
         var mob = MakeEngagedInstance(10, 10);
         var snapshot = MakeSnapshot(10, 10, alive: false);
 
-        var decision = MonsterEngagementDomain.Evaluate(mob, snapshot, Epoch);
+        var decision = MonsterEngagementDomain.Evaluate(mob, snapshot, Epoch, mob.NextAttackAt);
 
         Assert.IsType<MonsterEngagementDecision.Unlock>(decision);
     }
@@ -55,7 +55,7 @@ public sealed class MonsterEngagementDomainTests
         var mob = MakeEngagedInstance(10, 10);
         var snapshot = MakeSnapshot(10, 10, map: "iz_int03");
 
-        var decision = MonsterEngagementDomain.Evaluate(mob, snapshot, Epoch);
+        var decision = MonsterEngagementDomain.Evaluate(mob, snapshot, Epoch, mob.NextAttackAt);
 
         Assert.IsType<MonsterEngagementDecision.Unlock>(decision);
     }
@@ -66,7 +66,7 @@ public sealed class MonsterEngagementDomainTests
         var mob = MakeEngagedInstance(10, 10, attackRange: 1);
         var snapshot = MakeSnapshot(15, 10);
 
-        var decision = MonsterEngagementDomain.Evaluate(mob, snapshot, Epoch);
+        var decision = MonsterEngagementDomain.Evaluate(mob, snapshot, Epoch, mob.NextAttackAt);
 
         var chase = Assert.IsType<MonsterEngagementDecision.Chase>(decision);
         Assert.Equal((ushort)15, chase.DestinationX);
@@ -79,7 +79,7 @@ public sealed class MonsterEngagementDomainTests
         var mob = MakeEngagedInstance(10, 10, attackRange: 1);
         var snapshot = MakeSnapshot(11, 10); // Chebyshev distance 1.
 
-        var decision = MonsterEngagementDomain.Evaluate(mob, snapshot, Epoch);
+        var decision = MonsterEngagementDomain.Evaluate(mob, snapshot, Epoch, mob.NextAttackAt);
 
         Assert.IsType<MonsterEngagementDecision.Attack>(decision);
     }
@@ -91,7 +91,7 @@ public sealed class MonsterEngagementDomainTests
         mob.ScheduleNextAttack(Epoch.AddMilliseconds(5000));
         var snapshot = MakeSnapshot(11, 10);
 
-        var decision = MonsterEngagementDomain.Evaluate(mob, snapshot, Epoch.AddMilliseconds(1000));
+        var decision = MonsterEngagementDomain.Evaluate(mob, snapshot, Epoch.AddMilliseconds(1000), mob.NextAttackAt);
 
         Assert.IsType<MonsterEngagementDecision.Wait>(decision);
     }
@@ -103,7 +103,7 @@ public sealed class MonsterEngagementDomainTests
         mob.ScheduleNextAttack(Epoch.AddMilliseconds(5000));
         var snapshot = MakeSnapshot(11, 10);
 
-        var decision = MonsterEngagementDomain.Evaluate(mob, snapshot, Epoch.AddMilliseconds(5000));
+        var decision = MonsterEngagementDomain.Evaluate(mob, snapshot, Epoch.AddMilliseconds(5000), mob.NextAttackAt);
 
         Assert.IsType<MonsterEngagementDecision.Attack>(decision);
     }
@@ -114,7 +114,7 @@ public sealed class MonsterEngagementDomainTests
         var mob = MakeEngagedInstance(10, 10, attackRange: 3);
         var snapshot = MakeSnapshot(13, 10); // Chebyshev distance exactly 3.
 
-        var decision = MonsterEngagementDomain.Evaluate(mob, snapshot, Epoch);
+        var decision = MonsterEngagementDomain.Evaluate(mob, snapshot, Epoch, mob.NextAttackAt);
 
         Assert.IsType<MonsterEngagementDecision.Attack>(decision);
     }
@@ -125,7 +125,7 @@ public sealed class MonsterEngagementDomainTests
         var mob = MakeEngagedInstance(10, 10, attackRange: 3);
         var snapshot = MakeSnapshot(14, 10); // Chebyshev distance 4.
 
-        var decision = MonsterEngagementDomain.Evaluate(mob, snapshot, Epoch);
+        var decision = MonsterEngagementDomain.Evaluate(mob, snapshot, Epoch, mob.NextAttackAt);
 
         Assert.IsType<MonsterEngagementDecision.Chase>(decision);
     }
@@ -136,7 +136,7 @@ public sealed class MonsterEngagementDomainTests
         var mob = MakeEngagedInstance(10, 10, attackRange: 2);
         var snapshot = MakeSnapshot(12, 12); // dx=2, dy=2 -> Chebyshev 2, within range 2.
 
-        var decision = MonsterEngagementDomain.Evaluate(mob, snapshot, Epoch);
+        var decision = MonsterEngagementDomain.Evaluate(mob, snapshot, Epoch, mob.NextAttackAt);
 
         Assert.IsType<MonsterEngagementDecision.Attack>(decision);
     }
@@ -151,7 +151,7 @@ public sealed class MonsterEngagementDomainTests
         var mob = MakeEngagedInstance(10, 10, attackRange: 1);
         var snapshot = MakeSnapshot(12, 10, isWalking: true); // Chebyshev 2 = range(1)+1.
 
-        var decision = MonsterEngagementDomain.Evaluate(mob, snapshot, Epoch);
+        var decision = MonsterEngagementDomain.Evaluate(mob, snapshot, Epoch, mob.NextAttackAt);
 
         Assert.IsType<MonsterEngagementDecision.Attack>(decision);
     }
@@ -162,7 +162,7 @@ public sealed class MonsterEngagementDomainTests
         var mob = MakeEngagedInstance(10, 10, attackRange: 1);
         var snapshot = MakeSnapshot(12, 10, isWalking: false); // Same distance, no bonus - out of range.
 
-        var decision = MonsterEngagementDomain.Evaluate(mob, snapshot, Epoch);
+        var decision = MonsterEngagementDomain.Evaluate(mob, snapshot, Epoch, mob.NextAttackAt);
 
         Assert.IsType<MonsterEngagementDecision.Chase>(decision);
     }
@@ -173,7 +173,7 @@ public sealed class MonsterEngagementDomainTests
         var mob = MakeEngagedInstance(10, 10, attackRange: 1);
         var snapshot = MakeSnapshot(13, 10, isWalking: true); // Chebyshev 3 > range(1)+1.
 
-        var decision = MonsterEngagementDomain.Evaluate(mob, snapshot, Epoch);
+        var decision = MonsterEngagementDomain.Evaluate(mob, snapshot, Epoch, mob.NextAttackAt);
 
         Assert.IsType<MonsterEngagementDecision.Chase>(decision);
     }

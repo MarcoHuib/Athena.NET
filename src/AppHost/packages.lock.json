@@ -2,12 +2,6 @@
   "version": 1,
   "dependencies": {
     "net10.0": {
-      "Aspire.Dashboard.Sdk.osx-arm64": {
-        "type": "Direct",
-        "requested": "[13.5.3, )",
-        "resolved": "13.5.3",
-        "contentHash": "OOTIO2KdbrMIR3ECB3B69nIy86wFj0EsmVZJvv10DrH1TWb4Q21BCtFA4FmzIbcfNsAv9XoFjpjAAyz4dJeLmw=="
-      },
       "Aspire.Hosting": {
         "type": "Direct",
         "requested": "[13.5.3, )",
@@ -83,12 +77,6 @@
           "System.IO.Hashing": "10.0.8",
           "YamlDotNet": "16.3.0"
         }
-      },
-      "Aspire.Hosting.Orchestration.osx-arm64": {
-        "type": "Direct",
-        "requested": "[13.5.3, )",
-        "resolved": "13.5.3",
-        "contentHash": "ry2FgI1qlQbsB5KWntqCTDPcbR0NIhXDOLN7nYNMnGfYWlCIuwdbHgfEyH8uAesRmzO4DShhZ7uOjiwgCBUa1Q=="
       },
       "Aspire.Hosting.Orleans": {
         "type": "Direct",

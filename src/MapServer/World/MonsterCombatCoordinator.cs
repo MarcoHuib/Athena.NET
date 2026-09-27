@@ -1,14 +1,13 @@
 using Athena.Net.MapServer.Gameplay.Rules;
+using Athena.Net.World.Contracts;
 
 namespace Athena.Net.MapServer.World;
 
-// Outcome of one basic-attack attempt against a live MobInstance.
-//
-// `EngagementAcquired`: true only for the actual acquisition transition (Idle -> Rush for a
-// genuinely NEW target), never a re-hit of an already-targeted mob or a rejected steal attempt
-// while chasing/attacking. This coordinator stays a pure state/rules layer and never logs itself
-// (MapLogger has no place here) - the caller (an orchestration layer, e.g. MapClientSession or
-// MonsterEngagementTickProcessor) surfaces this flag as its own operational diagnostic.
+// Outcome of one player -> monster basic-attack attempt, projected from World's own authoritative
+// WorldMonsterDamageResult (see BuildOutcome below). `EngagementAcquired` reports whether this hit
+// resulted in this player becoming (or remaining) the monster's locked target, straight from
+// World's own Engagement field - this coordinator itself never calls into World (stays
+// Orleans-free, see this type's own doc comment below).
 public readonly record struct MonsterAttackOutcome(
     bool Accepted,
     uint HpBefore,
@@ -18,113 +17,56 @@ public readonly record struct MonsterAttackOutcome(
     bool EngagementAcquired,
     IReadOnlyList<QuestDropOutcome> QuestDrops);
 
-// Coordinates one authoritative attack -> damage -> (exactly-once) death ->
-// quest-drop -> respawn-scheduling transition against a target MobInstance.
-// This is the single place death is resolved: callers never mutate
-// MobInstance HP directly, so "two simultaneous lethal attacks -> one death,
-// one quest-drop award" is enforced by MobInstance.ApplyDamage's own lock,
-// not by caller discipline.
+// A calculated candidate hit - the damage formula's own result, computed against the target's
+// static definition only (no local HP/lethality guess any more - World alone decides both, via
+// ApplyMonsterDamageAsync). `WouldAcquireEngagement` is a pure LOCAL signal ("this mob is
+// CanAttack-capable") the caller uses to decide whether to request engagement acquisition on the
+// World RPC - it carries no engagement-state mutation of its own; World independently
+// re-validates/no-ops it.
+public readonly record struct MonsterAttackCandidate(uint Damage, bool IsMiss, bool WouldAcquireEngagement);
+
+// Substep 9 cutover: this coordinator is now PURE damage calculation + outcome projection. It owns
+// no HP/lethality state of its own at all - World's ApplyMonsterDamageAsync is the sole authority
+// for CurrentHp/MaxHp/the Alive->Dead transition. This type never calls into World and never
+// mutates any local store; MapClientSession's own PendingMonsterDamageAttempt/DispatchPending
+// DamageAttemptAsync own the actual RPC round trip and idempotency bookkeeping (AttackSequence).
 //
-// Depends only on IBasicAttackRules - this class never knows or asks which gameplay
-// ruleset (Renewal/PreRenewal) is active. The concrete implementation is selected
-// once at MapServer startup by GameplayRulesFactory and threaded in here.
-public sealed class MonsterCombatCoordinator(MonsterRegistry monsters, QuestDropResolver questDrops, IBasicAttackRules basicAttackRules)
+// This coordinator remains entirely Orleans/World-contract-free (only value types cross this
+// boundary, never a grain reference or IWorldRuntime).
+//
+// Depends only on IBasicAttackRules - this class never knows or asks which gameplay ruleset
+// (Renewal/PreRenewal) is active.
+public sealed class MonsterCombatCoordinator(QuestDropResolver questDrops, IBasicAttackRules basicAttackRules)
 {
-    // `attackerQuestStatus`: a synchronous, already-resolved per-quest-ID lookup (see
-    // QuestDropResolver's doc comment) - the caller must obtain each relevant quest's status from
-    // ICharacterQuestPersistence BEFORE calling Attack, e.g. by awaiting GetQuestStateAsync once per
-    // distinct QuestId in the generated drop rules and closing over the results.
-    //
-    // `equippedWeapon`: the CURRENT authoritative right-hand weapon, already resolved by the caller
-    // via EquippedWeaponResolver against the session's live CharacterEquipmentSnapshot - null means
-    // genuinely unarmed (EquippedWeaponResolution.Unarmed), never "unknown"/"not looked up yet". This
-    // coordinator never reads equipment state itself; it just forwards it into a BasicAttackContext for
-    // IBasicAttackRules, so re-equipping/unequipping mid-session changes the very next attack's
-    // calculation without any coordinator-side caching to invalidate.
-    public MonsterAttackOutcome Attack(
-        MobInstance target,
-        uint attackerAccountId,
+    // Computes the damage formula's result against the target's static definition - no HP lookup,
+    // no lethality guess, no store access of any kind. The caller (MapClientSession) sends this
+    // candidate's Damage/IsMiss verbatim to World's ApplyMonsterDamageAsync, which alone decides
+    // whether it is lethal.
+    public MonsterAttackCandidate CalculateAttack(
+        WorldMonsterActorView target,
         EffectiveCharacterStats attacker,
         ushort attackerBaseLevel,
-        WeaponItemDefinition? equippedWeapon,
-        Func<uint, CharacterQuestStatus> attackerQuestStatus)
+        WeaponItemDefinition? equippedWeapon)
     {
-        if (!target.IsAlive) return new(false, target.CurrentHp, target.CurrentHp, false, false, false, []);
-
-        var result = basicAttackRules.Calculate(new BasicAttackContext(attacker, attackerBaseLevel, equippedWeapon, target.Spawn.Mob));
-        var (hpBefore, hpAfter, killed) = target.ApplyDamage(result.Damage);
-
-        // Pinned mob_ai_sub_hard's own target-acquisition gate ("if (md->attacked_id &&
-        // mode&MD_CANATTACK)", mob.cpp:1937): a mob without MD_CANATTACK never promotes an
-        // attacker into a combat target at all - checked here via the mob's own generated mode,
-        // never a hardcoded mob-ID special case.
-        //
-        // Pinned mob_set_attacked_id, called from the walk-delay timer battle_damage schedules for
-        // every hit that connects against a mob (battle.cpp:356-362) - see MobInstance.
-        // TryAcquireTarget's own doc comment for why this project calls it immediately rather than
-        // reproducing that intermediate timer hop. A killing hit must not re-acquire a target on an
-        // instance that ApplyDamage just moved to Dead (TryAcquireTarget's own IsAlive guard already
-        // makes this a no-op, but skipping the call entirely when killed also avoids the pointless
-        // MSS_RUSH-on-a-dead-mob transition that TryAcquireTarget's own logic would otherwise not
-        // reach anyway - either way, matches pinned mob_dead's own immediate unlock, mob.cpp:3863).
-        var mode = target.Spawn.Mob.Mode;
-        var engagementAcquired = !killed && mode.HasFlag(MobMode.CanAttack) && TryAcquireEngagement(target, attackerAccountId, mode);
-
-        IReadOnlyList<QuestDropOutcome> drops = [];
-        if (killed)
-        {
-            drops = questDrops.ResolveDrops(attackerQuestStatus, target.Spawn.Mob.Id);
-            monsters.ScheduleRespawnIfNeeded(target);
-        }
-
-        return new(true, hpBefore, hpAfter, result.IsMiss, killed, engagementAcquired, drops);
+        var result = basicAttackRules.Calculate(new BasicAttackContext(attacker, attackerBaseLevel, equippedWeapon, target.StaticMob));
+        var wouldAcquireEngagement = target.StaticMob.Mode.HasFlag(MobMode.CanAttack);
+        return new MonsterAttackCandidate(result.Damage, result.IsMiss, wouldAcquireEngagement);
     }
 
-    // Section 16: reports ONLY the actual acquisition transition (Idle -> Rush for a genuinely NEW
-    // target), never a re-hit of an already-targeted mob or a rejected steal attempt while
-    // chasing/attacking - via MonsterAttackOutcome.EngagementAcquired, not a direct log call. This
-    // coordinator is domain-adjacent state/rules, not operational diagnostics: the caller decides
-    // whether/how to log the transition (MapLogger has no place in this class).
-    private static bool TryAcquireEngagement(MobInstance target, uint attackerAccountId, MobMode mode)
+    // Projects World's own authoritative WorldMonsterDamageResult into this coordinator's existing
+    // MonsterAttackOutcome shape, so the existing damage/HP-info/EXP/quest-drop packet-building
+    // code in MapClientSession is reused with minimal edits. Quest drops are resolved only when
+    // this hit was lethal AND a quest-status resolver was supplied - the resolver passed in on the
+    // live path is always backed by an ALREADY-RESOLVED snapshot captured before the World RPC was
+    // ever sent (see PendingMonsterDamageAttempt.QuestStatusSnapshot in MapClientSession.cs) -
+    // BuildOutcome itself performs no persistence I/O and never re-resolves anything.
+    public MonsterAttackOutcome BuildOutcome(WorldMonsterDamageResult result, WorldMonsterActorView target, bool isMiss, Func<uint, CharacterQuestStatus>? attackerQuestStatus)
     {
-        var wasIdle = target.Engagement.State == MobCombatState.Idle;
-        return target.TryAcquireTarget(attackerAccountId, mode) && wasIdle;
-    }
-
-    // Section 15's own optimization: a quest-state CharServer roundtrip is only ever NEEDED when
-    // THIS hit actually kills the target (QuestDropResolver.ResolveDrops is only ever called in the
-    // `killed` branch above) - resolving every distinct QuestId's state on EVERY ordinary
-    // non-lethal hit (the live-log-observed "hit 1 -> roundtrip, hit 2 -> roundtrip, hit 3 -> kill"
-    // pattern for a three-hit kill) is pure waste. This overload defers `resolveQuestStates` (an
-    // async ICharacterQuestPersistence-backed resolver, e.g. one GetQuestStateAsync call per
-    // distinct QuestId) until AFTER ApplyDamage has already determined `killed` atomically -
-    // MobInstance.ApplyDamage's own lock still enforces "two simultaneous lethal hits -> one death,
-    // one quest-drop award" exactly as before; this method only decides WHETHER to await the
-    // resolver at all, never races the death determination itself.
-    public async Task<MonsterAttackOutcome> AttackAsync(
-        MobInstance target,
-        uint attackerAccountId,
-        EffectiveCharacterStats attacker,
-        ushort attackerBaseLevel,
-        WeaponItemDefinition? equippedWeapon,
-        Func<Task<Func<uint, CharacterQuestStatus>>> resolveQuestStates)
-    {
-        if (!target.IsAlive) return new(false, target.CurrentHp, target.CurrentHp, false, false, false, []);
-
-        var result = basicAttackRules.Calculate(new BasicAttackContext(attacker, attackerBaseLevel, equippedWeapon, target.Spawn.Mob));
-        var (hpBefore, hpAfter, killed) = target.ApplyDamage(result.Damage);
-
-        var mode = target.Spawn.Mob.Mode;
-        var engagementAcquired = !killed && mode.HasFlag(MobMode.CanAttack) && TryAcquireEngagement(target, attackerAccountId, mode);
-
-        IReadOnlyList<QuestDropOutcome> drops = [];
-        if (killed)
-        {
-            var attackerQuestStatus = await resolveQuestStates();
-            drops = questDrops.ResolveDrops(attackerQuestStatus, target.Spawn.Mob.Id);
-            monsters.ScheduleRespawnIfNeeded(target);
-        }
-
-        return new(true, hpBefore, hpAfter, result.IsMiss, killed, engagementAcquired, drops);
+        var accepted = result.Status is WorldMonsterDamageStatus.Applied or WorldMonsterDamageStatus.ReplayedSequence;
+        var engagementAcquired = result.Engagement is WorldMonsterAttackedStatus.Acquired or WorldMonsterAttackedStatus.AlreadyCurrentTarget;
+        IReadOnlyList<QuestDropOutcome> drops = result.KilledByThisHit && attackerQuestStatus is not null
+            ? questDrops.ResolveDrops(attackerQuestStatus, target.MobId)
+            : [];
+        return new MonsterAttackOutcome(accepted, result.HpBefore, result.HpAfter, isMiss, result.KilledByThisHit, engagementAcquired, drops);
     }
 }
