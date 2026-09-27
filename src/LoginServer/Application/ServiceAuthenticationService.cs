@@ -64,12 +64,16 @@ public sealed class ServiceAuthenticationService : IServiceAuthenticationService
             _ => ServiceAuthenticationOutcome.NotAuthorized,
         };
 
-        if (outcome == ServiceAuthenticationOutcome.Success)
-        {
-            IsAuthenticated = true;
-        }
-
+        // Deliberately does not set IsAuthenticated here: credential/classification
+        // success is necessary but not sufficient. The caller still has to check
+        // expiration/ban/account state and reach a final successful CharServer
+        // login before calling MarkAuthenticated().
         return new ServiceAuthenticationResult(outcome);
+    }
+
+    public void MarkAuthenticated()
+    {
+        IsAuthenticated = true;
     }
 
     private static byte[] Concat(byte[] first, byte[] second)

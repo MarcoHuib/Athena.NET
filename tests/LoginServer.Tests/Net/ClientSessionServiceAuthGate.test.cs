@@ -178,6 +178,78 @@ public sealed class ClientSessionServiceAuthGateTests : IDisposable
         Assert.True(account.UnbanTime > 0, "An authenticated CharServer must still be able to ban an account.");
     }
 
+    [Theory]
+    [InlineData("wrong-password")]
+    public async Task CharServerLogin_WrongPassword_FailsAndLeavesConnectionUnauthenticated(string suppliedPassword)
+    {
+        await AssertServiceLoginFailsAndLeavesConnectionUnauthenticatedAsync(
+            new LoginAccount { AccountId = 1, UserId = "charserver", UserPass = "service-secret", Sex = "S" },
+            suppliedPassword);
+    }
+
+    [Fact]
+    public async Task CharServerLogin_BannedServiceAccount_FailsAndLeavesConnectionUnauthenticated()
+    {
+        var unbanTime = (uint)DateTimeOffset.UtcNow.AddHours(1).ToUnixTimeSeconds();
+        await AssertServiceLoginFailsAndLeavesConnectionUnauthenticatedAsync(
+            new LoginAccount { AccountId = 1, UserId = "charserver", UserPass = "service-secret", Sex = "S", UnbanTime = unbanTime },
+            "service-secret");
+    }
+
+    [Fact]
+    public async Task CharServerLogin_ExpiredServiceAccount_FailsAndLeavesConnectionUnauthenticated()
+    {
+        var expirationTime = (uint)DateTimeOffset.UtcNow.AddHours(-1).ToUnixTimeSeconds();
+        await AssertServiceLoginFailsAndLeavesConnectionUnauthenticatedAsync(
+            new LoginAccount { AccountId = 1, UserId = "charserver", UserPass = "service-secret", Sex = "S", ExpirationTime = expirationTime },
+            "service-secret");
+    }
+
+    [Fact]
+    public async Task CharServerLogin_RestrictedStateServiceAccount_FailsAndLeavesConnectionUnauthenticated()
+    {
+        await AssertServiceLoginFailsAndLeavesConnectionUnauthenticatedAsync(
+            new LoginAccount { AccountId = 1, UserId = "charserver", UserPass = "service-secret", Sex = "S", State = 5 },
+            "service-secret");
+    }
+
+    /// <summary>
+    /// Seeds a service account row, attempts a CharServer login that must fail for
+    /// the given reason (wrong password, banned, expired, or state-restricted),
+    /// confirms the failure ack, and then proves the connection is still
+    /// unauthenticated by sending a protected Lc* packet on the SAME session and
+    /// confirming it is dropped. This is the core regression for the
+    /// "IsAuthenticated must only become true after a fully successful CharServer
+    /// login" security fix.
+    /// </summary>
+    private async Task AssertServiceLoginFailsAndLeavesConnectionUnauthenticatedAsync(LoginAccount account, string suppliedPassword)
+    {
+        var loginDbName = Guid.NewGuid().ToString();
+        await using (var seedDb = CreateLoginDb(loginDbName))
+        {
+            seedDb.Accounts.Add(account);
+            await seedDb.SaveChangesAsync();
+        }
+
+        using var fixture = ClientSessionFixture.Create(() => CreateLoginDb(loginDbName), () => CreateIdentityDb());
+
+        var loginPacket = BuildCharServerLoginPacket(account.UserId, suppliedPassword);
+        var handlePacket = typeof(ClientSession).GetMethod("HandlePacketAsync", BindingFlags.NonPublic | BindingFlags.Instance);
+        await (Task)handlePacket!.Invoke(fixture.Session, new object[] { LcCharServerLogin, loginPacket, CancellationToken.None })!;
+
+        var loginAck = await fixture.ReadExactAsync(3);
+        Assert.Equal(LcCharServerLoginAck, BinaryPrimitives.ReadInt16LittleEndian(loginAck.AsSpan(0, 2)));
+        Assert.NotEqual((byte)0, loginAck[2]);
+
+        var banPacket = new byte[10];
+        BinaryPrimitives.WriteUInt32LittleEndian(banPacket.AsSpan(2, 4), 2000001);
+        BinaryPrimitives.WriteInt32LittleEndian(banPacket.AsSpan(6, 4), 3600);
+        await (Task)handlePacket!.Invoke(fixture.Session, new object[] { LcBanAccount, banPacket, CancellationToken.None })!;
+
+        var receivedAnything = await fixture.TryReadAnyByteAsync(TimeSpan.FromMilliseconds(300));
+        Assert.False(receivedAnything, "A connection whose CharServer login failed must not be treated as authenticated.");
+    }
+
     private static byte[] BuildCharServerLoginPacket(string user, string pass)
     {
         var packet = new byte[86];

@@ -32,6 +32,14 @@ public sealed record ServiceAuthenticationResult(ServiceAuthenticationOutcome Ou
 /// </summary>
 public interface IServiceAuthenticationService
 {
+    /// <summary>
+    /// True only once <see cref="MarkAuthenticated"/> has been called. This must
+    /// never become true merely because <see cref="Authenticate"/> classified the
+    /// credentials as belonging to a valid service account: the caller still has
+    /// to run its own expiration/ban/state checks and reach a final successful
+    /// CharServer login before the connection is trusted with
+    /// service-only packets.
+    /// </summary>
     bool IsAuthenticated { get; }
 
     /// <summary>
@@ -40,5 +48,18 @@ public interface IServiceAuthenticationService
     /// </summary>
     bool VerifyPassword(LoginAccount account, string suppliedPassword, int passwordEnc, byte[]? md5Key);
 
+    /// <summary>
+    /// Classifies a login attempt (credential validity + reserved-account-range
+    /// check) without granting authenticated status. The caller is responsible
+    /// for running any remaining checks (expiration, ban, account state, ...)
+    /// before calling <see cref="MarkAuthenticated"/>.
+    /// </summary>
     ServiceAuthenticationResult Authenticate(LoginAccount? account, bool passwordMatches);
+
+    /// <summary>
+    /// Grants this connection service-authenticated status. Must only be called
+    /// once the caller has completed every check for a successful CharServer
+    /// login - never merely because <see cref="Authenticate"/> succeeded.
+    /// </summary>
+    void MarkAuthenticated();
 }

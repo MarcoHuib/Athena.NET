@@ -501,6 +501,12 @@ public sealed class ClientSession : IDisposable
                 return;
             }
 
+            // Only at this point has every check for a successful CharServer
+            // login passed (credentials, classification, expiration/ban/state,
+            // and the sex/account-id sanity check above). ServiceOnlyPackets
+            // must never be gated on anything earlier than this.
+            _serviceAuth.MarkAuthenticated();
+
             RegisterCharServer(result, request, cancellationToken);
             LoginLogger.Status("Char server login accepted.");
             await SendCharServerAckAsync(0, cancellationToken);

@@ -59,8 +59,12 @@ public sealed class ServiceAuthenticationServiceTests
     }
 
     [Fact]
-    public void Authenticate_ValidReservedServiceAccount_Succeeds_AndMarksConnectionAuthenticated()
+    public void Authenticate_ValidReservedServiceAccount_Succeeds_ButDoesNotYetMarkConnectionAuthenticated()
     {
+        // Authenticate() only classifies credentials. The caller (ClientSession)
+        // still has to run expiration/ban/state checks and reach a final
+        // successful login before the connection is trusted - see
+        // MarkAuthenticated_OnlyExplicitCall_SetsIsAuthenticated below.
         var service = new ServiceAuthenticationService();
         Assert.False(service.IsAuthenticated);
 
@@ -68,6 +72,17 @@ public sealed class ServiceAuthenticationServiceTests
 
         Assert.True(result.Success);
         Assert.Equal(ServiceAuthenticationOutcome.Success, result.Outcome);
+        Assert.False(service.IsAuthenticated);
+    }
+
+    [Fact]
+    public void MarkAuthenticated_OnlyExplicitCall_SetsIsAuthenticated()
+    {
+        var service = new ServiceAuthenticationService();
+        Assert.False(service.IsAuthenticated);
+
+        service.MarkAuthenticated();
+
         Assert.True(service.IsAuthenticated);
     }
 
