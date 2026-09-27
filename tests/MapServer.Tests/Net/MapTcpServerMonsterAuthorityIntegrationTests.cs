@@ -521,6 +521,14 @@ public sealed class MapTcpServerMonsterAuthorityIntegrationTests : IAsyncLifetim
         Assert.True(world.MonsterProjections.TryGet(mapId, out var projection));
         var monster = Assert.Single(projection.AllInstances);
 
+        // Baseline cursor captured BEFORE the race, so the post-race proof below can poll the real
+        // feed incrementally FROM this point and count Died entries directly - never inferred from
+        // the terminal Lifecycle==Dead snapshot, which cannot distinguish "exactly one Died entry"
+        // from "zero or several, but the last-observed state happens to be Dead".
+        var grain = _cluster.GrainFactory.GetGrain<IWorldPartitionGrain>(Resolver().ResolvePartition(mapId));
+        var baselinePage = await grain.PollMonsterFeedAsync(cursor: null, mapId);
+        var feedCursor = new WorldMonsterFeedCursor(baselinePage.SimulationEpoch, baselinePage.AsOfSequence);
+
         var aReachedBarrier = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var bReachedBarrier = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var releaseBoth = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -554,7 +562,6 @@ public sealed class MapTcpServerMonsterAuthorityIntegrationTests : IAsyncLifetim
         // nondeterministic; this barrier only guarantees overlap, never a winner.
         releaseBoth.TrySetResult();
 
-        var grain = _cluster.GrainFactory.GetGrain<IWorldPartitionGrain>(Resolver().ResolvePartition(mapId));
         var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
         var confirmedDead = false;
         while (DateTime.UtcNow < deadline && !confirmedDead)
@@ -581,6 +588,30 @@ public sealed class MapTcpServerMonsterAuthorityIntegrationTests : IAsyncLifetim
         Assert.Equal(WorldMonsterLifecycleState.Dead, finalInstance.Lifecycle);
         Assert.Equal(0u, finalInstance.CurrentHp);
         Assert.Single(finalPage.Snapshot!, i => i.ActorId == monster.ActorId); // No duplicate/ghost entries.
+
+        // Exactly ONE authoritative Died feed entry for the raced Life - polled incrementally from
+        // the pre-race baseline cursor, never inferred from the terminal Lifecycle==Dead snapshot.
+        var diedEntryCount = 0;
+        var feedDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        while (DateTime.UtcNow < feedDeadline)
+        {
+            var page = await grain.PollMonsterFeedAsync(feedCursor, mapId);
+            if (page.Snapshot is not null)
+            {
+                // A resync mid-scan would make incremental Died-counting unreliable for this
+                // specific proof - none is expected in this bounded single-map scenario, but fail
+                // loudly rather than silently under/over-count if one ever occurs.
+                Assert.Fail("Expected only incremental feed entries while counting Died occurrences, but observed a resync/snapshot page.");
+            }
+            feedCursor = new WorldMonsterFeedCursor(page.SimulationEpoch, page.AsOfSequence);
+            if (page.Entries is { Count: > 0 } entries)
+            {
+                diedEntryCount += entries.Count(e => e.Kind == WorldMonsterFeedEntryKind.Died && e.ActorId == monster.ActorId);
+                if (diedEntryCount > 0) break;
+            }
+            await Task.Delay(50);
+        }
+        Assert.Equal(1, diedEntryCount);
 
         // Prove the AlreadyDead loser's wire silence directly against its own socket - not merely
         // inferred from the status - since this is the cross-process integration proof.
@@ -706,18 +737,13 @@ public sealed class MapTcpServerMonsterAuthorityIntegrationTests : IAsyncLifetim
         using var _disposeA = clientA;
         using var _disposeB = clientB;
 
-        // B's own reward tail (damage/HP/EXP/vanish/drop packets from its real kill) is never
-        // asserted by this scenario - drain it continuously so those unread packets never fill the
-        // OS socket buffer and stall B's own send path, which would otherwise silently stall B's
-        // real ApplyMonsterDamageAsync call from ever completing (mirrors the drain pattern used by
-        // every other scenario/existing test in this file for streams whose packets aren't read).
-        using var drainCtsB = new CancellationTokenSource();
-        var drainTaskB = Task.Run(async () =>
-        {
-            var sink = new byte[4096];
-            try { while (!drainCtsB.IsCancellationRequested) await streamB.ReadAsync(sink, drainCtsB.Token); }
-            catch (OperationCanceledException) { } catch (IOException) { }
-        });
+        // B's own reward tail IS asserted by this scenario (see AssertExactlyOneLethalRewardTailAsync
+        // below) - unlike a plain discard-drain, this background reader accumulates every byte B's
+        // session sends into a buffered stream instead of throwing it away, so the reward tail can
+        // still be scanned/verified afterward while ALSO preventing the OS socket buffer from filling
+        // and stalling B's own send path (which would otherwise silently stall B's real
+        // ApplyMonsterDamageAsync call from ever completing).
+        var bufferedB = new BufferedSocketReader(streamB);
 
         await server.ProcessOneMonsterTickAsync([sessionA, sessionB], CancellationToken.None);
         await server.ProcessOneMonsterTickAsync([sessionA, sessionB], CancellationToken.None);
@@ -731,8 +757,18 @@ public sealed class MapTcpServerMonsterAuthorityIntegrationTests : IAsyncLifetim
         WorldMonsterDamageCommand? retryCommand = null;
         WorldMonsterDamageResult? retryResult = null;
         var lostResponseCommitted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var retryReachedGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseRetry = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var isFirstDispatch = true;
 
+        // A's second dispatch (its own natural retry, scheduled and fired entirely by production's
+        // own cadence - nothing here artificially triggers it) is gated: the command is captured and
+        // the gate signaled as soon as production reaches this call, but the REAL World RPC is held
+        // back until the test explicitly releases it. This is what makes the required ordering
+        // (A observes B's deferred Died WHILE BeginInFlight is still open, and ONLY THEN does A's
+        // retry reach World) deterministic instead of a race against B's own kill and A's feed poll
+        // under a slower CI run - without this gate, NextRetryAt could legitimately expire and reach
+        // World before B has even attacked.
         sessionA.DebugApplyMonsterDamageDispatcher = async (command, ct) =>
         {
             if (isFirstDispatch)
@@ -747,9 +783,22 @@ public sealed class MapTcpServerMonsterAuthorityIntegrationTests : IAsyncLifetim
                 throw new IOException("Simulated lost response: the request committed at World but MapServer never received the reply.");
             }
             retryCommand = command;
+            retryReachedGate.TrySetResult();
+            await releaseRetry.Task.WaitAsync(TimeSpan.FromSeconds(15));
             var retry = await worldRuntime.ApplyMonsterDamageAsync(command, ct);
             retryResult = retry;
             return retry;
+        };
+
+        // Transparent wrapper on B - the real dispatcher still runs unmodified, this only captures
+        // B's own first real result so "B is the single kill owner" is an OBSERVED result (Applied +
+        // KilledByThisHit==true), not merely inferred from the grain's terminal Dead snapshot.
+        WorldMonsterDamageResult? firstResultB = null;
+        sessionB.DebugApplyMonsterDamageDispatcher = async (command, ct) =>
+        {
+            var result = await worldRuntime.ApplyMonsterDamageAsync(command, ct);
+            firstResultB ??= result;
+            return result;
         };
 
         await streamA.WriteAsync(BuildAttackPacket(monster.ActorId));
@@ -769,13 +818,27 @@ public sealed class MapTcpServerMonsterAuthorityIntegrationTests : IAsyncLifetim
         }
         Assert.True(confirmedDead, "Expected B's own attack to confirm the kill.");
 
+        // B's own first real result is the observed proof it is the single kill owner - not an
+        // inference from the grain's terminal snapshot.
+        var firstResultBDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        while (DateTime.UtcNow < firstResultBDeadline && firstResultB is null) await Task.Delay(20);
+        Assert.NotNull(firstResultB);
+        Assert.Equal(WorldMonsterDamageStatus.Applied, firstResultB!.Status);
+        Assert.True(firstResultB.KilledByThisHit, "Expected B's own first real hit to be the observed lethal one.");
+
         // BEFORE A's retry is allowed to happen, drive a tick for A specifically so its own feed
         // poll observes B's authoritative Died while A's BeginInFlight registration is still open -
         // forcing the arbiter to defer it rather than deliver it as an ordinary bystander vanish.
+        // A's retry may already be parked at the gate by this point (its own NextRetryAt cadence is
+        // untouched by this test), or it may still be pending - both are fine, since releaseRetry is
+        // not signaled until after this tick and the deferred-Died assertion below.
         await server.ProcessOneMonsterTickAsync([sessionA, sessionB], CancellationToken.None);
 
-        // Now allow A's natural retry to fire on its own real cadence (TimeProvider.System-backed,
-        // like the rest of this file - no artificial pulse needed).
+        // Only now let A's retry - already captured/parked at the gate, or about to park there on
+        // its own natural cadence - actually reach World.
+        await retryReachedGate.Task.WaitAsync(TimeSpan.FromSeconds(15));
+        releaseRetry.TrySetResult();
+
         var retryDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(15);
         while (DateTime.UtcNow < retryDeadline && retryResult is null) await Task.Delay(50);
         Assert.NotNull(retryResult);
@@ -806,11 +869,16 @@ public sealed class MapTcpServerMonsterAuthorityIntegrationTests : IAsyncLifetim
         Assert.Equal(0u, finalInstance.CurrentHp);
         Assert.Equal(WorldMonsterLifecycleState.Dead, finalInstance.Lifecycle);
 
-        // A receives exactly one authoritative Died vanish, no stale damage/HP/reward tail.
+        // A's side: no stale damage/HP tail, no EXP/progression/drop tail, exactly one deferred Died
+        // vanish (A never owned the kill).
         await AssertExactlyOneDiedVanishNoRewardTailAsync(streamA);
 
-        drainCtsB.Cancel();
-        try { await drainTaskB; } catch { }
+        // B's side: B is the real lethal owner, so its stream must show exactly one lethal
+        // vanish/reward tail and no duplicate - bufferedB accumulated every byte B's session sent
+        // (not discarded like a plain drain), so this scans the real, complete sequence instead of
+        // merely proving traffic existed.
+        await bufferedB.StopAndAssertExactlyOneLethalRewardTailAsync(monster.ActorId);
+
         clientA.Close(); clientB.Close();
         await runA.WaitAsync(TimeSpan.FromSeconds(5));
         await runB.WaitAsync(TimeSpan.FromSeconds(5));
@@ -1081,6 +1149,65 @@ public sealed class MapTcpServerMonsterAuthorityIntegrationTests : IAsyncLifetim
         await runBystander.WaitAsync(TimeSpan.FromSeconds(5));
     }
 
+    // Substep 10: single source of truth for every fixed-length opcode these packet-scanning test
+    // helpers need to skip over or reject. Centralized so the framing logic in
+    // AssertNoDamageHpOrRewardPacketsAsync/AssertExactlyOneDiedVanishNoRewardTailAsync/
+    // ReadUntilVanishAsync cannot silently desynchronize again by guessing a fixed skip length or
+    // omitting a reward/progression opcode one of them forbids but another doesn't - see the review
+    // finding that caught exactly that gap (ZcParameterChange/ZcLongLongParameterChange/
+    // ZcNotifyExperience/ZcNotifyEffect/ZcItemPickupAck were skipped as "unknown length-prefixed"
+    // instead of being recognized AND rejected as reward/progression packets). -1 means "not a known
+    // fixed-length opcode" - the caller falls back to the dynamic, self-describing length-prefixed
+    // shape (ZcNotifyNewEntry/ZcNotifyStandEntry, matching ReadDynamic's own 4-byte-header/2-byte-
+    // length shape used elsewhere in this file).
+    private static int KnownFixedPacketLength(short opcode) => opcode switch
+    {
+        (short)PacketConstants.ZcNotifyAct3 => PacketConstants.ZcNotifyAct3Length,
+        (short)PacketConstants.ZcHpInfo => PacketConstants.ZcHpInfoLength,
+        (short)PacketConstants.ZcStopMove => PacketConstants.ZcStopMoveLength,
+        (short)PacketConstants.ZcNotifyVanish => PacketConstants.ZcNotifyVanishLength,
+        (short)PacketConstants.ZcParameterChange => 8,
+        (short)PacketConstants.ZcLongLongParameterChange => 12,
+        (short)PacketConstants.ZcNotifyExperience => PacketConstants.ZcNotifyExperienceLength,
+        (short)PacketConstants.ZcNotifyEffect => PacketConstants.ZcNotifyEffectLength,
+        (short)PacketConstants.ZcItemPickupAck => PacketConstants.ZcItemPickupAckLength,
+        _ => -1,
+    };
+
+    // Substep 10: every reward/progression opcode a lethal hit's own reward tail can produce -
+    // forbidden on a stream this scenario asserts received NO reward tail (an AlreadyDead loser, or
+    // a bystander's own deferred-Died path that never owned the kill). The review finding that
+    // required this: the old checks only rejected ZcNotifyAct3/ZcHpInfo (damage/HP) and never
+    // actually rejected the EXP/parameter-change/item-pickup families a real kill's reward
+    // projection sends, so a genuine double-reward defect could have slipped through undetected.
+    private static bool IsForbiddenRewardOpcode(short opcode) =>
+        opcode == (short)PacketConstants.ZcNotifyAct3 ||
+        opcode == (short)PacketConstants.ZcHpInfo ||
+        opcode == (short)PacketConstants.ZcParameterChange ||
+        opcode == (short)PacketConstants.ZcLongLongParameterChange ||
+        opcode == (short)PacketConstants.ZcNotifyExperience ||
+        opcode == (short)PacketConstants.ZcNotifyEffect ||
+        opcode == (short)PacketConstants.ZcItemPickupAck;
+
+    // Substep 10: reads one packet's own body past an already-consumed 2-byte opcode header, using
+    // its real length (fixed-size via KnownFixedPacketLength, else the dynamic length-prefixed
+    // shape) - shared by every helper below so a packet is always skipped by its OWN true length,
+    // never a fixed too-small guess.
+    private static async Task SkipPacketBodyAsync(Stream stream, short opcode)
+    {
+        var fixedLength = KnownFixedPacketLength(opcode);
+        if (fixedLength >= 0)
+        {
+            await ReadExact(stream, fixedLength - 2);
+        }
+        else
+        {
+            var lengthField = await ReadExact(stream, 2);
+            var length = BinaryPrimitives.ReadUInt16LittleEndian(lengthField);
+            await ReadExact(stream, length - 4);
+        }
+    }
+
     // Substep 10 helper: bounded, non-destructive proof that no damage/HP-info/reward packet ever
     // arrives on the given stream - used to prove an AlreadyDead loser's wire silence directly.
     private static async Task AssertNoDamageHpOrRewardPacketsAsync(NetworkStream stream)
@@ -1098,37 +1225,17 @@ public sealed class MapTcpServerMonsterAuthorityIntegrationTests : IAsyncLifetim
             }
             catch (OperationCanceledException) { return; } // Nothing else arrived - the load-bearing proof.
             var opcode = BinaryPrimitives.ReadInt16LittleEndian(header);
-            Assert.True(
-                opcode != (short)PacketConstants.ZcNotifyAct3 && opcode != (short)PacketConstants.ZcHpInfo,
-                $"Expected no damage/HP-info packet on the AlreadyDead loser's own stream, but observed opcode 0x{opcode:X4}.");
+            Assert.False(
+                IsForbiddenRewardOpcode(opcode),
+                $"Expected no damage/HP-info/reward/progression packet on the AlreadyDead loser's own stream, but observed opcode 0x{opcode:X4}.");
             // Drain whatever else this opcode's own payload is (best-effort - anything reaching here
-            // is already unexpected for this proof) using each packet's OWN real length - a fixed
-            // too-small skip guess would desynchronize this byte-level scan from real packet
-            // boundaries for any packet larger than the guess (see the identical fix in
-            // AssertExactlyOneDiedVanishNoRewardTailAsync's own doc comment for the failure this
-            // caused there).
-            var skipLength = opcode switch
-            {
-                (short)PacketConstants.ZcNotifyAct3 => PacketConstants.ZcNotifyAct3Length,
-                (short)PacketConstants.ZcHpInfo => PacketConstants.ZcHpInfoLength,
-                (short)PacketConstants.ZcStopMove => PacketConstants.ZcStopMoveLength,
-                _ => -1,
-            };
-            if (skipLength >= 0)
-            {
-                await ReadExact(stream, skipLength - 2);
-            }
-            else
-            {
-                var lengthField = await ReadExact(stream, 2);
-                var length = BinaryPrimitives.ReadUInt16LittleEndian(lengthField);
-                await ReadExact(stream, length - 4);
-            }
+            // is already unexpected for this proof) using its own real length.
+            await SkipPacketBodyAsync(stream, opcode);
         }
     }
 
     // Substep 10 helper: reads exactly one Died vanish packet off the given stream and confirms no
-    // damage/HP-info/reward packet precedes or follows it within the bounded window.
+    // damage/HP-info/reward/progression packet precedes or follows it within the bounded window.
     private static async Task AssertExactlyOneDiedVanishNoRewardTailAsync(NetworkStream stream)
     {
         var vanishSeen = false;
@@ -1154,35 +1261,90 @@ public sealed class MapTcpServerMonsterAuthorityIntegrationTests : IAsyncLifetim
                 vanishSeen = true;
                 continue;
             }
-            Assert.True(
-                opcode != (short)PacketConstants.ZcNotifyAct3 && opcode != (short)PacketConstants.ZcHpInfo,
-                $"Expected no damage/HP-info/reward packet on this stream, but observed opcode 0x{opcode:X4}.");
+            Assert.False(
+                IsForbiddenRewardOpcode(opcode),
+                $"Expected no damage/HP-info/reward/progression packet on this stream, but observed opcode 0x{opcode:X4}.");
             // Every other packet this server's fan-out/discovery path can produce is either a
-            // fixed-size struct this helper knows the exact length of, or a dynamic, self-describing
-            // length-prefixed packet (ZcNotifyNewEntry/ZcNotifyStandEntry, matching ReadDynamic's own
-            // 4-byte-header/2-byte-length shape used elsewhere in this file) - a fixed, too-small
-            // "skip N bytes" guess here would desynchronize this byte-level opcode scan from the real
-            // packet boundaries for any packet larger than that guess, corrupting every subsequent
-            // read in this loop (including the real vanish this helper exists to find).
-            var skipLength = opcode switch
-            {
-                (short)PacketConstants.ZcNotifyAct3 => PacketConstants.ZcNotifyAct3Length,
-                (short)PacketConstants.ZcHpInfo => PacketConstants.ZcHpInfoLength,
-                (short)PacketConstants.ZcStopMove => PacketConstants.ZcStopMoveLength,
-                _ => -1,
-            };
-            if (skipLength >= 0)
-            {
-                await ReadExact(stream, skipLength - 2);
-            }
-            else
-            {
-                var lengthField = await ReadExact(stream, 2);
-                var length = BinaryPrimitives.ReadUInt16LittleEndian(lengthField);
-                await ReadExact(stream, length - 4);
-            }
+            // fixed-size struct KnownFixedPacketLength knows the exact length of, or a dynamic,
+            // self-describing length-prefixed packet - see SkipPacketBodyAsync's own doc comment.
+            await SkipPacketBodyAsync(stream, opcode);
         }
         Assert.True(vanishSeen, "Expected exactly one deferred Died vanish packet to arrive.");
+    }
+
+    // Substep 10 (review fix): accumulates every byte a session sends, from a background reader
+    // task, into an in-memory buffer instead of discarding it (a plain discard-drain would still
+    // prevent the OS socket buffer from filling and stalling the session's own send path, but makes
+    // it impossible to later prove anything about what was actually sent - "we drained the stream"
+    // is not the same claim as "we verified its contents"). StopAndAssertExactlyOneLethalRewardTailAsync
+    // stops the reader and scans the complete, real captured sequence for exactly one lethal
+    // reward tail (damage, then optionally HP-info, then the reward/progression packet family, then
+    // exactly one Died vanish), rejecting a duplicate of any of them.
+    private sealed class BufferedSocketReader
+    {
+        private readonly MemoryStream _buffer = new();
+        private readonly CancellationTokenSource _cts = new();
+        private readonly Task _readTask;
+
+        public BufferedSocketReader(NetworkStream stream)
+        {
+            _readTask = Task.Run(async () =>
+            {
+                var chunk = new byte[4096];
+                try
+                {
+                    while (!_cts.IsCancellationRequested)
+                    {
+                        var read = await stream.ReadAsync(chunk, _cts.Token);
+                        if (read == 0) return;
+                        lock (_buffer) _buffer.Write(chunk, 0, read);
+                    }
+                }
+                catch (OperationCanceledException) { } catch (IOException) { }
+            });
+        }
+
+        public async Task StopAndAssertExactlyOneLethalRewardTailAsync(uint expectedActorId)
+        {
+            // Bounded settle window: the reward tail is produced asynchronously (ticks/background
+            // loops) after the kill is confirmed, so give it a moment to actually land in the buffer
+            // before stopping the reader and scanning what was captured.
+            var settleDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(3);
+            while (DateTime.UtcNow < settleDeadline) await Task.Delay(50);
+
+            _cts.Cancel();
+            try { await _readTask; } catch { }
+
+            byte[] captured;
+            lock (_buffer) captured = _buffer.ToArray();
+            using var replay = new MemoryStream(captured);
+
+            var damageSeen = false;
+            var vanishSeen = false;
+            while (replay.Position < replay.Length)
+            {
+                var header = await ReadExact(replay, 2);
+                var opcode = BinaryPrimitives.ReadInt16LittleEndian(header);
+                if (opcode == (short)PacketConstants.ZcNotifyVanish)
+                {
+                    Assert.False(vanishSeen, "Expected exactly one Died vanish packet on the killer's own stream, but observed a second one.");
+                    var rest = await ReadExact(replay, PacketConstants.ZcNotifyVanishLength - 2);
+                    var full = header.Concat(rest).ToArray();
+                    Assert.Equal(expectedActorId, BinaryPrimitives.ReadUInt32LittleEndian(full.AsSpan(2)));
+                    Assert.Equal(PacketConstants.ZcNotifyVanishReasonDied, full[6]);
+                    vanishSeen = true;
+                    continue;
+                }
+                if (opcode == (short)PacketConstants.ZcNotifyAct3)
+                {
+                    Assert.False(damageSeen, "Expected exactly one damage packet on the killer's own stream, but observed a second one.");
+                    damageSeen = true;
+                }
+                await SkipPacketBodyAsync(replay, opcode);
+            }
+            Assert.True(damageSeen, "Expected the killer's own stream to carry exactly one damage packet for its lethal hit.");
+            Assert.True(vanishSeen, "Expected the killer's own stream to carry exactly one Died vanish packet.");
+        }
     }
 
     // Real capture-verified 8-byte shape (mirrors IroAttackRequestPacketTests' own CapturedBytes
@@ -1243,28 +1405,7 @@ public sealed class MapTcpServerMonsterAuthorityIntegrationTests : IAsyncLifetim
             var opcode = BinaryPrimitives.ReadInt16LittleEndian(header);
             if (opcode == (short)PacketConstants.ZcNotifyVanish)
                 return [.. header, .. await ReadExact(stream, PacketConstants.ZcNotifyVanishLength - 2)];
-
-            var skipLength = opcode switch
-            {
-                (short)PacketConstants.ZcNotifyAct3 => PacketConstants.ZcNotifyAct3Length,
-                (short)PacketConstants.ZcHpInfo => PacketConstants.ZcHpInfoLength,
-                (short)PacketConstants.ZcStopMove => PacketConstants.ZcStopMoveLength,
-                (short)PacketConstants.ZcParameterChange => 8,
-                (short)PacketConstants.ZcLongLongParameterChange => 12,
-                (short)PacketConstants.ZcNotifyExperience => PacketConstants.ZcNotifyExperienceLength,
-                (short)PacketConstants.ZcNotifyEffect => PacketConstants.ZcNotifyEffectLength,
-                _ => -1,
-            };
-            if (skipLength >= 0)
-            {
-                await ReadExact(stream, skipLength - 2);
-            }
-            else
-            {
-                var lengthField = await ReadExact(stream, 2);
-                var length = BinaryPrimitives.ReadUInt16LittleEndian(lengthField);
-                await ReadExact(stream, length - 4);
-            }
+            await SkipPacketBodyAsync(stream, opcode);
         }
     }
 
