@@ -1,6 +1,6 @@
 # Helper Scripts
 
-- `scripts/create-player-account.sh <username> [M|F] [email]` creates a normal player account. The password is never a positional argument - it is read from the hidden `Password:` prompt, or from stdin for non-interactive automation. It reads the SQL password from `SA_PASSWORD`, the root `.env`, or `solutionfiles/secrets/secret.json`, in that order.
+- `scripts/create-player-account.sh <username> [M|F] [email]` (bash) / `scripts/create-player-account.ps1 <username> [M|F] [email]` (PowerShell 7+, cross-platform - Windows/Linux/macOS) creates a normal player account. Both are equivalent; use whichever shell you have. The password is never a positional argument - it is read from the hidden `Password:` prompt, or from stdin for non-interactive automation (e.g. `"pw" | ./create-player-account.ps1 alice`). It reads the SQL password from `SA_PASSWORD`, the root `.env`, or `solutionfiles/secrets/secret.json`, in that order.
 - CharServer's inter-server `ServiceToken` (HMAC-SHA256 service authentication with LoginServer) is configured, not seeded - see `ai/login-server.md` ("Inter-server service authentication").
 
 Both account scripts target standard SQL Server connection strings and use Microsoft's `mssql-tools` image. When the Compose SQL resource is running, they locate it by the stable Compose `sql` service identity rather than by database image name.

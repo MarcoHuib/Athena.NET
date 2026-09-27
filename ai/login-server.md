@@ -226,19 +226,30 @@ Identity, never by inserting rows directly:
 Password:
 ```
 
-Run it as shown above and type the password at the hidden `Password:` prompt.
-The password is deliberately never a positional argument to this script or to
-LoginServer's own `--create-account-*` startup mode: a password passed as a
-process argument is visible in shell history and, for as long as the process
-runs, in every other process's view of its argument list (e.g. `ps aux`).
+A cross-platform PowerShell 7+ equivalent (Windows/Linux/macOS) is also
+available and behaves identically:
 
-For non-interactive automation, the script also accepts the password on
+```powershell
+./scripts/create-player-account.ps1 <username> [M|F] [email]
+Password:
+```
+
+Run either as shown above and type the password at the hidden `Password:`
+prompt. The password is deliberately never a positional argument to either
+script or to LoginServer's own `--create-account-*` startup mode: a password
+passed as a process argument is visible in shell history and, for as long as
+the process runs, in every other process's view of its argument list (e.g.
+`ps aux`/`Get-Process`).
+
+For non-interactive automation, both scripts also accept the password on
 stdin instead of the hidden prompt - source it from a secret manager or a
 protected CI secret and pipe it in. Never place the plaintext password
 directly in the command line (an `echo '<password>' | ...` example would
 defeat the purpose, landing the password in shell history just the same).
-The script reads the password itself (from stdin if piped, or a hidden
-prompt if run from a terminal) and pipes it to the LoginServer child
+Each script reads the password itself (from stdin if piped/redirected, or a
+hidden prompt if run from a terminal - the PowerShell version checks
+`[Console]::IsInputRedirected`, matching the receiving process's own
+`Console.IsInputRedirected` check) and pipes it to the LoginServer child
 process's stdin; `LoginServerApp.CreateAccountAsync`/`ReadPasswordFromStdin`
 on the receiving end does the same for anyone invoking the one-shot mode
 directly.
