@@ -272,6 +272,16 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     // lethal-death race window; this one exists purely to exercise the NEW pending-attempt machinery
     // in isolation, with no live combat-authority call ever reaching it in production).
     internal Func<WorldMonsterDamageCommand, CancellationToken, Task<WorldMonsterDamageResult>>? DebugApplyMonsterDamageDispatcher { get; set; }
+
+    // Item 2 of the substep-8 correction round: test-only coordination hook, always null in
+    // production - never awaited/invoked outside PerformDueRepeatAttackAsync's own entry point (see
+    // that method's own doc comment for exactly what this proves). Lets a test suspend a call to
+    // PerformDueRepeatAttackAsync BEFORE it acquires _attackExecutionGate, so the test can force a
+    // second, concurrent call to genuinely win the gate first and mutate _pendingDamageAttempt in the
+    // window between "this call was entered" and "this call's own prelude checks the pending slot" -
+    // proving the prelude's check happens AFTER _attackExecutionGate is acquired, not merely "after
+    // some pending attempt happened to already exist when the caller was constructed".
+    internal Func<Task>? DebugBeforeAttackExecutionGateAsync { get; set; }
     private ScriptExecutionSession? _scriptExecutionSession;
     private Task? _generatedScriptTask;
     private string? _generatedScriptEntityId;
@@ -1994,8 +2004,20 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
                 var delay = active.NextAttackAt - _timeProvider.GetUtcNow();
                 if (delay > TimeSpan.Zero)
                 {
+                    // Item 9 of the substep-8 correction round: this branch is reached only when no
+                    // pending attempt exists yet (the pendingNextRetryAt branch above would have
+                    // short-circuited otherwise) - but one can be CREATED while this sleep is in
+                    // progress (e.g. a fresh due-now attack request racing in on another target,
+                    // allocating a PendingMonsterDamageAttempt via the fresh-attempt path). Racing
+                    // _pendingRetrySignal here too (not just _attackSignal) ensures that transition
+                    // wakes this loop promptly to re-snapshot and re-prioritize, rather than sleeping
+                    // until whichever comes first of active.NextAttackAt or an unrelated _attackSignal
+                    // release - matching this method's own doc comment ("every wait races
+                    // _pendingRetrySignal, _attackSignal, and ... a Task.Delay").
                     using var delayCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-                    var wake = _attackSignal.WaitAsync(delayCancellation.Token);
+                    var wake = Task.WhenAny(
+                        _attackSignal.WaitAsync(delayCancellation.Token),
+                        _pendingRetrySignal.WaitAsync(delayCancellation.Token));
                     var sleep = Task.Delay(delay, _timeProvider, delayCancellation.Token);
                     var completed = await Task.WhenAny(wake, sleep);
                     delayCancellation.Cancel();
@@ -2096,6 +2118,15 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     // for now, when no pending attempt exists, control falls through to that unchanged legacy method.
     private async Task PerformDueRepeatAttackAsync(RepeatAttackState expected, CancellationToken cancellationToken)
     {
+        // Item 2 of the substep-8 correction round: test-only coordination point, always null in
+        // production. Lets a test force the exact adversarial ordering Scenario 6 requires - suspend
+        // THIS call (B) here, before it acquires _attackExecutionGate at all, while a concurrent
+        // caller (A) acquires the gate first, creates a PendingMonsterDamageAttempt, and releases it -
+        // so that when B is released and finally proceeds, it acquires the gate SECOND and its own
+        // prelude check (immediately below) observes a pending attempt that did not exist yet at the
+        // moment this method was entered. Never awaited/invoked in production (always null there).
+        if (DebugBeforeAttackExecutionGateAsync is { } beforeGate) await beforeGate();
+
         await _attackExecutionGate.WaitAsync(cancellationToken);
         try
         {
@@ -2237,6 +2268,10 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         }
         catch (Exception ex) when (IsTransientWorldRpcFailure(ex, cancellationToken))
         {
+            // Transient failure: registration stays open across the retry - never CompleteInFlight
+            // here (§8/§19 of the substep-8 correction round). Only advance NextRetryAt, and ONLY if
+            // the stored pending attempt is still THIS exact logical attempt (compared by
+            // AttackSequence - guards against the retire-then-reallocate race Scenario 15 exercises).
             await _attackGate.WaitAsync(cancellationToken);
             try
             {
@@ -2250,17 +2285,45 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
             try { _pendingRetrySignal.Release(); } catch (SemaphoreFullException) { }
             return;
         }
+        catch
+        {
+            // Fatal/non-transient exception (item 3 of the substep-8 correction round): this attempt
+            // is unambiguously resolved from this session's own perspective, exactly like a normal
+            // returned result - retire the pending slot and complete the arbiter registration BEFORE
+            // rethrowing, so a fatal seam failure can never leak an open pending/in-flight
+            // registration. Retirement is still guarded by the same AttackSequence comparison as the
+            // ordinary success path below, for the identical retire-then-reallocate reason.
+            WorldMonsterLifeReference? retiredLife = null;
+            await _attackGate.WaitAsync(CancellationToken.None);
+            try
+            {
+                if (_pendingDamageAttempt is { } current && current.AttackSequence == sequence)
+                {
+                    retiredLife = current.Life;
+                    _pendingDamageAttempt = null;
+                }
+            }
+            finally { _attackGate.Release(); }
+            if (retiredLife is { } life2) _lethalDeathArbiter.CompleteInFlight(life2, markProjected: false);
+            try { _pendingRetrySignal.Release(); } catch (SemaphoreFullException) { }
+            throw;
+        }
 
-        // Any unambiguous result (the seam threw nothing, or threw a non-transient exception that
-        // propagates past this method - either way the attempt is resolved from this session's own
-        // perspective) retires the pending attempt, but ONLY if it is still THIS exact logical
-        // attempt - a concurrent retire/reallocate must never be clobbered.
+        // Any unambiguous result (the seam returned normally) retires the pending attempt and
+        // completes the arbiter registration, but ONLY if it is still THIS exact logical attempt - a
+        // concurrent retire/reallocate must never be clobbered.
+        WorldMonsterLifeReference? completedLife = null;
         await _attackGate.WaitAsync(CancellationToken.None);
         try
         {
-            if (_pendingDamageAttempt is { } current && current.AttackSequence == sequence) _pendingDamageAttempt = null;
+            if (_pendingDamageAttempt is { } current && current.AttackSequence == sequence)
+            {
+                completedLife = current.Life;
+                _pendingDamageAttempt = null;
+            }
         }
         finally { _attackGate.Release(); }
+        if (completedLife is { } completedLifeValue) _lethalDeathArbiter.CompleteInFlight(completedLifeValue, markProjected: false);
         try { _pendingRetrySignal.Release(); } catch (SemaphoreFullException) { }
     }
 
@@ -2271,13 +2334,26 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     // send happens immediately, as the last action of the very turn that allocates it" rule.
     // NextRetryAt is set at allocation time but governs only a POSSIBLE later retry, never this
     // first call. Real production allocation (substep 9) happens inline inside the fresh-attempt
-    // branch of PerformDueRepeatAttackCoreAsync's eventual replacement, using this exact shape.
+    // branch of PerformDueRepeatAttackCoreAsync's eventual replacement, using this exact shape -
+    // including the BeginInFlight call below, which this helper now models faithfully so the
+    // isolated substep-8 tests actually exercise the arbiter lifecycle the final plan requires
+    // (§7/§17 step 3: "allocate PendingMonsterDamageAttempt, call BeginInFlight(life), release
+    // _attackGate, first dispatch inline").
+    //
+    // Enforces the "at most one unresolved logical damage attempt per session" invariant (§16) by
+    // construction: throws if a pending attempt is already outstanding, rather than silently
+    // overwriting it - a caller that genuinely needs to model "the old attempt was retired and a
+    // new one allocated" (Scenario 15's adversarial retire-then-reallocate race) must retire the
+    // old one first, via RetirePendingDamageAttemptForTestAsync below.
     internal async Task AllocatePendingDamageAttemptForTestAsync(WorldMonsterLifeReference life, uint damage, bool acquireEngagement, CancellationToken cancellationToken)
     {
         long sequence;
         await _attackGate.WaitAsync(cancellationToken);
         try
         {
+            if (_pendingDamageAttempt is not null)
+                throw new InvalidOperationException("A PendingMonsterDamageAttempt is already outstanding for this session - at most one may exist at a time (§16). Retire it first (RetirePendingDamageAttemptForTestAsync) before allocating a new one.");
+
             sequence = _nextAttackSequence++;
             _pendingDamageAttempt = new PendingMonsterDamageAttempt
             {
@@ -2289,9 +2365,59 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
             };
         }
         finally { _attackGate.Release(); }
+        _lethalDeathArbiter.BeginInFlight(life);
         try { _pendingRetrySignal.Release(); } catch (SemaphoreFullException) { }
 
         await DispatchPendingDamageAttemptAsync(life, sequence, damage, acquireEngagement, cancellationToken);
+    }
+
+    // Step 7 substep 8 isolated-test-only seam (item 3/8 of the substep-8 correction round): an
+    // explicit, adversarial-only retirement hook that discards the currently-stored pending
+    // attempt (if any) and completes its arbiter registration WITHOUT going through the ordinary
+    // unambiguous-result retirement path inside DispatchPendingDamageAttemptAsync - i.e. without
+    // requiring an actual dispatch call to resolve. This exists solely so Scenario 15 can model
+    // "the original attempt was retired/replaced by something else while its own RPC call was
+    // still in flight" without violating AllocatePendingDamageAttemptForTestAsync's own
+    // at-most-one invariant (which exists to catch a genuine production bug, not to obstruct a
+    // deliberate test of the race that invariant's OWN guard code (the AttackSequence comparison
+    // in DispatchPendingDamageAttemptAsync's catch block) is supposed to survive). Never called
+    // from any production code path.
+    internal async Task RetirePendingDamageAttemptForTestAsync(CancellationToken cancellationToken)
+    {
+        WorldMonsterLifeReference? retiredLife;
+        await _attackGate.WaitAsync(cancellationToken);
+        try
+        {
+            retiredLife = _pendingDamageAttempt?.Life;
+            _pendingDamageAttempt = null;
+        }
+        finally { _attackGate.Release(); }
+        if (retiredLife is { } life) _lethalDeathArbiter.CompleteInFlight(life, markProjected: false);
+        try { _pendingRetrySignal.Release(); } catch (SemaphoreFullException) { }
+    }
+
+    // Item 5/6 of the substep-8 correction round: test-only helper exposing the CURRENTLY-stored
+    // pending attempt's actual NextRetryAt, read under _attackGate exactly like every other access to
+    // this field (§10/§21.1's mandatory snapshot pattern) - lets a test assert the exact boundary
+    // (just-before / exactly-at) against the real scheduled retry time rather than an assumed delay
+    // constant. Returns null if no pending attempt is currently outstanding. Never called from any
+    // production code path.
+    internal async Task<DateTimeOffset?> SnapshotPendingNextRetryAtForTestAsync(CancellationToken cancellationToken)
+    {
+        await _attackGate.WaitAsync(cancellationToken);
+        try { return _pendingDamageAttempt?.NextRetryAt; }
+        finally { _attackGate.Release(); }
+    }
+
+    // Item 4 of the substep-8 correction round: test-only helper that pulses BOTH wake signals
+    // (_attackSignal and _pendingRetrySignal) exactly the way ordinary production call sites already
+    // do (try/Release, swallowing SemaphoreFullException for an already-signalled single-slot
+    // semaphore) - lets a test exercise repeated early wakeups on both signals without reaching into
+    // private state directly. Never called from any production code path.
+    internal void PulseBothWakeSignalsForTest()
+    {
+        try { _attackSignal.Release(); } catch (SemaphoreFullException) { }
+        try { _pendingRetrySignal.Release(); } catch (SemaphoreFullException) { }
     }
 
     // Executes exactly one authoritative hit for the repeat-attack state active at the time the

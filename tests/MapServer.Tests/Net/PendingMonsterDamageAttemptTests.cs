@@ -124,7 +124,7 @@ public sealed class PendingMonsterDamageAttemptTests
 
     private WorldSimulationEpoch _lastEpoch;
 
-    private async Task<(TcpClient Client, NetworkStream Stream, MapClientSession Session, Task RunTask, MobInstance Target, MonsterCombatStateStore CombatState)> SetupAsync(
+    private async Task<(TcpClient Client, NetworkStream Stream, MapClientSession Session, Task RunTask, MobInstance Target, MonsterCombatStateStore CombatState, MonsterFeedProjectionRegistry Projections)> SetupAsync(
         ushort playerX, ushort playerY, ushort monsterX, ushort monsterY, TimeProvider timeProvider)
     {
         var listener = new TcpListener(IPAddress.Loopback, 0);
@@ -175,7 +175,7 @@ public sealed class PendingMonsterDamageAttemptTests
         var actorId = BinaryPrimitives.ReadUInt32LittleEndian(spawn.AsSpan(5));
         Assert.Equal(target.ActorId, actorId);
 
-        return (client, stream, session, run, target, combatState);
+        return (client, stream, session, run, target, combatState, monsterProjections);
     }
 
     private WorldMonsterLifeReference LifeFor(MobInstance target) =>
@@ -195,7 +195,7 @@ public sealed class PendingMonsterDamageAttemptTests
     public async Task Scenario1_FreshDueNowOutOfRange_ExactlyOneFixposBeforeFailure_ZeroDispatchCalls()
     {
         var clock = new ControllableTimeProvider();
-        var (client, stream, session, run, target, _) = await SetupAsync(playerX: 81, playerY: 64, monsterX: 72, monsterY: 78, clock);
+        var (client, stream, session, run, target, _, _) = await SetupAsync(playerX: 81, playerY: 64, monsterX: 72, monsterY: 78, clock);
         using var _dispose = client;
         var dispatchCount = 0;
         session.DebugApplyMonsterDamageDispatcher = (_, _) => { Interlocked.Increment(ref dispatchCount); return Task.FromResult(new WorldMonsterDamageResult(WorldMonsterDamageStatus.Applied, 0, 0, 0, false, null)); };
@@ -222,7 +222,7 @@ public sealed class PendingMonsterDamageAttemptTests
     public async Task Scenario2_FreshDueNowInRange_ExactlyOneFixposBeforeFirstDamagePacket()
     {
         var clock = new ControllableTimeProvider();
-        var (client, stream, session, run, target, _) = await SetupAsync(playerX: 75, playerY: 51, monsterX: 75, monsterY: 51, clock);
+        var (client, stream, session, run, target, _, _) = await SetupAsync(playerX: 75, playerY: 51, monsterX: 75, monsterY: 51, clock);
         using var _dispose = client;
 
         await stream.WriteAsync(AttackPacket(target.ActorId));
@@ -243,7 +243,7 @@ public sealed class PendingMonsterDamageAttemptTests
     public async Task Scenario3_SameRepeatAttackStateScheduledAgain_NoSecondFixpos()
     {
         var clock = new ControllableTimeProvider();
-        var (client, stream, session, run, target, combatState) = await SetupAsync(playerX: 75, playerY: 51, monsterX: 75, monsterY: 51, clock);
+        var (client, stream, session, run, target, combatState, _) = await SetupAsync(playerX: 75, playerY: 51, monsterX: 75, monsterY: 51, clock);
         using var _dispose = client;
 
         await stream.WriteAsync(AttackPacket(target.ActorId));
@@ -282,7 +282,7 @@ public sealed class PendingMonsterDamageAttemptTests
     public async Task Scenario5_PendingAttemptRetryNeverSetDueNowFixposPending_ZeroFixpos()
     {
         var clock = new ControllableTimeProvider();
-        var (client, stream, session, run, target, _) = await SetupAsync(playerX: 75, playerY: 51, monsterX: 75, monsterY: 51, clock);
+        var (client, stream, session, run, target, _, _) = await SetupAsync(playerX: 75, playerY: 51, monsterX: 75, monsterY: 51, clock);
         using var _dispose = client;
         var dispatchedCommands = new List<WorldMonsterDamageCommand>();
         session.DebugApplyMonsterDamageDispatcher = (command, _) =>
@@ -314,7 +314,7 @@ public sealed class PendingMonsterDamageAttemptTests
     public async Task Scenario4_FirstDispatchTransientlyFailsAndRetriesManyTimes_TotalFixposRemainsOne()
     {
         var clock = new ControllableTimeProvider();
-        var (client, stream, session, run, target, _) = await SetupAsync(playerX: 75, playerY: 51, monsterX: 75, monsterY: 51, clock);
+        var (client, stream, session, run, target, _, _) = await SetupAsync(playerX: 75, playerY: 51, monsterX: 75, monsterY: 51, clock);
         using var _dispose = client;
         var dispatchCount = 0;
         session.DebugApplyMonsterDamageDispatcher = (_, _) =>
@@ -347,59 +347,112 @@ public sealed class PendingMonsterDamageAttemptTests
     // Scenarios 6-9: the adversarial retarget-while-pending interleaving.
     // ================================================================================
 
-    // Scenario 6: B installs a due-now RepeatAttackState while A already has a pending attempt (for
-    // a DIFFERENT life) - B's prelude sends no 0x0088, B's core does no fresh attack, and B's
-    // DueNowFixposPending remains true.
+    // Scenario 6: the ACTUAL adversarial _attackExecutionGate ordering (item 2 of the substep-8
+    // correction round) - B installs due-now state and is suspended BEFORE it ever acquires
+    // _attackExecutionGate; A then acquires the gate first, creates its pending attempt, and
+    // releases the gate; only THEN is B released to finally acquire the gate itself. B's own
+    // prelude must observe the pending attempt that did not exist at the moment B was entered - this
+    // is the actual regression: the pending check must happen AFTER B acquires
+    // _attackExecutionGate, never based on state observed/decided earlier. Teardown avoids the CI
+    // "Broken pipe" race (item 1): B is cleared via the movement path (which the test waits to be
+    // processed) BEFORE A is ever resolved, so A's resolution can never race a legitimately-eligible
+    // fresh B execution against this test's own socket close.
     [Fact]
     public async Task Scenario6_RetargetWhileOtherPendingAttemptExists_NoFixposNoFreshAttack_FlagRemainsTrue()
     {
         var clock = new ControllableTimeProvider();
-        var (client, stream, session, run, target, _) = await SetupAsync(playerX: 75, playerY: 51, monsterX: 75, monsterY: 51, clock);
+        var (client, stream, session, run, target, _, _) = await SetupAsync(playerX: 75, playerY: 51, monsterX: 75, monsterY: 51, clock);
         using var _dispose = client;
 
         var otherLife = new WorldMonsterLifeReference("int_land03", _lastEpoch, ActorId: 9999, WorldMonsterIncarnationId.First);
         var aSuspend = new TaskCompletionSource();
         session.DebugApplyMonsterDamageDispatcher = async (_, _) => { await aSuspend.Task; return new WorldMonsterDamageResult(WorldMonsterDamageStatus.Applied, 0, 0, 0, false, null); };
 
-        // A's own pending attempt: allocated directly, its dispatch call suspended indefinitely
-        // until this test releases it - simulating "A is already in flight, holding no gate but
-        // occupying the ONE pending-attempt slot this session has".
-        var aTask = session.AllocatePendingDamageAttemptForTestAsync(otherLife, damage: 5, acquireEngagement: false, CancellationToken.None);
+        // B's own coordination: reached BEFORE B's PerformDueRepeatAttackAsync call ever acquires
+        // _attackExecutionGate. Signals this test that B has arrived at that point (bEntered), then
+        // blocks until the test says A has already created its pending attempt and released the gate
+        // (letBProceed) - forcing B to acquire the gate strictly SECOND.
+        var bEntered = new TaskCompletionSource();
+        var letBProceed = new TaskCompletionSource();
+        session.DebugBeforeAttackExecutionGateAsync = async () =>
+        {
+            bEntered.TrySetResult();
+            await letBProceed.Task;
+        };
 
         // B: a due-now attack request for the REAL target - installs a fresh RepeatAttackState with
-        // DueNowFixposPending=true and calls PerformDueRepeatAttackAsync, which will find A's pending
-        // attempt occupying the slot once it acquires _attackExecutionGate.
-        await stream.WriteAsync(AttackPacket(target.ActorId));
+        // DueNowFixposPending=true and calls PerformDueRepeatAttackAsync inline, which immediately
+        // suspends at the hook above, before touching _attackExecutionGate at all.
+        var writeB = stream.WriteAsync(AttackPacket(target.ActorId)).AsTask();
+        await bEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        // Only NOW does A acquire the gate, create its pending attempt (occupying the one
+        // pending-attempt slot), and return - A's own dispatch call is left suspended (aSuspend),
+        // simulating "A is genuinely in flight" without needing A to hold _attackExecutionGate itself
+        // (allocation/dispatch of A never touches that gate - only PerformDueRepeatAttackAsync does).
+        var aTask = session.AllocatePendingDamageAttemptForTestAsync(otherLife, damage: 5, acquireEngagement: false, CancellationToken.None);
+
+        // Release B - it now acquires _attackExecutionGate SECOND, after A's pending attempt already
+        // exists, which is the exact ordering this scenario must force.
+        letBProceed.TrySetResult();
+        await writeB;
 
         // B must send NO fixpos and NO fresh damage - confirmed by a harmless ping landing next.
-        // This is the entire point of this scenario - deliberately do NOT resolve A afterward: once
-        // A resolves, B's own retained RepeatAttackState legitimately becomes eligible to execute its
-        // own fresh attack turn (that is Scenario 7's own job to prove, precisely) - resolving A here
-        // would race this test's own client.Close() against that legitimate follow-on activity for no
-        // reason relevant to what THIS scenario is actually asserting.
         await AssertNothingElseArrivesAsync(stream);
 
-        aSuspend.SetResult(); // Unblock A purely so RunAsync's own shutdown/join can complete cleanly.
+        // Teardown (item 1): clear B via the real movement path and wait for it to be processed
+        // BEFORE resolving A - once A resolves, B's retained RepeatAttackState would otherwise become
+        // legitimately eligible to execute a fresh attack (Scenario 7's own job to prove), which would
+        // race this test's own socket close. Clearing B first removes that race entirely without
+        // weakening any assertion above.
+        var moveTo = new byte[6];
+        BinaryPrimitives.WriteInt16LittleEndian(moveTo, 0x035f);
+        ushort moveX = 76, moveY = 51;
+        moveTo[2] = (byte)(moveX >> 2);
+        moveTo[3] = (byte)((moveX << 6) | ((moveY >> 4) & 0x3f));
+        moveTo[4] = (byte)(moveY << 4);
+        moveTo[5] = 0xab;
+        await stream.WriteAsync(moveTo);
+        await Task.Delay(150); // Let the session's own packet loop actually process the movement request.
+
+        aSuspend.SetResult();
+        await aTask;
         client.Close();
         await run.WaitAsync(TimeSpan.FromSeconds(5));
     }
 
-    // Scenario 7: continuing scenario 6, once A resolves, the scheduler picks up B's retained
-    // RepeatAttackState, sends exactly one 0x0088, then runs B's own fresh path.
+    // Scenario 7: continuing scenario 6's ordering, once A resolves, the scheduler picks up B's
+    // retained RepeatAttackState, sends exactly one 0x0088, then runs B's own fresh path. Unlike
+    // Scenario 6, this scenario deliberately lets B remain retained (never clears it via movement)
+    // so it can observe B's own eventual execution - teardown here is safe because there is no
+    // concurrent client.Close() racing B's legitimate execution: the test awaits B's own wire output
+    // before closing.
     [Fact]
     public async Task Scenario7_AfterOtherPendingAttemptResolves_RetainedStateGetsExactlyOneFixposThenFreshPath()
     {
         var clock = new ControllableTimeProvider();
-        var (client, stream, session, run, target, _) = await SetupAsync(playerX: 75, playerY: 51, monsterX: 75, monsterY: 51, clock);
+        var (client, stream, session, run, target, _, _) = await SetupAsync(playerX: 75, playerY: 51, monsterX: 75, monsterY: 51, clock);
         using var _dispose = client;
 
         var otherLife = new WorldMonsterLifeReference("int_land03", _lastEpoch, ActorId: 9999, WorldMonsterIncarnationId.First);
         var aSuspend = new TaskCompletionSource();
         session.DebugApplyMonsterDamageDispatcher = async (_, _) => { await aSuspend.Task; return new WorldMonsterDamageResult(WorldMonsterDamageStatus.Applied, 0, 0, 0, false, null); };
 
+        var bEntered = new TaskCompletionSource();
+        var letBProceed = new TaskCompletionSource();
+        session.DebugBeforeAttackExecutionGateAsync = async () =>
+        {
+            bEntered.TrySetResult();
+            await letBProceed.Task;
+        };
+
+        var writeB = stream.WriteAsync(AttackPacket(target.ActorId)).AsTask();
+        await bEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
         var aTask = session.AllocatePendingDamageAttemptForTestAsync(otherLife, damage: 5, acquireEngagement: false, CancellationToken.None);
-        await stream.WriteAsync(AttackPacket(target.ActorId));
-        await AssertNothingElseArrivesAsync(stream); // B blocked, per scenario 6.
+        letBProceed.TrySetResult();
+        await writeB;
+        await AssertNothingElseArrivesAsync(stream); // B blocked, per scenario 6's ordering.
 
         // Release A - it resolves, retiring the pending slot and signalling the scheduler.
         aSuspend.SetResult();
@@ -422,7 +475,7 @@ public sealed class PendingMonsterDamageAttemptTests
     public async Task Scenario8_OtherPendingAttemptInternalRetries_ZeroAdditionalFixpos()
     {
         var clock = new ControllableTimeProvider();
-        var (client, stream, session, run, target, _) = await SetupAsync(playerX: 75, playerY: 51, monsterX: 75, monsterY: 51, clock);
+        var (client, stream, session, run, target, _, _) = await SetupAsync(playerX: 75, playerY: 51, monsterX: 75, monsterY: 51, clock);
         using var _dispose = client;
 
         var otherLife = new WorldMonsterLifeReference("int_land03", _lastEpoch, ActorId: 9999, WorldMonsterIncarnationId.First);
@@ -457,7 +510,7 @@ public sealed class PendingMonsterDamageAttemptTests
     public async Task Scenario9_RetainedStateClearedByMovementBeforeOtherResolves_NeverGetsFixpos()
     {
         var clock = new ControllableTimeProvider();
-        var (client, stream, session, run, target, _) = await SetupAsync(playerX: 75, playerY: 51, monsterX: 75, monsterY: 51, clock);
+        var (client, stream, session, run, target, _, _) = await SetupAsync(playerX: 75, playerY: 51, monsterX: 75, monsterY: 51, clock);
         using var _dispose = client;
 
         var otherLife = new WorldMonsterLifeReference("int_land03", _lastEpoch, ActorId: 9999, WorldMonsterIncarnationId.First);
@@ -537,7 +590,7 @@ public sealed class PendingMonsterDamageAttemptTests
     public async Task Scenario10_ConcurrentDueNowRequestsWhilePendingAttemptHeld_NoTornReadNoExecutionGateViolation()
     {
         var clock = new ControllableTimeProvider();
-        var (client, stream, session, run, target, _) = await SetupAsync(playerX: 75, playerY: 51, monsterX: 75, monsterY: 51, clock);
+        var (client, stream, session, run, target, _, _) = await SetupAsync(playerX: 75, playerY: 51, monsterX: 75, monsterY: 51, clock);
         using var _dispose = client;
 
         var otherLife = new WorldMonsterLifeReference("int_land03", _lastEpoch, ActorId: 9999, WorldMonsterIncarnationId.First);
@@ -581,7 +634,7 @@ public sealed class PendingMonsterDamageAttemptTests
     public async Task Scenario11_RepeatedEarlySignalReleases_NoOrphanedWaiterOrLostWakeup()
     {
         var clock = new ControllableTimeProvider();
-        var (client, stream, session, run, target, _) = await SetupAsync(playerX: 75, playerY: 51, monsterX: 75, monsterY: 51, clock);
+        var (client, stream, session, run, target, _, _) = await SetupAsync(playerX: 75, playerY: 51, monsterX: 75, monsterY: 51, clock);
         using var _dispose = client;
         var dispatchCount = 0;
         session.DebugApplyMonsterDamageDispatcher = (_, _) =>
@@ -616,27 +669,50 @@ public sealed class PendingMonsterDamageAttemptTests
         await run.WaitAsync(TimeSpan.FromSeconds(5));
     }
 
-    // Scenario 12: fake clock just BEFORE NextRetryAt, pump every wake source - zero additional
-    // dispatch calls.
+    // Scenario 12 (item 5 of the substep-8 correction round): fake clock advanced to just BEFORE the
+    // ACTUAL stored NextRetryAt (read via SnapshotPendingNextRetryAtForTestAsync, never an assumed
+    // delay constant), then BOTH wake signals are pulsed explicitly - zero additional dispatch calls.
     [Fact]
     public async Task Scenario12_ClockJustBeforeNextRetryAt_ZeroAdditionalDispatchCalls()
     {
         var clock = new ControllableTimeProvider();
-        var (client, stream, session, run, target, _) = await SetupAsync(playerX: 75, playerY: 51, monsterX: 75, monsterY: 51, clock);
+        var (client, stream, session, run, target, _, _) = await SetupAsync(playerX: 75, playerY: 51, monsterX: 75, monsterY: 51, clock);
         using var _dispose = client;
         var dispatchCount = 0;
         session.DebugApplyMonsterDamageDispatcher = (_, _) =>
         {
-            Interlocked.Increment(ref dispatchCount);
-            return Task.FromResult(new WorldMonsterDamageResult(WorldMonsterDamageStatus.Applied, 55, 45, 55, false, null));
+            var call = Interlocked.Increment(ref dispatchCount);
+            // The FIRST call transiently fails, so the attempt has a genuine outstanding
+            // NextRetryAt for this scenario's boundary check to test against (an unambiguous
+            // Applied result on the first call would retire the attempt immediately, leaving no
+            // NextRetryAt at all).
+            return call == 1
+                ? Task.FromException<WorldMonsterDamageResult>(new IOException("Simulated transient World RPC failure."))
+                : Task.FromResult(new WorldMonsterDamageResult(WorldMonsterDamageStatus.Applied, 55, 45, 55, false, null));
         };
 
         await session.AllocatePendingDamageAttemptForTestAsync(LifeFor(target), damage: 10, acquireEngagement: false, CancellationToken.None);
         Assert.Equal(1, dispatchCount);
 
-        // Advance to just short of the retry delay (AttackDelayCalculator's own novice/unarmed
-        // cadence is well over 1s) and pump every wake source.
-        await clock.AdvanceAsync(TimeSpan.FromMilliseconds(500));
+        DateTimeOffset? retryAt = null;
+        var pollDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        while (DateTime.UtcNow < pollDeadline)
+        {
+            retryAt = await session.SnapshotPendingNextRetryAtForTestAsync(CancellationToken.None);
+            if (retryAt is not null) break;
+            await Task.Delay(10);
+        }
+        Assert.NotNull(retryAt);
+
+        // Advance to exactly one millisecond short of the actual stored NextRetryAt - the smallest
+        // meaningful tick this clock's own AdvanceAsync/DateTimeOffset resolution supports - then
+        // pump both wake signals explicitly (not merely "wait and hope a signal fires").
+        var now = clock.GetUtcNow();
+        var justBefore = retryAt.Value - TimeSpan.FromMilliseconds(1);
+        Assert.True(justBefore > now, "Test setup requires the retry delay to exceed 1ms, which AttackDelayCalculator's own novice/unarmed cadence always does.");
+        await clock.AdvanceAsync(justBefore - now);
+        session.PulseBothWakeSignalsForTest();
+        session.PulseBothWakeSignalsForTest();
         await Task.Delay(50);
 
         Assert.Equal(1, dispatchCount);
@@ -645,13 +721,15 @@ public sealed class PendingMonsterDamageAttemptTests
         await run.WaitAsync(TimeSpan.FromSeconds(5));
     }
 
-    // Scenario 13: fake clock EXACTLY at NextRetryAt - the exact stored command is resent once,
-    // verbatim (same Life/AttackSequence/Damage/AcquireEngagement as the original).
+    // Scenario 13 (item 6 of the substep-8 correction round): fake clock advanced to EXACTLY the
+    // ACTUAL stored NextRetryAt (read via SnapshotPendingNextRetryAtForTestAsync, never "eventually
+    // after due") - the exact stored command is resent exactly once, verbatim (same Life/
+    // AttackSequence/Damage/AcquireEngagement as the original), and no extra retry occurs.
     [Fact]
     public async Task Scenario13_ClockAtNextRetryAt_ResendsExactStoredCommandVerbatim()
     {
         var clock = new ControllableTimeProvider();
-        var (client, stream, session, run, target, _) = await SetupAsync(playerX: 75, playerY: 51, monsterX: 75, monsterY: 51, clock);
+        var (client, stream, session, run, target, _, _) = await SetupAsync(playerX: 75, playerY: 51, monsterX: 75, monsterY: 51, clock);
         using var _dispose = client;
         var seenCommands = new List<WorldMonsterDamageCommand>();
         session.DebugApplyMonsterDamageDispatcher = (command, _) =>
@@ -666,26 +744,36 @@ public sealed class PendingMonsterDamageAttemptTests
         await session.AllocatePendingDamageAttemptForTestAsync(life, damage: 17, acquireEngagement: true, CancellationToken.None);
         lock (seenCommands) Assert.Single(seenCommands);
 
-        // The background scheduler's own loop re-registers its Task.Delay against the clock some
-        // short, non-deterministic time after the transient failure above (its own registration
-        // computes the due time from the clock's CURRENT time at the moment it actually registers,
-        // not from an earlier snapshot) - a single AdvanceAsync call race-condition-ordered before
-        // that registration completes would silently schedule the retry for a point in time this
-        // test's own single advance never reaches. Repeatedly advancing in a bounded loop (rather
-        // than one large advance) makes this deterministic without needing to synchronize on the
-        // loop's own internal registration generation: whichever iteration's advance happens to land
-        // AFTER the loop's registration will correctly cross its due time.
+        // Poll the ACTUAL stored NextRetryAt (it is only set once the transient-failure handler
+        // above has reacquired _attackGate and advanced it - a short, non-deterministic time after
+        // the first call above) rather than assuming a delay constant.
+        DateTimeOffset? retryAt = null;
+        var pollDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        while (DateTime.UtcNow < pollDeadline)
+        {
+            retryAt = await session.SnapshotPendingNextRetryAtForTestAsync(CancellationToken.None);
+            if (retryAt is not null) break;
+            await Task.Delay(10);
+        }
+        Assert.NotNull(retryAt);
+
+        // Advance the fake clock to EXACTLY the actual stored NextRetryAt - not "eventually past
+        // it" - then pulse both wake signals to prompt the scheduler to re-evaluate immediately
+        // rather than waiting for its own Task.Delay to elapse.
+        var now = clock.GetUtcNow();
+        if (retryAt.Value > now) await clock.AdvanceAsync(retryAt.Value - now);
+        session.PulseBothWakeSignalsForTest();
+
         var scenario13Deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
         while (DateTime.UtcNow < scenario13Deadline)
         {
             lock (seenCommands) if (seenCommands.Count >= 2) break;
-            await clock.AdvanceAsync(TimeSpan.FromSeconds(1));
             await Task.Delay(20);
         }
 
         List<WorldMonsterDamageCommand> snapshot;
         lock (seenCommands) snapshot = [.. seenCommands];
-        Assert.Equal(2, snapshot.Count);
+        Assert.Equal(2, snapshot.Count); // Exactly one retry dispatch - no extra retry.
         Assert.Equal(snapshot[0].Life, snapshot[1].Life);
         Assert.Equal(snapshot[0].AttackSequence, snapshot[1].AttackSequence);
         Assert.Equal(snapshot[0].Damage, snapshot[1].Damage);
@@ -694,19 +782,29 @@ public sealed class PendingMonsterDamageAttemptTests
         Assert.True(snapshot[1].AcquireEngagement);
         Assert.Equal(life, snapshot[1].Life);
 
+        // No extra retry follows - confirmed by pumping the clock/signals once more and observing
+        // the seen-command count stays at exactly 2.
+        await clock.AdvanceAsync(TimeSpan.FromSeconds(5));
+        session.PulseBothWakeSignalsForTest();
+        await Task.Delay(50);
+        lock (seenCommands) Assert.Equal(2, seenCommands.Count);
+
         client.Close();
         await run.WaitAsync(TimeSpan.FromSeconds(5));
     }
 
-    // Scenario 14: the retry still dispatches using the stored Life with no dependency on the
-    // MonsterFeedProjection cache - even after the projection no longer contains this monster at
-    // all (simulating "aged out"), the retry still fires using the stored identity, and a simulated
-    // StaleLifeReference response is handled by ordinary retirement (no special-casing, no crash).
+    // Scenario 14 (item 7 of the substep-8 correction round): the retry still dispatches using the
+    // stored Life with no dependency on the MonsterFeedProjection cache - the monster is ACTUALLY
+    // removed from the local MonsterFeedProjection (via a real ApplySnapshot re-seed omitting it,
+    // the exact mechanism WorldMonsterProjectionTestHelper's own ResyncProjection already uses) while
+    // the stored PendingMonsterDamageAttempt is preserved - the retry still fires using the stored
+    // identity, and a simulated StaleLifeReference response is handled by ordinary retirement (no
+    // special-casing, no crash).
     [Fact]
     public async Task Scenario14_ProjectionNoLongerContainsMonster_RetryStillDispatchesStoredLife_StaleLifeReferenceRetiresNormally()
     {
         var clock = new ControllableTimeProvider();
-        var (client, stream, session, run, target, _) = await SetupAsync(playerX: 75, playerY: 51, monsterX: 75, monsterY: 51, clock);
+        var (client, stream, session, run, target, combatState, projections) = await SetupAsync(playerX: 75, playerY: 51, monsterX: 75, monsterY: 51, clock);
         using var _dispose = client;
         var seenLives = new List<WorldMonsterLifeReference>();
         var callCount = 0;
@@ -722,11 +820,13 @@ public sealed class PendingMonsterDamageAttemptTests
         var life = LifeFor(target);
         await session.AllocatePendingDamageAttemptForTestAsync(life, damage: 10, acquireEngagement: false, CancellationToken.None);
 
-        // Simulate the monster having aged out of the local projection entirely - the retry path
-        // (§17 step 2b) never consults MonsterFeedProjection at all, so this has no bearing on it.
-        // (No actual removal API is required here: the retry logic's own code path structurally
-        // never reads _monsterProjections - proven by the fact this test never seeds/keeps a live
-        // projection reference in scope for the retry to consult.)
+        // ACTUALLY remove the monster from the local MonsterFeedProjection - re-seed the SAME map's
+        // projection (same epoch, same combatState, so nothing else this session depends on is
+        // invalidated) with an EMPTY instance list, simulating "this monster has aged out of the
+        // projection entirely". The stored PendingMonsterDamageAttempt above is completely untouched
+        // by this - it lives in the session's own field, not in the projection.
+        WorldMonsterProjectionTestHelper.ResyncProjection(projections, target.Map, _lastEpoch, combatState, []);
+        Assert.False(projections.GetOrCreate(target.Map).TryGetInstance(target.ActorId, out _), "Test setup requires the monster to be genuinely absent from the projection.");
 
         // See Scenario 13's own comment for why repeatedly advancing in a bounded loop (rather than
         // one large single advance) is required here.
@@ -755,22 +855,26 @@ public sealed class PendingMonsterDamageAttemptTests
         await run.WaitAsync(TimeSpan.FromSeconds(5));
     }
 
-    // Scenario 15: an adversarial transient-completion race - after the simulated call fails, the
-    // pending attempt is retired/reallocated (a DIFFERENT logical attempt, different AttackSequence)
+    // Scenario 15 (item 8 of the substep-8 correction round): an adversarial transient-completion
+    // race - after the simulated call fails, the pending attempt is EXPLICITLY retired (via
+    // RetirePendingDamageAttemptForTestAsync, never a silent overwrite - AllocatePendingDamageAttemptForTestAsync
+    // now enforces the at-most-one invariant and would throw if the old attempt were still on
+    // record) and a genuinely NEW logical attempt (a DIFFERENT AttackSequence) is allocated, all
     // before the old failure handler reacquires _attackGate; the old handler must detect the
     // logical-attempt mismatch (via AttackSequence) and must NOT modify the new attempt's own
-    // NextRetryAt/state.
+    // NextRetryAt/state - proven directly by snapshotting the new attempt's NextRetryAt both before
+    // and after the old handler resumes and asserting they are identical.
     [Fact]
     public async Task Scenario15_TransientFailureHandlerDetectsReplacedLogicalAttempt_DoesNotCorruptNewAttemptState()
     {
         var clock = new ControllableTimeProvider();
-        var (client, stream, session, run, target, _) = await SetupAsync(playerX: 75, playerY: 51, monsterX: 75, monsterY: 51, clock);
+        var (client, stream, session, run, target, _, _) = await SetupAsync(playerX: 75, playerY: 51, monsterX: 75, monsterY: 51, clock);
         using var _dispose = client;
 
         var firstCallSuspend = new TaskCompletionSource();
         var firstCallReached = new TaskCompletionSource();
         var callIndex = 0;
-        session.DebugApplyMonsterDamageDispatcher = async (_, _) =>
+        session.DebugApplyMonsterDamageDispatcher = async (command, _) =>
         {
             var index = Interlocked.Increment(ref callIndex);
             if (index == 1)
@@ -779,26 +883,43 @@ public sealed class PendingMonsterDamageAttemptTests
                 await firstCallSuspend.Task; // Held open until the test explicitly releases it.
                 throw new IOException("Simulated transient World RPC failure - resolves AFTER the pending attempt below has already been replaced.");
             }
-            return new WorldMonsterDamageResult(WorldMonsterDamageStatus.Applied, 55, 45, 55, false, null);
+            // The SECOND call is the new attempt's own first dispatch - also transiently fails
+            // (exactly once), so the new attempt has a genuine outstanding NextRetryAt for the stale
+            // first-call handler to potentially (and incorrectly) corrupt.
+            throw new IOException("Simulated transient World RPC failure for the NEW attempt's own first dispatch.");
         };
 
         var life = LifeFor(target);
         var firstAttemptTask = session.AllocatePendingDamageAttemptForTestAsync(life, damage: 10, acquireEngagement: false, CancellationToken.None);
         await firstCallReached.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
-        // While the first call is still suspended (in flight, not yet thrown/handled), retire the
-        // pending attempt directly and allocate a genuinely NEW logical attempt (a different
-        // AttackSequence) for the SAME life - simulating "the original attempt resolved/was replaced
-        // by something else while this exact RPC call was still in flight".
+        // While the first call is still suspended (in flight, not yet thrown/handled): EXPLICITLY
+        // retire the old pending attempt via the dedicated adversarial-only seam (never a raw
+        // overwrite - the ordinary allocation helper now refuses to clobber an outstanding attempt),
+        // then allocate a genuinely NEW logical attempt (a different AttackSequence) for a DIFFERENT
+        // life - simulating "the original attempt resolved/was replaced by something else while this
+        // exact RPC call was still in flight".
+        await session.RetirePendingDamageAttemptForTestAsync(CancellationToken.None);
         var otherLife = new WorldMonsterLifeReference("int_land03", _lastEpoch, ActorId: 12345, WorldMonsterIncarnationId.First);
         var secondAttemptTask = session.AllocatePendingDamageAttemptForTestAsync(otherLife, damage: 99, acquireEngagement: false, CancellationToken.None);
+        await secondAttemptTask; // The new attempt's own first dispatch (transient failure) completes independently of the stale first call.
+
+        var newAttemptNextRetryAtBefore = await session.SnapshotPendingNextRetryAtForTestAsync(CancellationToken.None);
+        // The new attempt's own first call transiently failed, so it has a genuine outstanding
+        // NextRetryAt at this point - this is the exact state the stale first-call handler must not
+        // be allowed to corrupt.
+        Assert.NotNull(newAttemptNextRetryAtBefore);
 
         // Now let the FIRST (stale) call's exception fire - its own transient-failure handler must
-        // detect (via AttackSequence comparison) that the CURRENTLY-stored pending attempt is no
-        // longer the one it started with, and must NOT mutate its NextRetryAt/state.
+        // detect (via AttackSequence comparison) that the CURRENTLY-stored pending attempt is the
+        // NEW attempt, not the one it started with, and must NOT mutate its NextRetryAt/state.
         firstCallSuspend.SetResult();
         await firstAttemptTask;
-        await secondAttemptTask;
+
+        // The new attempt's own NextRetryAt must be byte-for-byte unchanged by the stale handler's
+        // resumption - proving the AttackSequence-comparison guard actually holds.
+        var newAttemptNextRetryAtAfter = await session.SnapshotPendingNextRetryAtForTestAsync(CancellationToken.None);
+        Assert.Equal(newAttemptNextRetryAtBefore, newAttemptNextRetryAtAfter);
 
         client.Close();
         await run.WaitAsync(TimeSpan.FromSeconds(5));
