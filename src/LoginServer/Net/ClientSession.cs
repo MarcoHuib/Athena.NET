@@ -6,6 +6,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Linq;
 using Microsoft.EntityFrameworkCore;
+using Athena.Net.LoginServer.Application;
 using Athena.Net.LoginServer.Config;
 using Athena.Net.LoginServer.Db;
 using Athena.Net.LoginServer.Db.Entities;
@@ -25,6 +26,8 @@ public sealed class ClientSession : IDisposable
     private readonly CharServerRegistry _charServers;
     private readonly LoginState _state;
     private readonly Config.SubnetConfig _subnetConfig;
+    private readonly IPlayerAuthenticationService _playerAuth;
+    private readonly IServiceAuthenticationService _serviceAuth;
     private byte[]? _md5Key;
     private byte[]? _clientHash;
     private int? _charServerId;
@@ -72,6 +75,8 @@ public sealed class ClientSession : IDisposable
         _charServers = charServers;
         _state = state;
         _subnetConfig = subnetConfig;
+        _playerAuth = new LegacyPlayerAuthenticationService();
+        _serviceAuth = new ServiceAuthenticationService();
         _stream = client.GetStream();
     }
 
@@ -410,11 +415,11 @@ public sealed class ClientSession : IDisposable
         {
             if (isServer)
             {
-                var reason = result.ServerAccountFailure switch
+                var reason = result.ServiceAuthOutcome switch
                 {
-                    ServerAccountFailure.NotFound => "server-account-not-found",
-                    ServerAccountFailure.InvalidCredential => "invalid-server-credential",
-                    ServerAccountFailure.NotAuthorized => "account-not-authorized-as-server",
+                    ServiceAuthenticationOutcome.AccountNotFound => "server-account-not-found",
+                    ServiceAuthenticationOutcome.InvalidCredential => "invalid-server-credential",
+                    ServiceAuthenticationOutcome.NotAuthorized => "account-not-authorized-as-server",
                     _ => "authentication-failed",
                 };
                 LoginLogger.Warning($"Char server login rejected reason={reason} code={result.ErrorCode}.");
@@ -472,24 +477,15 @@ public sealed class ClientSession : IDisposable
             return;
         }
 
-        if (_state.TryGetOnlineUser(result.AccountId, out var existing))
+        if (_state.CheckDuplicateLogin(result.AccountId) == DuplicateLoginCheckResult.AlreadyOnline)
         {
-            if (existing.CharServerId >= 0)
-            {
-                await SendKickRequestAsync(result.AccountId, cancellationToken);
-                _state.ScheduleWaitingDisconnect(result.AccountId);
-                await SendNotifyBanAsync(8, cancellationToken);
-                return;
-            }
-
-            if (existing.CharServerId == -1)
-            {
-                _state.RemoveAuthNode(result.AccountId);
-                _state.RemoveOnlineUser(result.AccountId);
-            }
+            await SendKickRequestAsync(result.AccountId, cancellationToken);
+            _state.ScheduleWaitingDisconnect(result.AccountId);
+            await SendNotifyBanAsync(8, cancellationToken);
+            return;
         }
 
-        _state.AddAuthNode(new AuthNode
+        _state.BeginPendingHandoff(new AuthNode
         {
             AccountId = result.AccountId,
             LoginId1 = result.LoginId1,
@@ -498,9 +494,6 @@ public sealed class ClientSession : IDisposable
             ClientType = request.ClientType,
             Ip = result.Ip
         });
-
-        _state.AddOnlineUser(-1, result.AccountId);
-        _state.ScheduleWaitingDisconnect(result.AccountId);
 
         var remoteAddress = (_client.Client.RemoteEndPoint as IPEndPoint)?.Address;
         await SendAcceptLoginAsync(result, remoteAddress, cancellationToken);
@@ -529,17 +522,13 @@ public sealed class ClientSession : IDisposable
         var requestId = BinaryPrimitives.ReadUInt32LittleEndian(packet.AsSpan(19, 4));
 
         byte result = 1;
-        byte clientType = 0;
+        byte clientType;
 
-        if (_state.TryGetAuthNode(accountId, out var node))
+        if (_state.TryConsumeAuthNode(accountId, loginId1, loginId2, sex, out clientType))
         {
-            if (node.AccountId == accountId && node.LoginId1 == loginId1 && node.LoginId2 == loginId2 && node.Sex == sex)
-            {
-                result = 0;
-                clientType = node.ClientType;
-                _state.RemoveAuthNode(accountId);
-            }
+            result = 0;
         }
+
         if (result != 0)
         {
             LoginLogger.Warning($"Auth request denied (sex={sex}).");
@@ -1217,30 +1206,34 @@ public sealed class ClientSession : IDisposable
             if (account == null)
             {
                 await LogLoginAsync(db, userId, remoteIp, 0, string.Empty, cancellationToken);
-                return AuthResult.Fail(0, serverAccountFailure: isServer ? ServerAccountFailure.NotFound : ServerAccountFailure.None);
+                return AuthResult.Fail(0, serviceAuthOutcome: isServer ? ServiceAuthenticationOutcome.AccountNotFound : ServiceAuthenticationOutcome.NotApplicable);
             }
 
             if (isServer)
             {
-                var serverAccountFailure = ServerAccountAuthentication.Classify(account, CheckPassword(request, account));
-                if (serverAccountFailure != ServerAccountFailure.None)
+                var serviceAuthResult = _serviceAuth.Authenticate(account, _playerAuth.VerifyPassword(account, request.Password, request.PasswordEnc, _md5Key));
+                if (!serviceAuthResult.Success)
                 {
-                    var errorCode = serverAccountFailure == ServerAccountFailure.InvalidCredential ? 1u : 0u;
+                    var errorCode = serviceAuthResult.Outcome == ServiceAuthenticationOutcome.InvalidCredential ? 1u : 0u;
                     await LogLoginAsync(db, userId, remoteIp, errorCode, string.Empty, cancellationToken);
-                    return AuthResult.Fail(errorCode, serverAccountFailure: serverAccountFailure);
+                    return AuthResult.Fail(errorCode, serviceAuthOutcome: serviceAuthResult.Outcome);
                 }
             }
 
-            if (!isServer && string.Equals(account.Sex, "S", StringComparison.OrdinalIgnoreCase))
+            if (!isServer)
             {
-                await LogLoginAsync(db, userId, remoteIp, 0, string.Empty, cancellationToken);
-                return AuthResult.Fail(0);
-            }
+                var credentialOutcome = _playerAuth.VerifyCredentials(account, request.Password, request.PasswordEnc, _md5Key);
+                if (credentialOutcome == PlayerCredentialOutcome.SexRestricted)
+                {
+                    await LogLoginAsync(db, userId, remoteIp, 0, string.Empty, cancellationToken);
+                    return AuthResult.Fail(0);
+                }
 
-            if (!isServer && !CheckPassword(request, account))
-            {
-                await LogLoginAsync(db, userId, remoteIp, 1, string.Empty, cancellationToken);
-                return AuthResult.Fail(1);
+                if (credentialOutcome == PlayerCredentialOutcome.InvalidPassword)
+                {
+                    await LogLoginAsync(db, userId, remoteIp, 1, string.Empty, cancellationToken);
+                    return AuthResult.Fail(1);
+                }
             }
 
             var now = DateTime.UtcNow;
@@ -1276,8 +1269,7 @@ public sealed class ClientSession : IDisposable
         await UpdateAccountLoginAsync(db, account, remoteIp, cancellationToken);
         await LogLoginAsync(db, userId, remoteIp, 100, "login ok", cancellationToken);
 
-            var loginId1 = RandomNumberGenerator.GetInt32(1, int.MaxValue);
-            var loginId2 = RandomNumberGenerator.GetInt32(1, int.MaxValue);
+            var (loginId1, loginId2) = _state.GenerateLoginIds();
 
             return AuthResult.FromAccount(account, loginId1, loginId2, remoteIp);
         }
@@ -1311,39 +1303,6 @@ public sealed class ClientSession : IDisposable
         _charServerId = (int)result.AccountId;
         _charServers.Register(_charServerId.Value, info);
         LoginLogger.Status($"Registered char server '{info.Name}' at {info.Ip}:{info.Port} (type={info.Type}, new={info.IsNew}).");
-    }
-
-    private bool CheckPassword(LoginRequest request, LoginAccount account)
-    {
-        if (request.PasswordEnc == 0)
-        {
-            return string.Equals(request.Password, account.UserPass, StringComparison.Ordinal);
-        }
-
-        if (_md5Key == null || _md5Key.Length == 0)
-        {
-            return false;
-        }
-
-        if ((request.PasswordEnc & 0x01) != 0)
-        {
-            var hash = Md5Hex(Concat(_md5Key, Encoding.ASCII.GetBytes(account.UserPass)));
-            if (string.Equals(request.Password, hash, StringComparison.OrdinalIgnoreCase))
-            {
-                return true;
-            }
-        }
-
-        if ((request.PasswordEnc & 0x02) != 0)
-        {
-            var hash = Md5Hex(Concat(Encoding.ASCII.GetBytes(account.UserPass), _md5Key));
-            if (string.Equals(request.Password, hash, StringComparison.OrdinalIgnoreCase))
-            {
-                return true;
-            }
-        }
-
-        return false;
     }
 
     private async Task UpdateAccountLoginAsync(LoginDbContext db, LoginAccount account, string remoteIp, CancellationToken cancellationToken)
@@ -2063,19 +2022,19 @@ public sealed class ClientSession : IDisposable
         int GroupId,
         string WebAuthToken,
         uint Ip,
-        ServerAccountFailure ServerAccountFailure)
+        ServiceAuthenticationOutcome ServiceAuthOutcome)
     {
-        public static AuthResult Fail(uint error, string unblockTime = "", ServerAccountFailure serverAccountFailure = ServerAccountFailure.None)
+        public static AuthResult Fail(uint error, string unblockTime = "", ServiceAuthenticationOutcome serviceAuthOutcome = ServiceAuthenticationOutcome.NotApplicable)
         {
-            return new AuthResult(false, error, unblockTime, 0, 0, 0, 0, 0, string.Empty, 0, serverAccountFailure);
+            return new AuthResult(false, error, unblockTime, 0, 0, 0, 0, 0, string.Empty, 0, serviceAuthOutcome);
         }
 
-        public static AuthResult FromAccount(LoginAccount account, int loginId1, int loginId2, string ip)
+        public static AuthResult FromAccount(LoginAccount account, uint loginId1, uint loginId2, string ip)
         {
             var sex = (byte)(account.Sex.Equals("F", StringComparison.OrdinalIgnoreCase) ? 0 :
                 account.Sex.Equals("M", StringComparison.OrdinalIgnoreCase) ? 1 : 2);
             var parsedIp = ParseIp(ip);
-            return new AuthResult(true, 0, string.Empty, account.AccountId, (uint)loginId1, (uint)loginId2, sex, account.GroupId, account.WebAuthToken ?? string.Empty, parsedIp, ServerAccountFailure.None);
+            return new AuthResult(true, 0, string.Empty, account.AccountId, loginId1, loginId2, sex, account.GroupId, account.WebAuthToken ?? string.Empty, parsedIp, ServiceAuthenticationOutcome.Success);
         }
     }
 

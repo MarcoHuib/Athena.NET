@@ -3,6 +3,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Reflection;
 using System.Text;
+using Athena.Net.LoginServer.Application;
 using Athena.Net.LoginServer.Config;
 using Athena.Net.LoginServer.Net;
 
@@ -268,7 +269,6 @@ public sealed class ClientSessionWireCharacterizationTests
             var authResultType = typeof(ClientSession).GetNestedType("AuthResult", BindingFlags.NonPublic);
             Assert.NotNull(authResultType);
 
-            var serverAccountFailureNone = ServerAccountFailure.None;
             return Activator.CreateInstance(
                 authResultType!,
                 true,
@@ -281,7 +281,7 @@ public sealed class ClientSessionWireCharacterizationTests
                 0,
                 webAuthToken,
                 0u,
-                serverAccountFailureNone)!;
+                ServiceAuthenticationOutcome.Success)!;
         }
 
         public async Task<byte[]> InvokeSendAcceptLoginAsync(object authResult, int expectedLength)
