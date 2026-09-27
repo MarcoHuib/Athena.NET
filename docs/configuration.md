@@ -16,3 +16,4 @@ Notes
 - `login_case_sensitive` in `conf/inter_athena.conf` is supported.
 - Database credentials are not read from `conf/inter_athena.conf`; keep secrets in `solutionfiles/secrets/secret.json`.
 - LoginServer is SQL Server only. `login_db_provider` in `conf/inter_athena.conf` (or `ATHENA_NET_LOGIN_DB_PROVIDER`) must resolve to `sqlserver` (or the `mssql` alias); no other provider is supported.
+- CharServer is SQL Server only. `char_db_provider` in `conf/inter_athena.conf` (or `ATHENA_NET_CHAR_DB_PROVIDER`) must resolve to `sqlserver` (or the `mssql` alias); no other provider is supported.
