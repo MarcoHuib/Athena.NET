@@ -62,6 +62,11 @@ public static class ServiceComposition
             // per-call state itself, it creates a fresh DI scope (and therefore a
             // fresh UserManager/AthenaIdentityDbContext) per authentication call.
             services.AddSingleton<IPlayerAuthenticationService, IdentityPlayerAuthenticationService>();
+
+            // Same pattern as IdentityPlayerAuthenticationService: no per-call
+            // state, a fresh scope (and UserManager/AthenaIdentityDbContext) per
+            // call, safe as a singleton on CharServer's long-lived connection.
+            services.AddSingleton<IPlayerIdentityAccountService, PlayerIdentityAccountService>();
         }
         else
         {
@@ -69,6 +74,7 @@ public static class ServiceComposition
             // of crashing: every player login safely fails rather than the server
             // bypassing authentication.
             services.AddSingleton<IPlayerAuthenticationService, UnavailablePlayerAuthenticationService>();
+            services.AddSingleton<IPlayerIdentityAccountService, UnavailablePlayerIdentityAccountService>();
         }
 
         // Each TCP connection needs its own "has this socket authenticated as a

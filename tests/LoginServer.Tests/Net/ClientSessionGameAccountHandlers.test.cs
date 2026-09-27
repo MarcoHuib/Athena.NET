@@ -174,6 +174,72 @@ public sealed class ClientSessionGameAccountHandlersTests : IDisposable
         Assert.Equal("datahandler@example.com", email);
     }
 
+    [Fact]
+    public async Task HandleChangeEmailAsync_MatchingCurrentEmail_UpdatesEmailViaUserManager()
+    {
+        var provisioned = await ProvisionAsync("emailhandler");
+        var identityAccountService = new PlayerIdentityAccountService(new SingleScopeFactory(_serviceProvider));
+        using var fixture = ClientSessionFixture.Create(() => CreateIdentityDb(), identityAccountService);
+
+        var packet = BuildChangeEmailPacket(provisioned.RagnarokAccountId, "emailhandler@example.com", "newaddress@example.com");
+        var method = typeof(ClientSession).GetMethod("HandleChangeEmailAsync", BindingFlags.NonPublic | BindingFlags.Instance);
+        await (Task)method!.Invoke(fixture.Session, new object[] { packet, CancellationToken.None })!;
+
+        using var scope = _serviceProvider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AthenaIdentityDbContext>();
+        var user = await db.Users.AsNoTracking().SingleAsync(u => u.Id == provisioned.IdentityUserId);
+        Assert.Equal("newaddress@example.com", user.Email);
+        Assert.Equal("NEWADDRESS@EXAMPLE.COM", user.NormalizedEmail);
+        Assert.False(user.EmailConfirmed);
+    }
+
+    [Fact]
+    public async Task HandleChangeEmailAsync_CurrentEmailMismatch_LeavesEmailUnchanged()
+    {
+        var provisioned = await ProvisionAsync("emailmismatch");
+        var identityAccountService = new PlayerIdentityAccountService(new SingleScopeFactory(_serviceProvider));
+        using var fixture = ClientSessionFixture.Create(() => CreateIdentityDb(), identityAccountService);
+
+        var packet = BuildChangeEmailPacket(provisioned.RagnarokAccountId, "wrong@example.com", "newaddress@example.com");
+        var method = typeof(ClientSession).GetMethod("HandleChangeEmailAsync", BindingFlags.NonPublic | BindingFlags.Instance);
+        await (Task)method!.Invoke(fixture.Session, new object[] { packet, CancellationToken.None })!;
+
+        using var scope = _serviceProvider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AthenaIdentityDbContext>();
+        var user = await db.Users.AsNoTracking().SingleAsync(u => u.Id == provisioned.IdentityUserId);
+        Assert.Equal("emailmismatch@example.com", user.Email);
+    }
+
+    private static byte[] BuildChangeEmailPacket(uint accountId, string actualEmail, string newEmail)
+    {
+        var packet = new byte[86];
+        BinaryPrimitives.WriteUInt32LittleEndian(packet.AsSpan(2, 4), accountId);
+        WriteFixedAscii(packet, 6, 40, actualEmail);
+        WriteFixedAscii(packet, 46, 40, newEmail);
+        return packet;
+    }
+
+    private static void WriteFixedAscii(byte[] buffer, int offset, int length, string value)
+    {
+        var bytes = System.Text.Encoding.ASCII.GetBytes(value);
+        Buffer.BlockCopy(bytes, 0, buffer, offset, Math.Min(length, bytes.Length));
+    }
+
+    /// <summary>
+    /// PlayerIdentityAccountService normally creates a fresh IServiceScope per
+    /// call (see its own doc comment); for this test it is pointed at scopes of
+    /// the same root _serviceProvider/SQLite connection this fixture already
+    /// uses, so assertions after the fact see the same data.
+    /// </summary>
+    private sealed class SingleScopeFactory : IServiceScopeFactory
+    {
+        private readonly IServiceProvider _root;
+
+        public SingleScopeFactory(IServiceProvider root) => _root = root;
+
+        public IServiceScope CreateScope() => _root.CreateScope();
+    }
+
     private AthenaIdentityDbContext CreateIdentityDb()
     {
         // Mirrors production's short-lived-per-call AthenaIdentityDbContext
@@ -201,7 +267,7 @@ public sealed class ClientSessionGameAccountHandlersTests : IDisposable
             _serverSide = serverSide;
         }
 
-        public static ClientSessionFixture Create(Func<AthenaIdentityDbContext?> identityDbFactory)
+        public static ClientSessionFixture Create(Func<AthenaIdentityDbContext?> identityDbFactory, IPlayerIdentityAccountService? identityAccountService = null)
         {
             var listener = new TcpListener(IPAddress.Loopback, 0);
             listener.Start();
@@ -224,7 +290,8 @@ public sealed class ClientSessionGameAccountHandlersTests : IDisposable
                 new Athena.Net.LoginServer.Net.LoginState(),
                 new SubnetConfig(),
                 new UnavailablePlayerAuthenticationService(),
-                new ServiceAuthenticationService());
+                new ServiceAuthenticationService(),
+                identityAccountService);
 
             return new ClientSessionFixture(session, listener, testClient, serverSide);
         }

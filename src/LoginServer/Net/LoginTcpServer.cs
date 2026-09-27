@@ -113,6 +113,7 @@ public sealed class LoginTcpServer
 
                 var playerAuth = scope.ServiceProvider.GetRequiredService<IPlayerAuthenticationService>();
                 var serviceAuth = scope.ServiceProvider.GetRequiredService<IServiceAuthenticationService>();
+                var identityAccountService = scope.ServiceProvider.GetRequiredService<IPlayerIdentityAccountService>();
 
                 using var session = new ClientSession(
                     client,
@@ -124,7 +125,8 @@ public sealed class LoginTcpServer
                     _state,
                     _subnetConfig,
                     playerAuth,
-                    serviceAuth
+                    serviceAuth,
+                    identityAccountService
                 );
 
                 await session.RunAsync(cancellationToken);

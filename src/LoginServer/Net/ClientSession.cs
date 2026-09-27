@@ -29,6 +29,7 @@ public sealed class ClientSession : IDisposable
     private readonly Config.SubnetConfig _subnetConfig;
     private readonly IPlayerAuthenticationService _playerAuth;
     private readonly IServiceAuthenticationService _serviceAuth;
+    private readonly IPlayerIdentityAccountService _identityAccountService;
     private byte[]? _md5Key;
     private byte[]? _clientHash;
     private int? _charServerId;
@@ -82,7 +83,8 @@ public sealed class ClientSession : IDisposable
         LoginState state,
         Config.SubnetConfig subnetConfig,
         IPlayerAuthenticationService playerAuth,
-        IServiceAuthenticationService serviceAuth)
+        IServiceAuthenticationService serviceAuth,
+        IPlayerIdentityAccountService? identityAccountService = null)
     {
         _client = client;
         _configStore = configStore;
@@ -94,6 +96,7 @@ public sealed class ClientSession : IDisposable
         _subnetConfig = subnetConfig;
         _playerAuth = playerAuth;
         _serviceAuth = serviceAuth;
+        _identityAccountService = identityAccountService ?? new UnavailablePlayerIdentityAccountService();
         _stream = client.GetStream();
     }
 
@@ -635,6 +638,14 @@ public sealed class ClientSession : IDisposable
         }
     }
 
+    /// <summary>
+    /// Wire-format validation (does this look like an email at all) stays here -
+    /// it is rejecting malformed packet data, not an Identity concern. The
+    /// actual mutation goes through IPlayerIdentityAccountService/UserManager
+    /// (see PlayerIdentityAccountService), never hand-written EF property
+    /// assignment, so normalization/validation always match whatever ASP.NET
+    /// Core Identity is actually configured to do.
+    /// </summary>
     private async Task HandleChangeEmailAsync(byte[] packet, CancellationToken cancellationToken)
     {
         var accountId = BinaryPrimitives.ReadUInt32LittleEndian(packet.AsSpan(2, 4));
@@ -646,32 +657,10 @@ public sealed class ClientSession : IDisposable
             return;
         }
 
-        var db = _identityDbFactory();
-        if (db == null)
+        var result = await _identityAccountService.ChangeEmailAsync(accountId, actualEmail, newEmail, cancellationToken);
+        if (!result.Success)
         {
-            return;
-        }
-
-        await using (db)
-        {
-            var account = await db.GameAccounts.AsNoTracking().FirstOrDefaultAsync(a => a.RagnarokAccountId == accountId, cancellationToken);
-            if (account == null)
-            {
-                return;
-            }
-
-            var user = await db.Users.FirstOrDefaultAsync(u => u.Id == account.IdentityUserId, cancellationToken);
-            if (user == null || !string.Equals(user.Email, actualEmail, StringComparison.OrdinalIgnoreCase))
-            {
-                return;
-            }
-
-            // Mirrors ASP.NET Core Identity's default UpperInvariantLookupNormalizer
-            // so NormalizedEmail (and its unique index) stay consistent with Email.
-            user.Email = newEmail;
-            user.NormalizedEmail = newEmail.ToUpperInvariant();
-            user.EmailConfirmed = false;
-            await db.SaveChangesAsync(cancellationToken);
+            LoginLogger.Warning($"Email change rejected for account {accountId} ({result.FailureReason}).");
         }
     }
 
