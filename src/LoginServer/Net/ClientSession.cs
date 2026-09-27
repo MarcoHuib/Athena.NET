@@ -248,8 +248,44 @@ public sealed class ClientSession : IDisposable
         return packetFixed;
     }
 
+    /// <summary>
+    /// Inter-server packets that must never execute for a socket that has not
+    /// successfully authenticated as a service (CharServer) via LcCharServerLogin.
+    /// LcCharServerLogin itself is intentionally excluded - it is the one packet
+    /// an unauthenticated service socket is allowed to send.
+    /// </summary>
+    private static readonly HashSet<short> ServiceOnlyPackets = new()
+    {
+        PacketConstants.LcAuthRequest,
+        PacketConstants.LcUserCount,
+        PacketConstants.LcAccountDataRequest,
+        PacketConstants.LcKeepAliveRequest,
+        PacketConstants.LcChangeEmailRequest,
+        PacketConstants.LcUpdateAccountState,
+        PacketConstants.LcBanAccount,
+        PacketConstants.LcChangeSex,
+        PacketConstants.LcUnbanAccount,
+        PacketConstants.LcVipRequest,
+        PacketConstants.LcSetAccountOnline,
+        PacketConstants.LcSetAccountOffline,
+        PacketConstants.LcOnlineList,
+        PacketConstants.LcAccountInfoRequest,
+        PacketConstants.LcAccountReg2Update,
+        PacketConstants.LcGlobalAccRegRequest,
+        PacketConstants.LcCharIpUpdate,
+        PacketConstants.LcSetAllOffline,
+        PacketConstants.LcPincodeUpdate,
+        PacketConstants.LcPincodeAuthFail,
+    };
+
     private async Task HandlePacketAsync(short packetType, byte[] packet, CancellationToken cancellationToken)
     {
+        if (ServiceOnlyPackets.Contains(packetType) && !_serviceAuth.IsAuthenticated)
+        {
+            LoginLogger.Warning($"Rejected inter-server packet 0x{packetType:X4} from an unauthenticated socket.");
+            return;
+        }
+
         switch (packetType)
         {
             case PacketConstants.CaReqHash:
