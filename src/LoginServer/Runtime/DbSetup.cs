@@ -127,7 +127,12 @@ public static class DbSetup
         }
     }
 
-    private static string ResolveConnectionString(InterConfig interConfig, SecretConfig secrets)
+    /// <summary>
+    /// Resolves the LoginDb connection string. Also used by <see cref="IdentityDbSetup"/>
+    /// since the Identity/AthenaGameAccount tables live in the same physical SQL
+    /// Server database as the legacy login/audit tables.
+    /// </summary>
+    public static string ResolveConnectionString(InterConfig interConfig, SecretConfig secrets)
     {
         var aspireConnection = Environment.GetEnvironmentVariable("ConnectionStrings__LoginDb");
         if (!string.IsNullOrWhiteSpace(aspireConnection))
@@ -149,7 +154,7 @@ public static class DbSetup
         return interConfig.LoginDbConnectionString;
     }
 
-    private static string ResolveDbProvider(InterConfig interConfig, SecretConfig secrets)
+    public static string ResolveDbProvider(InterConfig interConfig, SecretConfig secrets)
     {
         var envProvider = Environment.GetEnvironmentVariable("ATHENA_NET_LOGIN_DB_PROVIDER");
         if (!string.IsNullOrWhiteSpace(envProvider))

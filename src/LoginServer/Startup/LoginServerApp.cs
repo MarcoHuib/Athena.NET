@@ -40,6 +40,11 @@ public static class LoginServerApp
             ? await DbSetup.CreateDbFactoryAsync(serviceProvider, options.AutoMigrate)
             : (Func<LoginDbContext?>)(() => null);
 
+        if (composition.IdentityDbAvailable)
+        {
+            await IdentityDbSetup.EnsureReadyAsync(serviceProvider, options.AutoMigrate);
+        }
+
         if (options.SelfTest)
         {
             var exitCode = await SelfTest.RunAsync(config, dbFactory, serviceProvider);
