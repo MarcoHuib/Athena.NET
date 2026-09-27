@@ -82,8 +82,20 @@ development player accounts are provisioned through ASP.NET Core Identity, never
 by inserting rows directly:
 
 ```bash
-./scripts/create-player-account.sh <username> <password> [M|F] [email]
+./scripts/create-player-account.sh <username> [M|F] [email]
+# then either pipe the password in:
+echo 'mypassword' | ./scripts/create-player-account.sh <username> [M|F] [email]
+# or run it interactively and type it at the hidden "Password:" prompt.
 ```
+
+The password is deliberately never a positional argument to this script or to
+LoginServer's own `--create-account-*` startup mode: a password passed as a
+process argument is visible in shell history and, for as long as the process
+runs, in every other process's view of its argument list (e.g. `ps aux`). The
+script reads the password itself (from stdin if piped, or a hidden prompt if
+run from a terminal) and pipes it to the LoginServer child process's stdin;
+`LoginServerApp.CreateAccountAsync`/`ReadPasswordFromStdin` on the receiving
+end does the same for anyone invoking the one-shot mode directly.
 
 This shells out to LoginServer's own one-shot `--create-account-*` startup mode
 (see `src/LoginServer/Startup/StartupOptions.cs` /
@@ -91,7 +103,9 @@ This shells out to LoginServer's own one-shot `--create-account-*` startup mode
 `AthenaIdentityUser` + `AthenaGameAccount` pair transactionally through
 `IPlayerAccountProvisioningService` using the same configuration/connection-string
 resolution as the running server. The same console-driven flow is available while
-the server is running via the `create:` command in `ConsoleCommandLoop`. The
+the server is running via the `create:` command in `ConsoleCommandLoop` (typed
+directly into LoginServer's own interactive console, not a process argument, so
+the shell-history/process-list concern above does not apply to it). The
 Ragexe login screen is authentication-only: no login packet can create an
 account. The legacy rAthena `_M`/`_F` auto-register-on-login behavior and its
 configuration (`new_account`, `allowed_regs`/`time_allowed`,

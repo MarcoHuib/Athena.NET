@@ -86,9 +86,16 @@ public static class LoginServerApp
 
     private static async Task<int> CreateAccountAsync(StartupOptions options, IServiceProvider serviceProvider)
     {
-        if (string.IsNullOrWhiteSpace(options.CreateAccountUserName) || string.IsNullOrWhiteSpace(options.CreateAccountPassword))
+        if (string.IsNullOrWhiteSpace(options.CreateAccountUserName))
         {
-            LoginLogger.Error("--create-account-username and --create-account-password are required.");
+            LoginLogger.Error("--create-account-username is required.");
+            return 1;
+        }
+
+        var password = ReadPasswordFromStdin();
+        if (string.IsNullOrEmpty(password))
+        {
+            LoginLogger.Error("No password was provided on stdin.");
             return 1;
         }
 
@@ -101,7 +108,7 @@ public static class LoginServerApp
         }
 
         var email = options.CreateAccountEmail ?? $"{options.CreateAccountUserName}@players.athena.local";
-        var result = await provisioning.ProvisionAsync(options.CreateAccountUserName, email, options.CreateAccountPassword, options.CreateAccountSex, CancellationToken.None);
+        var result = await provisioning.ProvisionAsync(options.CreateAccountUserName, email, password, options.CreateAccountSex, CancellationToken.None);
         if (!result.Success)
         {
             LoginLogger.Error($"Account '{options.CreateAccountUserName}' was not created: {result.ErrorMessage}");
@@ -110,5 +117,53 @@ public static class LoginServerApp
 
         LoginLogger.Status($"Account '{options.CreateAccountUserName}' created (RagnarokAccountId={result.RagnarokAccountId}).");
         return 0;
+    }
+
+    /// <summary>
+    /// Reads the new account's password from stdin rather than a
+    /// --create-account-password process argument, which would otherwise be
+    /// visible in shell history and in every other process's view of this
+    /// process's argument list for as long as it runs. When stdin is piped (the
+    /// normal case: scripts/create-player-account.sh pipes it in), reads one
+    /// line. When stdin is an interactive terminal (running this mode directly),
+    /// prompts and masks the input so it is never echoed to the screen.
+    /// </summary>
+    private static string ReadPasswordFromStdin()
+    {
+        if (Console.IsInputRedirected)
+        {
+            return Console.ReadLine() ?? string.Empty;
+        }
+
+        Console.Write("Password: ");
+        var password = new System.Text.StringBuilder();
+        while (true)
+        {
+            var key = Console.ReadKey(intercept: true);
+            if (key.Key == ConsoleKey.Enter)
+            {
+                Console.WriteLine();
+                break;
+            }
+
+            if (key.Key == ConsoleKey.Backspace)
+            {
+                if (password.Length > 0)
+                {
+                    password.Length--;
+                    Console.Write("\b \b");
+                }
+
+                continue;
+            }
+
+            if (!char.IsControl(key.KeyChar))
+            {
+                password.Append(key.KeyChar);
+                Console.Write('*');
+            }
+        }
+
+        return password.ToString();
     }
 }

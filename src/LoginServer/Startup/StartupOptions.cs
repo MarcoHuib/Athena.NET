@@ -16,9 +16,17 @@ public sealed class StartupOptions
     /// server. Used by scripts/create-player-account.sh, replacing that script's
     /// former direct-SQL insert into the legacy login table (which player login
     /// no longer reads after the Identity migration).
+    /// <para>
+    /// Deliberately has no CreateAccountPassword property / --create-account-password
+    /// argument: a password passed as a process argument is visible in shell
+    /// history and in the process argument list of every other process on the
+    /// machine for as long as this process runs (e.g. "ps aux"). The password is
+    /// instead read from stdin by LoginServerApp - piped by
+    /// scripts/create-player-account.sh, or as hidden interactive input when run
+    /// directly from a terminal.
+    /// </para>
     /// </summary>
     public string? CreateAccountUserName { get; init; }
-    public string? CreateAccountPassword { get; init; }
     public char CreateAccountSex { get; init; } = 'M';
     public string? CreateAccountEmail { get; init; }
 
@@ -38,7 +46,6 @@ public sealed class StartupOptions
             AutoMigrate = ArgsHelper.HasFlag(args, "--auto-migrate") ||
                 string.Equals(Environment.GetEnvironmentVariable("ATHENA_NET_LOGIN_DB_AUTOMIGRATE"), "true", StringComparison.OrdinalIgnoreCase),
             CreateAccountUserName = createAccountUserName,
-            CreateAccountPassword = ArgsHelper.GetValue(args, "--create-account-password"),
             CreateAccountSex = !string.IsNullOrEmpty(sexArg) ? char.ToUpperInvariant(sexArg[0]) : 'M',
             CreateAccountEmail = ArgsHelper.GetValue(args, "--create-account-email"),
         };
