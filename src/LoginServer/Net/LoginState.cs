@@ -9,9 +9,6 @@ public sealed class LoginState : ILoginSessionService
     private readonly ConcurrentDictionary<uint, AuthNode> _authNodes = new();
     private readonly ConcurrentDictionary<uint, OnlineLoginData> _onlineUsers = new();
     private readonly ConcurrentDictionary<uint, CancellationTokenSource> _waitingDisconnect = new();
-    private readonly object _regLock = new();
-    private int _regCount;
-    private DateTime _regWindowEnd = DateTime.MinValue;
 
     public TimeSpan AuthTimeout { get; set; } = TimeSpan.FromSeconds(30);
     public Func<uint, Task>? OnAutoDisconnect { get; set; }
@@ -195,55 +192,6 @@ public sealed class LoginState : ILoginSessionService
         }
     }
 
-    public bool IsRegistrationAllowed(int allowedRegs, int windowSeconds)
-    {
-        if (allowedRegs <= 0 || windowSeconds <= 0)
-        {
-            return false;
-        }
-
-        lock (_regLock)
-        {
-            var now = DateTime.UtcNow;
-            if (_regWindowEnd == DateTime.MinValue)
-            {
-                _regWindowEnd = now.AddSeconds(windowSeconds);
-            }
-
-            if (now < _regWindowEnd && _regCount >= allowedRegs)
-            {
-                return false;
-            }
-
-            if (now > _regWindowEnd)
-            {
-                _regCount = 0;
-                _regWindowEnd = now.AddSeconds(windowSeconds);
-            }
-
-            return true;
-        }
-    }
-
-    public void RegisterSuccess(int windowSeconds)
-    {
-        if (windowSeconds <= 0)
-        {
-            return;
-        }
-
-        lock (_regLock)
-        {
-            var now = DateTime.UtcNow;
-            if (now > _regWindowEnd)
-            {
-                _regCount = 0;
-                _regWindowEnd = now.AddSeconds(windowSeconds);
-            }
-
-            _regCount++;
-        }
-    }
 }
 
 public sealed class AuthNode

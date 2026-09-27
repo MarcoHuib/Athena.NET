@@ -420,11 +420,6 @@ public sealed class ClientSession : IDisposable
             return;
         }
 
-        if (Config.NewAccountFlag && request.AutoRegisterBaseId != null)
-        {
-            request = request with { UserId = request.AutoRegisterBaseId };
-        }
-
         var remoteIp = (_client.Client.RemoteEndPoint as IPEndPoint)?.Address.ToString() ?? "0.0.0.0";
         var result = await AuthenticateAsync(request, remoteIp, isServer, cancellationToken);
 
@@ -526,7 +521,7 @@ public sealed class ClientSession : IDisposable
             pass = Md5Hex(Encoding.ASCII.GetBytes(pass));
         }
 
-        var loginRequest = new LoginRequest(user, pass, 0, 0, null, null) { RawPacket = packet };
+        var loginRequest = new LoginRequest(user, pass, 0, 0) { RawPacket = packet };
         await HandleLoginAsync(loginRequest, true, cancellationToken);
     }
 
@@ -1849,14 +1844,8 @@ public sealed class ClientSession : IDisposable
     {
         var user = ReadFixedString(packet, 6, PacketConstants.NameLength);
         var pass = ReadFixedString(packet, 6 + PacketConstants.NameLength, PacketConstants.NameLength);
-        if (Config.UseMd5Passwords)
-        {
-            pass = Md5Hex(Encoding.ASCII.GetBytes(pass));
-        }
-
         var clientType = packet[^1];
-        var (baseId, sex) = ParseAutoRegister(user);
-        return new LoginRequest(user, pass, 0, clientType, baseId, sex);
+        return new LoginRequest(user, pass, 0, clientType);
     }
 
     private LoginRequest ParseMd5Login(byte[] packet)
@@ -1865,8 +1854,7 @@ public sealed class ClientSession : IDisposable
         var md5Bytes = packet.AsSpan(6 + PacketConstants.NameLength, 16).ToArray();
         var pass = BytesToHex(md5Bytes);
         var clientType = packet[^1];
-        var (baseId, sex) = ParseAutoRegister(user);
-        return new LoginRequest(user, pass, PasswordEncMode, clientType, baseId, sex);
+        return new LoginRequest(user, pass, PasswordEncMode, clientType);
     }
 
     private LoginRequest ParseSsoLogin(byte[] packet)
@@ -1875,14 +1863,8 @@ public sealed class ClientSession : IDisposable
         var tokenOffset = 9 + PacketConstants.NameLength + 27 + 17 + 15;
         var tokenLength = packet.Length - tokenOffset;
         var token = tokenLength > 0 ? Encoding.ASCII.GetString(packet, tokenOffset, tokenLength).TrimEnd('\0') : string.Empty;
-        if (Config.UseMd5Passwords)
-        {
-            token = Md5Hex(Encoding.ASCII.GetBytes(token));
-        }
-
         var clientType = packet[8];
-        var (baseId, sex) = ParseAutoRegister(user);
-        return new LoginRequest(user, token, 0, clientType, baseId, sex);
+        return new LoginRequest(user, token, 0, clientType);
     }
 
     private static string ReadFixedString(byte[] buffer, int offset, int length)
@@ -1903,14 +1885,6 @@ public sealed class ClientSession : IDisposable
     {
         var bytes = Encoding.ASCII.GetBytes(value);
         Buffer.BlockCopy(bytes, 0, buffer, offset, Math.Min(length, bytes.Length));
-    }
-
-    private static byte[] Concat(byte[] first, byte[] second)
-    {
-        var buffer = new byte[first.Length + second.Length];
-        Buffer.BlockCopy(first, 0, buffer, 0, first.Length);
-        Buffer.BlockCopy(second, 0, buffer, first.Length, second.Length);
-        return buffer;
     }
 
     private static string Md5Hex(byte[] data)
@@ -2040,7 +2014,7 @@ public sealed class ClientSession : IDisposable
         return buffer;
     }
 
-    private readonly record struct LoginRequest(string UserId, string Password, int PasswordEnc, byte ClientType, string? AutoRegisterBaseId, char? AutoRegisterSex)
+    private readonly record struct LoginRequest(string UserId, string Password, int PasswordEnc, byte ClientType)
     {
         public byte[]? RawPacket { get; init; }
     }
@@ -2091,118 +2065,6 @@ public sealed class ClientSession : IDisposable
 
         var bytes = address.GetAddressBytes();
         return BinaryPrimitives.ReadUInt32BigEndian(bytes);
-    }
-
-    private static (string? baseId, char? sex) ParseAutoRegister(string userId)
-    {
-        if (userId.Length <= 2)
-        {
-            return (null, null);
-        }
-
-        var suffix = userId[^2..];
-        if (!suffix.StartsWith("_", StringComparison.Ordinal))
-        {
-            return (null, null);
-        }
-
-        var sexChar = suffix[1];
-        if (sexChar is 'M' or 'm')
-        {
-            return (userId[..^2], 'M');
-        }
-
-        if (sexChar is 'F' or 'f')
-        {
-            return (userId[..^2], 'F');
-        }
-
-        return (null, null);
-    }
-
-    private async Task<int?> TryAutoRegisterAsync(LoginDbContext db, LoginRequest request, string remoteIp, CancellationToken cancellationToken)
-    {
-        if (request.AutoRegisterBaseId == null || request.AutoRegisterSex == null)
-        {
-            return null;
-        }
-
-        if (request.PasswordEnc != 0)
-        {
-            return 0;
-        }
-
-        if (!Config.NewAccountFlag)
-        {
-            return null;
-        }
-
-        if (!_state.IsRegistrationAllowed(Config.AllowedRegistrations, Config.RegistrationWindowSeconds))
-        {
-            return 3;
-        }
-
-        var baseId = request.AutoRegisterBaseId;
-        if (baseId.Length < Config.AccountNameMinLength || request.Password.Length < Config.PasswordMinLength)
-        {
-            return 1;
-        }
-
-        var sex = request.AutoRegisterSex.Value;
-        if (sex is not ('M' or 'F'))
-        {
-            return 0;
-        }
-
-        var exists = await ExistsUserIdAsync(db, baseId, cancellationToken);
-        if (exists)
-        {
-            return 1;
-        }
-
-        var expiration = 0u;
-        if (Config.StartLimitedTimeSeconds != -1)
-        {
-            expiration = ToUnixTime(DateTime.UtcNow.AddSeconds(Config.StartLimitedTimeSeconds));
-        }
-
-        var account = new LoginAccount
-        {
-            UserId = baseId,
-            UserPass = request.Password,
-            Sex = sex.ToString(),
-            Email = "a@a.com",
-            ExpirationTime = expiration,
-            LastLogin = null,
-            LastIp = remoteIp,
-            Birthdate = null,
-            Pincode = string.Empty,
-            PincodeChange = 0,
-            CharacterSlots = (byte)Config.CharPerAccount,
-            VipTime = 0,
-            OldGroup = 0,
-            GroupId = 0,
-            State = 0,
-            LoginCount = 0,
-            WebAuthToken = null,
-            WebAuthTokenEnabled = false,
-        };
-
-        db.Accounts.Add(account);
-        await db.SaveChangesAsync(cancellationToken);
-        _state.RegisterSuccess(Config.RegistrationWindowSeconds);
-        return -1;
-    }
-
-    private async Task<bool> ExistsUserIdAsync(LoginDbContext db, string userId, CancellationToken cancellationToken)
-    {
-        if (IsCaseSensitive)
-        {
-            return await db.Accounts.AsNoTracking().AnyAsync(a => a.UserId == userId, cancellationToken);
-        }
-
-        var normalizedUserId = userId.ToLowerInvariant();
-        return await db.Accounts.AsNoTracking().AnyAsync(a => a.UserId.ToLower() == normalizedUserId, cancellationToken);
     }
 
     private bool IsClientHashAllowed(int accountGroupId)

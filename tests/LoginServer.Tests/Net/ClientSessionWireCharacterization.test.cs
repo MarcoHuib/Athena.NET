@@ -48,6 +48,32 @@ public sealed class ClientSessionWireCharacterizationTests
     }
 
     [Fact]
+    public void ParsePlainLogin_NeverHashesPassword_EvenWhenUseMd5PasswordsIsEnabled()
+    {
+        // Regression test for the Identity migration: the legacy use_MD5_passwords
+        // config toggle used to MD5-hash a plain 0x0064 password at parse time (to
+        // match a legacy MD5-stored LoginAccount.UserPass value). Since player
+        // passwords are now verified by ASP.NET Core Identity, which needs the real
+        // plaintext, this must never happen for the player login path - only
+        // service-account verification (ServiceAuthenticationService) still
+        // understands that legacy storage format.
+        var packet = new byte[55];
+        BinaryPrimitives.WriteInt16LittleEndian(packet.AsSpan(0, 2), CaLogin);
+        BinaryPrimitives.WriteUInt32LittleEndian(packet.AsSpan(2, 4), 18);
+        WriteFixedAscii(packet, 6, NameLength, "someone");
+        WriteFixedAscii(packet, 30, NameLength, "plaintext-pw");
+        packet[54] = 0;
+
+        using var fixture = ClientSessionFixture.Create(new LoginConfig { UseMd5Passwords = true });
+        var method = typeof(ClientSession).GetMethod("ParsePlainLogin", BindingFlags.NonPublic | BindingFlags.Instance);
+
+        var request = method!.Invoke(fixture.Session, new object[] { packet })!;
+        var requestType = request.GetType();
+
+        Assert.Equal("plaintext-pw", (string)requestType.GetProperty("Password")!.GetValue(request)!);
+    }
+
+    [Fact]
     public void ParsePlainLogin_StopsUsernameAndPassword_AtFirstNulByte()
     {
         // Arrange: garbage after the first NUL byte must never be part of the parsed value.
