@@ -405,6 +405,22 @@ public sealed class PendingMonsterDamageAttemptTests
         var recomputedDelayMsIfBugPresent = AttackDelayCalculator.AttackDelayMs(buffedStats, null);
         Assert.NotEqual(originalDelayMs, recomputedDelayMsIfBugPresent);
 
+        // Deterministic scheduler synchronization (CI-observed race fix): RunRepeatAttackLoopAsync's
+        // own Task.Delay(..., clock, ...) for the NEXT wake is registered with the fake clock only
+        // AFTER the loop actually re-enters its wait - a window that may still be open at this exact
+        // point, right after the first transient failure returned. Advancing the clock before that
+        // registration exists would silently miss it: no callback is due yet, so AdvanceAsync's own
+        // due-callback scan finds nothing, and no further clock advance ever happens in this test to
+        // retry the observation - the retry would simply never fire. Capture the registration
+        // generation now, explicitly pulse both wake signals to force the loop to (re)evaluate its
+        // own schedule against the CURRENT NextRetryAt (idempotent - see Scenario 11/12's own
+        // identical use of this seam), then await a registration strictly AFTER this generation
+        // before ever advancing the clock - never an arbitrary Task.Delay, never a larger polling
+        // timeout; this only makes the clock-advance step below observably safe to perform.
+        var registrationGeneration = clock.RegistrationGeneration;
+        session.PulseBothWakeSignalsForTest();
+        await clock.WaitForRegistrationAfterAsync(registrationGeneration).WaitAsync(TimeSpan.FromSeconds(5));
+
         // Advance the clock to trigger another transient-failure retry, and capture the instant the
         // retry actually fires (never assumed equal to allocatedAt - the loop's own wake happens some
         // real time after the clock advance).
