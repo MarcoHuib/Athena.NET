@@ -11,7 +11,6 @@ public static class LoginConfigLoader
         var bindIp = IPAddress.Any;
         var loginPort = 6900;
         var logLogin = true;
-        var useMd5Passwords = false;
         var dateFormat = "yyyy-MM-dd HH:mm:ss";
         var accountNameMinLength = 6;
         var passwordMinLength = 6;
@@ -38,8 +37,6 @@ public static class LoginConfigLoader
         var consoleSilent = 0;
         var consoleLogFilePath = "./log/login-msg_log.log";
         var timestampFormat = string.Empty;
-        var clientHashCheck = false;
-        var clientHashRules = new List<ClientHashRule>();
         var ipSyncIntervalMinutes = 0;
         var usercountDisable = false;
         var usercountLow = 200;
@@ -54,7 +51,6 @@ public static class LoginConfigLoader
                 BindIp = bindIp,
                 LoginPort = loginPort,
                 LogLogin = logLogin,
-                UseMd5Passwords = useMd5Passwords,
                 DateFormat = dateFormat,
                 AccountNameMinLength = accountNameMinLength,
                 PasswordMinLength = passwordMinLength,
@@ -81,8 +77,6 @@ public static class LoginConfigLoader
                 ConsoleSilent = consoleSilent,
                 ConsoleLogFilePath = consoleLogFilePath,
                 TimestampFormat = timestampFormat,
-                ClientHashCheck = clientHashCheck,
-                ClientHashRules = clientHashRules,
                 IpSyncIntervalMinutes = ipSyncIntervalMinutes,
                 UsercountDisable = usercountDisable,
                 UsercountLow = usercountLow,
@@ -125,10 +119,6 @@ public static class LoginConfigLoader
             else if (key.Equals("log_login", StringComparison.OrdinalIgnoreCase))
             {
                 logLogin = ParseBool(value, logLogin);
-            }
-            else if (key.Equals("use_MD5_passwords", StringComparison.OrdinalIgnoreCase))
-            {
-                useMd5Passwords = ParseBool(value, useMd5Passwords);
             }
             else if (key.Equals("date_format", StringComparison.OrdinalIgnoreCase))
             {
@@ -297,18 +287,6 @@ public static class LoginConfigLoader
             {
                 timestampFormat = value;
             }
-            else if (key.Equals("client_hash_check", StringComparison.OrdinalIgnoreCase))
-            {
-                clientHashCheck = ParseBool(value, clientHashCheck);
-            }
-            else if (key.Equals("client_hash", StringComparison.OrdinalIgnoreCase))
-            {
-                var rule = ParseClientHashRule(value);
-                if (rule != null)
-                {
-                    clientHashRules.Add(rule);
-                }
-            }
             else if (key.Equals("ip_sync_interval", StringComparison.OrdinalIgnoreCase))
             {
                 if (int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed))
@@ -367,7 +345,6 @@ public static class LoginConfigLoader
             BindIp = bindIp,
             LoginPort = loginPort,
             LogLogin = logLogin,
-            UseMd5Passwords = useMd5Passwords,
             DateFormat = dateFormat,
             AccountNameMinLength = accountNameMinLength,
             PasswordMinLength = passwordMinLength,
@@ -394,8 +371,6 @@ public static class LoginConfigLoader
             ConsoleSilent = consoleSilent,
             ConsoleLogFilePath = consoleLogFilePath,
             TimestampFormat = timestampFormat,
-            ClientHashCheck = clientHashCheck,
-            ClientHashRules = clientHashRules,
             IpSyncIntervalMinutes = ipSyncIntervalMinutes,
             UsercountDisable = usercountDisable,
             UsercountLow = usercountLow,
@@ -489,65 +464,6 @@ public static class LoginConfigLoader
 
         var dir = Path.GetDirectoryName(basePath);
         return Path.GetFullPath(Path.Combine(dir ?? ".", importPath));
-    }
-
-    private static ClientHashRule? ParseClientHashRule(string value)
-    {
-        var parts = value.Split(',', 2, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        if (parts.Length != 2)
-        {
-            return null;
-        }
-
-        if (!int.TryParse(parts[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out var groupId))
-        {
-            return null;
-        }
-
-        var hashPart = parts[1].Trim();
-        if (hashPart.Equals("disabled", StringComparison.OrdinalIgnoreCase))
-        {
-            return new ClientHashRule
-            {
-                GroupId = groupId,
-                AllowWithoutHash = true,
-            };
-        }
-
-        if (!TryParseHex(hashPart, out var hash))
-        {
-            return null;
-        }
-
-        return new ClientHashRule
-        {
-            GroupId = groupId,
-            Hash = hash,
-            AllowWithoutHash = false,
-        };
-    }
-
-    private static bool TryParseHex(string value, out byte[] bytes)
-    {
-        bytes = Array.Empty<byte>();
-        if (value.Length % 2 != 0)
-        {
-            return false;
-        }
-
-        var buffer = new byte[value.Length / 2];
-        for (var i = 0; i < buffer.Length; i++)
-        {
-            if (!byte.TryParse(value.AsSpan(i * 2, 2), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var b))
-            {
-                return false;
-            }
-
-            buffer[i] = b;
-        }
-
-        bytes = buffer;
-        return true;
     }
 
     private static string StripComment(string line)

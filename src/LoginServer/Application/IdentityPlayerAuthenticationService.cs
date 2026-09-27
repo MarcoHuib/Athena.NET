@@ -17,13 +17,13 @@ namespace Athena.Net.LoginServer.Application;
 /// longer-lived than a single authentication attempt.
 /// </para>
 /// <para>
-/// Only the plain-password stock login path (0x0064/CA_LOGIN_PCBANG/CA_LOGIN_CHANNEL,
-/// PasswordEnc == 0) can succeed here. The legacy rAthena MD5 challenge-response
-/// login variants (CA_LOGIN2/3/4) require a recoverable stored password to hash
-/// against, which ASP.NET Core Identity intentionally never exposes; a request
-/// using them safely fails as an invalid password rather than being accepted or
-/// crashing. ai/iro-2026-wire.md only verifies 0x0064 for the current stock iRO
-/// client, so this does not affect stock-client compatibility.
+/// Only the plain-password stock login path (0x0064/CA_LOGIN_PCBANG/CA_LOGIN_CHANNEL)
+/// is handled at all. The legacy rAthena MD5 challenge-response login
+/// variants (CA_LOGIN2/3/4) are not part of the verified current stock iRO
+/// client flow (ai/iro-2026-wire.md only verifies 0x0064) and are not parsed
+/// by ClientSession - Athena.NET's active runtime code never calculates or
+/// depends on MD5, and ASP.NET Core Identity intentionally never exposes a
+/// recoverable stored password to hash against in the first place.
 /// </para>
 /// </summary>
 public sealed class IdentityPlayerAuthenticationService : IPlayerAuthenticationService
