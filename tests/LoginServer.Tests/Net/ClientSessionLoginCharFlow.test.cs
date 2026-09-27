@@ -316,6 +316,81 @@ public sealed class ClientSessionLoginCharFlowTests
         Assert.Equal((byte)3, response[2]);
     }
 
+    [Fact]
+    public async Task PlayerLogin_EnablesWebAuthToken_ThenGoesOffline_DisablesWebAuthToken()
+    {
+        // Arrange: a real Identity login with UseWebAuthToken enabled end-to-end.
+        // Login enables the token on AthenaGameAccount (never the legacy
+        // LoginAccount table, which service accounts use); CharServer then
+        // reports the player offline, which must disable it - also on
+        // AthenaGameAccount, looked up by RagnarokAccountId.
+        using var identity = new IdentityTestFixture(useWebAuthToken: true);
+        var provisioned = await identity.ProvisionAsync("webtokenuser", "correct-password", 'M');
+
+        var loginDbName = Guid.NewGuid().ToString();
+        await using (var seedDb = CreateLoginDb(loginDbName))
+        {
+            seedDb.Accounts.Add(new LoginAccount { AccountId = 1, UserId = "charserver", UserPass = "service-secret", Sex = "S" });
+            await seedDb.SaveChangesAsync();
+        }
+
+        using var fixture = ClientSessionFixture.Create(
+            dbFactory: () => CreateLoginDb(loginDbName),
+            playerAuth: identity.PlayerAuth,
+            identityDbFactory: identity.CreateDb,
+            config: new LoginConfig { LogLogin = false, UseWebAuthToken = true, DisableWebTokenDelayMs = 0 });
+        fixture.RegisterCharServer(1, "Chaos");
+
+        var handlePacket = typeof(ClientSession).GetMethod("HandlePacketAsync", BindingFlags.NonPublic | BindingFlags.Instance);
+        Assert.NotNull(handlePacket);
+
+        // Act 1: player logs in through the stock 0x0064 path.
+        var loginPacket = new byte[55];
+        BinaryPrimitives.WriteInt16LittleEndian(loginPacket.AsSpan(0, 2), CaLogin);
+        BinaryPrimitives.WriteUInt32LittleEndian(loginPacket.AsSpan(2, 4), 18);
+        WriteFixedAscii(loginPacket, 6, NameLength, "webtokenuser");
+        WriteFixedAscii(loginPacket, 30, NameLength, "correct-password");
+        loginPacket[54] = 0;
+        await (Task)handlePacket!.Invoke(fixture.Session, new object[] { CaLogin, loginPacket, CancellationToken.None })!;
+        await fixture.ReadExactAsync(96);
+
+        Assert.True(await identity.GetWebAuthTokenEnabledAsync(provisioned.GameAccountId), "A successful login must enable the WebAuthToken.");
+
+        // Act 2: CharServer authenticates, then reports the player offline
+        // (LcSetAccountOffline is a ServiceOnlyPackets packet - CharServer must
+        // authenticate first).
+        var charLoginPacket = BuildCharServerLoginPacket("charserver", "service-secret");
+        await (Task)handlePacket!.Invoke(fixture.Session, new object[] { LcCharServerLogin, charLoginPacket, CancellationToken.None })!;
+        await fixture.ReadExactAsync(3);
+
+        var offlinePacket = new byte[6];
+        BinaryPrimitives.WriteUInt32LittleEndian(offlinePacket.AsSpan(2, 4), provisioned.RagnarokAccountId);
+        await (Task)handlePacket!.Invoke(fixture.Session, new object[] { PacketConstants.LcSetAccountOffline, offlinePacket, CancellationToken.None })!;
+
+        // ScheduleDisableWebAuthTokenAsync is fire-and-forget from
+        // HandleSetAccountOffline, so poll briefly for the eventual write.
+        var disabled = await PollUntilAsync(
+            async () => !await identity.GetWebAuthTokenEnabledAsync(provisioned.GameAccountId),
+            TimeSpan.FromSeconds(3));
+        Assert.True(disabled, "Going offline must disable the WebAuthToken on AthenaGameAccount.");
+    }
+
+    private static async Task<bool> PollUntilAsync(Func<Task<bool>> condition, TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            if (await condition())
+            {
+                return true;
+            }
+
+            await Task.Delay(20);
+        }
+
+        return await condition();
+    }
+
     private static byte[] BuildCharServerLoginPacket(string user, string pass)
     {
         // LcCharServerLogin is 86 bytes: id[2] user[24] pass[24] ... ip[4] port[2] name[20] type[2] isNew[2] (from offset 54).
@@ -359,7 +434,7 @@ public sealed class ClientSessionLoginCharFlowTests
 
         public IPlayerAuthenticationService PlayerAuth { get; }
 
-        public IdentityTestFixture(int maxFailedAccessAttempts = 5)
+        public IdentityTestFixture(int maxFailedAccessAttempts = 5, bool useWebAuthToken = false)
         {
             _connection = new SqliteConnection("DataSource=:memory:");
             _connection.Open();
@@ -380,7 +455,7 @@ public sealed class ClientSessionLoginCharFlowTests
                 .AddRoles<IdentityRole<Guid>>()
                 .AddEntityFrameworkStores<AthenaIdentityDbContext>();
             services.AddScoped<IPlayerAccountProvisioningService, PlayerAccountProvisioningService>();
-            services.AddSingleton(new LoginConfigStore(new LoginConfig { UseWebAuthToken = false }));
+            services.AddSingleton(new LoginConfigStore(new LoginConfig { UseWebAuthToken = useWebAuthToken }));
             services.AddSingleton<IPlayerAuthenticationService, IdentityPlayerAuthenticationService>();
 
             _serviceProvider = services.BuildServiceProvider();
@@ -389,6 +464,26 @@ public sealed class ClientSessionLoginCharFlowTests
             scope.ServiceProvider.GetRequiredService<AthenaIdentityDbContext>().Database.EnsureCreated();
 
             PlayerAuth = _serviceProvider.GetRequiredService<IPlayerAuthenticationService>();
+        }
+
+        /// <summary>
+        /// A short-lived context sharing this fixture's SQLite connection, for
+        /// wiring into ClientSessionFixture as an _identityDbFactory - mirrors how
+        /// production code never ties an AthenaIdentityDbContext to a connection's
+        /// lifetime.
+        /// </summary>
+        public AthenaIdentityDbContext CreateDb()
+        {
+            var options = new DbContextOptionsBuilder<AthenaIdentityDbContext>().UseSqlite(_connection).Options;
+            return new AthenaIdentityDbContext(options);
+        }
+
+        public async Task<bool> GetWebAuthTokenEnabledAsync(Guid gameAccountId)
+        {
+            using var scope = _serviceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<AthenaIdentityDbContext>();
+            var account = await db.GameAccounts.AsNoTracking().SingleAsync(a => a.Id == gameAccountId);
+            return account.WebAuthTokenEnabled;
         }
 
         public async Task<ProvisionPlayerAccountResult> ProvisionAsync(string userName, string password, char sex)
@@ -452,7 +547,11 @@ public sealed class ClientSessionLoginCharFlowTests
             _serverSide = serverSide;
         }
 
-        public static ClientSessionFixture Create(Func<LoginDbContext?> dbFactory, IPlayerAuthenticationService? playerAuth = null)
+        public static ClientSessionFixture Create(
+            Func<LoginDbContext?> dbFactory,
+            IPlayerAuthenticationService? playerAuth = null,
+            Func<AthenaIdentityDbContext?>? identityDbFactory = null,
+            LoginConfig? config = null)
         {
             var listener = new TcpListener(IPAddress.Loopback, 0);
             listener.Start();
@@ -466,7 +565,7 @@ public sealed class ClientSessionLoginCharFlowTests
             // LogLogin is disabled because the legacy login-log write uses raw SQL
             // (ExecuteSqlRawAsync), which the EF Core InMemory provider used for the
             // service-account tests in this file does not support.
-            var configStore = new LoginConfigStore(new LoginConfig { LogLogin = false });
+            var configStore = new LoginConfigStore(config ?? new LoginConfig { LogLogin = false });
             var messageStore = new LoginMessageStore(new LoginMessageCatalog(new Dictionary<uint, string>
             {
                 [22] = "Unknown Error.",
@@ -477,7 +576,7 @@ public sealed class ClientSessionLoginCharFlowTests
                 configStore,
                 messageStore,
                 dbFactory,
-                () => null,
+                identityDbFactory ?? (() => null),
                 charServers,
                 new LoginState(),
                 new SubnetConfig(),

@@ -1381,36 +1381,6 @@ public sealed class ClientSession : IDisposable
         db.Entry(account).Property(a => a.LoginCount).IsModified = true;
 
         await db.SaveChangesAsync(cancellationToken);
-
-        if (Config.UseWebAuthToken && !string.Equals(account.Sex, "S", StringComparison.OrdinalIgnoreCase))
-        {
-            await UpdateWebAuthTokenWithRetryAsync(db, account, cancellationToken);
-        }
-    }
-
-    private async Task UpdateWebAuthTokenWithRetryAsync(LoginDbContext db, LoginAccount account, CancellationToken cancellationToken)
-    {
-        const int maxRetries = 20;
-
-        for (var attempt = 0; attempt < maxRetries; attempt++)
-        {
-            account.WebAuthToken = GenerateWebAuthToken();
-            account.WebAuthTokenEnabled = true;
-            db.Entry(account).Property(a => a.WebAuthToken).IsModified = true;
-            db.Entry(account).Property(a => a.WebAuthTokenEnabled).IsModified = true;
-
-            try
-            {
-                await db.SaveChangesAsync(cancellationToken);
-                return;
-            }
-            catch (DbUpdateException) when (attempt < maxRetries - 1)
-            {
-                db.Entry(account).State = EntityState.Unchanged;
-            }
-        }
-
-        LoginLogger.Warning("Failed to generate a unique web_auth_token after multiple retries.");
     }
 
     private async Task LogLoginAsync(LoginDbContext db, string userId, string ip, uint resultCode, string message, CancellationToken cancellationToken)
@@ -2159,9 +2129,16 @@ public sealed class ClientSession : IDisposable
         await DisableWebAuthTokenAsync(accountId);
     }
 
+    /// <summary>
+    /// Player WebAuthToken state lives on AthenaGameAccount (Identity schema), not
+    /// the legacy LoginDbContext.Accounts table service accounts use - service
+    /// accounts never have web auth tokens. Looked up by RagnarokAccountId, the
+    /// only account identifier this legacy wire-protocol path (LcSetAccountOffline)
+    /// ever carries.
+    /// </summary>
     private async Task DisableWebAuthTokenAsync(uint accountId)
     {
-        var db = _dbFactory();
+        var db = _identityDbFactory();
         if (db == null)
         {
             return;
@@ -2169,27 +2146,14 @@ public sealed class ClientSession : IDisposable
 
         await using (db)
         {
-            var account = await db.Accounts.FirstOrDefaultAsync(a => a.AccountId == accountId);
+            var account = await db.GameAccounts.FirstOrDefaultAsync(a => a.RagnarokAccountId == accountId);
             if (account == null)
             {
                 return;
             }
 
             account.WebAuthTokenEnabled = false;
-            db.Entry(account).Property(a => a.WebAuthTokenEnabled).IsModified = true;
             await db.SaveChangesAsync();
         }
-    }
-
-    private static string GenerateWebAuthToken()
-    {
-        var bytes = RandomNumberGenerator.GetBytes(8);
-        var sb = new StringBuilder(16);
-        foreach (var b in bytes)
-        {
-            sb.Append(b.ToString("x2", CultureInfo.InvariantCulture));
-        }
-
-        return sb.ToString();
     }
 }

@@ -67,7 +67,7 @@ public static class LoginServerApp
 
         var charServers = new CharServerRegistry();
         var state = new LoginState();
-        state.OnAutoDisconnect = accountId => BackgroundTasks.DisableWebAuthTokenAsync(accountId, configStore, state, dbFactory, cts.Token);
+        state.OnAutoDisconnect = accountId => BackgroundTasks.DisableWebAuthTokenAsync(accountId, configStore, state, identityDbFactory, cts.Token);
 
         var consoleTask = ConsoleCommandLoop.StartAsync(configStore, loginMessages, options.InterConfigPath, charServers, state, dbFactory, serviceProvider, cts);
         var server = new LoginTcpServer(configStore, loginMessages, dbFactory, identityDbFactory, charServers, state, subnetConfig, serviceProvider);

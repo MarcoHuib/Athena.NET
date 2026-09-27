@@ -2,6 +2,7 @@ using System.Buffers.Binary;
 using Microsoft.EntityFrameworkCore;
 using Athena.Net.LoginServer.Config;
 using Athena.Net.LoginServer.Db;
+using Athena.Net.LoginServer.Db.Identity;
 using Athena.Net.LoginServer.Logging;
 using Athena.Net.LoginServer.Net;
 
@@ -133,7 +134,16 @@ public static class BackgroundTasks
         }, cancellationToken);
     }
 
-    public static async Task DisableWebAuthTokenAsync(uint accountId, LoginConfigStore configStore, LoginState state, Func<LoginDbContext?> dbFactory, CancellationToken cancellationToken)
+    /// <summary>
+    /// Disables a player's WebAuthToken after an auto-disconnect (a pending
+    /// Login->Char handoff that was never completed - see
+    /// LoginState.ScheduleWaitingDisconnect). Player WebAuthToken state lives on
+    /// AthenaGameAccount (Identity schema), looked up by RagnarokAccountId - the
+    /// only account identifier this legacy path ever carries - never the legacy
+    /// LoginDbContext.Accounts table, which service accounts use and which never
+    /// has web auth tokens.
+    /// </summary>
+    public static async Task DisableWebAuthTokenAsync(uint accountId, LoginConfigStore configStore, LoginState state, Func<AthenaIdentityDbContext?> identityDbFactory, CancellationToken cancellationToken)
     {
         if (!configStore.Current.UseWebAuthToken)
         {
@@ -151,7 +161,7 @@ public static class BackgroundTasks
             return;
         }
 
-        var db = dbFactory();
+        var db = identityDbFactory();
         if (db == null)
         {
             return;
@@ -159,14 +169,13 @@ public static class BackgroundTasks
 
         await using (db)
         {
-            var account = await db.Accounts.FirstOrDefaultAsync(a => a.AccountId == accountId, cancellationToken);
+            var account = await db.GameAccounts.FirstOrDefaultAsync(a => a.RagnarokAccountId == accountId, cancellationToken);
             if (account == null)
             {
                 return;
             }
 
             account.WebAuthTokenEnabled = false;
-            db.Entry(account).Property(a => a.WebAuthTokenEnabled).IsModified = true;
             await db.SaveChangesAsync(cancellationToken);
         }
     }

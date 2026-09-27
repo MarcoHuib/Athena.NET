@@ -72,6 +72,17 @@ public sealed class AthenaIdentityDbContext : IdentityDbContext<AthenaIdentityUs
             entity.Property(e => e.WebAuthToken)
                 .HasMaxLength(17);
 
+            // IdentityPlayerAuthenticationService.UpdateWebAuthTokenWithRetryAsync
+            // regenerates the token and retries on DbUpdateException, which only
+            // does anything useful if the database actually rejects duplicates.
+            // Filtered (not a plain unique index) because most accounts have a
+            // null token (never logged in, or UseWebAuthToken disabled) and SQL
+            // Server's plain unique index only allows a single NULL row.
+            entity.HasIndex(e => e.WebAuthToken)
+                .IsUnique()
+                .HasFilter("[WebAuthToken] IS NOT NULL")
+                .HasDatabaseName("IX_AthenaGameAccounts_WebAuthToken");
+
             entity.Property(e => e.Birthdate)
                 .HasColumnType("date");
 
