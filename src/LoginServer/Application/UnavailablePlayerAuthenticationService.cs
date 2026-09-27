@@ -10,5 +10,5 @@ namespace Athena.Net.LoginServer.Application;
 public sealed class UnavailablePlayerAuthenticationService : IPlayerAuthenticationService
 {
     public Task<PlayerAuthenticationResult> AuthenticateAsync(string userName, string password, string remoteIp, CancellationToken cancellationToken) =>
-        Task.FromResult(PlayerAuthenticationResult.Fail(PlayerAuthenticationFailureReason.AccountNotFound, 0));
+        Task.FromResult(PlayerAuthenticationResult.Fail(PlayerAuthenticationFailureReason.AccountNotFound));
 }

@@ -1320,9 +1320,10 @@ public sealed class ClientSession : IDisposable
         var playerResult = await _playerAuth.AuthenticateAsync(userId, request.Password, remoteIp, cancellationToken);
         if (!playerResult.Success)
         {
-            await LogLoginAsync(db, userId, remoteIp, playerResult.ErrorCode, string.Empty, cancellationToken);
+            var errorCode = PlayerAuthenticationErrorCodeMapper.ToErrorCode(playerResult);
+            await LogLoginAsync(db, userId, remoteIp, errorCode, string.Empty, cancellationToken);
             var unblockTime = playerResult.UnblockAtLocal.HasValue ? FormatDate(playerResult.UnblockAtLocal.Value) : string.Empty;
-            return AuthResult.Fail(playerResult.ErrorCode, unblockTime);
+            return AuthResult.Fail(errorCode, unblockTime);
         }
 
         if (Config.ClientHashCheck && !IsClientHashAllowed(playerResult.Account!.GroupId))

@@ -46,19 +46,19 @@ public sealed class IdentityPlayerAuthenticationService : IPlayerAuthenticationS
         var user = await userManager.FindByNameAsync(userName);
         if (user == null)
         {
-            return PlayerAuthenticationResult.Fail(PlayerAuthenticationFailureReason.AccountNotFound, 0);
+            return PlayerAuthenticationResult.Fail(PlayerAuthenticationFailureReason.AccountNotFound);
         }
 
         if (await userManager.IsLockedOutAsync(user))
         {
-            return PlayerAuthenticationResult.Fail(PlayerAuthenticationFailureReason.LockedOut, 6, user.LockoutEnd?.LocalDateTime);
+            return PlayerAuthenticationResult.Fail(PlayerAuthenticationFailureReason.LockedOut, user.LockoutEnd?.LocalDateTime);
         }
 
         var passwordValid = await userManager.CheckPasswordAsync(user, password);
         if (!passwordValid)
         {
             await userManager.AccessFailedAsync(user);
-            return PlayerAuthenticationResult.Fail(PlayerAuthenticationFailureReason.InvalidPassword, 1);
+            return PlayerAuthenticationResult.Fail(PlayerAuthenticationFailureReason.InvalidPassword);
         }
 
         if (userManager.SupportsUserLockout)
@@ -69,24 +69,23 @@ public sealed class IdentityPlayerAuthenticationService : IPlayerAuthenticationS
         var gameAccount = await db.GameAccounts.FirstOrDefaultAsync(a => a.IdentityUserId == user.Id, cancellationToken);
         if (gameAccount == null)
         {
-            return PlayerAuthenticationResult.Fail(PlayerAuthenticationFailureReason.GameAccountMissing, 0);
+            return PlayerAuthenticationResult.Fail(PlayerAuthenticationFailureReason.GameAccountMissing);
         }
 
         var nowUnix = ToUnixTime(DateTime.UtcNow);
         if (gameAccount.ExpirationTime != 0 && gameAccount.ExpirationTime < nowUnix)
         {
-            return PlayerAuthenticationResult.Fail(PlayerAuthenticationFailureReason.AccountExpired, 2);
+            return PlayerAuthenticationResult.Fail(PlayerAuthenticationFailureReason.AccountExpired);
         }
 
         if (gameAccount.UnbanTime != 0 && gameAccount.UnbanTime > nowUnix)
         {
-            return PlayerAuthenticationResult.Fail(PlayerAuthenticationFailureReason.AccountBanned, 6, FromUnixTime(gameAccount.UnbanTime));
+            return PlayerAuthenticationResult.Fail(PlayerAuthenticationFailureReason.AccountBanned, FromUnixTime(gameAccount.UnbanTime));
         }
 
         if (gameAccount.State != 0)
         {
-            var error = (uint)Math.Max(0, (int)gameAccount.State - 1);
-            return PlayerAuthenticationResult.Fail(PlayerAuthenticationFailureReason.AccountStateRestricted, error);
+            return PlayerAuthenticationResult.Fail(PlayerAuthenticationFailureReason.AccountStateRestricted, accountStateCode: gameAccount.State);
         }
 
         gameAccount.LastLogin = DateTime.Now;

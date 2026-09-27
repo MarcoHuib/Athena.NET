@@ -26,23 +26,30 @@ public sealed record AuthenticatedGameAccount(
     string WebAuthToken);
 
 /// <summary>
-/// Result of a player authentication attempt. <see cref="UnblockAtLocal"/> carries
-/// a raw local timestamp (not pre-formatted) for a ban/lockout failure; formatting
-/// it for the wire response is ClientSession's responsibility, matching how every
-/// other legacy protocol string is built.
+/// Result of a player authentication attempt. This is a domain/application-level
+/// result, not a wire-protocol one: it deliberately carries no iRO error code.
+/// Mapping <see cref="FailureReason"/> (and, for <see cref="PlayerAuthenticationFailureReason.AccountStateRestricted"/>,
+/// <see cref="AccountStateCode"/>) to the iRO AC_REFUSE_LOGIN error code is the
+/// protocol layer's job (see Net.PlayerAuthenticationErrorCodeMapper), so a
+/// future non-iRO/non-Ragnarok caller of this interface (a website, a future
+/// external identity provider) never has to know iRO wire codes exist.
+/// <see cref="UnblockAtLocal"/> carries a raw local timestamp (not
+/// pre-formatted) for a ban/lockout failure; formatting it for the wire
+/// response is ClientSession's responsibility, matching how every other
+/// legacy protocol string is built.
 /// </summary>
 public sealed record PlayerAuthenticationResult(
     bool Success,
     PlayerAuthenticationFailureReason FailureReason,
-    uint ErrorCode,
     DateTime? UnblockAtLocal,
-    AuthenticatedGameAccount? Account)
+    AuthenticatedGameAccount? Account,
+    uint? AccountStateCode = null)
 {
-    public static PlayerAuthenticationResult Fail(PlayerAuthenticationFailureReason reason, uint errorCode, DateTime? unblockAtLocal = null) =>
-        new(false, reason, errorCode, unblockAtLocal, null);
+    public static PlayerAuthenticationResult Fail(PlayerAuthenticationFailureReason reason, DateTime? unblockAtLocal = null, uint? accountStateCode = null) =>
+        new(false, reason, unblockAtLocal, null, accountStateCode);
 
     public static PlayerAuthenticationResult Ok(AuthenticatedGameAccount account) =>
-        new(true, PlayerAuthenticationFailureReason.None, 0, null, account);
+        new(true, PlayerAuthenticationFailureReason.None, null, account);
 }
 
 /// <summary>
