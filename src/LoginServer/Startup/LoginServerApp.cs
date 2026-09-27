@@ -36,7 +36,7 @@ public static class LoginServerApp
 
         LoginLogger.Status($"Login server starting on {config.BindIp}:{config.LoginPort} (PACKETVER 20220406)");
 
-        var composition = ServiceComposition.Build(interConfig, secrets, tableNames);
+        var composition = ServiceComposition.Build(interConfig, secrets, tableNames, configStore);
         await using var serviceProvider = composition.Provider;
         var dbAvailable = composition.DbAvailable;
         var dbFactory = dbAvailable

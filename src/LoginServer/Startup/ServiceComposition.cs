@@ -19,9 +19,17 @@ public static class ServiceComposition
     public static (ServiceProvider Provider, bool DbAvailable, bool IdentityDbAvailable) Build(
         InterConfig interConfig,
         SecretConfig secrets,
-        LoginDbTableNames tableNames)
+        LoginDbTableNames tableNames,
+        LoginConfigStore configStore)
     {
         var services = new ServiceCollection();
+
+        // IdentityPlayerAuthenticationService (and any other application service
+        // that needs live config, e.g. UseWebAuthToken) resolves LoginConfigStore
+        // from this container. Registering the SAME instance the rest of the app
+        // uses (rather than letting DI construct its own) keeps config reload
+        // (LoginConfigStore.Reload()) visible everywhere.
+        services.AddSingleton(configStore);
 
         var dbAvailable = DbSetup.TryAddLoginDbContext(services, interConfig, secrets, tableNames);
         var identityDbAvailable = IdentityDbSetup.TryAddAthenaIdentityDbContext(services, interConfig, secrets);
@@ -66,6 +74,13 @@ public static class ServiceComposition
         // service?" state, so this is transient rather than a shared singleton.
         services.AddTransient<IServiceAuthenticationService, ServiceAuthenticationService>();
 
-        return (services.BuildServiceProvider(), dbAvailable, identityDbAvailable);
+        // ValidateOnBuild + ValidateScopes catch missing/misscoped registrations
+        // (like the LoginConfigStore omission this composition root once had) at
+        // startup instead of at the first real login attempt. ValidateScopes also
+        // enforces that scoped services (UserManager, the DbContexts, etc.) are
+        // only ever resolved from a created IServiceScope, never straight from
+        // this root provider.
+        var providerOptions = new ServiceProviderOptions { ValidateOnBuild = true, ValidateScopes = true };
+        return (services.BuildServiceProvider(providerOptions), dbAvailable, identityDbAvailable);
     }
 }

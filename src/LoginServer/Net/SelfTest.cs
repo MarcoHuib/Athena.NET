@@ -187,7 +187,8 @@ public static class SelfTest
             return (false, true);
         }
 
-        var provisioning = serviceProvider.GetService<IPlayerAccountProvisioningService>();
+        using var provisioningScope = serviceProvider.CreateScope();
+        var provisioning = provisioningScope.ServiceProvider.GetService<IPlayerAccountProvisioningService>();
         if (provisioning == null)
         {
             LoginLogger.Info("Self-test: login-flow skipped (Identity DB unavailable).");
