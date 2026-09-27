@@ -5,6 +5,7 @@ using System.Net.Sockets;
 using Athena.Net.MapServer.Config;
 using Athena.Net.MapServer.Gameplay.Rules;
 using Athena.Net.MapServer.Gameplay.Rules.Renewal;
+using Athena.Net.MapServer.Generated.GameData.Mobs;
 using Athena.Net.MapServer.Net;
 using Athena.Net.MapServer.World;
 using Athena.Net.World.Contracts;
@@ -591,10 +592,17 @@ public sealed class MapTcpServerMonsterAuthorityIntegrationTests : IAsyncLifetim
 
         // Exactly ONE authoritative Died feed entry for the raced Life - polled incrementally from
         // the pre-race baseline cursor, never inferred from the terminal Lifecycle==Dead snapshot.
+        // The race has already fully settled by this point (both first-attempt results resolved,
+        // Dead confirmed), so finalPage.AsOfSequence is an authoritative terminal boundary: scan
+        // every incremental page from the pre-race cursor until the cursor catches up to that exact
+        // sequence, accumulating EVERY Died entry for this Life along the way - never stopping at
+        // the first one found, since that would only prove "at least one", not "exactly one" (a
+        // hypothetical second Died entry in a later page would otherwise never be inspected).
         var diedEntryCount = 0;
         var feedDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
-        while (DateTime.UtcNow < feedDeadline)
+        while (feedCursor.Sequence < finalPage.AsOfSequence)
         {
+            Assert.True(DateTime.UtcNow < feedDeadline, "Timed out scanning the feed up to the terminal sequence.");
             var page = await grain.PollMonsterFeedAsync(feedCursor, mapId);
             if (page.Snapshot is not null)
             {
@@ -605,11 +613,8 @@ public sealed class MapTcpServerMonsterAuthorityIntegrationTests : IAsyncLifetim
             }
             feedCursor = new WorldMonsterFeedCursor(page.SimulationEpoch, page.AsOfSequence);
             if (page.Entries is { Count: > 0 } entries)
-            {
-                diedEntryCount += entries.Count(e => e.Kind == WorldMonsterFeedEntryKind.Died && e.ActorId == monster.ActorId);
-                if (diedEntryCount > 0) break;
-            }
-            await Task.Delay(50);
+                diedEntryCount += entries.Count(e => e.Kind == WorldMonsterFeedEntryKind.Died && e.ActorId == monster.ActorId && e.IncarnationId.Equals(monster.IncarnationId));
+            if (page.Entries is not { Count: > 0 }) await Task.Delay(20);
         }
         Assert.Equal(1, diedEntryCount);
 
@@ -876,8 +881,11 @@ public sealed class MapTcpServerMonsterAuthorityIntegrationTests : IAsyncLifetim
         // B's side: B is the real lethal owner, so its stream must show exactly one lethal
         // vanish/reward tail and no duplicate - bufferedB accumulated every byte B's session sent
         // (not discarded like a plain drain), so this scans the real, complete sequence instead of
-        // merely proving traffic existed.
-        await bufferedB.StopAndAssertExactlyOneLethalRewardTailAsync(monster.ActorId);
+        // merely proving traffic existed. Expected EXP presence is derived from Poring's own real
+        // generated MobDefinition (BaseExp/JobExp), not a hard-coded count - both are non-zero for
+        // Poring and the default GameplayRateOptions used by ConnectSessionAsync (100% rate), so
+        // both a base-EXP and a job-EXP gain packet are expected exactly once each.
+        await bufferedB.StopAndAssertExactlyOneLethalRewardTailAsync(monster.ActorId, GeneratedMobs.Poring.BaseExp, GeneratedMobs.Poring.JobExp);
 
         clientA.Close(); clientB.Close();
         await runA.WaitAsync(TimeSpan.FromSeconds(5));
@@ -1304,7 +1312,20 @@ public sealed class MapTcpServerMonsterAuthorityIntegrationTests : IAsyncLifetim
             });
         }
 
-        public async Task StopAndAssertExactlyOneLethalRewardTailAsync(uint expectedActorId)
+        // Substep 10 (review fix): the invariant this proves is "one logical kill => one damage/HP/
+        // death/reward projection", not merely "one damage packet + one vanish". Parses B's real
+        // captured wire output and asserts, for the exact killed monster/expected reward shape:
+        //   - exactly one ZcNotifyAct3 (damage) for expectedActorId
+        //   - exactly one ZcHpInfo for expectedActorId, with its authoritative HP field == 0
+        //   - exactly one ZcNotifyVanish for expectedActorId, reason == Died
+        //   - exactly one ZcNotifyExperience carrying BaseExperienceParameter, IFF expectedBaseExp > 0
+        //   - exactly one ZcNotifyExperience carrying JobExperienceParameter, IFF expectedJobExp > 0
+        // A second occurrence of any of these fails the test. ZcParameterChange/ZcLongLongParameterChange/
+        // ZcNotifyEffect (level-up/stat-sync packets) legitimately vary with progression state, so
+        // their total count is not asserted - they are still parsed with their correct fixed lengths
+        // so the byte-level scan cannot desynchronize. No ZcItemPickupAck is expected/asserted here:
+        // this scenario's MakeWorld wires an empty QuestDropResolver, so no quest drop can fire.
+        public async Task StopAndAssertExactlyOneLethalRewardTailAsync(uint expectedActorId, long expectedBaseExp, long expectedJobExp)
         {
             // Bounded settle window: the reward tail is produced asynchronously (ticks/background
             // loops) after the kill is confirmed, so give it a moment to actually land in the buffer
@@ -1320,7 +1341,10 @@ public sealed class MapTcpServerMonsterAuthorityIntegrationTests : IAsyncLifetim
             using var replay = new MemoryStream(captured);
 
             var damageSeen = false;
+            var hpInfoSeen = false;
             var vanishSeen = false;
+            var baseExpSeen = false;
+            var jobExpSeen = false;
             while (replay.Position < replay.Length)
             {
                 var header = await ReadExact(replay, 2);
@@ -1328,8 +1352,7 @@ public sealed class MapTcpServerMonsterAuthorityIntegrationTests : IAsyncLifetim
                 if (opcode == (short)PacketConstants.ZcNotifyVanish)
                 {
                     Assert.False(vanishSeen, "Expected exactly one Died vanish packet on the killer's own stream, but observed a second one.");
-                    var rest = await ReadExact(replay, PacketConstants.ZcNotifyVanishLength - 2);
-                    var full = header.Concat(rest).ToArray();
+                    var full = header.Concat(await ReadExact(replay, PacketConstants.ZcNotifyVanishLength - 2)).ToArray();
                     Assert.Equal(expectedActorId, BinaryPrimitives.ReadUInt32LittleEndian(full.AsSpan(2)));
                     Assert.Equal(PacketConstants.ZcNotifyVanishReasonDied, full[6]);
                     vanishSeen = true;
@@ -1338,12 +1361,43 @@ public sealed class MapTcpServerMonsterAuthorityIntegrationTests : IAsyncLifetim
                 if (opcode == (short)PacketConstants.ZcNotifyAct3)
                 {
                     Assert.False(damageSeen, "Expected exactly one damage packet on the killer's own stream, but observed a second one.");
+                    var full = header.Concat(await ReadExact(replay, PacketConstants.ZcNotifyAct3Length - 2)).ToArray();
+                    Assert.Equal(expectedActorId, BinaryPrimitives.ReadUInt32LittleEndian(full.AsSpan(6))); // dstId (the killed monster)
                     damageSeen = true;
+                    continue;
+                }
+                if (opcode == (short)PacketConstants.ZcHpInfo)
+                {
+                    Assert.False(hpInfoSeen, "Expected exactly one HP-info packet on the killer's own stream, but observed a second one.");
+                    var full = header.Concat(await ReadExact(replay, PacketConstants.ZcHpInfoLength - 2)).ToArray();
+                    Assert.Equal(expectedActorId, BinaryPrimitives.ReadUInt32LittleEndian(full.AsSpan(2)));
+                    Assert.Equal(0u, BinaryPrimitives.ReadUInt32LittleEndian(full.AsSpan(6))); // authoritative HP field
+                    hpInfoSeen = true;
+                    continue;
+                }
+                if (opcode == (short)PacketConstants.ZcNotifyExperience)
+                {
+                    var full = header.Concat(await ReadExact(replay, PacketConstants.ZcNotifyExperienceLength - 2)).ToArray();
+                    var parameterId = BinaryPrimitives.ReadUInt16LittleEndian(full.AsSpan(14));
+                    if (parameterId == IroCharacterProgressionPackets.BaseExperienceParameter)
+                    {
+                        Assert.False(baseExpSeen, "Expected exactly one base-EXP gain packet, but observed a second one.");
+                        baseExpSeen = true;
+                    }
+                    else if (parameterId == IroCharacterProgressionPackets.JobExperienceParameter)
+                    {
+                        Assert.False(jobExpSeen, "Expected exactly one job-EXP gain packet, but observed a second one.");
+                        jobExpSeen = true;
+                    }
+                    continue;
                 }
                 await SkipPacketBodyAsync(replay, opcode);
             }
             Assert.True(damageSeen, "Expected the killer's own stream to carry exactly one damage packet for its lethal hit.");
+            Assert.True(hpInfoSeen, "Expected the killer's own stream to carry exactly one HP-info packet showing HP==0.");
             Assert.True(vanishSeen, "Expected the killer's own stream to carry exactly one Died vanish packet.");
+            Assert.Equal(expectedBaseExp > 0, baseExpSeen);
+            Assert.Equal(expectedJobExp > 0, jobExpSeen);
         }
     }
 
