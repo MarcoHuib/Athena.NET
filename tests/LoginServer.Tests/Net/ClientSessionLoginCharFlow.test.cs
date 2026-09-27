@@ -38,7 +38,7 @@ public sealed class ClientSessionLoginCharFlowTests
     private const int ServerNameLength = 20;
     private const int ServiceNonceLength = 32;
     private const int ServiceProofLength = 32;
-    private const string ServiceToken = "test-only-service-token-0123456789abcdef";
+    private static readonly string ServiceToken = Convert.ToBase64String(Enumerable.Range(0, 32).Select(i => (byte)i).ToArray());
     private const string ServiceId = "TestCharServer";
 
     [Fact]
@@ -419,7 +419,8 @@ public sealed class ClientSessionLoginCharFlowTests
         Assert.Equal(LcServiceAuthChallenge, BinaryPrimitives.ReadInt16LittleEndian(challengePacket.AsSpan(0, 2)));
         var nonce = challengePacket.AsSpan(2, ServiceNonceLength).ToArray();
 
-        var proof = ServiceAuthProofCalculator.ComputeProof(Encoding.UTF8.GetBytes(ServiceToken), ServiceId, nonce);
+        var helloInfo = new ServiceHelloInfo(ServiceId, IPAddress.Loopback, 6121, "TestChar", 0, 0);
+        var proof = ServiceAuthProofCalculator.ComputeProof(Convert.FromBase64String(ServiceToken), helloInfo, nonce);
         var proofPacket = new byte[2 + ServiceProofLength];
         proof.CopyTo(proofPacket, 2);
         await (Task)handlePacket.Invoke(fixture.Session, new object[] { LcServiceAuthProof, proofPacket, CancellationToken.None })!;

@@ -86,19 +86,103 @@ is:
    (`RandomNumberGenerator`) and replies with `LcServiceAuthChallenge`
    (`0x2751`) carrying it. The nonce is scoped to this connection only and can
    be consumed exactly once.
-3. CharServer computes
-   `HMAC-SHA256(ServiceToken, "Athena.NET/CharServer/Auth/v1" + 0x1F + ServiceId + 0x1F + nonce)`
-   (see `ServiceAuthProofCalculator`) and sends only the 32-byte proof back as
+3. CharServer computes an HMAC-SHA256 proof over the **complete** hello
+   payload - not just `ServiceId` - and sends only the 32-byte proof back as
    `LcServiceAuthProof` (`0x2752`). The `ServiceToken` itself never travels
    over the network - only this one-time derived proof does.
-4. LoginServer independently recomputes the expected proof and compares it to
-   the submitted one with `CryptographicOperations.FixedTimeEquals` (a
-   fixed-time comparison, so a wrong proof cannot be distinguished by timing).
-   Only on an exact match does it set `IsAuthenticated = true` and register
-   the connection as a live CharServer; any other outcome - wrong proof,
+4. LoginServer independently recomputes the expected proof (over the same
+   hello payload it parsed from step 1) and compares it to the submitted one
+   with `CryptographicOperations.FixedTimeEquals` (a fixed-time comparison,
+   so a wrong proof cannot be distinguished by timing). Only on an exact
+   match does it register the connection as a live CharServer and set
+   `IsAuthenticated = true`; any other outcome - wrong proof,
    expired/already-consumed challenge, or no `ServiceToken` configured at all
    (fail closed) - sends `LcServiceAuthResult` (`0x2753`) with a failure byte
    and closes the connection rather than allowing retries.
+
+### v2 proof format: binds the complete ServiceHello, not just ServiceId
+
+`ServiceAuthProofCalculator` computes
+`HMAC-SHA256(ServiceToken, message)`, where `message` is a deterministic,
+unambiguous binary serialization of every `LcServiceHello` field in a fixed
+order (see the calculator's doc comment for the exact byte layout):
+
+```
+UTF8("Athena.NET/CharServer/Auth/v2")
++ 0x1F
++ byte(len(UTF8(serviceId))) + UTF8(serviceId)
++ 0x1F
++ ip.GetAddressBytes() (4 bytes, IPv4)
++ port (UInt16, big-endian)
++ byte(len(UTF8(serverName))) + UTF8(serverName)
++ 0x1F
++ charMaintenance (UInt16, big-endian)
++ charNewDisplay (UInt16, big-endian)
++ nonce (32 bytes)
+```
+
+This binds `ServiceId`, advertised IP, advertised port, server name,
+maintenance/type, and new-display flag into the proof (in addition to the
+nonce), so an active attacker who cannot compute the HMAC cannot tamper with
+any of those fields in an in-flight `LcServiceHello` while leaving a
+previously-issued proof valid - a v1 proof (bound only to `ServiceId` +
+nonce) would not have caught that. The two textual fields are
+length-prefixed with a single byte (both are always far shorter than 255
+bytes on the wire) rather than built by naive string concatenation, so their
+boundaries are unambiguous regardless of content. The leading context string
+is domain separation and is versioned (`v1` -> `v2`) whenever the bound
+field set or serialization changes, so a stale client/server pair can never
+silently interoperate with an incompatible proof format.
+
+### Handshake connection state machine
+
+Each TCP connection's `IServiceAuthenticationService` (a fresh instance per
+connection - see `ServiceComposition`) tracks an explicit
+`ServiceAuthConnectionState`:
+
+```
+Unauthenticated --LcServiceHello (valid)--> ChallengeIssued
+ChallengeIssued --LcServiceAuthProof (valid)--> ChallengeIssued, then Authenticated once MarkAuthenticated() is called
+(any state) --invalid transition--> Failed (terminal), except Authenticated never regresses
+```
+
+A hello is only ever accepted from `Unauthenticated`, and a proof only ever
+from `ChallengeIssued`. In particular:
+
+- A second `LcServiceHello` while a challenge is already outstanding does
+  not silently replace/reset it - the connection is rejected and closed.
+- Once `Authenticated`, a further `LcServiceHello` or `LcServiceAuthProof`
+  (e.g. a replayed proof) is always rejected and the connection is closed -
+  but the state never regresses: an already-authenticated connection keeps
+  its granted trust (`IsAuthenticated` stays `true`) right up until it is
+  closed, it is just never able to re-run or extend the handshake.
+- A proof with no outstanding challenge (never issued, already consumed, or
+  the connection already failed) is always rejected.
+
+`ClientSession` also guards `CharServerRegistry` registration defensively:
+a connection can only ever register once (`RegisterCharServer` is a no-op if
+this connection already has a registry id), so the state machine's "one
+proof succeeds per connection" guarantee can never leak a stale registry
+entry even if that invariant were ever violated elsewhere.
+
+### Handshake timeout
+
+Once `LcServiceAuthChallenge` is sent, the connection must send
+`LcServiceAuthProof` within 30 seconds (the production default;
+`ClientSession`'s constructor accepts an injectable duration for tests).
+This is enforced as a **real wall-clock bound on the next read**, not just a
+timestamp check inside proof verification: `ClientSession.RunAsync` reads
+every packet through a `CancellationTokenSource` linked to the server's
+lifetime token, and issuing a challenge calls `CancelAfter(30s)` on it. If no
+proof arrives in time, the pending read is cancelled, the connection closes,
+no `CharServer` is registered, and no service-auth state remains active. The
+timeout is disabled (`CancelAfter(Timeout.InfiniteTimeSpan)`) the moment a
+proof is received (successful or not), so it never applies to the normal
+long-lived authenticated CharServer connection afterward. `VerifyProof`
+separately still checks the challenge's age against the same 30-second
+window as defense in depth, but that check alone was never sufficient by
+itself - the timeout has to bound the wait, not just be checked whenever a
+(possibly very late) proof happens to arrive.
 
 HMAC-SHA256 here authenticates *possession* of the shared `ServiceToken` and
 prevents that secret from ever being sent over the wire - it does not encrypt
@@ -107,14 +191,32 @@ LoginServer<->CharServer transport, are both still plaintext for now; a future
 TLS/mTLS layer may protect the internal connection later but is out of scope
 here.
 
+### ServiceToken configuration and format
+
 The `ServiceToken` is configured in `solutionfiles/secrets/secret.json` under
 `ServiceAuthentication.CharServer.Token`, or via the
 `ATHENA_NET_CHAR_SERVER_SERVICE_TOKEN` environment variable (checked first,
-suited to deployment secret sources such as Kubernetes Secrets). It should be
-a high-entropy random value (256 bits/32+ bytes is recommended) and both
-LoginServer and CharServer must be configured with the identical value. It is
-never stored in SQL Server, never hashed into any table, and never
-represented as an ASP.NET Core Identity user.
+suited to deployment secret sources such as Kubernetes Secrets). Both
+LoginServer and CharServer must be configured with the identical value.
+
+The token **must** be Base64-encoded and decode to at least 32 bytes (256
+bits); `CharServerServiceTokenProvider` (implemented identically on both
+servers) treats a missing value, invalid Base64, or a decoded length below
+32 bytes all identically as "not configured" - service authentication fails
+closed rather than silently accepting a weak value such as `password` or
+`test`. Generate one with a tool that produces random output, never by
+typing a value yourself:
+
+```bash
+openssl rand -base64 32
+```
+
+Piping the output straight into your secrets file/store, rather than typing
+or echoing the generated value back into another command, keeps the actual
+secret out of shell history. It is never stored in SQL Server, never hashed
+into any table, never logged (even on validation failure - only "missing or
+invalid" is logged, never the value), and never represented as an ASP.NET
+Core Identity user.
 
 Normal development player accounts are provisioned through ASP.NET Core
 Identity, never by inserting rows directly:

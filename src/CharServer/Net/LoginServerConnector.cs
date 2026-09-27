@@ -254,7 +254,15 @@ public sealed class LoginServerConnector
         }
 
         var nonce = challengePacket.AsSpan(2, PacketConstants.ServiceNonceLength).ToArray();
-        var proof = ServiceAuthProofCalculator.ComputeProof(_serviceTokenProvider.TokenBytes!, config.ServiceId, nonce);
+        var proof = ServiceAuthProofCalculator.ComputeProof(
+            _serviceTokenProvider.TokenBytes!,
+            config.ServiceId,
+            config.CharIp,
+            (ushort)config.CharPort,
+            config.ServerName,
+            (ushort)config.CharMaintenance,
+            (ushort)config.CharNewDisplay,
+            nonce);
 
         await SendServiceAuthProofAsync(connection, proof, cancellationToken);
 

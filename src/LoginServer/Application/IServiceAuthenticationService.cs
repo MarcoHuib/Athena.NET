@@ -13,10 +13,10 @@ public enum ServiceAuthenticationOutcome
     NotApplicable,
     Success,
 
-    /// <summary>No ServiceToken is configured anywhere (secret file or environment variable). Fails closed.</summary>
+    /// <summary>No ServiceToken is configured anywhere (secret file or environment variable), or the configured value is not valid (not Base64, or decodes to fewer than 32 bytes). Fails closed.</summary>
     TokenNotConfigured,
 
-    /// <summary>A proof was submitted without an outstanding challenge (none was ever issued, or it was already consumed).</summary>
+    /// <summary>A proof was submitted without an outstanding challenge (none was ever issued, it was already consumed, or the connection is not in a state that accepts a proof).</summary>
     NoChallengeIssued,
 
     /// <summary>The outstanding challenge was issued too long ago.</summary>
@@ -24,9 +24,41 @@ public enum ServiceAuthenticationOutcome
 
     /// <summary>The submitted proof does not match the expected HMAC-SHA256 value.</summary>
     InvalidProof,
+
+    /// <summary>
+    /// LcServiceHello arrived while the connection was not in the
+    /// <see cref="ServiceAuthConnectionState.Unauthenticated"/> state (a
+    /// challenge is already outstanding, the connection is already
+    /// authenticated, or a prior invalid transition already failed it).
+    /// </summary>
+    InvalidHelloState,
 }
 
-public sealed record ServiceAuthenticationResult(ServiceAuthenticationOutcome Outcome)
+/// <summary>
+/// The inter-server service-authentication handshake's connection state, as
+/// tracked per-TCP-connection (a fresh <see cref="IServiceAuthenticationService"/>
+/// is created per connection - see ServiceComposition). Models exactly the
+/// three legitimate phases plus a terminal failure state:
+/// <code>
+/// Unauthenticated --GenerateChallenge success--> ChallengeIssued
+/// ChallengeIssued --VerifyProof success--> ChallengeIssued (until MarkAuthenticated)
+/// ChallengeIssued --MarkAuthenticated--> Authenticated
+/// (any state) --invalid transition or failed proof--> Failed
+/// </code>
+/// Once <see cref="Authenticated"/> or <see cref="Failed"/>, the state never
+/// goes backwards: a second LcServiceHello or LcServiceAuthProof is always
+/// rejected, never silently reset to a fresh Unauthenticated/ChallengeIssued
+/// state.
+/// </summary>
+public enum ServiceAuthConnectionState
+{
+    Unauthenticated,
+    ChallengeIssued,
+    Authenticated,
+    Failed,
+}
+
+public sealed record ServiceAuthenticationResult(ServiceAuthenticationOutcome Outcome, ServiceHelloInfo? Hello = null)
 {
     public bool Success => Outcome == ServiceAuthenticationOutcome.Success;
 }
@@ -37,7 +69,10 @@ public sealed record ServiceAuthenticationResult(ServiceAuthenticationOutcome Ou
 /// ServiceToken. Owns the per-connection "has this socket proven possession
 /// of the ServiceToken?" state so packet handlers can gate privileged
 /// inter-server operations on it. The ServiceToken itself never travels over
-/// the network - only a one-time proof derived from it does.
+/// the network - only a one-time proof does, and that proof cryptographically
+/// binds the complete ServiceHello registration payload (see
+/// <see cref="ServiceHelloInfo"/>/<see cref="ServiceAuthProofCalculator"/>),
+/// not just the ServiceId.
 /// </summary>
 public interface IServiceAuthenticationService
 {
@@ -50,34 +85,47 @@ public interface IServiceAuthenticationService
     bool IsAuthenticated { get; }
 
     /// <summary>
-    /// The ServiceId presented in the most recent <see cref="GenerateChallenge"/>
+    /// The ServiceId presented in the most recent accepted <see cref="GenerateChallenge"/>
     /// call, for logging/diagnostics only. Never used as an authorization
     /// credential by itself - the ServiceToken-derived proof is.
     /// </summary>
     string? ServiceId { get; }
 
-    /// <summary>
-    /// Generates a fresh, cryptographically random one-time nonce challenge
-    /// for the given (non-secret) ServiceId. Only one challenge may be
-    /// outstanding at a time; calling this again discards any previous
-    /// unconsumed challenge (so it can never later be satisfied).
-    /// </summary>
-    byte[] GenerateChallenge(string serviceId);
+    /// <summary>Current handshake connection state - see <see cref="ServiceAuthConnectionState"/>.</summary>
+    ServiceAuthConnectionState State { get; }
 
     /// <summary>
-    /// Verifies a submitted proof against the single outstanding challenge (if
-    /// any) using a fixed-time comparison. The challenge is consumed
-    /// (one-time use) regardless of outcome, so a repeated or replayed proof
-    /// can never succeed against it again. Never sets <see cref="IsAuthenticated"/> -
-    /// the caller decides when every check for a successful CharServer login
-    /// has passed.
+    /// Generates a fresh, cryptographically random one-time nonce challenge
+    /// for the given CharServer registration hello, binding every field of
+    /// <paramref name="hello"/> (not just its ServiceId) into the proof that
+    /// will later be expected. Only valid from <see cref="ServiceAuthConnectionState.Unauthenticated"/> -
+    /// a second hello while a challenge is already outstanding, or after the
+    /// connection has already authenticated or failed, is rejected (returns
+    /// null) and does not replace/reset any existing challenge or state.
+    /// </summary>
+    byte[]? GenerateChallenge(ServiceHelloInfo hello);
+
+    /// <summary>
+    /// Verifies a submitted proof against the single outstanding challenge -
+    /// recomputing the expected HMAC over the exact <see cref="ServiceHelloInfo"/>
+    /// bound when the challenge was issued - using a fixed-time comparison.
+    /// Only valid from <see cref="ServiceAuthConnectionState.ChallengeIssued"/>;
+    /// the challenge is consumed (one-time use) regardless of outcome, so a
+    /// repeated or replayed proof can never succeed against it again. A
+    /// successful result includes the verified <see cref="ServiceHelloInfo"/>
+    /// so the caller registers exactly the payload that was cryptographically
+    /// bound - never a separately-tracked copy that could diverge from it.
+    /// Never sets <see cref="IsAuthenticated"/> - the caller decides when
+    /// every check for a successful CharServer login has passed.
     /// </summary>
     ServiceAuthenticationResult VerifyProof(byte[] proof);
 
     /// <summary>
-    /// Grants this connection service-authenticated status. Must only be
-    /// called once the caller has completed every check for a successful
-    /// CharServer login - never merely because <see cref="VerifyProof"/> succeeded.
+    /// Grants this connection service-authenticated status and transitions
+    /// <see cref="State"/> to <see cref="ServiceAuthConnectionState.Authenticated"/>.
+    /// Must only be called once the caller has completed every check for a
+    /// successful CharServer login - never merely because <see cref="VerifyProof"/>
+    /// succeeded.
     /// </summary>
     void MarkAuthenticated();
 }

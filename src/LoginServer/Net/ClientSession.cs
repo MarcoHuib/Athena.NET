@@ -27,8 +27,9 @@ public sealed class ClientSession : IDisposable
     private readonly IPlayerAuthenticationService _playerAuth;
     private readonly IServiceAuthenticationService _serviceAuth;
     private readonly IPlayerIdentityAccountService _identityAccountService;
+    private readonly TimeSpan _serviceAuthTimeout;
     private int? _charServerId;
-    private PendingCharServerHello? _pendingHello;
+    private CancellationTokenSource? _handshakeCts;
     private LoginConfig Config => _configStore.Current;
     private bool IsCaseSensitive => _configStore.LoginCaseSensitive;
 
@@ -76,7 +77,8 @@ public sealed class ClientSession : IDisposable
         Config.SubnetConfig subnetConfig,
         IPlayerAuthenticationService playerAuth,
         IServiceAuthenticationService serviceAuth,
-        IPlayerIdentityAccountService? identityAccountService = null)
+        IPlayerIdentityAccountService? identityAccountService = null,
+        TimeSpan? serviceAuthTimeout = null)
     {
         _client = client;
         _configStore = configStore;
@@ -89,27 +91,59 @@ public sealed class ClientSession : IDisposable
         _playerAuth = playerAuth;
         _serviceAuth = serviceAuth;
         _identityAccountService = identityAccountService ?? new UnavailablePlayerIdentityAccountService();
+        _serviceAuthTimeout = serviceAuthTimeout ?? TimeSpan.FromSeconds(30);
         _stream = client.GetStream();
     }
 
+    /// <summary>
+    /// Runs the packet loop for this connection's lifetime. A per-connection
+    /// <see cref="CancellationTokenSource"/>, linked to the server-lifetime
+    /// <paramref name="cancellationToken"/>, is used for every read so the
+    /// service-auth handshake can impose a real wall-clock timeout (see
+    /// <see cref="HandleServiceHelloAsync"/>) on just the "waiting for
+    /// LcServiceAuthProof" window, without affecting the outer token or the
+    /// normal long-lived authenticated CharServer connection once that
+    /// window closes.
+    /// </summary>
     public async Task RunAsync(CancellationToken cancellationToken)
     {
-        while (!cancellationToken.IsCancellationRequested)
+        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        _handshakeCts = linkedCts;
+        var token = linkedCts.Token;
+
+        try
         {
-            var header = await ReadExactAsync(2, cancellationToken);
-            if (header.Length == 0)
+            while (!token.IsCancellationRequested)
             {
-                return;
-            }
+                var header = await ReadExactAsync(2, token);
+                if (header.Length == 0)
+                {
+                    return;
+                }
 
-            var packetType = BinaryPrimitives.ReadInt16LittleEndian(header);
-            var packet = await ReadPacketAsync(packetType, header, cancellationToken);
-            if (packet.Length == 0)
-            {
-                return;
-            }
+                var packetType = BinaryPrimitives.ReadInt16LittleEndian(header);
+                var packet = await ReadPacketAsync(packetType, header, token);
+                if (packet.Length == 0)
+                {
+                    return;
+                }
 
-            await HandlePacketAsync(packetType, packet, cancellationToken);
+                await HandlePacketAsync(packetType, packet, token);
+            }
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            // The outer server-lifetime token is still alive, so this
+            // cancellation came only from the per-connection handshake
+            // timeout: a challenge was issued but LcServiceAuthProof never
+            // arrived within the timeout window. No CharServer is registered
+            // and no service-auth state remains active - the connection is
+            // simply closed like any other malformed/abandoned connection.
+            LoginLogger.Warning("Service authentication handshake timed out waiting for LcServiceAuthProof. Closing connection.");
+        }
+        finally
+        {
+            _handshakeCts = null;
         }
     }
 
@@ -467,10 +501,15 @@ public sealed class ClientSession : IDisposable
     /// First step of Athena.NET's internal CharServer &lt;-&gt; LoginServer HMAC-SHA256
     /// service handshake (see ai/login-server.md): a CharServer identifies itself
     /// with a non-secret ServiceId and its registration info, and receives a
-    /// one-time nonce challenge in return. Registration is not finalized here -
-    /// only after LcServiceAuthProof verifies successfully (see
-    /// <see cref="HandleServiceAuthProofAsync"/>) is this socket trusted with
-    /// anything.
+    /// one-time nonce challenge - cryptographically bound to the complete hello
+    /// payload, not just the ServiceId - in return. Only valid from
+    /// <see cref="ServiceAuthConnectionState.Unauthenticated"/>: a second hello
+    /// while a challenge is outstanding, or one arriving after this connection
+    /// already authenticated or failed, is rejected and the connection is
+    /// closed rather than silently issuing a fresh challenge. Registration is
+    /// not finalized here - only after LcServiceAuthProof verifies
+    /// successfully (see <see cref="HandleServiceAuthProofAsync"/>) is this
+    /// socket trusted with anything.
     /// </summary>
     private async Task HandleServiceHelloAsync(byte[] packet, CancellationToken cancellationToken)
     {
@@ -482,30 +521,56 @@ public sealed class ClientSession : IDisposable
         var maintenance = BinaryPrimitives.ReadUInt16LittleEndian(packet.AsSpan(maintenanceOffset, 2));
         var newDisplay = BinaryPrimitives.ReadUInt16LittleEndian(packet.AsSpan(maintenanceOffset + 2, 2));
 
-        _pendingHello = new PendingCharServerHello(serviceId, ip, port, name, maintenance, newDisplay);
+        var hello = new ServiceHelloInfo(serviceId, ip, port, name, maintenance, newDisplay);
 
-        var nonce = _serviceAuth.GenerateChallenge(serviceId);
+        var nonce = _serviceAuth.GenerateChallenge(hello);
+        if (nonce == null)
+        {
+            LoginLogger.Warning($"Rejected LcServiceHello: connection is not in a state that accepts a new challenge (state={_serviceAuth.State}). Closing connection.");
+            await SendServiceAuthResultAsync(1, cancellationToken);
+            _client.Close();
+            return;
+        }
+
+        // The handshake timeout starts only once a challenge is actually
+        // issued - a real wall-clock bound on "how long may this connection
+        // wait before sending LcServiceAuthProof", enforced by cancelling the
+        // next read rather than merely checked when a (possibly very late)
+        // proof happens to arrive.
+        _handshakeCts?.CancelAfter(_serviceAuthTimeout);
+
         LoginLogger.Info($"Service hello received (serviceId='{serviceId}'), challenge issued.");
         await SendServiceAuthChallengeAsync(nonce, cancellationToken);
     }
 
     /// <summary>
     /// Second/final step of the handshake: verifies the submitted HMAC-SHA256
-    /// proof against the outstanding one-time challenge. Only on success is
-    /// this connection registered as a CharServer and marked authenticated -
-    /// a failed proof leaves IsAuthenticated false and closes the connection
-    /// (rather than allowing unlimited retries), matching the security
-    /// invariant that protected Lc* packets must be unreachable before a
-    /// fully successful service login.
+    /// proof - recomputed over the complete ServiceHello payload bound when
+    /// the challenge was issued - against the outstanding one-time challenge.
+    /// Only valid from <see cref="ServiceAuthConnectionState.ChallengeIssued"/>;
+    /// a proof with no outstanding challenge (never issued, already consumed,
+    /// or arriving after this connection already authenticated) is always
+    /// rejected. Only on success is this connection registered as a
+    /// CharServer and marked authenticated - a failed proof leaves
+    /// IsAuthenticated false and closes the connection (rather than allowing
+    /// unlimited retries), matching the security invariant that protected
+    /// Lc* packets must be unreachable before a fully successful service
+    /// login.
     /// </summary>
     private async Task HandleServiceAuthProofAsync(byte[] packet, CancellationToken cancellationToken)
     {
         var proof = packet.AsSpan(2, PacketConstants.ServiceProofLength).ToArray();
-        var hello = _pendingHello;
-        _pendingHello = null;
 
         var result = _serviceAuth.VerifyProof(proof);
-        if (!result.Success || hello == null)
+
+        // Whether this proof succeeds or fails, the pending-challenge phase
+        // is over: disable the handshake timeout so it can never fire against
+        // the connection again (a long-lived authenticated CharServer
+        // connection must not inherit this timeout; a failing connection is
+        // about to be closed here directly).
+        _handshakeCts?.CancelAfter(Timeout.InfiniteTimeSpan);
+
+        if (!result.Success || result.Hello == null)
         {
             // Never log the proof or the token - only the classification.
             LoginLogger.Warning($"Service authentication failed (reason={result.Outcome}). Closing connection.");
@@ -515,12 +580,13 @@ public sealed class ClientSession : IDisposable
         }
 
         // Only at this point has the HMAC proof been verified against the
-        // one-time challenge. ServiceOnlyPackets must never be gated on
-        // anything earlier than this.
+        // one-time challenge and the complete bound ServiceHello payload.
+        // ServiceOnlyPackets must never be gated on anything earlier than
+        // this.
         _serviceAuth.MarkAuthenticated();
 
-        RegisterCharServer(hello);
-        LoginLogger.Status($"Char server registered (serviceId='{hello.ServiceId}', name='{hello.ServerName}').");
+        RegisterCharServer(result.Hello);
+        LoginLogger.Status($"Char server registered (serviceId='{result.Hello.ServiceId}', name='{result.Hello.ServerName}').");
         await SendServiceAuthResultAsync(0, cancellationToken);
     }
 
@@ -1213,9 +1279,26 @@ public sealed class ClientSession : IDisposable
     /// bookkeeping id (assigned by <see cref="CharServerRegistry.NextId"/>) -
     /// it carries no meaning outside this process and is never derived from
     /// any account/credential concept.
+    /// <para>
+    /// Defense in depth against a stale registry leak: the service-auth state
+    /// machine already guarantees at most one successful proof per
+    /// connection (a second LcServiceAuthProof after authentication is
+    /// rejected before this method could ever be reached again), so
+    /// <see cref="_charServerId"/> should never already be set here - but if
+    /// it somehow were, registering a second entry and only ever unregistering
+    /// the latest one on <see cref="Dispose"/> would leak the first
+    /// registration forever. Guard against that explicitly rather than relying
+    /// solely on the caller-side invariant.
+    /// </para>
     /// </summary>
-    private void RegisterCharServer(PendingCharServerHello hello)
+    private void RegisterCharServer(ServiceHelloInfo hello)
     {
+        if (_charServerId.HasValue)
+        {
+            LoginLogger.Warning("RegisterCharServer called more than once on the same connection; ignoring the redundant registration.");
+            return;
+        }
+
         var info = new CharServerInfo
         {
             Name = hello.ServerName,
@@ -1843,20 +1926,6 @@ public sealed class ClientSession : IDisposable
 
         return buffer;
     }
-
-    /// <summary>
-    /// Registration info presented in LcServiceHello, held until
-    /// LcServiceAuthProof verifies successfully - a CharServer is only
-    /// registered (see <see cref="RegisterCharServer"/>) once the HMAC
-    /// handshake completes, never on hello alone.
-    /// </summary>
-    private sealed record PendingCharServerHello(
-        string ServiceId,
-        IPAddress Ip,
-        ushort Port,
-        string ServerName,
-        ushort CharMaintenance,
-        ushort CharNewDisplay);
 
     private readonly record struct LoginRequest(string UserId, string Password, byte ClientType);
 
