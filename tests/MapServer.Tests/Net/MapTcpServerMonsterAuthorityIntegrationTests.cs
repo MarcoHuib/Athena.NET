@@ -476,6 +476,25 @@ public sealed class MapTcpServerMonsterAuthorityIntegrationTests : IAsyncLifetim
             Assert.Equal(currentIncarnation, beforeInstance.IncarnationId);
             Assert.Equal(beforeInstance.MaxHp, beforeInstance.CurrentHp);
 
+            // Deterministic observation of _inFlight WHILE the real attack is actually in flight
+            // (review fix): AllocateAndDispatchFreshDamageAttemptAsync calls BeginInFlight under
+            // the SAME _attackGate critical section that publishes the pending attempt, strictly
+            // BEFORE the first dispatch (DispatchPendingDamageAttemptAsync) ever runs - so by the
+            // time this transparent wrapper around the REAL worldRuntime.ApplyMonsterDamageAsync
+            // call is entered, BeginInFlight has unconditionally already registered this life.
+            // Asserting here, before awaiting the real RPC's result, is what actually proves
+            // "_inFlight <= 1 DURING one logical attack" rather than merely inferring it from the
+            // fully-resolved state after the fact. The real World RPC and real end-to-end path are
+            // preserved - this wrapper only observes, never fakes or skips, the real call.
+            var inFlightObservedDuringDispatch = false;
+            session.DebugApplyMonsterDamageDispatcher = async (command, ct) =>
+            {
+                Assert.Equal(1, session.LethalDeathArbiterInFlightCountForTest);
+                inFlightObservedDuringDispatch = true;
+                maxInFlight = Math.Max(maxInFlight, session.LethalDeathArbiterInFlightCountForTest);
+                return await worldRuntime.ApplyMonsterDamageAsync(command, ct);
+            };
+
             // C. the real Ragexe 0x0437 / MapClientSession attack path.
             await stream.WriteAsync(BuildAttackPacket(actorId));
 
@@ -507,16 +526,21 @@ public sealed class MapTcpServerMonsterAuthorityIntegrationTests : IAsyncLifetim
             Assert.Equal(actorId, BinaryPrimitives.ReadUInt32LittleEndian(vanishPacket.AsSpan(2)));
             Assert.Equal(PacketConstants.ZcNotifyVanishReasonDied, vanishPacket[6]);
 
+            // This cycle's real dispatch must have actually reached the wrapper above - otherwise
+            // the _inFlight==1 observation asserted there never genuinely ran, and this cycle would
+            // silently prove nothing about the in-flight invariant.
+            Assert.True(inFlightObservedDuringDispatch, $"Cycle {cycle}: expected the real dispatch to observe _inFlight while in flight.");
+
             // F. no unresolved PendingMonsterDamageAttempt remains for this session.
             var pendingRetryAt = await session.SnapshotPendingNextRetryAtForTestAsync(CancellationToken.None);
             Assert.Null(pendingRetryAt);
 
-            // LethalDeathProjectionArbiter memory bound: at most 1 in-flight during one logical
-            // attack (already resolved by this point -> 0), and _alreadyProjected may be 1 right
-            // after this session's own lethal vanish projects (markProjected: true on the winning
-            // path) - captured now, before this cycle's Respawned cleanup removes it.
+            // LethalDeathProjectionArbiter memory bound: 0 in-flight now that this logical attack
+            // has fully resolved (the peak of 1 was directly observed above, WHILE the real World
+            // RPC was actually in flight), and _alreadyProjected may be 1 right after this session's
+            // own lethal vanish projects (markProjected: true on the winning path) - captured now,
+            // before this cycle's Respawned cleanup removes it.
             Assert.Equal(0, session.LethalDeathArbiterInFlightCountForTest);
-            maxInFlight = Math.Max(maxInFlight, session.LethalDeathArbiterInFlightCountForTest);
             maxAlreadyProjected = Math.Max(maxAlreadyProjected, session.LethalDeathArbiterAlreadyProjectedCountForTest);
 
             // G./H./I. drive the real feed until Respawned is observed: the SAME ActorId reports a
@@ -550,22 +574,49 @@ public sealed class MapTcpServerMonsterAuthorityIntegrationTests : IAsyncLifetim
             // session - the load-bearing proof against historical growth across cycles.
             Assert.Equal(0, session.LethalDeathArbiterAlreadyProjectedCountForTest);
 
+            // Review fix: also prove "no unresolved pending attempt" at the COMPLETED kill/respawn
+            // cycle boundary - the earlier check (F, above) ran before the Respawned lifecycle even
+            // started, which only proves the pending attempt resolved before respawn, not that it
+            // stays resolved (0) all the way through respawn/rediscovery. This is the actual
+            // per-cycle boundary the original requirement calls for.
+            Assert.Null(await session.SnapshotPendingNextRetryAtForTestAsync(CancellationToken.None));
+
             currentIncarnation = respawnedInstance.IncarnationId;
         }
 
         // Across all 25 cycles, the maximum observed arbiter counts never exceeded the bounded
-        // envelope - they did not grow with cycle/kill number.
-        Assert.Equal(0, maxInFlight);
+        // envelope - they did not grow with cycle/kill number. maxInFlight was captured directly
+        // WHILE each cycle's real dispatch was in flight (see the DebugApplyMonsterDamageDispatcher
+        // wrapper above), not merely inferred from the fully-resolved post-cycle state - it proves
+        // the actual requested envelope, _inFlight <= 1 DURING one logical attack.
+        Assert.Equal(1, maxInFlight);
         Assert.Equal(1, maxAlreadyProjected);
 
-        // J./6. session-end cleanup: close normally, await teardown, and confirm no unresolved
-        // pending attempt or in-flight/leftover arbiter registration remains.
+        // Pre-teardown snapshot: no unresolved pending attempt while the session is still fully
+        // live (both this and the identical post-teardown check below are required - see that
+        // check's own doc comment for why SnapshotPendingNextRetryAtForTestAsync itself cannot be
+        // repeated after teardown).
         Assert.Null(await session.SnapshotPendingNextRetryAtForTestAsync(CancellationToken.None));
-        Assert.Equal(0, session.LethalDeathArbiterInFlightCountForTest);
-        Assert.Equal(0, session.LethalDeathArbiterAlreadyProjectedCountForTest);
 
+        // J./6. session-end cleanup: close normally, THEN await teardown, THEN confirm terminal
+        // state - the assertions below run strictly AFTER RunAsync's own teardown has completed
+        // (run.WaitAsync has returned), not before it.
         client.Close();
         await run.WaitAsync(TimeSpan.FromSeconds(5));
+
+        // Known limitation (review-identified): SnapshotPendingNextRetryAtForTestAsync itself
+        // cannot be safely called here - RunAsync's own teardown (StopCoreAsync) disposes
+        // _attackGate (the SemaphoreSlim that method awaits) as part of its own `finally` block,
+        // which has already run by the time run.WaitAsync() returns above. Calling it now would
+        // throw ObjectDisposedException, not report a legitimate "no pending attempt" answer -
+        // inventing a new post-teardown-safe seam for this would be a broader change than this
+        // correction's own scope allows. The pre-teardown snapshot immediately above already
+        // proves "no unresolved pending attempt" at the last live-session instant available before
+        // teardown; LethalDeathProjectionArbiter is a plain in-memory Lock-guarded type (never
+        // disposed by teardown), so its own counts remain safely, genuinely readable AFTER
+        // teardown and are asserted here as the actual terminal-state confirmation.
+        Assert.Equal(0, session.LethalDeathArbiterInFlightCountForTest);
+        Assert.Equal(0, session.LethalDeathArbiterAlreadyProjectedCountForTest);
     }
 
     [Fact]
