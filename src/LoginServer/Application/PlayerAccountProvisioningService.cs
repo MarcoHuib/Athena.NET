@@ -14,11 +14,13 @@ public sealed class PlayerAccountProvisioningService : IPlayerAccountProvisionin
 {
     private readonly UserManager<AthenaIdentityUser> _userManager;
     private readonly AthenaIdentityDbContext _db;
+    private readonly IRagnarokAccountIdAllocator _idAllocator;
 
-    public PlayerAccountProvisioningService(UserManager<AthenaIdentityUser> userManager, AthenaIdentityDbContext db)
+    public PlayerAccountProvisioningService(UserManager<AthenaIdentityUser> userManager, AthenaIdentityDbContext db, IRagnarokAccountIdAllocator idAllocator)
     {
         _userManager = userManager;
         _db = db;
+        _idAllocator = idAllocator;
     }
 
     public async Task<ProvisionPlayerAccountResult> ProvisionAsync(string userName, string email, string password, char sex, CancellationToken cancellationToken)
@@ -41,7 +43,7 @@ public sealed class PlayerAccountProvisioningService : IPlayerAccountProvisionin
 
         try
         {
-            var ragnarokAccountId = await AllocateRagnarokAccountIdAsync(cancellationToken);
+            var ragnarokAccountId = await _idAllocator.AllocateAsync(_db, cancellationToken);
             var gameAccount = new AthenaGameAccount
             {
                 Id = Guid.NewGuid(),
@@ -61,19 +63,5 @@ public sealed class PlayerAccountProvisioningService : IPlayerAccountProvisionin
             await transaction.RollbackAsync(cancellationToken);
             return ProvisionPlayerAccountResult.Fail(ex.Message);
         }
-    }
-
-    /// <summary>
-    /// Allocates the next legacy uint32 compatibility id. Mirrors the existing
-    /// login table's IDENTITY(2000000,1) starting range so stock-protocol account
-    /// ids stay in the same numeric space regardless of which table produced them.
-    /// </summary>
-    private async Task<uint> AllocateRagnarokAccountIdAsync(CancellationToken cancellationToken)
-    {
-        var max = await _db.GameAccounts
-            .Select(a => (uint?)a.RagnarokAccountId)
-            .MaxAsync(cancellationToken);
-
-        return (max ?? 1_999_999u) + 1;
     }
 }

@@ -99,5 +99,22 @@ public sealed class AthenaIdentityDbContext : IdentityDbContext<AthenaIdentityUs
             // protocol; must remain unique across all game accounts.
             entity.HasIndex(e => e.RagnarokAccountId).IsUnique();
         });
+
+        // Backs SqlServerSequenceRagnarokAccountIdAllocator: a SQL Server SEQUENCE
+        // is atomic under concurrent provisioning without an in-process counter or
+        // holding a transaction lock across the allocation. Starts above the
+        // legacy login table's reserved/service-account range and its own
+        // IDENTITY(2000000,1) starting point, matching the previous MAX()+1
+        // allocation's starting range.
+        //
+        // Deliberately NOT declared via builder.HasSequence(...): that would put
+        // it in the EF model, and Database.EnsureCreated() (used by this
+        // project's SQLite-backed tests, since SQLite has no migrations
+        // provider) creates schema straight from the model and throws
+        // NotSupportedException the moment a sequence appears in it - SQLite has
+        // no equivalent. The sequence exists only via the
+        // AddRagnarokAccountIdSequence migration, which is fine: nothing else in
+        // the model references it (SqlServerSequenceRagnarokAccountIdAllocator
+        // queries it with a raw "NEXT VALUE FOR" statement, not a column default).
     }
 }

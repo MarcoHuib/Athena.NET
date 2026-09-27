@@ -13,6 +13,7 @@ using Athena.Net.LoginServer.Db;
 using Athena.Net.LoginServer.Db.Entities;
 using Athena.Net.LoginServer.Db.Identity;
 using Athena.Net.LoginServer.Net;
+using Athena.Net.LoginServer.Tests.TestSupport;
 
 namespace Athena.Net.LoginServer.Tests.Net;
 
@@ -518,6 +519,7 @@ public sealed class ClientSessionLoginCharFlowTests
             })
                 .AddRoles<IdentityRole<Guid>>()
                 .AddEntityFrameworkStores<AthenaIdentityDbContext>();
+            services.AddScoped<IRagnarokAccountIdAllocator, SqliteMaxPlusOneRagnarokAccountIdAllocator>();
             services.AddScoped<IPlayerAccountProvisioningService, PlayerAccountProvisioningService>();
             services.AddSingleton(new LoginConfigStore(new LoginConfig { UseWebAuthToken = useWebAuthToken }));
             services.AddSingleton<IPlayerAuthenticationService, IdentityPlayerAuthenticationService>();

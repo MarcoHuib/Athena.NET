@@ -11,6 +11,7 @@ using Athena.Net.LoginServer.Config;
 using Athena.Net.LoginServer.Db;
 using Athena.Net.LoginServer.Db.Identity;
 using Athena.Net.LoginServer.Net;
+using Athena.Net.LoginServer.Tests.TestSupport;
 
 namespace Athena.Net.LoginServer.Tests.Net;
 
@@ -46,6 +47,7 @@ public sealed class ClientSessionGameAccountHandlersTests : IDisposable
         })
             .AddRoles<IdentityRole<Guid>>()
             .AddEntityFrameworkStores<AthenaIdentityDbContext>();
+        services.AddScoped<IRagnarokAccountIdAllocator, SqliteMaxPlusOneRagnarokAccountIdAllocator>();
         services.AddScoped<IPlayerAccountProvisioningService, PlayerAccountProvisioningService>();
 
         _serviceProvider = services.BuildServiceProvider();

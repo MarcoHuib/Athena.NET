@@ -55,6 +55,7 @@ public static class ServiceComposition
                 .AddRoles<IdentityRole<Guid>>()
                 .AddEntityFrameworkStores<AthenaIdentityDbContext>();
 
+            services.AddScoped<IRagnarokAccountIdAllocator, SqlServerSequenceRagnarokAccountIdAllocator>();
             services.AddScoped<IPlayerAccountProvisioningService, PlayerAccountProvisioningService>();
 
             // Singleton is safe: IdentityPlayerAuthenticationService holds no

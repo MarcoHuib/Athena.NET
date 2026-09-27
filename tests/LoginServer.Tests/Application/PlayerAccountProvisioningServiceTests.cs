@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Athena.Net.LoginServer.Application;
 using Athena.Net.LoginServer.Db.Identity;
+using Athena.Net.LoginServer.Tests.TestSupport;
 
 namespace Athena.Net.LoginServer.Tests.Application;
 
@@ -36,6 +37,7 @@ public sealed class PlayerAccountProvisioningServiceTests : IDisposable
         })
             .AddRoles<IdentityRole<Guid>>()
             .AddEntityFrameworkStores<AthenaIdentityDbContext>();
+        services.AddScoped<IRagnarokAccountIdAllocator, SqliteMaxPlusOneRagnarokAccountIdAllocator>();
         services.AddScoped<IPlayerAccountProvisioningService, PlayerAccountProvisioningService>();
 
         _serviceProvider = services.BuildServiceProvider();
@@ -175,5 +177,88 @@ public sealed class PlayerAccountProvisioningServiceTests : IDisposable
     {
         Assert.Equal(typeof(Guid), typeof(AthenaIdentityUser).GetProperty("Id")!.PropertyType);
         Assert.Equal(typeof(Guid), typeof(AthenaGameAccount).GetProperty("Id")!.PropertyType);
+    }
+
+    [Fact]
+    public async Task ProvisionAsync_UsesTheAllocatedRagnarokAccountId()
+    {
+        // Application-level semantics, independent of which IRagnarokAccountIdAllocator
+        // is wired in: the provisioned game account's RagnarokAccountId must be
+        // exactly whatever the allocator returned.
+        var services = new ServiceCollection();
+        services.AddDbContext<AthenaIdentityDbContext>(options => options.UseSqlite(_connection));
+        services.AddIdentityCore<AthenaIdentityUser>(options =>
+        {
+            options.User.RequireUniqueEmail = true;
+            options.Password.RequiredLength = 6;
+            options.Password.RequireDigit = false;
+            options.Password.RequireLowercase = false;
+            options.Password.RequireUppercase = false;
+            options.Password.RequireNonAlphanumeric = false;
+        })
+            .AddRoles<IdentityRole<Guid>>()
+            .AddEntityFrameworkStores<AthenaIdentityDbContext>();
+        services.AddScoped<IRagnarokAccountIdAllocator>(_ => new FixedRagnarokAccountIdAllocator(9_000_042));
+        services.AddScoped<IPlayerAccountProvisioningService, PlayerAccountProvisioningService>();
+        await using var provider = services.BuildServiceProvider();
+
+        using var scope = provider.CreateScope();
+        var provisioning = scope.ServiceProvider.GetRequiredService<IPlayerAccountProvisioningService>();
+
+        var result = await provisioning.ProvisionAsync("FixedIdUser", "fixed@example.com", "password1", 'M', CancellationToken.None);
+
+        Assert.True(result.Success, result.ErrorMessage);
+        Assert.Equal(9_000_042u, result.RagnarokAccountId);
+    }
+
+    [Fact]
+    public async Task ProvisionAsync_AllocatorReturnsAColludingId_FailsViaTheRealUniqueConstraint()
+    {
+        // Defense in depth: even if an IRagnarokAccountIdAllocator implementation
+        // were buggy and handed out a duplicate (which SqlServerSequenceRagnarokAccountIdAllocator
+        // cannot do, but this proves PlayerAccountProvisioningService does not
+        // simply trust the allocator), the database's unique index on
+        // RagnarokAccountId must still reject the second insert and roll back
+        // cleanly rather than silently colliding two accounts.
+        var services = new ServiceCollection();
+        services.AddDbContext<AthenaIdentityDbContext>(options => options.UseSqlite(_connection));
+        services.AddIdentityCore<AthenaIdentityUser>(options =>
+        {
+            options.User.RequireUniqueEmail = true;
+            options.Password.RequiredLength = 6;
+            options.Password.RequireDigit = false;
+            options.Password.RequireLowercase = false;
+            options.Password.RequireUppercase = false;
+            options.Password.RequireNonAlphanumeric = false;
+        })
+            .AddRoles<IdentityRole<Guid>>()
+            .AddEntityFrameworkStores<AthenaIdentityDbContext>();
+        services.AddScoped<IRagnarokAccountIdAllocator>(_ => new FixedRagnarokAccountIdAllocator(9_000_099));
+        services.AddScoped<IPlayerAccountProvisioningService, PlayerAccountProvisioningService>();
+        await using var provider = services.BuildServiceProvider();
+
+        using (var firstScope = provider.CreateScope())
+        {
+            var provisioning = firstScope.ServiceProvider.GetRequiredService<IPlayerAccountProvisioningService>();
+            var first = await provisioning.ProvisionAsync("CollisionOne", "collision1@example.com", "password1", 'M', CancellationToken.None);
+            Assert.True(first.Success, first.ErrorMessage);
+        }
+
+        using var secondScope = provider.CreateScope();
+        var db = secondScope.ServiceProvider.GetRequiredService<AthenaIdentityDbContext>();
+        var secondProvisioning = secondScope.ServiceProvider.GetRequiredService<IPlayerAccountProvisioningService>();
+        var second = await secondProvisioning.ProvisionAsync("CollisionTwo", "collision2@example.com", "password2", 'F', CancellationToken.None);
+
+        Assert.False(second.Success);
+        Assert.Equal(1, await db.Users.CountAsync(u => u.UserName == "CollisionOne" || u.UserName == "CollisionTwo"));
+    }
+
+    private sealed class FixedRagnarokAccountIdAllocator : IRagnarokAccountIdAllocator
+    {
+        private readonly uint _value;
+
+        public FixedRagnarokAccountIdAllocator(uint value) => _value = value;
+
+        public Task<uint> AllocateAsync(AthenaIdentityDbContext db, CancellationToken cancellationToken) => Task.FromResult(_value);
     }
 }
