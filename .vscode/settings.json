@@ -1,3 +1,8 @@
 {
-    "git.detectSubmodules": false
+    "dataworkspace.excludedProjects": [
+        "Ragnarok/Ragnarok.sqlproj"
+    ],
+    "git.detectSubmodules": false,
+    "cmake.sourceDirectory": "/Users/marco/Projects/Athena.NET/legacy/rathena",
+    "dotnet.defaultSolution": "Athena.NET.slnx"
 }

@@ -6,7 +6,9 @@ using Athena.Net.MapServer.Gameplay.Rules.Renewal;
 using Athena.Net.MapServer.Generated.GameData.Mobs;
 using Athena.Net.MapServer.Generated.World;
 using Athena.Net.MapServer.Net;
+using Athena.Net.MapServer.Tests.Net;
 using Athena.Net.MapServer.World;
+using Athena.Net.World.Contracts;
 
 namespace Athena.Net.MapServer.Tests.World;
 
@@ -94,9 +96,13 @@ public sealed class PrtFild08dMonsterVisibilityAndRespawnIntegrationTests
 
         var clock = new FakeTimeProvider();
         var allocator = new WorldActorIdAllocator();
-        var registry = new MonsterRegistry([spawn with { Count = 1 }], allocator, new FixedCellSelector(500, 500), clock);
-        var combat = new MonsterCombatCoordinator(registry, new QuestDropResolver(Generated.GameData.Quests.GeneratedQuestDrops.All), new RenewalBasicAttackRules());
+        var registry = new MonsterRegistry([spawn with { Count = 1 }], allocator.Allocate, new FixedCellSelector(500, 500), clock);
         var target = registry.AllInstances[0];
+        var epoch = WorldSimulationEpoch.NewEpoch();
+        var combatState = new MonsterAttackCadenceStore();
+        combatState.Register(target.Map, epoch, target.ActorId, new WorldMonsterIncarnationId(target.IncarnationId.Value));
+        var combat = new MonsterCombatCoordinator(new QuestDropResolver(Generated.GameData.Quests.GeneratedQuestDrops.All), new RenewalBasicAttackRules());
+        var monsterProjections = WorldMonsterProjectionTestHelper.SeedProjection(target.Map, epoch, combatState, registry.AllInstances);
         Assert.Equal("prt_fild08d", target.Map);
         Assert.Equal(GeneratedMobs.Poring.Id, target.Spawn.Mob.Id);
         Assert.NotEqual(2401, target.Spawn.Mob.Id); // Real ordinary Poring (1002), never the tutorial G_PORING (2401).
@@ -111,12 +117,16 @@ public sealed class PrtFild08dMonsterVisibilityAndRespawnIntegrationTests
         using var _ = client;
         var stream = client.GetStream();
 
+        var fakeWorld = new FakeCombatWorldRuntime();
+        WorldMonsterProjectionTestHelper.ResyncProjection(monsterProjections, target.Map, epoch, combatState, registry.AllInstances, fakeWorld);
+        var life = new WorldMonsterLifeReference(target.Map, epoch, target.ActorId, new WorldMonsterIncarnationId(target.IncarnationId.Value));
+
         var session = new MapClientSession(
             1, serverClient, new CharServerConnector(new MapConfigStore(new MapConfig(), "unused.conf")), true,
             "prt_fild08d", 500, 500, WorldMapRegistry.Tutorial,
             questPersistence: new NoOpQuestPersistence(), gameplayStatePersistence: new FixedGameplayStatePersistence(StrongNovice()),
-            accountId: AccountId, charId: CharId, monsters: registry, combat: combat,
-            inventoryPersistence: new NoOpInventoryPersistence());
+            accountId: AccountId, charId: CharId, monsterProjections: monsterProjections, combat: combat,
+            inventoryPersistence: new NoOpInventoryPersistence(), combatState: combatState, distributedWorld: fakeWorld);
         var run = session.RunAsync(CancellationToken.None);
         await session.CompleteIroAuthenticationAsync(new(AccountId, CharId, 1, 2, 0, 0, false, "prt_fild08d", 500, 500, 0, 0, 0));
 
@@ -144,15 +154,34 @@ public sealed class PrtFild08dMonsterVisibilityAndRespawnIntegrationTests
         // already proves for this same generic pipeline) before the terminal 0x0080 vanish - drained
         // generically here rather than assumed away, since this test's point is exercising the real
         // pipeline, not re-deriving G_PORING's simplified zero-EXP shape.
-        for (var i = 0; i < 20 && target.IsAlive; i++)
+        bool IsAlive() => fakeWorld.TryGetCurrentHp(life) is > 0;
+
+        for (var i = 0; i < 20 && IsAlive(); i++)
         {
             await stream.WriteAsync(AttackPacket(actorId));
+
+            // Live-acceptance wire-fidelity fix: pinned unit_attack's own due-now branch (unit.cpp:
+            // 2971-2978) sends clif_fixpos (0x0088, the ATTACKER's own current position)
+            // unconditionally, before the attack-timer-equivalent execution/range check - each
+            // iteration here is a fresh, genuinely due-now client attack request.
+            var fixposPacket = await ReadExact(stream, PacketConstants.ZcStopMoveLength);
+            Assert.Equal((short)PacketConstants.ZcStopMove, BinaryPrimitives.ReadInt16LittleEndian(fixposPacket));
+            Assert.Equal(AccountId, BinaryPrimitives.ReadUInt32LittleEndian(fixposPacket.AsSpan(2)));
+
             var damagePacket = await ReadExact(stream, PacketConstants.ZcNotifyAct3Length);
             Assert.Equal((short)PacketConstants.ZcNotifyAct3, BinaryPrimitives.ReadInt16LittleEndian(damagePacket));
             Assert.Equal(actorId, BinaryPrimitives.ReadUInt32LittleEndian(damagePacket.AsSpan(6)));
             Assert.True(BinaryPrimitives.ReadUInt32LittleEndian(damagePacket.AsSpan(22)) > 0, "Expected the strong test attacker to deal nonzero damage.");
 
-            if (!target.IsAlive)
+            // ZC_HP_INFO (0x0977) always follows the damage packet for an already-visible target -
+            // see PacketConstants.ZcHpInfo's own doc comment - including on the killing blow itself
+            // (pinned status_damage decrements HP to 0 BEFORE mob_damage sends this packet).
+            var hpInfoPacket = await ReadExact(stream, PacketConstants.ZcHpInfoLength);
+            Assert.Equal((short)PacketConstants.ZcHpInfo, BinaryPrimitives.ReadInt16LittleEndian(hpInfoPacket));
+            Assert.Equal(actorId, BinaryPrimitives.ReadUInt32LittleEndian(hpInfoPacket.AsSpan(2)));
+            Assert.Equal(fakeWorld.TryGetCurrentHp(life) ?? 0u, BinaryPrimitives.ReadUInt32LittleEndian(hpInfoPacket.AsSpan(6)));
+
+            if (!IsAlive())
             {
                 while (true)
                 {
@@ -178,6 +207,15 @@ public sealed class PrtFild08dMonsterVisibilityAndRespawnIntegrationTests
                 }
             }
         }
+        Assert.False(IsAlive());
+
+        // The coordinator's own kill mutation lands in MonsterAttackCadenceStore, never on the local
+        // MobInstance (there is no local MobInstance for a production monster post-cutover) - the
+        // local MobInstance driving this test's own generated-spawn/respawn-delay data must be
+        // independently killed too, mirroring what a real World life transition would have already
+        // done, so ProcessDueRespawns below has a genuinely dead instance to work with.
+        target.ApplyDamage(target.CurrentHp);
+        registry.ScheduleRespawnIfNeeded(target);
         Assert.False(target.IsAlive);
 
         // --- Respawn through the EXISTING generic respawn pipeline (same as every other map) ---
@@ -185,8 +223,21 @@ public sealed class PrtFild08dMonsterVisibilityAndRespawnIntegrationTests
         var respawned = registry.ProcessDueRespawns();
         Assert.Single(respawned);
         Assert.Same(target, respawned[0]);
+        // Mirrors MapTcpServer's own production respawn fan-out, which re-registers each respawned
+        // instance's combat-state entry (fresh full HP) into the SAME store, under the SAME epoch -
+        // and reseeds the World HP ledger (fakeWorld) the same way a real respawn's fresh
+        // authoritative snapshot would, since HP is no longer local MapServer/cadence-store state.
+        foreach (var instance in respawned)
+        {
+            combatState.Register(instance.Map, epoch, instance.ActorId, new WorldMonsterIncarnationId(instance.IncarnationId.Value));
+            fakeWorld.SeedMonster(new WorldMonsterLifeReference(instance.Map, epoch, instance.ActorId, new WorldMonsterIncarnationId(instance.IncarnationId.Value)), instance.CurrentHp, instance.Spawn.Mob.MaxHp);
+        }
         Assert.True(target.IsAlive);
-        Assert.Equal(target.Spawn.Mob.MaxHp, target.CurrentHp);
+        // `life` still carries the PRE-respawn IncarnationId - respawn is a genuinely new life
+        // (fresh WorldMonsterLifeReference), so the fake ledger was seeded under the NEW incarnation
+        // above, never re-seeding the old (now-superseded) key `life` still points at.
+        var currentLife = life with { IncarnationId = new WorldMonsterIncarnationId(target.IncarnationId.Value) };
+        Assert.Equal(target.Spawn.Mob.MaxHp, fakeWorld.TryGetCurrentHp(currentLife) ?? 0u);
 
         client.Close();
         await run.WaitAsync(TimeSpan.FromSeconds(5));

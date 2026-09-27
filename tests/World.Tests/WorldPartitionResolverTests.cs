@@ -155,18 +155,21 @@ public sealed class WorldPartitionResolverTests
     public void DuplicatePartitionIds_FailValidation() => Assert.Throws<InvalidOperationException>(() =>
         new WorldPartitionResolver([new("a", ["prontera"]), new("a", ["izlude"])], []));
 
+    // Topology configuration carries NO actor-ID concept at all (see WorldPartitionTopology.cs's
+    // own doc comment, and ActorIdBlockAuthority.cs's own doc comment for where global actor-ID
+    // uniqueness is actually guaranteed instead - a single leased-block Orleans grain, never a
+    // config-declared numeric range tied to a specific partition). Proven structurally: the real
+    // production conf/world_partitions.json parses successfully through the plain
+    // WorldPartitionDefinition shape, which has no ActorIdRange field for a stray/legacy
+    // "actorIdRange" key in the JSON to even bind to.
     [Fact]
-    public void DevelopmentActorRanges_DoNotOverlap()
+    public void ProductionTopology_CarriesNoActorIdRangeConcept()
     {
-        WorldPartitionActorRanges.Validate(WorldPartitionActorRanges.Development);
-        var prontera = new PartitionWorldActorIdAllocator(WorldPartitionActorRanges.Development[0]);
-        var rest = new PartitionWorldActorIdAllocator(WorldPartitionActorRanges.Development[1]);
-        Assert.NotEqual(prontera.Allocate(), rest.Allocate());
+        var resolver = WorldPartitionTopologyLoader.Load(TestWorldPartitionsPath.Resolve(), ["prontera", "prt_fild08d", "izlude"]);
+        Assert.Equal("prontera-region", resolver.ResolvePartition("prontera"));
+        var actorIdRangeField = typeof(WorldPartitionDefinition).GetProperty("ActorIdRange");
+        Assert.Null(actorIdRangeField);
     }
-
-    [Fact]
-    public void OverlappingActorRanges_FailValidation() => Assert.Throws<InvalidOperationException>(() =>
-        WorldPartitionActorRanges.Validate([new("a", 110_000_000, 120_000_000), new("b", 119_000_000, 129_000_000)]));
 
     private static string WriteTempTopology(object document)
     {

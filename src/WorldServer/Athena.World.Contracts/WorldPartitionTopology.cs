@@ -30,6 +30,11 @@ public interface IWorldPartitionResolver
 // responsibility lives instead. Both production and development source their policy from the same
 // world_partitions.json shape via WorldPartitionTopologyLoader.Load, just pointed at different
 // absolute paths supplied by their own composition root.
+//
+// Deliberately carries no actor-ID concept at all: partition topology and actor-ID capacity
+// planning are fully independent concerns - see ActorIdBlockAuthority.cs's own doc comment for
+// where global actor-ID uniqueness is actually guaranteed (a single leased-block Orleans grain,
+// never a config-declared numeric range tied to a specific partition).
 public sealed class WorldPartitionResolver : IWorldPartitionResolver
 {
     private readonly IReadOnlyList<WorldPartitionDefinition> _definitions;
@@ -92,40 +97,4 @@ public static class WorldPartitionTopologyLoader
     }
 
     private sealed record PartitionJson(string[]? IncludeMaps, string[]? ExcludeMaps);
-}
-
-public readonly record struct WorldActorIdRange(string PartitionId, uint StartInclusive, uint EndInclusive)
-{
-    public void Validate() { if (StartInclusive < 110_000_000 || StartInclusive > EndInclusive) throw new InvalidOperationException($"Invalid actor-ID range for '{PartitionId}'."); }
-}
-
-public static class WorldPartitionActorRanges
-{
-    public static readonly IReadOnlyList<WorldActorIdRange> Development =
-    [
-        new("prontera-region", 110_000_000, 119_999_999),
-        new("world-rest", 120_000_000, 129_999_999),
-    ];
-
-    public static void Validate(IReadOnlyList<WorldActorIdRange> ranges)
-    {
-        foreach (var range in ranges) range.Validate();
-        for (var i = 0; i < ranges.Count; i++)
-        for (var j = i + 1; j < ranges.Count; j++)
-            if (ranges[i].StartInclusive <= ranges[j].EndInclusive && ranges[j].StartInclusive <= ranges[i].EndInclusive)
-                throw new InvalidOperationException($"Actor-ID ranges for '{ranges[i].PartitionId}' and '{ranges[j].PartitionId}' overlap.");
-    }
-}
-
-public sealed class PartitionWorldActorIdAllocator
-{
-    private readonly WorldActorIdRange _range;
-    private long _last;
-    public PartitionWorldActorIdAllocator(WorldActorIdRange range) { range.Validate(); _range = range; _last = range.StartInclusive - 1L; }
-    public uint Allocate()
-    {
-        var value = Interlocked.Increment(ref _last);
-        if (value > _range.EndInclusive) throw new InvalidOperationException($"Actor-ID range for '{_range.PartitionId}' is exhausted.");
-        return (uint)value;
-    }
 }
