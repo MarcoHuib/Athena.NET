@@ -429,6 +429,145 @@ public sealed class MapTcpServerMonsterAuthorityIntegrationTests : IAsyncLifetim
         await run.WaitAsync(TimeSpan.FromSeconds(5));
     }
 
+    // Step 7 substep 11: the real end-to-end same-spawn kill/respawn/re-attack soak. ONE player
+    // session, ONE monster spawn point/ActorId, driven through the REAL MapTcpServer/MapClientSession/
+    // Orleans TestCluster/WorldPartitionGrain stack - never a scripted fake, never a manually
+    // replaced session projection. Every cycle's attack goes through the genuine Ragexe 0x0437 wire
+    // path (BuildAttackPacket -> HandleIroAttackRequestAsync -> the live PendingMonsterDamageAttempt
+    // machinery -> ApplyMonsterDamageAsync), and every respawn is discovered purely through the real
+    // monster feed (ProcessOneMonsterTickAsync -> FanOutEntryAsync), matching
+    // Respawned_RealFeedEntry_...'s own established single-cycle pattern extended to >=25 repeats of
+    // the SAME ActorId. All ordering below is state-driven (bounded polling against real grain/feed/
+    // session state), never an arbitrary sleep used for correctness.
+    [Fact]
+    public async Task KillRespawnReattack_TwentyFiveCyclesSameSpawnPoint_NoHistoricalMemoryGrowth()
+    {
+        var mapId = "izlude";
+        var world = MakeWorld(mapId, respawnDelayMs: 150); // Short, real respawn delay - the grain's own 100ms tick timer observes it deterministically.
+        var worldRuntime = new OrleansWorldRuntime(_cluster.Client, Resolver());
+        var server = new MapTcpServer(new MapConfigStore(new MapConfig(), "unused.conf"), new CharServerConnector(new MapConfigStore(new MapConfig(), "unused.conf")), world, worldRuntime);
+        // The file-level default strong/one-shot fixture (BaseLevel 99, STR/DEX 99) - proven
+        // elsewhere in this file (Scenario 1's own fixture-requirement note) to one-shot-kill
+        // Poring's 55 HP deterministically, no RNG dependency. Every cycle's attack must be lethal
+        // on its own first real hit so the soak's own bounded per-cycle windows stay tight.
+        var (client, stream, session, run, _) = await ConnectSessionAsync(server, world, worldRuntime, accountId: 700, mapId, MonsterX, MonsterY);
+        using var _dispose = client;
+
+        await server.ProcessOneMonsterTickAsync([session], CancellationToken.None); // SpawnInitializationRequired.
+        await server.ProcessOneMonsterTickAsync([session], CancellationToken.None); // Fresh atomic bootstrap.
+        var initialDiscovery = await ReadDynamic(stream);
+        Assert.Equal((short)PacketConstants.ZcNotifyStandEntry, BinaryPrimitives.ReadInt16LittleEndian(initialDiscovery));
+
+        Assert.True(world.MonsterProjections.TryGet(mapId, out var projection));
+        var original = Assert.Single(projection.AllInstances);
+        var actorId = original.ActorId;
+        var currentIncarnation = original.IncarnationId;
+
+        var maxInFlight = 0;
+        var maxAlreadyProjected = 0;
+
+        const int cycles = 25;
+        for (var cycle = 0; cycle < cycles; cycle++)
+        {
+            // A. projection contains the current Alive incarnation; B. full HP before attacking.
+            Assert.True(world.MonsterProjections.TryGet(mapId, out var beforeProjection), $"Cycle {cycle}: expected a live projection.");
+            var beforeInstance = Assert.Single(beforeProjection.AllInstances, i => i.ActorId == actorId);
+            Assert.Equal(WorldMonsterLifecycleState.Alive, beforeInstance.Lifecycle);
+            Assert.Equal(currentIncarnation, beforeInstance.IncarnationId);
+            Assert.Equal(beforeInstance.MaxHp, beforeInstance.CurrentHp);
+
+            // C. the real Ragexe 0x0437 / MapClientSession attack path.
+            await stream.WriteAsync(BuildAttackPacket(actorId));
+
+            // D. World authority reaches Dead/HP==0 - polled directly against the real grain, the
+            // authoritative source, never inferred from the session's own local projection.
+            var grain = _cluster.GrainFactory.GetGrain<IWorldPartitionGrain>(Resolver().ResolvePartition(mapId));
+            var deathDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+            var confirmedDead = false;
+            while (DateTime.UtcNow < deathDeadline && !confirmedDead)
+            {
+                await Task.Delay(20);
+                var page = await grain.PollMonsterFeedAsync(cursor: null, mapId);
+                var candidate = page.Snapshot!.SingleOrDefault(i => i.ActorId == actorId);
+                confirmedDead = candidate is { Lifecycle: WorldMonsterLifecycleState.Dead, CurrentHp: 0 };
+            }
+            Assert.True(confirmedDead, $"Cycle {cycle}: expected World authority to confirm Dead/HP==0.");
+
+            // E. the session resolves the logical attack/death projection - drive real ticks until
+            // its own socket observes exactly the Died vanish for this ActorId (ReadUntilVanishAsync
+            // skips any preceding damage/HP-info packet using each packet's own real framing).
+            var vanishTask = ReadUntilVanishAsync(stream);
+            var vanishDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+            while (DateTime.UtcNow < vanishDeadline && !vanishTask.IsCompletedSuccessfully)
+            {
+                await server.ProcessOneMonsterTickAsync([session], CancellationToken.None);
+                await Task.Delay(20);
+            }
+            var vanishPacket = await vanishTask;
+            Assert.Equal(actorId, BinaryPrimitives.ReadUInt32LittleEndian(vanishPacket.AsSpan(2)));
+            Assert.Equal(PacketConstants.ZcNotifyVanishReasonDied, vanishPacket[6]);
+
+            // F. no unresolved PendingMonsterDamageAttempt remains for this session.
+            var pendingRetryAt = await session.SnapshotPendingNextRetryAtForTestAsync(CancellationToken.None);
+            Assert.Null(pendingRetryAt);
+
+            // LethalDeathProjectionArbiter memory bound: at most 1 in-flight during one logical
+            // attack (already resolved by this point -> 0), and _alreadyProjected may be 1 right
+            // after this session's own lethal vanish projects (markProjected: true on the winning
+            // path) - captured now, before this cycle's Respawned cleanup removes it.
+            Assert.Equal(0, session.LethalDeathArbiterInFlightCountForTest);
+            maxInFlight = Math.Max(maxInFlight, session.LethalDeathArbiterInFlightCountForTest);
+            maxAlreadyProjected = Math.Max(maxAlreadyProjected, session.LethalDeathArbiterAlreadyProjectedCountForTest);
+
+            // G./H./I. drive the real feed until Respawned is observed: the SAME ActorId reports a
+            // NEW IncarnationId with CurrentHp == MaxHp.
+            WorldMonsterInstance? respawnedInstance = null;
+            var respawnDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+            while (DateTime.UtcNow < respawnDeadline)
+            {
+                await server.ProcessOneMonsterTickAsync([session], CancellationToken.None);
+                if (world.MonsterProjections.TryGet(mapId, out var afterProjection) &&
+                    afterProjection.AllInstances.SingleOrDefault(i => i.ActorId == actorId) is { Lifecycle: WorldMonsterLifecycleState.Alive } candidate &&
+                    !candidate.IncarnationId.Equals(currentIncarnation))
+                {
+                    respawnedInstance = candidate;
+                    break;
+                }
+                await Task.Delay(20);
+            }
+            Assert.NotNull(respawnedInstance);
+            Assert.Equal(actorId, respawnedInstance!.ActorId); // Same ActorId/spawn point across every cycle.
+            Assert.NotEqual(currentIncarnation, respawnedInstance.IncarnationId);
+            Assert.Equal(respawnedInstance.MaxHp, respawnedInstance.CurrentHp);
+
+            // The session must discover the new incarnation through the real World feed (ordinary
+            // discovery, 0x09FF) - never a manually replaced projection.
+            var rediscovery = await ReadDynamic(stream);
+            Assert.Equal((short)PacketConstants.ZcNotifyStandEntry, BinaryPrimitives.ReadInt16LittleEndian(rediscovery));
+            Assert.Equal(actorId, BinaryPrimitives.ReadUInt32LittleEndian(rediscovery.AsSpan(5)));
+
+            // After Respawned cleanup for this actor, _alreadyProjected must be back to 0 for this
+            // session - the load-bearing proof against historical growth across cycles.
+            Assert.Equal(0, session.LethalDeathArbiterAlreadyProjectedCountForTest);
+
+            currentIncarnation = respawnedInstance.IncarnationId;
+        }
+
+        // Across all 25 cycles, the maximum observed arbiter counts never exceeded the bounded
+        // envelope - they did not grow with cycle/kill number.
+        Assert.Equal(0, maxInFlight);
+        Assert.Equal(1, maxAlreadyProjected);
+
+        // J./6. session-end cleanup: close normally, await teardown, and confirm no unresolved
+        // pending attempt or in-flight/leftover arbiter registration remains.
+        Assert.Null(await session.SnapshotPendingNextRetryAtForTestAsync(CancellationToken.None));
+        Assert.Equal(0, session.LethalDeathArbiterInFlightCountForTest);
+        Assert.Equal(0, session.LethalDeathArbiterAlreadyProjectedCountForTest);
+
+        client.Close();
+        await run.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
     [Fact]
     public async Task StaleLifeReference_AfterRespawn_CannotBeAttacked_NoQuestOrDeathProjection()
     {

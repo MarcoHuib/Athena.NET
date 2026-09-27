@@ -47,6 +47,13 @@ internal sealed class WorldMonsterMapSimulation
     // substep - this index exists now so that wiring is a pure lookup, not a full-table scan).
     private readonly Dictionary<Guid, HashSet<(uint CharacterId, WorldMonsterLifeReference Life)>> _attackSequencesByPresence = [];
 
+    // Substep 11 soak diagnostics: read-only counts only, never the dictionaries themselves - lets a
+    // test assert the AttackSequence ledger's memory bound (does it grow historically across many
+    // kill/respawn cycles, or genuinely stay bounded by currently-live attackers?) without exposing
+    // either structure through IWorldPartitionGrain or any other public/Orleans-facing surface.
+    internal int AttackSequenceCountForTest => _attackSequences.Count;
+    internal int AttackSequencePresenceBucketCountForTest => _attackSequencesByPresence.Count;
+
     public string MapId { get; }
     public WorldSimulationEpoch SimulationEpoch { get; private set; }
     public MonsterRegistry? Registry { get; private set; }
@@ -319,13 +326,13 @@ internal sealed class WorldMonsterMapSimulation
     }
 
     // Step 7: the sole atomic HP-mutation entry point. Non-async, zero-await, matching
-    // TryMarkMonsterDeadAsync/NotifyMonsterAttackedAsync's own zero-await pattern above - the
-    // entire clamped-subtract -> Alive/Dead compare -> feed-append -> engagement-fold sequence is
-    // one uninterruptible call, relying on the SAME Orleans per-activation turn-serialization
-    // guarantee those two methods already document and rely on (no [Reentrant] attribute on the
-    // grain, and no await here to yield control mid-mutation). Returns the (HpBefore, HpAfter,
-    // KilledByThisHit) triple the caller (WorldPartitionGrain.ApplyMonsterDamageAsync) folds into
-    // the final WorldMonsterDamageResult, alongside MaxHp read from the same instance.
+    // WorldPartitionGrain.NotifyMonsterAttackedAsync's own zero-await pattern - the entire
+    // clamped-subtract -> Alive/Dead compare -> feed-append -> engagement-fold sequence is one
+    // uninterruptible call, relying on the SAME Orleans per-activation turn-serialization guarantee
+    // that method already documents and relies on (no [Reentrant] attribute on the grain, and no
+    // await here to yield control mid-mutation). Returns the (HpBefore, HpAfter, KilledByThisHit)
+    // triple the caller (WorldPartitionGrain.ApplyMonsterDamageAsync) folds into the final
+    // WorldMonsterDamageResult, alongside MaxHp read from the same instance.
     public (uint HpBefore, uint HpAfter, bool KilledByThisHit, uint MaxHp) ApplyDamage(MobInstance instance, uint damage)
     {
         var maxHp = instance.Spawn.Mob.MaxHp;

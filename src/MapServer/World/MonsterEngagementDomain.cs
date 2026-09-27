@@ -65,11 +65,12 @@ public static class MonsterEngagementDomain
     // behavior this task fixes; a target becomes invalid here only via map mismatch or the target
     // session/character no longer resolving (disconnect, teleport, death), which is exactly this
     // task's own item 7 unlock-condition list.
-    // `nextAttackAt` is supplied by the caller (MonsterEngagementTickProcessor, reading
-    // MonsterCombatStateStore - see that store's own doc comment for why NextAttackAt is owned
-    // there, not on MobInstance, on the migrated combat path) rather than read from
-    // `mob.NextAttackAt` directly - MobInstance.NextAttackAt is superseded on this path (see its
-    // own doc comment) and this method must not reintroduce it as a second cadence source.
+    // No production call site remains on the final Step-7 architecture - the live monster
+    // engagement decision is made by World's own WorldMonsterEngagementRules.Evaluate
+    // (WorldMonsterMapSimulation.cs), never here. This method is retained only for its own
+    // dedicated unit coverage (MonsterEngagementDomainTests.cs) as the MapServer-side equivalent
+    // MonsterTargetRangeRules documents sharing logic with; it must not be wired back onto a live
+    // path as a second, competing engagement authority.
     public static MonsterEngagementDecision Evaluate(MobInstance mob, PlayerCombatSnapshot? target, DateTimeOffset now, DateTimeOffset? nextAttackAt)
     {
         if (target is not { } snapshot || !MonsterTargetRangeRules.IsTargetValid(mob.Map, snapshot.Map, snapshot.IsAlive))

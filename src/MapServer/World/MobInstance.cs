@@ -48,8 +48,14 @@ public readonly record struct MonsterIncarnationId(long Value)
     public MonsterIncarnationId Next() => new(Value + 1);
 }
 
-// One runtime monster instance. Mutable current HP/lifecycle/position only
-// live here, never in the immutable generated MobDefinition/MobSpawnDefinition.
+// One runtime monster instance. Mutable current HP/lifecycle/position only live here, never in
+// the immutable generated MobDefinition/MobSpawnDefinition. This type is file-linked (not
+// duplicated) into both MapServer and Athena.World.Monsters (see WorldMonsterMapSimulation.cs's
+// own doc comment) - the SAME source compiles into both processes. It physically holds mutable
+// player->monster HP/lifecycle fields either way, but only ONE running instance of this type, in
+// the World process, is ever the authoritative distributed runtime instance a real
+// ApplyMonsterDamageAsync call actually mutates - see WorldMonsterMapSimulation's own doc comment
+// for that scope boundary. Do not infer authority from this type's own physical field layout alone.
 //
 // Implements IMonsterActorView directly - see that interface's own doc comment for why its
 // members are exactly this narrow (position/identity/movement only, no CurrentHp/NextAttackAt).
@@ -322,14 +328,13 @@ public sealed class MobInstance : IMonsterActorView
         lock (_gate) { _movement.Stop(); }
     }
 
-    // SUPERSEDED on the migrated live MapServer combat path (Step 5) - MonsterCombatStateStore is
-    // now the sole owner of CurrentHp for MonsterCombatCoordinator/MonsterEngagementTickProcessor
-    // and every production call site they depend on; those callers no longer call ApplyDamage.
-    // This method is retained ONLY for its own existing focused unit tests (MobInstanceTests.cs)
-    // and any not-yet-migrated caller - it must not be (re)introduced as a second mutable HP
-    // authority on the migrated path. See MonsterCombatStateStore.ApplyDamage for the current
-    // production implementation, which calls MarkDeadIfNeeded (not this method) for the lifecycle
-    // transition while holding its own per-key critical section.
+    // Final architecture (Step 7): this IS the production HP-mutation call - World's own
+    // WorldMonsterMapSimulation.ApplyDamage (the sole authoritative player->monster mutation
+    // surface, reached only through WorldPartitionGrain.ApplyMonsterDamageAsync) calls straight
+    // into this method. MapServer itself owns no mutable player->monster HP/lifecycle authority at
+    // all - MonsterCombatCoordinator is pure damage-formula calculation and never mutates HP (see
+    // that type's own doc comment); this record's own physically-mutable CurrentHp/lifecycle fields
+    // are meaningful ONLY inside the World process, via this exact call path.
     //
     // Applies damage and reports whether THIS call caused the Alive->Dead
     // transition (never true twice for the same death - the state check and
@@ -358,23 +363,17 @@ public sealed class MobInstance : IMonsterActorView
         }
     }
 
-    // The narrow, HP-free lifecycle transition MonsterCombatStateStore.ApplyDamage calls (while
-    // still holding ITS OWN per-(MapId,ActorId,IncarnationId) critical section) once it has
-    // determined - using its own separately-owned CurrentHp - that this hit brought HP from >0 to
-    // exactly 0. Deliberately does NOT touch CurrentHp/NextAttackAt at all (those are the store's
-    // own fields on the migrated path); it only performs the Alive->Dead transition and the
-    // engagement-clearing side effect that legitimately belongs to it (pinned mob_dead's own
-    // unlock-on-death, mob.cpp:3863 - identical to ApplyDamage's own long-standing behavior above,
-    // just without also owning the HP math that decided to call this).
+    // A narrow, HP-free Alive->Dead lifecycle transition - performs the same engagement-clearing
+    // side effect as ApplyDamage's own lethal branch above (pinned mob_dead's own unlock-on-death,
+    // mob.cpp:3863) without touching CurrentHp itself. On the final Step-7 architecture, the live
+    // production mutation path is ApplyDamage (called from World's own
+    // WorldMonsterMapSimulation.ApplyDamage) rather than this method - this method currently has no
+    // production caller; it is kept available for a narrower HP-free lifecycle transition should one
+    // ever be needed, and must not be reintroduced as a second, independent HP-mutation authority.
     //
     // Returns true only the FIRST time this transitions Alive->Dead (never true twice for the same
     // death, matching ApplyDamage's own exactly-once guarantee) - a caller that already observed
-    // Dead (e.g. a second concurrent lethal hit serialized behind the store's own lock, which by
-    // then already applied the first hit's lethal transition) gets false and changes nothing.
-    //
-    // Must NOT call back into MonsterCombatStateStore (or any other component's lock) while holding
-    // `_gate` - this method's own critical section only ever touches MobInstance's own fields, so
-    // no lock-order inversion is possible between this method and the store's own outer lock.
+    // Dead gets false and changes nothing.
     public bool MarkDeadIfNeeded()
     {
         lock (_gate)

@@ -25,6 +25,9 @@ public interface IWorldRuntime
     // MovePlayerAsync for the reference shape).
     Task<WorldMonsterSpawnLoadResult> LoadMonsterSpawnsAsync(WorldMonsterSpawnBatch batch, CancellationToken cancellationToken);
     Task<WorldMonsterFeedPage> PollMonsterFeedAsync(WorldMonsterFeedCursor? cursor, string mapId, CancellationToken cancellationToken);
+    // ApplyMonsterDamageAsync is the sole player->monster HP-mutation seam. NotifyMonsterAttackedAsync
+    // is a separate, narrower seam for engagement semantics only where still used (target
+    // acquisition/refresh) - it is NOT the live player-hit HP-mutation path.
     Task<WorldMonsterDamageResult> ApplyMonsterDamageAsync(WorldMonsterDamageCommand command, CancellationToken cancellationToken);
     Task<WorldMonsterAttackedResult> NotifyMonsterAttackedAsync(WorldMonsterAttackedCommand command, CancellationToken cancellationToken);
     Task<WorldMonsterAttackWindowResult> ValidateMonsterAttackWindowAsync(WorldMonsterAttackWindowQuery query, CancellationToken cancellationToken);

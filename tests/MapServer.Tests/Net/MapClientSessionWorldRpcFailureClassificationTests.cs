@@ -174,10 +174,11 @@ public sealed class MapClientSessionWorldRpcFailureClassificationTests
     }
 
     // The legitimate transient case (IOException, already covered end-to-end in
-    // MapClientSessionTransientWorldRpcFailureTests.cs) must re-arm NextAttackAt to a FUTURE time,
-    // never leave an already-due RepeatAttackState that could spin the loop immediately - proven here
-    // directly against RearmAfterTransientFailureAsync's own observable effect: the SECOND
-    // TryMarkMonsterDeadAsync attempt must not happen essentially instantaneously after the first.
+    // MapClientSessionTransientWorldRpcFailureTests.cs) must advance NextRetryAt to a FUTURE time
+    // (DispatchPendingDamageAttemptAsync's own transient-failure branch), never leave an
+    // already-due pending attempt that could spin the loop immediately - proven here directly
+    // against that branch's own observable effect: the SECOND ApplyMonsterDamageAsync dispatch
+    // attempt must not happen essentially instantaneously after the first.
     [Fact]
     public async Task LethalHit_TransientFailure_DoesNotHotLoop_RetryIsPacedByOrdinaryAttackCadence()
     {

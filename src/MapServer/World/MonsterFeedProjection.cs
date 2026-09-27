@@ -13,8 +13,9 @@ namespace Athena.Net.MapServer.World;
 // Binding bootstrap/resync ordering (never reordered):
 //   1. receive Snapshot + SimulationEpoch + AsOfSequence from PollMonsterFeedAsync
 //   2. reconcile the shared monster projection (this type's own _byActorId dictionary)
-//   3. reconcile local combat-state identities (MonsterCombatStateStore - old epoch discarded,
-//      new incarnations get fresh full-HP entries, SAME life's entry is preserved untouched)
+//   3. reconcile local attack-cadence identities (MonsterAttackCadenceStore - old epoch discarded,
+//      new incarnations get a fresh, no-scheduled-attack cadence entry, SAME life's entry is
+//      preserved untouched; this store holds cadence bookkeeping only, never HP)
 //   4. reconcile every active session's actual client-visible monster projection (via the
 //      caller-supplied `reconcileSessions` callback - MapTcpServer owns session enumeration, this
 //      type does not)
@@ -27,7 +28,7 @@ namespace Athena.Net.MapServer.World;
 // own packet-handling loop and its own repeat-attack loop (TryGetLife/TryGetInstance/AllInstances/
 // EngagementOf), and MonsterAttackCadenceExecutor/MonsterSpatialInspector (read-only consumers). All
 // mutable state (_byActorId, _engagementByActorId, Cursor, CurrentEpoch) is guarded by ONE `Lock`,
-// mirroring MonsterCombatStateStore's own exact `private readonly Lock _gate = new(); lock (_gate)
+// mirroring MonsterAttackCadenceStore's own exact `private readonly Lock _gate = new(); lock (_gate)
 // { ... }` convention - every operation here is O(map monster count) in-memory work with no I/O, so
 // holding the lock for the whole operation is cheap and never blocks on a network write.
 public sealed class MonsterFeedProjection(string mapId)

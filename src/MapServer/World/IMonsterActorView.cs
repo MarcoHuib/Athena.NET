@@ -5,15 +5,15 @@ namespace Athena.Net.MapServer.World;
 // Phase 2B plan's own "no second monster-position authority in MapServer" design decision calls
 // for: every position-dependent read (packet building, range checks, visibility) goes through THIS
 // interface so it is mechanically obvious, at every call site, that it reads whichever authority
-// actually backs it (MobInstance for the legacy live-attack path; WorldMonsterActorView,
-// World-authoritative, everywhere else). MobInstance implements this interface unmodified - see
-// that type's own doc comments for the full source trace behind each member.
+// actually backs it (MobInstance's own position fields on the World-process side; WorldMonsterActorView,
+// World-authoritative, everywhere on the MapServer side). MobInstance implements this interface
+// unmodified - see that type's own doc comments for the full source trace behind each member.
 //
-// As of Step 7, CurrentHp/MaxHp are World-authoritative fields carried directly on
-// WorldMonsterInstance (see that type's own doc comment) - packet/read-model projection code reads
-// them from there directly, never through this interface. NextAttackAt remains a MapServer-local
-// cadence concern (MonsterCombatStateStore, staged for rename to MonsterAttackCadenceStore in
-// substep 9) and is likewise never exposed here.
+// On the final Step-7 architecture, CurrentHp/MaxHp are World-authoritative fields carried
+// directly on WorldMonsterInstance (see that type's own doc comment) - packet/read-model
+// projection code reads them from there directly, never through this interface. NextAttackAt
+// remains a MapServer-local cadence concern (MonsterAttackCadenceStore) and is likewise never
+// exposed here.
 //
 // IncarnationId is the REAL MonsterIncarnationId MobInstance itself now tracks (see that type's
 // own doc comment) - never a stub/placeholder value.

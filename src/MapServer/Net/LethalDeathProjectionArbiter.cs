@@ -2,22 +2,29 @@ using Athena.Net.World.Contracts;
 
 namespace Athena.Net.MapServer.Net;
 
-// Step 6 final correctness pass, item 1: closes the race between an attacker's OWN in-flight
-// confirmed-lethal-hit projection (PerformDueRepeatAttackAsync's own TryMarkMonsterDeadAsync call)
-// and World's independent, authoritative Died feed reaching that SAME session through MapTcpServer's
-// separate monster-tick loop (FanOutEntryAsync -> NotifyMonsterDiedAsync) for the SAME exact life.
+// Final architecture (Step 7): World's ApplyMonsterDamageAsync is the sole authority for HP
+// mutation and the Alive->Dead transition - MapServer computes one immutable logical hit
+// (MonsterCombatCoordinator), and PendingMonsterDamageAttempt/AttackSequence preserve that hit's
+// retry identity so a lost-response retry replays the exact same logical outcome idempotently
+// (see PendingMonsterDamageAttempt's own doc comment). When World's response reports
+// KilledByThisHit, the attacking session's own PerformDueRepeatAttackCoreAsync/
+// HandleLethalDamageResultAsync path directly projects that authoritative lethal result onto the
+// wire (damage packet, HP-info, EXP/progression, then the death vanish) - it does not decide
+// lethality itself, only renders the result World already committed.
 //
-// Before this arbiter existed, MapTcpServer's own doc comment claimed the attacker's local
-// confirmed-kill path "necessarily" sends its own death-vanish (and clears its own visibility)
-// BEFORE the separate feed loop can ever observe the resulting Died entry - that was only true back
-// when the local lethal HP mutation happened BEFORE calling TryMarkMonsterDeadAsync. Once that
-// ordering was corrected (World's MarkedDead confirmation now happens FIRST), World's Died feed
-// becomes observable to the SAME MapTcpServer tick loop that is ALSO what will eventually poll for
-// it, immediately after TryMarkMonsterDeadAsync returns MarkedDead - genuinely concurrently with
-// PerformDueRepeatAttackAsync still completing its own CommitConfirmedDeath -> quest/drop -> wire
-// projection sequence. Without arbitration, the attacker's own session could receive an authoritative
-// Died vanish from the feed loop BEFORE its own local sequence finishes, corrupting packet ordering
-// (a bare 0x0080 died with no preceding 0x08C8/0x0977, or two 0x0080 sends).
+// World's OWN independent Died feed (FanOutEntryAsync -> NotifyMonsterDiedAsync, driven by
+// MapTcpServer's separate monster-tick loop) can genuinely race that same session's own in-progress
+// projection of its own lethal hit: both observe the SAME World-authoritative death, through two
+// different paths, and either can finish first. Without arbitration, the attacker's own session
+// could receive an authoritative Died vanish from the feed loop BEFORE its own local sequence
+// finishes, corrupting packet ordering (a bare 0x0080 died with no preceding 0x08C8/0x0977, or two
+// 0x0080 sends). This arbiter ensures exactly one vanish per session per life: while a session's own
+// lethal projection is in flight, an independently-arriving Died for the SAME exact life is deferred
+// (TryDeferDiedWhileInFlight) rather than delivered immediately; `_alreadyProjected` then suppresses
+// any late duplicate Died for that same life once the session's own projection has completed.
+// Respawned/ForgetProjectedForActor structurally removes stale incarnation markers once a new
+// incarnation exists, so `_alreadyProjected` never accumulates historically across many respawns of
+// the same ActorId (see Step 7 substep 11's own memory-bound soak proof of this).
 //
 // Keyed by the EXACT life (MapId, SimulationEpoch, ActorId, IncarnationId) - never by ActorId alone,
 // since a Died feed entry for a DIFFERENT incarnation of the same ActorId must never be suppressed
@@ -50,9 +57,10 @@ internal sealed class LethalDeathProjectionArbiter
     private readonly HashSet<WorldMonsterLifeReference> _alreadyProjected = [];
 
     // Step A: registers that THIS session has an in-flight local lethal projection for the exact
-    // life, called immediately before starting TryMarkMonsterDeadAsync. Idempotent-safe to call again
-    // for the same life (overwrites to false/not-yet-observed) - callers only ever call this once per
-    // attack attempt in practice (PerformDueRepeatAttackAsync's own single lethal branch).
+    // life, called immediately before dispatching the World RPC whose result may report
+    // KilledByThisHit. Idempotent-safe to call again for the same life (overwrites to false/
+    // not-yet-observed) - callers only ever call this once per attack attempt in practice
+    // (AllocateAndDispatchFreshDamageAttemptAsync's own single BeginInFlight call site).
     public void BeginInFlight(WorldMonsterLifeReference life)
     {
         lock (_gate) { _inFlight[life] = false; }
@@ -134,4 +142,11 @@ internal sealed class LethalDeathProjectionArbiter
                 !life.IncarnationId.Value.Equals(exceptIncarnationId.Value));
         }
     }
+
+    // Substep 11 soak diagnostics: read-only counts only, never the underlying dictionary/set
+    // contents - lets a test assert this session's own memory bound (do these structures grow
+    // historically across many kill/respawn cycles, or genuinely stay bounded?) without exposing
+    // either collection publicly.
+    internal int InFlightCountForTest { get { lock (_gate) return _inFlight.Count; } }
+    internal int AlreadyProjectedCountForTest { get { lock (_gate) return _alreadyProjected.Count; } }
 }

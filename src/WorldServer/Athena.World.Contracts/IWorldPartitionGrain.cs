@@ -17,19 +17,24 @@ public interface IWorldPartitionGrain : IGrainWithStringKey
     Task<OutgoingTransferResult> FinalizeOutgoingTransferAsync(Guid transferId);
     Task<WorldMapSnapshot> GetMapSnapshotAsync(string mapId);
 
-    // Step 7 substep 9: World is the sole authority for monster CurrentHp and the Alive->Dead
-    // transition. Damage calculation (weapon/ATK/DEF formula) and quest-drop orchestration remain
-    // MapServer-local - only the atomic clamped-subtract + Alive->Dead compare, and the
-    // exactly-once idempotency ledger that guards it (AttackSequence), live here.
-    // ApplyMonsterDamageAsync is the sole seam MapServer-local combat crosses into World for
+    // Final scope boundary (Step 7): World owns the monster's exact life identity (epoch/actor/
+    // incarnation), position/movement, engagement, CurrentHp/MaxHp, the Alive->Dead transition,
+    // respawn timing, AttackSequence idempotency, and the sequenced monster feed. MapServer owns
+    // damage-formula calculation (weapon/ATK/DEF), local attack cadence/scheduling, packet
+    // projection, EXP/progression, and quest/drop orchestration - it holds no authoritative
+    // player->monster HP/lifecycle state of its own.
+    //
+    // ApplyMonsterDamageAsync is the SOLE seam MapServer-local combat crosses into World for
     // actually mutating HP/lifecycle - the live MapClientSession attack path is fully cut over to
-    // it. NotifyMonsterAttackedAsync remains the separate, narrower seam for target
-    // acquisition/refresh only. ValidateMonsterAttackWindowAsync is a read-only just-in-time
-    // recheck immediately before a locally-cadenced attack actually executes (never an executable
-    // command, never a reservation/claim), UpdatePresenceLifeStateAsync feeds World's own
-    // engagement rules, and PollMonsterFeedAsync is the per-map sequenced feed of pure state
-    // transitions a MapServer instance polls to project monster movement/lifecycle/engagement/HP to
-    // its connected sessions.
+    // it; the atomic clamped-subtract + Alive->Dead compare, and the exactly-once idempotency
+    // ledger that guards it (AttackSequence), live here. NotifyMonsterAttackedAsync remains a
+    // separate, narrower seam for engagement semantics only where still used (target acquisition/
+    // refresh) - it is NOT the live player-hit HP-mutation path.
+    // ValidateMonsterAttackWindowAsync is a read-only just-in-time recheck immediately before a
+    // locally-cadenced attack actually executes (never an executable command, never a reservation/
+    // claim), UpdatePresenceLifeStateAsync feeds World's own engagement rules, and
+    // PollMonsterFeedAsync is the per-map sequenced feed of pure state transitions a MapServer
+    // instance polls to project monster movement/lifecycle/engagement/HP to its connected sessions.
     Task<WorldMonsterSpawnLoadResult> LoadMonsterSpawnsAsync(WorldMonsterSpawnBatch batch);
     Task<WorldMonsterFeedPage> PollMonsterFeedAsync(WorldMonsterFeedCursor? cursor, string mapId);
     Task<WorldMonsterDamageResult> ApplyMonsterDamageAsync(WorldMonsterDamageCommand command);

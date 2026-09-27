@@ -261,11 +261,11 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     // (also covers NPC/warp/player actor ids) used for actual send-gating everywhere else in this
     // class; this type is the monster-specific metadata layered on top of it.
     private readonly MonsterVisibilityState _monsterVisibility = new();
-    // Step 6 final correctness pass, item 1: arbitrates between THIS session's own in-flight
-    // confirmed-lethal-hit projection (PerformDueRepeatAttackAsync's own TryMarkMonsterDeadAsync
-    // call) and World's independent, authoritative Died feed reaching this same session through
-    // MapTcpServer's separate monster-tick loop for the SAME exact life - see
-    // LethalDeathProjectionArbiter's own doc comment for the full race this exists to close.
+    // Arbitrates between THIS session's own in-flight projection of a World-confirmed lethal hit
+    // (BeginInFlight, registered before the World RPC that may report KilledByThisHit) and World's
+    // independent, authoritative Died feed reaching this same session through MapTcpServer's
+    // separate monster-tick loop for the SAME exact life - see LethalDeathProjectionArbiter's own
+    // doc comment for the full race this exists to close and the final architecture it documents.
     private readonly LethalDeathProjectionArbiter _lethalDeathArbiter = new();
     // Test-only seam (always null in production - never set by any production constructor/call
     // site): lets MapClientSessionLethalDeathProjectionRaceTests force the exact, otherwise
@@ -279,17 +279,16 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     // BeforeApplyMonsterDamageReturns hook already covers.
     internal Func<Task>? DebugBeforeMonsterVanishSendAsync { get; set; }
 
-    // Step 7 substep 8 (§22): the ISOLATED test seam standing in for the real World.ApplyMonsterDamageAsync
-    // RPC while the pending-damage-attempt mechanism is built and tested on its own, against a fake
-    // clock, before substep 9 wires it to the live combat path. Always null in production - never
-    // set by any production constructor/call site. Settable to a scriptable delegate that can
-    // simulate any WorldMonsterDamageStatus, a transient exception, a controllable suspension (a
-    // TaskCompletionSource the test itself completes), and can record every command it was actually
-    // invoked with - see DispatchPendingDamageAttemptAsync's own doc comment for exactly where this
-    // is called (both the first send and every internal retry funnel through the same call site).
-    // Distinct from DebugBeforeCommitConfirmedDeathAsync above (that hook is specific to the legacy
-    // lethal-death race window; this one exists purely to exercise the NEW pending-attempt machinery
-    // in isolation, with no live combat-authority call ever reaching it in production).
+    // Test seam standing in for the real World.ApplyMonsterDamageAsync RPC - the ONE production
+    // call site every attack dispatch (both the first send and every internal retry) funnels
+    // through, see DispatchPendingDamageAttemptAsync's own doc comment for exactly where. Always
+    // null in production - never set by any production constructor/call site. Settable to a
+    // scriptable delegate that can simulate any WorldMonsterDamageStatus, a transient exception, a
+    // controllable suspension (a TaskCompletionSource the test itself completes), and can record
+    // every command it was actually invoked with. Distinct from DebugBeforeMonsterVanishSendAsync
+    // above (that hook fires immediately before this session sends its own death vanish, purely to
+    // force the deferred-Died race window in LethalDeathProjectionRaceTests; this one intercepts the
+    // World RPC call itself).
     internal Func<WorldMonsterDamageCommand, CancellationToken, Task<WorldMonsterDamageResult>>? DebugApplyMonsterDamageDispatcher { get; set; }
 
     // Item 2 of the substep-8 correction round: test-only coordination hook, always null in
@@ -2142,11 +2141,11 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     // would itself require running the pending-first turn's own fresh-attempt path, which cannot
     // happen until THIS call releases _attackExecutionGate.
     //
-    // After the prelude, this delegates to the pending-first turn (PerformPendingOrFreshAttackTurnAsync)
-    // - substep 8's own isolated mechanism, which takes priority over PerformDueRepeatAttackCoreAsync
-    // (the legacy, still-live combat path) whenever a PendingMonsterDamageAttempt exists. Substep 9
-    // replaces PerformDueRepeatAttackCoreAsync's own body with the real ApplyMonsterDamageAsync flow;
-    // for now, when no pending attempt exists, control falls through to that unchanged legacy method.
+    // After the prelude, this delegates to the pending-first turn (PerformPendingOrFreshAttackTurnAsync):
+    // an unresolved PendingMonsterDamageAttempt always takes priority and is retried verbatim
+    // (never recomputed); only when no pending attempt exists does control fall through to
+    // PerformDueRepeatAttackCoreAsync's own fresh-attempt path, which itself dispatches through the
+    // real World.ApplyMonsterDamageAsync RPC (see AllocateAndDispatchFreshDamageAttemptAsync).
     private async Task PerformDueRepeatAttackAsync(RepeatAttackState expected, CancellationToken cancellationToken)
     {
         // Item 2 of the substep-8 correction round: test-only coordination point, always null in
@@ -2765,6 +2764,14 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         try { _pendingRetrySignal.Release(); } catch (SemaphoreFullException) { }
     }
 
+    // Substep 11 soak diagnostics: tiny read-only pass-throughs to this session's own
+    // LethalDeathProjectionArbiter counts - lets a long-running kill/respawn soak assert the
+    // arbiter's memory bound (in-flight/already-projected counts staying bounded, never growing
+    // with historical kill count) without exposing the arbiter instance itself or its collections.
+    // Never called from any production code path.
+    internal int LethalDeathArbiterInFlightCountForTest => _lethalDeathArbiter.InFlightCountForTest;
+    internal int LethalDeathArbiterAlreadyProjectedCountForTest => _lethalDeathArbiter.AlreadyProjectedCountForTest;
+
     // Executes exactly one authoritative hit for the repeat-attack state active at the time the
     // loop woke. Reschedules the next hit (or clears the state on death/target-loss) BEFORE
     // sending any wire notification for this hit - the pinned unit_attack_timer_sub tail
@@ -2965,8 +2972,8 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         finally { _attackGate.Release(); }
     }
 
-    // Item 3 of the Step 6 final correctness pass: classifies an exception caught around
-    // NotifyMonsterAttackedAsync/TryMarkMonsterDeadAsync. Cancellation is decided FIRST and
+    // Classifies an exception caught around the real World.ApplyMonsterDamageAsync RPC dispatch
+    // (DispatchPendingDamageAttemptAsync's own call site). Cancellation is decided FIRST and
     // separately from WorldRpcFailureClassifier's own narrow transport/gateway/timeout type list
     // (OperationCanceledException is only "transient" when this session's OWN cancellationToken did
     // NOT request it - e.g. an internal Orleans call timeout can itself surface as
@@ -4791,26 +4798,25 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         await WriteAsync(IroMonsterCombatPackets.BuildNotifyVanish(actorId, reason), cancellationToken);
     }
 
-    // Requirement 4 (World `Died` fan-out), corrected by item 1 of the Step 6 final correctness
-    // pass: called by MapTcpServer.FanOutEntryAsync for EVERY session on the map when World's feed
-    // reports a monster Died, not merely the attacker's own session - now takes the EXACT life
-    // identity (`life`), never only an ActorId, so the arbitration below can never conflate two
-    // different incarnations of the same ActorId.
+    // World `Died` fan-out: called by MapTcpServer.FanOutEntryAsync for EVERY session on the map
+    // when World's feed reports a monster Died, not merely the attacker's own session - takes the
+    // EXACT life identity (`life`), never only an ActorId, so the arbitration below can never
+    // conflate two different incarnations of the same ActorId.
     //
-    // The OLD assumption here - "the attacker's own local confirmed-kill path has ALREADY sent its
-    // own death-vanish and cleared its own visibility SYNCHRONOUSLY, strictly before this feed entry
-    // can ever be observed" - is NO LONGER TRUE after the correction that moved World's death
-    // confirmation to happen BEFORE the local lethal projection: World's Died feed becomes
-    // observable to this SAME MapTcpServer tick loop immediately once TryMarkMonsterDeadAsync
-    // returns MarkedDead, genuinely concurrently with PerformDueRepeatAttackAsync still completing
-    // its own CommitConfirmedDeath -> wire projection sequence. See LethalDeathProjectionArbiter's
-    // own doc comment for the full race and why arbitration (keyed by the EXACT life, not ActorId
-    // alone) is required instead of relying on ordering that can no longer be assumed.
+    // World's ApplyMonsterDamageAsync commits the authoritative Alive->Dead transition and its Died
+    // feed entry BEFORE the attacking session's own local lethal projection (damage packet, HP-info,
+    // EXP/progression, death vanish) has necessarily finished - so this SAME MapTcpServer tick loop
+    // can observe that Died feed entry genuinely concurrently with this session's own
+    // PerformDueRepeatAttackCoreAsync/HandleLethalDamageResultAsync still completing that sequence
+    // for the very same life. See LethalDeathProjectionArbiter's own doc comment for the full race
+    // and why arbitration (keyed by the EXACT life, not ActorId alone) is required rather than
+    // assuming either path always finishes first.
     //
     // If this session has an in-flight local lethal projection for the EXACT same life (`life`),
     // defer: record that Died was observed and return WITHOUT sending anything or touching
-    // visibility - PerformDueRepeatAttackAsync's own resolution (MarkedDead/StaleLifeReference/
-    // AlreadyDead/transient-failure) is what decides the final wire outcome for THIS session,
+    // visibility - this session's own dispatch resolution (Applied+KilledByThisHit/
+    // ReplayedSequence+KilledByThisHit/StaleLifeReference/StaleAttackerPresence/AttackerNotEngageable/
+    // AlreadyDead/StaleSequence/Conflict) is what decides the final wire outcome for THIS session,
     // exactly once, per LethalDeathProjectionArbiter's own state machine. A Died feed entry for a
     // DIFFERENT incarnation of the same ActorId (no matching in-flight registration) is NEVER
     // suppressed - it proceeds through the ordinary immediate-vanish path below unchanged, exactly
@@ -4822,12 +4828,12 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     }
 
     // Performs the exact same wire vanish + visibility cleanup NotifyMonsterDiedAsync's own ordinary
-    // path performs - the DEFERRED half of item 1's arbitration, called by
-    // PerformDueRepeatAttackAsync itself when its own lethal RPC resolves to anything OTHER than
-    // MarkedDead (transient failure, StaleLifeReference, AlreadyDead) while an authoritative Died for
-    // the exact same life was already observed mid-flight. Kept as its own tiny named method (rather
-    // than inlining SendMonsterVanishAsync at each of those call sites) so the "this is the deferred-
-    // cleanup half of the arbitration" intent reads clearly at each call site.
+    // path performs - the DEFERRED half of the arbitration, called from HandleDamageResultAsync's
+    // own switch (every non-lethal-owning resolution branch) and HandleLethalDamageResultAsync's own
+    // catch/cleanup path when this session's own dispatch resolution completes while an authoritative
+    // Died for the exact same life was already observed mid-flight. Kept as its own tiny named
+    // method (rather than inlining SendMonsterVanishAsync at each of those call sites) so the "this
+    // is the deferred-cleanup half of the arbitration" intent reads clearly at each call site.
     private async Task PerformDeferredAuthoritativeDiedAsync(uint actorId, CancellationToken cancellationToken) =>
         await SendMonsterVanishAsync(actorId, PacketConstants.ZcNotifyVanishReasonDied, cancellationToken);
 
