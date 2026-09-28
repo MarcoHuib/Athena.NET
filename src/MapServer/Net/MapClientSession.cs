@@ -267,6 +267,11 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     // See the production constructor overload's own doc comment for what this is and why it is
     // never resolved by iterating sibling sessions directly.
     private readonly Func<PlayerAttackActionOutcome, CancellationToken, Task>? _playerAttackFanout;
+    // Cross-session (this gateway process only) per-life ordering primitive for a lethal player hit -
+    // see LethalAttackProjectionGate's own doc comment. Null (every non-MapTcpServer caller, including
+    // every existing test fixture) means no cross-session ordering is needed/available; this session's
+    // own per-session LethalDeathProjectionArbiter still protects its OWN Died-vs-action race either way.
+    private readonly LethalAttackProjectionGate? _lethalAttackGate;
     // Item 3 of the Step 6 correctness-hardening pass: the single, internally-synchronized owner of
     // "which monster ActorIds this session currently believes are visible, at which IncarnationId"
     // plus "the last SimulationEpoch this session fully reconciled against" - see
@@ -297,6 +302,16 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     // "ApplyMonsterDamageAsync itself still in flight" window FakeCombatWorldRuntime's own
     // BeforeApplyMonsterDamageReturns hook already covers.
     internal Func<Task>? DebugBeforeMonsterVanishSendAsync { get; set; }
+
+    // Live multiplayer race regression (cross-session lethal action-vs-Died-vanish ordering): test-
+    // only hook, always null in production. Awaited immediately BEFORE ProjectPlayerAttackActionAsync
+    // inside HandleLethalDamageResultAsync's own tail - i.e. AFTER World's lethal RPC has returned and
+    // EnterLethalInFlight/LethalAttackProjectionGate.Enter has already run, but BEFORE this session's
+    // own final action has been fanned out and the gate released. Lets a test deterministically prove
+    // MapTcpServer.FanOutEntryAsync's own Died-dispatch genuinely blocks on the still-open gate during
+    // this exact window (a real barrier, never Task.Delay/timing) before resuming this session's own
+    // action fan-out and gate release.
+    internal Func<Task>? DebugBeforeLethalActionFanoutAsync { get; set; }
 
     // Test seam standing in for the real World.ApplyMonsterDamageAsync RPC - the ONE production
     // call site every attack dispatch (both the first send and every internal retry) funnels
@@ -403,11 +418,12 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     // session never holds a reference to any sibling session itself. Null (every non-MapTcpServer
     // caller, including every existing test fixture) falls back to notifying only this session -
     // see NotifyPlayerAttackActionAsync's own call sites for exactly where that fallback applies.
-    public MapClientSession(int sessionId, TcpClient client, CharServerConnector charConnector, MapServerWorld world, IWorldRuntime worldRuntime, Func<PlayerAttackActionOutcome, CancellationToken, Task>? playerAttackFanout = null)
+    public MapClientSession(int sessionId, TcpClient client, CharServerConnector charConnector, MapServerWorld world, IWorldRuntime worldRuntime,
+        Func<PlayerAttackActionOutcome, CancellationToken, Task>? playerAttackFanout = null, LethalAttackProjectionGate? lethalAttackGate = null)
         : this(sessionId, client, charConnector, world.Maps, monsterProjections: world.MonsterProjections, combat: world.Combat,
                movementPathProvider: world.MovementPathProvider, collisionProvider: world.Collision, rates: world.Rates,
                players: world.Players, playerVisibility: world.PlayerVisibility, visibilityOptions: world.Visibility, distributedWorld: worldRuntime,
-               combatState: world.CombatState, playerAttackFanout: playerAttackFanout)
+               combatState: world.CombatState, playerAttackFanout: playerAttackFanout, lethalAttackGate: lethalAttackGate)
     {
     }
 
@@ -433,7 +449,8 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         WorldVisibilityOptions? visibilityOptions = null,
         IWorldRuntime? distributedWorld = null,
         MonsterAttackCadenceStore? combatState = null,
-        Func<PlayerAttackActionOutcome, CancellationToken, Task>? playerAttackFanout = null)
+        Func<PlayerAttackActionOutcome, CancellationToken, Task>? playerAttackFanout = null,
+        LethalAttackProjectionGate? lethalAttackGate = null)
     {
         SessionId = sessionId;
         _client = client;
@@ -459,6 +476,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         _playerVisibility = playerVisibility ?? new PlayerVisibilityCoordinator(_players, _visibilityOptions);
         _distributedWorld = distributedWorld;
         _playerAttackFanout = playerAttackFanout;
+        _lethalAttackGate = lethalAttackGate;
         _statusEffects = new CharacterStatusEffectState(_timeProvider);
     }
 
@@ -494,7 +512,8 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         WorldVisibilityOptions? visibilityOptions = null,
         IWorldRuntime? distributedWorld = null,
         MonsterAttackCadenceStore? combatState = null,
-        Func<PlayerAttackActionOutcome, CancellationToken, Task>? playerAttackFanout = null)
+        Func<PlayerAttackActionOutcome, CancellationToken, Task>? playerAttackFanout = null,
+        LethalAttackProjectionGate? lethalAttackGate = null)
         : this(
             sessionId,
             client,
@@ -525,7 +544,8 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
             visibilityOptions,
             distributedWorld,
             combatState,
-            playerAttackFanout)
+            playerAttackFanout,
+            lethalAttackGate)
     {
         _iroAuthRequested = iroAuthenticated;
         _authRequested = iroAuthenticated;
@@ -1173,7 +1193,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
             _pendingDamageAttempt = null;
         }
         finally { _attackGate.Release(); }
-        if (leakedPendingLifeOnDisconnect is { } disconnectLife) _lethalDeathArbiter.CompleteInFlight(disconnectLife, markProjected: false);
+        if (leakedPendingLifeOnDisconnect is { } disconnectLife) CompleteLethalInFlight(disconnectLife, markProjected: false);
 
         // Join ALL runtime loops before touching anything they can still access. This is the
         // invariant the earlier lifecycle audit found missing: cancellation is only a request: it
@@ -1483,7 +1503,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
             _pendingDamageAttempt = null;
         }
         finally { _attackGate.Release(); }
-        if (leakedPendingLife is { } life) _lethalDeathArbiter.CompleteInFlight(life, markProjected: false);
+        if (leakedPendingLife is { } life) CompleteLethalInFlight(life, markProjected: false);
     }
 
     // Reconciles _x/_y against real elapsed walking time. Pinned rAthena's authoritative position
@@ -2446,7 +2466,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
                 }
             }
             finally { _attackGate.Release(); }
-            if (retiredLife is { } life2) _lethalDeathArbiter.CompleteInFlight(life2, markProjected: false);
+            if (retiredLife is { } life2) CompleteLethalInFlight(life2, markProjected: false);
             try { _pendingRetrySignal.Release(); } catch (SemaphoreFullException) { }
             throw;
         }
@@ -2488,7 +2508,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
 
             case WorldMonsterDamageStatus.Applied or WorldMonsterDamageStatus.ReplayedSequence:
             {
-                var diedObserved = _lethalDeathArbiter.CompleteInFlight(life, markProjected: false);
+                var diedObserved = CompleteLethalInFlight(life, markProjected: false);
                 if (diedObserved)
                 {
                     await PerformDeferredAuthoritativeDiedAsync(life.ActorId, cancellationToken);
@@ -2522,7 +2542,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
 
             case WorldMonsterDamageStatus.StaleSequence:
             {
-                var diedObserved = _lethalDeathArbiter.CompleteInFlight(life, markProjected: false);
+                var diedObserved = CompleteLethalInFlight(life, markProjected: false);
                 if (diedObserved)
                 {
                     await PerformDeferredAuthoritativeDiedAsync(life.ActorId, cancellationToken);
@@ -2542,7 +2562,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
 
             case WorldMonsterDamageStatus.Conflict:
             {
-                var diedObserved = _lethalDeathArbiter.CompleteInFlight(life, markProjected: false);
+                var diedObserved = CompleteLethalInFlight(life, markProjected: false);
                 if (diedObserved) await PerformDeferredAuthoritativeDiedAsync(life.ActorId, cancellationToken);
                 MapLogger.Warning($"[iRO MAP DEBUG] ApplyMonsterDamageAsync returned Conflict mobActorId={life.ActorId} - fail-closed, never rearmed.");
                 if (ReferenceEquals(_repeatAttack, originRepeatAttackState)) ClearRepeatAttackIfCurrent(originRepeatAttackState);
@@ -2551,7 +2571,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
 
             case WorldMonsterDamageStatus.StaleLifeReference:
             {
-                var diedObserved = _lethalDeathArbiter.CompleteInFlight(life, markProjected: false);
+                var diedObserved = CompleteLethalInFlight(life, markProjected: false);
                 if (diedObserved) await PerformDeferredAuthoritativeDiedAsync(life.ActorId, cancellationToken);
                 if (ReferenceEquals(_repeatAttack, originRepeatAttackState)) ClearRepeatAttackIfCurrent(originRepeatAttackState);
                 _combatState?.Remove(MonsterCombatKey.From(life));
@@ -2561,7 +2581,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
             case WorldMonsterDamageStatus.StaleAttackerPresence:
             case WorldMonsterDamageStatus.AttackerNotEngageable:
             {
-                var diedObserved = _lethalDeathArbiter.CompleteInFlight(life, markProjected: false);
+                var diedObserved = CompleteLethalInFlight(life, markProjected: false);
                 if (diedObserved) await PerformDeferredAuthoritativeDiedAsync(life.ActorId, cancellationToken);
                 if (ReferenceEquals(_repeatAttack, originRepeatAttackState)) ClearRepeatAttackIfCurrent(originRepeatAttackState);
                 return;
@@ -2569,7 +2589,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
 
             case WorldMonsterDamageStatus.AlreadyDead:
             {
-                var diedObserved = _lethalDeathArbiter.CompleteInFlight(life, markProjected: false);
+                var diedObserved = CompleteLethalInFlight(life, markProjected: false);
                 if (diedObserved) await PerformDeferredAuthoritativeDiedAsync(life.ActorId, cancellationToken);
                 if (ReferenceEquals(_repeatAttack, originRepeatAttackState)) ClearRepeatAttackIfCurrent(originRepeatAttackState);
                 return;
@@ -2605,7 +2625,13 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
             var damageDealt = result.HpBefore - result.HpAfter;
             var attackAction = new PlayerAttackActionOutcome(_accountId, life.ActorId, _mapName, damageDealt, SrcSpeed: 460, DstSpeed: (uint)targetSnapshot.StaticMob.DamageMotion, Lethal: true);
             var lethalDamageWriteStartedAt = CombatTiming.Now();
+            if (DebugBeforeLethalActionFanoutAsync is { } beforeActionFanoutHook) await beforeActionFanoutHook(); // Test-only seam - see that field's own doc comment. Always null in production.
             await ProjectPlayerAttackActionAsync(attackAction, cancellationToken);
+            // Release the shared cross-session gate the INSTANT this session's own action has been fanned
+            // out to every other local session - not later, when the rest of this tail (EXP/progression/
+            // the vanish itself) finishes. Nothing past this point needs to hold up a bystander's own Died
+            // dispatch (see LethalAttackProjectionGate's own doc comment for the exact race this closes).
+            _lethalAttackGate?.Exit(life);
             lethalDamageWriteMs = CombatTiming.ElapsedMsSince(lethalDamageWriteStartedAt);
 
             if (_visibleActorIds.IsActorVisible(life.ActorId))
@@ -2688,7 +2714,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         }
         catch
         {
-            if (lethalCommitLife is { } leaked) _lethalDeathArbiter.CompleteInFlight(leaked, markProjected: false);
+            if (lethalCommitLife is { } leaked) CompleteLethalInFlight(leaked, markProjected: false);
             throw;
         }
     }
@@ -2745,7 +2771,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
             // this, a warp/disconnect could observe the published _pendingDamageAttempt, clear it,
             // and call CompleteInFlight BEFORE this BeginInFlight below ever runs, leaving an
             // orphaned arbiter registration that nothing will ever complete.
-            _lethalDeathArbiter.BeginInFlight(life);
+            EnterLethalInFlight(life);
         }
         finally { _attackGate.Release(); }
         try { _pendingRetrySignal.Release(); } catch (SemaphoreFullException) { }
@@ -2817,7 +2843,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
                 QuestStatusSnapshot = questStatusSnapshot,
                 NextRetryAt = _timeProvider.GetUtcNow().AddMilliseconds(attackDelayMs),
             };
-            _lethalDeathArbiter.BeginInFlight(life);
+            EnterLethalInFlight(life);
         }
         finally { _attackGate.Release(); }
         try { _pendingRetrySignal.Release(); } catch (SemaphoreFullException) { }
@@ -2869,7 +2895,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
             _pendingDamageAttempt = null;
         }
         finally { _attackGate.Release(); }
-        if (retiredLife is { } life) _lethalDeathArbiter.CompleteInFlight(life, markProjected: false);
+        if (retiredLife is { } life) CompleteLethalInFlight(life, markProjected: false);
         try { _pendingRetrySignal.Release(); } catch (SemaphoreFullException) { }
     }
 
@@ -5027,6 +5053,35 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     // when World's feed reports a monster Died, not merely the attacker's own session - takes the
     // EXACT life identity (`life`), never only an ActorId, so the arbitration below can never
     // conflate two different incarnations of the same ActorId.
+    // Registers a lethal-capable attempt for `life` in BOTH this session's own per-session
+    // LethalDeathProjectionArbiter (unchanged - defers THIS session's own concurrently-observed Died
+    // for the exact same life) AND, when this session was constructed by MapTcpServer, the SHARED
+    // cross-session LethalAttackProjectionGate (see that type's own doc comment) - called at the
+    // SAME two allocation-time call sites BeginInFlight itself always used, before the World RPC that
+    // may report KilledByThisHit is ever dispatched.
+    private void EnterLethalInFlight(WorldMonsterLifeReference life)
+    {
+        _lethalDeathArbiter.BeginInFlight(life);
+        _lethalAttackGate?.Enter(life);
+    }
+
+    // Retires this session's own per-session arbiter registration for `life`, exactly as
+    // CompleteInFlight always did. For every NON-lethal-success retirement (markProjected: false -
+    // a rejection status, a fatal dispatch exception, or a disconnect/replace leak cleanup) this ALSO
+    // releases the shared cross-session gate immediately, since no player-attack action fan-out is
+    // coming from this attempt at all. The one lethal-success retirement (markProjected: true, inside
+    // HandleLethalDamageResultAsync's own tail) deliberately does NOT release the gate here - that
+    // path releases it explicitly, early, right after its own action has been fanned out (well before
+    // EXP/progression/the vanish itself), so bystanders' Died dispatch is never held up waiting on
+    // work they do not need. Calling LethalAttackProjectionGate.Exit a second time for the same life
+    // is a safe no-op either way.
+    private bool CompleteLethalInFlight(WorldMonsterLifeReference life, bool markProjected)
+    {
+        var diedObservedWhilePending = _lethalDeathArbiter.CompleteInFlight(life, markProjected);
+        if (!markProjected) _lethalAttackGate?.Exit(life);
+        return diedObservedWhilePending;
+    }
+
     //
     // World's ApplyMonsterDamageAsync commits the authoritative Alive->Dead transition and its Died
     // feed entry BEFORE the attacking session's own local lethal projection (damage packet, HP-info,

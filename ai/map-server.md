@@ -1836,6 +1836,30 @@ visibility this way - that needs a World/Orleans player/combat event feed (the s
 `PlayerVisibilityCoordinator`/`PlayerPresenceRegistry` already need for player visibility in
 general), out of scope here.
 
+## Lethal player attack vs the World Died feed (a second, cross-session ordering race)
+
+The player-attack fan-out above closed the non-lethal gap, but live testing then exposed a narrower
+race on LETHAL hits specifically: World's Died feed entry for a life becomes independently pollable
+the instant `ApplyMonsterDamageAsync` reports `KilledByThisHit`, and `MapTcpServer`'s own monster-tick
+loop can observe and fan that Died vanish out to bystanders BEFORE the attacking session has finished
+building/fanning out its own final `0x08C8` for that same hit - an observer could then see the vanish
+with no preceding action (or never receive the action at all, since its own visibility check would by
+then correctly find the monster already marked not-visible).
+
+`LethalAttackProjectionGate` (`src/MapServer/Net/LethalAttackProjectionGate.cs`) closes this: a small,
+per-life (`WorldSimulationEpoch`/`ActorId`/`IncarnationId`), purely in-memory ordering primitive owned by
+`MapTcpServer` - never authoritative state, never a second copy of World's damage/death decision.
+`MapClientSession.EnterLethalInFlight` opens it at the SAME point `LethalDeathProjectionArbiter.
+BeginInFlight` always ran (before the World RPC that may report a kill is even dispatched, so no Died
+entry for that life can ever exist before the gate does); `HandleLethalDamageResultAsync` closes it the
+instant its own action has been fanned out (well before EXP/progression/the vanish itself, so nothing
+unrelated holds up bystanders); every other retirement path (`CompleteLethalInFlight`) closes it
+immediately. `MapTcpServer.FanOutEntryAsync`'s Died branch awaits the gate for that exact life (bounded
+by a 5 s defensive timeout against a stuck/disconnected attacker, never the mechanism itself) before
+notifying any session. Unrelated monsters, and even a different incarnation of the same ActorId, are
+never serialized against each other. `LethalDeathProjectionArbiter` itself is unchanged - it still
+handles the attacker's OWN per-session copy of this race exactly as before.
+
 ## Izlude -> prt_fild08d -> Prontera travel corridor
 
 See `ai/world-data.md`'s "Travel corridor" section for the full content/tooling writeup

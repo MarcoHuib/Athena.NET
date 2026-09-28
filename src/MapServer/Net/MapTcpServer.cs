@@ -27,6 +27,17 @@ public sealed class MapTcpServer
     private readonly TcpListener _listener;
     private readonly ConcurrentDictionary<int, MapClientSession> _sessions = new();
     private readonly MonsterAttackCadenceExecutor _cadenceExecutor;
+    // Cross-session (this gateway process only) ordering primitive for a lethal player attack action
+    // vs this SAME process's own Died feed dispatch - see LethalAttackProjectionGate's own doc comment.
+    private readonly LethalAttackProjectionGate _lethalAttackGate = new();
+    // Test-only exposure so a fixture that constructs MapClientSession directly (not via HandleClientAsync's
+    // own real accept path) can still wire the SAME gate instance in. Never used by any production code path.
+    internal LethalAttackProjectionGate LethalAttackGateForTest => _lethalAttackGate;
+    // Defensive upper bound on FanOutEntryAsync's own wait below: normal release happens the instant
+    // the attacking session's local action fan-out completes (microseconds to low milliseconds), never
+    // this long in practice. This bound exists only so a stuck/disconnected attacker session can never
+    // block THIS ONE life's Died dispatch forever - it is a fail-safe, not the ordering mechanism.
+    private static readonly TimeSpan LethalAttackGateWaitTimeout = TimeSpan.FromSeconds(5);
     // Item 7 of the Step 6 correctness-hardening pass: maps whose monster-feed reconciliation hit a
     // DETERMINISTIC invariant/configuration failure (see IsDeterministicInvariantFailure below) -
     // never retried by the ordinary per-tick loop, since a deterministic failure would simply
@@ -752,11 +763,28 @@ public sealed class MapTcpServer
     // not-visible (removed on death) re-discovers the NEW incarnation exactly like any other
     // newly-visible actor. Every OTHER kind carrying a MovementKind is projected via its own explicit
     // WorldMonsterMovementKind (never inferred from IsWalking - see that type's own doc comment).
-    private async Task FanOutEntryAsync(WorldMonsterFeedEntry entry, WorldSimulationEpoch epoch, IReadOnlyCollection<MapClientSession> mapSessions, CancellationToken cancellationToken)
+    internal async Task FanOutEntryAsync(WorldMonsterFeedEntry entry, WorldSimulationEpoch epoch, IReadOnlyCollection<MapClientSession> mapSessions, CancellationToken cancellationToken)
     {
         if (entry.Kind == WorldMonsterFeedEntryKind.Died)
         {
             var life = new WorldMonsterLifeReference(entry.Instance.MapId, epoch, entry.ActorId, entry.IncarnationId);
+            // Live multiplayer regression fix: if a local player-attack lethal hit for this EXACT life
+            // is currently being projected (LethalAttackProjectionGate.Enter was called before the
+            // World RPC that produced this very Died entry was even dispatched - see
+            // MapClientSession.EnterLethalInFlight), wait for that session to finish fanning its own
+            // final 0x08C8 out to every local session BEFORE this Died vanish reaches anyone - so no
+            // observer can ever see the vanish without having first seen the killing action. Bounded
+            // (LethalAttackGateWaitTimeout) so a stuck/disconnected attacker can never block this one
+            // life's Died dispatch forever; a life with no open gate returns immediately, so this adds
+            // no latency to the overwhelmingly common non-racing case, and never touches any OTHER life.
+            try
+            {
+                await _lethalAttackGate.WaitAsync(life).WaitAsync(LethalAttackGateWaitTimeout, cancellationToken);
+            }
+            catch (TimeoutException)
+            {
+                MapLogger.Warning($"[iRO MAP DEBUG] LethalAttackProjectionGate wait timed out mobActorId={life.ActorId} map={life.MapId} - proceeding with Died fan-out anyway.");
+            }
             foreach (var session in mapSessions)
             {
                 try
@@ -815,7 +843,7 @@ public sealed class MapTcpServer
         MapLogger.Info($"[iRO MAP DEBUG] Client connected: {endpoint}");
 
         using (client)
-        await using (var session = new MapClientSession(sessionId, client, _charConnector, _world, _worldRuntime, FanOutPlayerAttackActionAsync))
+        await using (var session = new MapClientSession(sessionId, client, _charConnector, _world, _worldRuntime, FanOutPlayerAttackActionAsync, _lethalAttackGate))
         {
             _sessions[sessionId] = session;
             try

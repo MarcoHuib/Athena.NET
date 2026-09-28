@@ -88,7 +88,7 @@ public sealed class MapTcpServerMonsterAuthorityIntegrationTests : IAsyncLifetim
             monsterProjections: world.MonsterProjections, combat: world.Combat, combatState: world.CombatState,
             movementPathProvider: world.MovementPathProvider, collisionProvider: world.Collision,
             players: world.Players, playerVisibility: world.PlayerVisibility, visibilityOptions: world.Visibility,
-            distributedWorld: worldRuntime, playerAttackFanout: playerAttackFanout);
+            distributedWorld: worldRuntime, playerAttackFanout: playerAttackFanout, lethalAttackGate: server.LethalAttackGateForTest);
         var run = session.RunAsync(CancellationToken.None);
         var auth = new MapAuthOkData(accountId, accountId, 1, 2, 0, 0, false, mapId, x, y, 0, 0, 1, "Fixture", HairStyle: 4, HairColor: 2, ClothesColor: 1);
         await session.CompleteIroAuthenticationAsync(auth);

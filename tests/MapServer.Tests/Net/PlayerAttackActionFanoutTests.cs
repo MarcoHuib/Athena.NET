@@ -104,7 +104,8 @@ public sealed class PlayerAttackActionFanoutTests
             monsterProjections: fixture.Projections, combat: fixture.Combat, combatState: fixture.CombatState,
             players: fixture.Players, playerVisibility: fixture.PlayerVisibility,
             distributedWorld: fixture.FakeWorld,
-            playerAttackFanout: wireFanout ? fixture.Server.FanOutPlayerAttackActionAsync : null);
+            playerAttackFanout: wireFanout ? fixture.Server.FanOutPlayerAttackActionAsync : null,
+            lethalAttackGate: fixture.Server.LethalAttackGateForTest);
         var run = session.RunAsync(CancellationToken.None);
         await session.CompleteIroAuthenticationAsync(new(accountId, charId, 1, 2, 0, 0, false, mapId, x, y, 0, 0, 0, CharacterName: $"P{accountId}"));
         await ReadExact(stream, 29);
@@ -280,6 +281,88 @@ public sealed class PlayerAttackActionFanoutTests
         await ReadExact(observer.Stream, PacketConstants.ZcNotifyAct3Length);
 
         await AssertNothingMoreSentAsync(otherMap.Stream);
+    }
+
+    // Live multiplayer regression: World's Died feed for a lethal hit can become independently
+    // observable (via MapTcpServer's own monster-tick loop) concurrently with the attacking session
+    // still building/fanning out its own final action - without ordering, an observer whose own Died
+    // dispatch wins that race would see the monster vanish with NO preceding action (or lose the
+    // action entirely, since NotifyPlayerAttackActionAsync's own - still correct - visibility check
+    // then finds the monster already marked not-visible). This test forces exactly that race
+    // deterministically, using a real barrier (DebugBeforeLethalActionFanoutAsync + a directly
+    // injected Died feed entry via MapTcpServer.FanOutEntryAsync, since FakeCombatWorldRuntime
+    // deliberately does not implement PollMonsterFeedAsync) - never Task.Delay/timing as the
+    // synchronization mechanism itself.
+    [Fact]
+    public async Task LethalHit_RacingDiedFeedEvent_ObserverStillReceivesTheActionBeforeTheVanish_NoDuplicates()
+    {
+        var fixture = MakeFixture();
+        var life = new WorldMonsterLifeReference(fixture.Target.Map, fixture.Epoch, fixture.Target.ActorId, new WorldMonsterIncarnationId(fixture.Target.IncarnationId.Value));
+        fixture.FakeWorld.SeedMonster(life, currentHp: 1, maxHp: fixture.Target.Spawn.Mob.MaxHp); // Guarantees a one-shot kill from any nonzero hit.
+
+        var (attacker, observer, monsterActorId) = await ConnectAttackerAndObserverAsync(fixture);
+        using var _a = attacker.Client;
+        using var _o = observer.Client;
+
+        var readyToRaceDied = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseAttackerFanout = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        attacker.Session.DebugBeforeLethalActionFanoutAsync = async () =>
+        {
+            readyToRaceDied.TrySetResult();
+            await releaseAttackerFanout.Task;
+        };
+
+        await attacker.Stream.WriteAsync(AttackPacket(monsterActorId));
+        await ReadFixposAsync(attacker.Stream, AttackerAccountId);
+
+        // Barrier: the attacker's own lethal tail has World's Applied+KilledByThisHit result in hand
+        // (LethalAttackProjectionGate is already OPEN for this life - Enter ran before the RPC was even
+        // dispatched) and is paused immediately before fanning its action out.
+        await readyToRaceDied.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        // Inject the matching authoritative Died feed event directly - this drives EXACTLY
+        // MapTcpServer.FanOutEntryAsync's own Died branch, the real production code under test,
+        // concurrently with the still-paused attacker task. It must genuinely block on the still-open
+        // gate rather than racing ahead to notify the observer first.
+        var diedEntry = new WorldMonsterFeedEntry(Sequence: 1, WorldMonsterFeedEntryKind.Died, monsterActorId,
+            new WorldMonsterIncarnationId(fixture.Target.IncarnationId.Value),
+            fixture.Target.ToWorldMonsterInstance() with { Lifecycle = WorldMonsterLifecycleState.Dead, CurrentHp = 0 });
+        var diedDispatchTask = fixture.Server.FanOutEntryAsync(diedEntry, fixture.Epoch, [attacker.Session, observer.Session], CancellationToken.None);
+
+        // Proof the wait is real, not merely fast: give the scheduler a bounded chance to run the Died
+        // dispatch to completion, then assert it genuinely has NOT - it is blocked on the open gate.
+        await Task.Delay(50);
+        Assert.False(diedDispatchTask.IsCompleted, "Expected FanOutEntryAsync's Died dispatch to still be waiting on the open LethalAttackProjectionGate.");
+        await AssertNothingMoreSentAsync(observer.Stream); // Nothing has reached the observer yet either.
+
+        releaseAttackerFanout.TrySetResult();
+        await diedDispatchTask.WaitAsync(TimeSpan.FromSeconds(10));
+
+        // Observer: the killing action, THEN the vanish - never the reverse, never missing, never
+        // duplicated.
+        var observerAction = await ReadExact(observer.Stream, PacketConstants.ZcNotifyAct3Length);
+        AssertAction(observerAction, AttackerAccountId, monsterActorId);
+        Assert.True(BinaryPrimitives.ReadUInt32LittleEndian(observerAction.AsSpan(22)) > 0);
+        var observerVanish = await ReadExact(observer.Stream, PacketConstants.ZcNotifyVanishLength);
+        Assert.Equal((short)PacketConstants.ZcNotifyVanish, BinaryPrimitives.ReadInt16LittleEndian(observerVanish));
+        Assert.Equal(monsterActorId, BinaryPrimitives.ReadUInt32LittleEndian(observerVanish.AsSpan(2)));
+        Assert.Equal(PacketConstants.ZcNotifyVanishReasonDied, observerVanish[6]);
+        await AssertNothingMoreSentAsync(observer.Stream); // No duplicate action, no duplicate vanish.
+
+        // Attacker: unaffected - its own action, self-only HP-info(0), then its own single vanish
+        // (the injected Died was correctly deferred for the attacker's own in-flight life, exactly
+        // like LethalDeathProjectionArbiter already guaranteed before this fix).
+        var attackerAction = await ReadExact(attacker.Stream, PacketConstants.ZcNotifyAct3Length);
+        AssertAction(attackerAction, AttackerAccountId, monsterActorId);
+        var attackerHpInfo = await ReadExact(attacker.Stream, PacketConstants.ZcHpInfoLength);
+        Assert.Equal(0u, BinaryPrimitives.ReadUInt32LittleEndian(attackerHpInfo.AsSpan(6)));
+        var attackerVanish = await ReadExact(attacker.Stream, PacketConstants.ZcNotifyVanishLength);
+        Assert.Equal((short)PacketConstants.ZcNotifyVanish, BinaryPrimitives.ReadInt16LittleEndian(attackerVanish));
+        Assert.Equal(monsterActorId, BinaryPrimitives.ReadUInt32LittleEndian(attackerVanish.AsSpan(2)));
+        await AssertNothingMoreSentAsync(attacker.Stream); // No duplicate vanish for the attacker either.
+
+        // World's damage authority was invoked exactly once for this hit.
+        Assert.Equal(1, fixture.FakeWorld.ApplyMonsterDamageCallCount);
     }
 
     // A standalone session (no MapTcpServer, no fan-out delegate - every existing single-session
