@@ -53,44 +53,70 @@ public sealed class PlayerAccountProvisioningService : IPlayerAccountProvisionin
             return ProvisionPlayerAccountResult.Fail(validationError);
         }
 
-        await using var transaction = await _db.Database.BeginTransactionAsync(cancellationToken);
+        var strategy = _db.Database.CreateExecutionStrategy();
 
-        var user = new AthenaIdentityUser
+        return await strategy.ExecuteAsync(async () =>
         {
-            Id = Guid.NewGuid(),
-            UserName = userName,
-            Email = email,
-        };
+            // ExecuteAsync can invoke this delegate more than once (e.g. a
+            // transient SQL Server error after UserManager.CreateAsync's own
+            // internal SaveChangesAsync already tracked the new user, but
+            // before this method's own SaveChangesAsync/CommitAsync). _db is
+            // the same DbContext instance across retries, so a failed
+            // attempt's tracked entities (the Identity user, and anything
+            // Identity's internal SaveChanges attached) must never carry over
+            // into the next attempt - otherwise the retry would try to
+            // re-insert an already-tracked "Added" entity, or silently reuse
+            // stale state from the aborted attempt.
+            _db.ChangeTracker.Clear();
 
-        var createResult = await _userManager.CreateAsync(user, password);
-        if (!createResult.Succeeded)
-        {
-            await transaction.RollbackAsync(cancellationToken);
-            return ProvisionPlayerAccountResult.Fail(string.Join("; ", createResult.Errors.Select(e => e.Description)));
-        }
+            await using var transaction =
+                await _db.Database.BeginTransactionAsync(cancellationToken);
 
-        try
-        {
-            var ragnarokAccountId = await _idAllocator.AllocateAsync(_db, cancellationToken);
-            var gameAccount = new AthenaGameAccount
+            var user = new AthenaIdentityUser
             {
                 Id = Guid.NewGuid(),
-                IdentityUserId = user.Id,
-                RagnarokAccountId = ragnarokAccountId,
-                Sex = char.ToUpperInvariant(sex).ToString(),
+                UserName = userName,
+                Email = email,
             };
 
-            _db.GameAccounts.Add(gameAccount);
-            await _db.SaveChangesAsync(cancellationToken);
-            await transaction.CommitAsync(cancellationToken);
+            var createResult = await _userManager.CreateAsync(user, password);
+            if (!createResult.Succeeded)
+            {
+                await transaction.RollbackAsync(cancellationToken);
 
-            return ProvisionPlayerAccountResult.Ok(user.Id, gameAccount.Id, gameAccount.RagnarokAccountId);
-        }
-        catch (DbUpdateException ex)
-        {
-            await transaction.RollbackAsync(cancellationToken);
-            return ProvisionPlayerAccountResult.Fail(ex.Message);
-        }
+                return ProvisionPlayerAccountResult.Fail(
+                    string.Join("; ", createResult.Errors.Select(e => e.Description)));
+            }
+
+            try
+            {
+                var ragnarokAccountId =
+                    await _idAllocator.AllocateAsync(_db, cancellationToken);
+
+                var gameAccount = new AthenaGameAccount
+                {
+                    Id = Guid.NewGuid(),
+                    IdentityUserId = user.Id,
+                    RagnarokAccountId = ragnarokAccountId,
+                    Sex = char.ToUpperInvariant(sex).ToString(),
+                };
+
+                _db.GameAccounts.Add(gameAccount);
+
+                await _db.SaveChangesAsync(cancellationToken);
+                await transaction.CommitAsync(cancellationToken);
+
+                return ProvisionPlayerAccountResult.Ok(
+                    user.Id,
+                    gameAccount.Id,
+                    gameAccount.RagnarokAccountId);
+            }
+            catch (DbUpdateException ex)
+            {
+                await transaction.RollbackAsync(cancellationToken);
+                return ProvisionPlayerAccountResult.Fail(ex.Message);
+            }
+        });
     }
 
     /// <summary>

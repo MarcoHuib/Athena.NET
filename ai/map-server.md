@@ -9,11 +9,34 @@ Generic kRO/rAthena client entry compatibility is not a goal. Existing CZ_ENTER/
 
 ## Current state
 - MapServer process/config/secrets/logging and Aspire integration exist.
-- MapServer registers with CharServer and existing internal char-map auth messaging exists.
+- MapServer registers with CharServer via an HMAC-SHA256 challenge/response
+  service-authentication handshake over an independent MapServer
+  `ServiceToken` (see "Inter-server service authentication" below); the
+  legacy username/password `MapLogin` handshake has been removed entirely.
 - CharServer can now successfully create/select a character and send `0x0071` map handoff.
 - The verified official MapServer endpoint in the capture is `128.241.92.42:4501`; development redirection can route that externally to Athena.NET's internal MapServer listener.
 - Athena.NET parses the capture-proven `0x0C1F` header fields, authenticates them
   against the single-use `MapAuthNode`, and sends the proven bootstrap through `0x02EB`.
+
+## Inter-server service authentication
+
+MapServer authenticates to CharServer with a non-secret `ServiceId` and a
+shared MapServer `ServiceToken` (`ServiceAuthentication.MapServer.Token` in
+`solutionfiles/secrets/secret.json`, or the
+`ATHENA_NET_MAP_SERVER_SERVICE_TOKEN` environment variable), never a
+username/password pair - `MapConfig.UserId`/`Password` no longer exist. This
+is a completely independent trust boundary from CharServer's own
+authentication to LoginServer (`ServiceAuthentication.CharServer.Token`).
+
+The full handshake (packet IDs, proof format, state machine, and CharServer's
+own enforcement of it) is documented in `ai/char-server.md`, "Inter-server
+service authentication (MapServer)" - MapServer's client-side implementation
+(`Athena.Net.MapServer.Net.CharServerConnector.AuthenticateAsync`,
+`ServiceAuthProofCalculator`, `MapServerServiceTokenProvider`) mirrors that
+handshake byte-for-byte. The ServiceToken itself is never sent over the
+network; only a one-time HMAC-SHA256 proof derived from it is, and MapServer
+does not attempt to connect at all if no valid token is configured (fail
+closed).
 
 ## Proven from stock iRO 2026 capture
 - CharServer handoff is `0x0071`, 28 bytes.

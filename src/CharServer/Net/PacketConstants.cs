@@ -32,7 +32,20 @@ public static class PacketConstants
     public const short LcPincodeUpdate = 0x2738;
     public const short LcPincodeAuthFail = 0x2739;
 
-    public const short MapLogin = 0x2af8;
+    // Athena.NET-internal MapServer<->CharServer HMAC-SHA256 service authentication handshake
+    // (see ai/char-server.md, "Inter-server service authentication (MapServer)"). Independent of
+    // - and structurally analogous to - the CharServer<->LoginServer handshake above. These are
+    // not stock-iRO packets, are not reused from the LoginServer<->CharServer packet range, and
+    // must match src/MapServer/Net/PacketConstants.cs exactly.
+    /// <summary>MapServer -&gt; CharServer: replaces legacy MapLogin. ServiceId + registration info (advertised map IP/port). 34 bytes (2 header + 24 ServiceId + 4 IP + 2 port + 2 reserved).</summary>
+    public const short MapServiceHello = 0x2b40;
+    /// <summary>CharServer -&gt; MapServer: one-time nonce challenge. 34 bytes (2 header + 32 nonce).</summary>
+    public const short MapServiceAuthChallenge = 0x2b41;
+    /// <summary>MapServer -&gt; CharServer: HMAC-SHA256 proof. 34 bytes (2 header + 32 proof).</summary>
+    public const short MapServiceAuthProof = 0x2b42;
+    /// <summary>CharServer -&gt; MapServer: authentication result. 3 bytes (2 header + 1 result byte, 0 = success). Replaces legacy MapLoginAck on success/failure of the new handshake.</summary>
+    public const short MapServiceAuthResult = 0x2b43;
+
     public const short MapLoginAck = 0x2af9;
     public const short MapSendMaps = 0x2afa;
     public const short MapAuthRequest = 0x2b26;

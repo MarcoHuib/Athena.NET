@@ -9,11 +9,32 @@ Example structure:
     "Provider": "sqlserver",
     "ConnectionString": "Server=localhost,1433;Database=athena.net;User ID=sa;Password=...;Encrypt=True;TrustServerCertificate=True;"
   },
+  "CharDb": {
+    "Provider": "sqlserver",
+    "ConnectionString": "Server=localhost,1433;Database=athena.net-char;User ID=sa;Password=...;Encrypt=True;TrustServerCertificate=True;"
+  },
   "SqlServer": {
     "SaPassword": "..."
+  },
+  "ServiceAuthentication": {
+    "CharServer": { "Token": "..." },
+    "MapServer": { "Token": "..." }
   }
 }
 ```
+
+`ServiceAuthentication.CharServer.Token` and `ServiceAuthentication.MapServer.Token`
+are independent, cryptographically random secrets (Base64-encoded, decoding to at
+least 32 bytes/256 bits) used for HMAC-SHA256 challenge/response interserver
+authentication: `CharServer.Token` secures CharServer's connection to LoginServer,
+and `MapServer.Token` secures MapServer's connection to CharServer. Neither token is
+ever sent over the network - only a proof derived from it is. There is no
+username/password interserver credential anywhere in this stack. See
+[.NET Aspire](aspire.md#inter-server-service-tokens) for how to generate them, and
+`ai/login-server.md` / `ai/char-server.md` for the handshake details.
+
+`scripts/setup-local.ps1` generates and migrates this file automatically and is the
+recommended way to create or update it locally.
 
 ## Git submodules
 

@@ -27,16 +27,36 @@ The LoginServer consumes the connection string from Aspire via
 
 Aspire uses a new `athena-sql-server-2025` data volume. It never mounts the retired Azure SQL Edge volume; see [SQL Server development database](sql-server-development.md) for data and Apple Silicon guidance.
 
-## CharServer service token
-CharServer authenticates to LoginServer via an HMAC-SHA256 challenge/response
-over a shared `ServiceToken` - there is no database row to seed. The token
-must be Base64-encoded and decode to at least 32 bytes (256 bits):
+## Inter-server service tokens
+Interserver authentication uses two independent HMAC-SHA256 challenge/response
+handshakes, each over its own shared `ServiceToken` - there is no database row
+to seed for either, and no username/password interserver credential exists
+anywhere in this stack:
+
+- CharServer -> LoginServer: `ServiceAuthentication.CharServer.Token`
+  (see `ai/login-server.md`, "Inter-server service authentication").
+- MapServer -> CharServer: `ServiceAuthentication.MapServer.Token`
+  (see `ai/char-server.md`, "Inter-server service authentication (MapServer)").
+
+Both tokens must be Base64-encoded and decode to at least 32 bytes (256 bits):
 
 ```sh
 openssl rand -base64 32
 ```
 
-Configure the same value for both servers in `solutionfiles/secrets/secret.json`
-(`ServiceAuthentication.CharServer.Token`), or via the
-`ATHENA_NET_CHAR_SERVER_SERVICE_TOKEN` environment variable. See
-`ai/login-server.md` ("Inter-server service authentication") for details.
+Generate a **separate** random value for each token - they protect two
+different trust boundaries and must never be equal in production. Configure
+them in `solutionfiles/secrets/secret.json`:
+
+```json
+{
+  "ServiceAuthentication": {
+    "CharServer": { "Token": "..." },
+    "MapServer": { "Token": "..." }
+  }
+}
+```
+
+or via the `ATHENA_NET_CHAR_SERVER_SERVICE_TOKEN` /
+`ATHENA_NET_MAP_SERVER_SERVICE_TOKEN` environment variables, which take
+priority over the secrets file when set.

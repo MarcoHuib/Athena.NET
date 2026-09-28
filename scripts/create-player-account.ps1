@@ -15,8 +15,10 @@
         command line.
 
 .PARAMETER Username
-    Login name, 4-23 characters (matches the stock client's fixed 24-byte
-    username field).
+    Login name. Credential policy (minimum length, etc.) is enforced once by
+    LoginServer's PlayerAccountProvisioningService (LoginConfig.AccountNameMinLength),
+    not duplicated here - this script only rejects an empty value, so the
+    policy can never drift between this script and the server.
 
 .PARAMETER Sex
     'M' or 'F'. Defaults to 'M'.
@@ -47,10 +49,16 @@ $ErrorActionPreference = "Stop"
 
 $Sex = $Sex.ToUpperInvariant()
 
-if ($Username.Length -lt 4 -or $Username.Length -gt 23) {
-    Write-Error "Username must contain between 4 and 23 characters."
+if ([string]::IsNullOrEmpty($Username)) {
+    Write-Error "Username must not be empty."
     exit 1
 }
+
+# Credential policy (minimum/maximum length) is validated once, authoritatively,
+# by LoginServer's PlayerAccountProvisioningService.ValidateInput - not
+# re-implemented here, so this script's rules can never drift from
+# LoginConfig.AccountNameMinLength/PasswordMinLength. A policy violation still
+# fails cleanly; it just surfaces as LoginServer's own error message below.
 
 if ($Sex -ne "M" -and $Sex -ne "F") {
     Write-Error "Sex must be M or F."

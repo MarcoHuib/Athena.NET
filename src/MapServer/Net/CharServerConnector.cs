@@ -13,7 +13,8 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
 {
     private static readonly Dictionary<short, int> PacketLengths = new()
     {
-        [PacketConstants.MapLoginAck] = 3,
+        [PacketConstants.MapServiceAuthChallenge] = 2 + PacketConstants.ServiceNonceLength,
+        [PacketConstants.MapServiceAuthResult] = 3,
         [PacketConstants.MapAuthFail] = 19,
         [PacketConstants.MapQuestStateResponse] = MapQuestStateProtocol.ResponseLength,
         [PacketConstants.MapSavePointResponse] = MapSavePointProtocol.ResponseLength,
@@ -43,11 +44,18 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
     private readonly ConcurrentDictionary<(uint CharId, uint DurableId), TaskCompletionSource<bool>> _pendingEquipUpdates = new();
     private readonly ConcurrentDictionary<uint, TaskCompletionSource<CharacterSkillReadResult>> _pendingSkillReads = new();
     private readonly ConcurrentDictionary<uint, (TaskCompletionSource<CharacterSkillLearnResult?> Pending, ushort SkillId)> _pendingSkillLearns = new();
+    private readonly MapServerServiceTokenProvider _serviceTokenProvider;
     private CharServerConnectionState? _connection;
 
     public CharServerConnector(MapConfigStore configStore)
+        : this(configStore, new MapServerServiceTokenProvider(new MapServer.Config.SecretConfig()))
+    {
+    }
+
+    public CharServerConnector(MapConfigStore configStore, MapServerServiceTokenProvider serviceTokenProvider)
     {
         _configStore = configStore;
+        _serviceTokenProvider = serviceTokenProvider;
     }
 
     public bool IsConnected => _connection != null;
@@ -273,6 +281,24 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
     {
         var config = _configStore.Current;
 
+        if (!_serviceTokenProvider.IsConfigured)
+        {
+            MapLogger.Error(
+                "MapServer ServiceToken is not configured (ServiceAuthentication.MapServer.Token in " +
+                "solutionfiles/secrets/secret.json, or the ATHENA_NET_MAP_SERVER_SERVICE_TOKEN environment " +
+                "variable). Cannot authenticate to the char server.");
+            return false;
+        }
+
+        if (!ServiceHelloFieldValidator.TryValidate(config.ServiceId, out _, out var validationError))
+        {
+            // Fail before ever attempting the handshake: a value that cannot
+            // be represented losslessly on the wire would otherwise make the
+            // HMAC proof diverge from what CharServer actually receives.
+            MapLogger.Error($"MapServer service-auth registration fields are invalid: {validationError} Cannot authenticate to the char server.");
+            return false;
+        }
+
         try
         {
             using var client = new TcpClient();
@@ -284,20 +310,14 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
             using var stream = client.GetStream();
             var connection = new CharServerConnectionState(stream);
 
-            await SendLoginPacketAsync(connection, config, cancellationToken);
-
-            var firstPacket = await ReadPacketAsync(stream, cancellationToken);
-            if (firstPacket.Length == 0)
+            if (!await AuthenticateAsync(connection, stream, config, cancellationToken))
             {
                 return false;
             }
 
             _connection = connection;
-            if (!HandlePacket(firstPacket))
-            {
-                _connection = null;
-                return false;
-            }
+            _initialReady.TrySetResult(true);
+            _ = TrySendMapListAsync();
 
             await ListenAsync(stream, cancellationToken);
             _connection = null;
@@ -366,8 +386,6 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
         var packetType = BinaryPrimitives.ReadInt16LittleEndian(packet.AsSpan(0, 2));
         switch (packetType)
         {
-            case PacketConstants.MapLoginAck:
-                return HandleLoginAck(packet);
             case PacketConstants.MapAuthOk:
                 return HandleAuthOk(packet);
             case PacketConstants.MapAuthFail:
@@ -398,23 +416,67 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
         }
     }
 
-    private bool HandleLoginAck(byte[] packet)
+    /// <summary>
+    /// Drives the Athena.NET-internal HMAC-SHA256 service authentication
+    /// handshake against CharServer (see ai/map-server.md, "Inter-server
+    /// service authentication"): send ServiceId/advertised map endpoint via
+    /// MapServiceHello -&gt; receive a one-time nonce challenge
+    /// (MapServiceAuthChallenge) -&gt; send an HMAC-SHA256 proof derived from
+    /// the shared MapServer ServiceToken (never the token itself) via
+    /// MapServiceAuthProof -&gt; receive the result (MapServiceAuthResult).
+    /// Any failure - malformed/unexpected packet, or a non-zero result byte -
+    /// aborts the connection attempt; the outer retry loop reconnects. Only
+    /// on success does this send the map list and mark the connector ready,
+    /// matching the old MapLoginAck-triggered behavior it replaces.
+    /// </summary>
+    private async Task<bool> AuthenticateAsync(CharServerConnectionState connection, NetworkStream stream, MapConfig config, CancellationToken cancellationToken)
     {
-        if (packet.Length < 3)
+        await SendServiceHelloAsync(connection, config, cancellationToken);
+
+        var challengePacket = await ReadPacketAsync(stream, cancellationToken);
+        if (challengePacket.Length == 0)
         {
             return false;
         }
 
-        var result = packet[2];
+        var challengeType = BinaryPrimitives.ReadInt16LittleEndian(challengePacket.AsSpan(0, 2));
+        if (challengeType != PacketConstants.MapServiceAuthChallenge)
+        {
+            MapLogger.Warning($"Expected service auth challenge, got 0x{challengeType:X4}.");
+            return false;
+        }
+
+        var nonce = challengePacket.AsSpan(2, PacketConstants.ServiceNonceLength).ToArray();
+        var proof = ServiceAuthProofCalculator.ComputeProof(
+            _serviceTokenProvider.TokenBytes!,
+            config.ServiceId,
+            config.MapIp,
+            (ushort)config.MapPort,
+            nonce);
+
+        await SendServiceAuthProofAsync(connection, proof, cancellationToken);
+
+        var resultPacket = await ReadPacketAsync(stream, cancellationToken);
+        if (resultPacket.Length == 0)
+        {
+            return false;
+        }
+
+        var resultType = BinaryPrimitives.ReadInt16LittleEndian(resultPacket.AsSpan(0, 2));
+        if (resultType != PacketConstants.MapServiceAuthResult)
+        {
+            MapLogger.Warning($"Expected service auth result, got 0x{resultType:X4}.");
+            return false;
+        }
+
+        var result = resultPacket[2];
         if (result != 0)
         {
-            MapLogger.Warning($"Char server rejected map server login (code {result}).");
+            MapLogger.Error($"Char server rejected map server service authentication (code {result}).");
             return false;
         }
 
-        MapLogger.Status("Char server accepted map server registration.");
-        _initialReady.TrySetResult(true);
-        _ = TrySendMapListAsync();
+        MapLogger.Status("Char server accepted map server service authentication.");
         return true;
     }
 
@@ -795,17 +857,31 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
         return buffer;
     }
 
-    private static async Task SendLoginPacketAsync(CharServerConnectionState connection, MapConfig config, CancellationToken cancellationToken)
+    /// <summary>
+    /// MapServiceHello wire layout (34 bytes total; must match
+    /// src/CharServer/Net/MapServerSession.cs's HandleServiceHelloAsync
+    /// exactly): 2 header + 24 ServiceId + 4 IP + 2 port + 2 reserved.
+    /// </summary>
+    private static async Task SendServiceHelloAsync(CharServerConnectionState connection, MapConfig config, CancellationToken cancellationToken)
     {
-        var buffer = new byte[60];
-        BinaryPrimitives.WriteInt16LittleEndian(buffer.AsSpan(0, 2), PacketConstants.MapLogin);
-        WriteFixedString(buffer.AsSpan(2, PacketConstants.NameLength), config.UserId);
-        WriteFixedString(buffer.AsSpan(26, PacketConstants.NameLength), config.Password);
-        BinaryPrimitives.WriteUInt32LittleEndian(buffer.AsSpan(50, 4), 0);
-        var ipBytes = config.MapIp.MapToIPv4().GetAddressBytes();
-        ipBytes.CopyTo(buffer.AsSpan(54, 4));
-        BinaryPrimitives.WriteUInt16LittleEndian(buffer.AsSpan(58, 2), (ushort)config.MapPort);
+        var buffer = new byte[2 + PacketConstants.NameLength + 4 + 2 + 2];
+        BinaryPrimitives.WriteInt16LittleEndian(buffer.AsSpan(0, 2), PacketConstants.MapServiceHello);
+        WriteFixedString(buffer.AsSpan(2, PacketConstants.NameLength), config.ServiceId);
 
+        var ipOffset = 2 + PacketConstants.NameLength;
+        var ipBytes = config.MapIp.MapToIPv4().GetAddressBytes();
+        ipBytes.CopyTo(buffer.AsSpan(ipOffset, 4));
+        BinaryPrimitives.WriteUInt16LittleEndian(buffer.AsSpan(ipOffset + 4, 2), (ushort)config.MapPort);
+        // Remaining 2 bytes reserved/zero.
+
+        await connection.WriteAsync(buffer, cancellationToken);
+    }
+
+    private static async Task SendServiceAuthProofAsync(CharServerConnectionState connection, byte[] proof, CancellationToken cancellationToken)
+    {
+        var buffer = new byte[2 + PacketConstants.ServiceProofLength];
+        BinaryPrimitives.WriteInt16LittleEndian(buffer.AsSpan(0, 2), PacketConstants.MapServiceAuthProof);
+        proof.CopyTo(buffer.AsSpan(2, PacketConstants.ServiceProofLength));
         await connection.WriteAsync(buffer, cancellationToken);
     }
 

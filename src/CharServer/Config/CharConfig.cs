@@ -12,10 +12,6 @@ public sealed class CharConfig
         "ATHENA_NET_CHAR_IRO_MAP_IP", "128.241.92.42");
     public int IroAdvertisedMapPort { get; init; } = ParseIntEnvironment(
         "ATHENA_NET_CHAR_IRO_MAP_PORT", 4501);
-    /// <summary>Authenticates MapServer to this CharServer. Unrelated to CharServer's own HMAC-SHA256 service authentication against LoginServer (see <see cref="ServiceId"/>).</summary>
-    public string UserId { get; init; } = string.Empty;
-    /// <summary>Authenticates MapServer to this CharServer. Unrelated to CharServer's own HMAC-SHA256 service authentication against LoginServer (see <see cref="ServiceId"/>).</summary>
-    public string Password { get; init; } = string.Empty;
     /// <summary>Non-secret identifier CharServer presents to LoginServer's HMAC-SHA256 service authentication handshake (see Net.LoginServerConnector). Never a credential by itself - proof of possessing the shared ServiceToken is.</summary>
     public string ServiceId { get; init; } = "CharServer";
     public string ServerName { get; init; } = "rAthena";
