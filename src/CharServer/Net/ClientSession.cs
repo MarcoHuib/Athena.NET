@@ -344,6 +344,8 @@ public sealed class ClientSession : IDisposable, ISession
         CharLogger.Debug($"[iRO DEBUG] Character select slot={slot} charId={character.CharId}");
 
         var location = ResolveCharacterLocation(character);
+        // DIAGNOSTIC-ONLY provenance of the map this login will be routed to (never used for a decision).
+        CharLogger.Info($"[MAP ROUTING] charId={character.CharId} accountId={_accountId} fromMap='{character.LastMap}' toMap='{location.MapName}' reason=character-select source={DescribeCharacterLocationSource(character)} position=({location.X},{location.Y})");
 
         var node = new MapAuthNode(
             _accountId,
@@ -825,7 +827,7 @@ public sealed class ClientSession : IDisposable, ISession
                 return;
             }
 
-            var startPoint = SelectStartPoint(config, job);
+            var startPoint = SelectStartPoint(config, job, out var startPointProvenance);
             var vit = 1;
             var intStat = 1;
             var maxHp = (uint)(40 * (100 + vit) / 100);
@@ -928,6 +930,7 @@ public sealed class ClientSession : IDisposable, ISession
                 return;
             }
             CharLogger.Debug($"[iRO DEBUG] Character created charId={character.CharId}");
+            CharLogger.Info($"[CHAR START MAP] charId={character.CharId} accountId={_accountId} slot={slot} selectedMap={startPoint.Map} selectedPosition=({startPoint.X},{startPoint.Y}) variantSource={startPointProvenance}");
 
             var items = SelectStartItems(config, job)
                 .Select(item => new CharInventory
@@ -2160,21 +2163,38 @@ public sealed class ClientSession : IDisposable, ISession
         return new string(chars);
     }
 
-    private static StartPoint SelectStartPoint(CharConfig config, uint job)
+    private static StartPoint SelectStartPoint(CharConfig config, uint job) => SelectStartPoint(config, job, out _);
+
+    // `provenance` is DIAGNOSTIC text only (which configured pool the point came from, the random
+    // index drawn and the candidate maps) so [CHAR START MAP] can show WHY a new character landed on
+    // a particular parallel map variant: pinned rAthena's `start_point` is a list of parallel intro
+    // instances (iz_int, iz_int01..04) and the location is "randomly picked on character creation"
+    // (conf/templates/char_athena.conf). It never influences the selection.
+    internal static StartPoint SelectStartPoint(CharConfig config, uint job, out string provenance)
     {
         var points = IsDoramJob(job) ? config.StartPointsDoram : config.StartPoints;
+        var pool = IsDoramJob(job) ? "start_point_doram" : "start_point";
         if (!IsDoramJob(job) && config.UsePreRenewalStartPoints && config.StartPointsPre.Count > 0)
         {
             points = config.StartPointsPre;
+            pool = "start_point_pre";
         }
         if (points.Count == 0)
         {
+            provenance = "built-in-fallback(no start_point configured)";
             return new StartPoint("iz_int", 18, 26);
         }
 
         var index = Random.Shared.Next(points.Count);
+        provenance = $"{pool}[{index + 1}/{points.Count}] random pick among {string.Join(',', points.Select(point => point.Map))}";
         return points[index];
     }
+
+    // DIAGNOSTIC-ONLY: names which persisted field ResolveCharacterLocation used, for [MAP ROUTING].
+    internal static string DescribeCharacterLocationSource(CharCharacter character) =>
+        !string.IsNullOrWhiteSpace(character.LastMap) ? "LastMap"
+        : !string.IsNullOrWhiteSpace(character.SaveMap) ? "SaveMap"
+        : "built-in-fallback(prontera)";
 
     private static IReadOnlyList<StartItem> SelectStartItems(CharConfig config, uint job)
     {

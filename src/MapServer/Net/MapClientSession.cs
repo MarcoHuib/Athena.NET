@@ -709,6 +709,10 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
 
         _accountId = authOk.AccountId;
         _charId = authOk.CharId;
+        // DIAGNOSTIC-ONLY: the map this session starts on is exactly the persisted LastMap CharServer
+        // resolved for the character (copied unchanged through MapAuthNode); this line makes that
+        // provenance visible next to the later per-transition [MAP ROUTING] lines.
+        MapLogger.Info($"[MAP ROUTING] charId={_charId} accountId={_accountId} fromMap='<none>' toMap='{authOk.MapName}' reason=character-load source=CharServer.MapAuthNode(persisted-location) position=({authOk.X},{authOk.Y})");
         _mapName = authOk.MapName;
         _x = authOk.X;
         _y = authOk.Y;
@@ -1406,8 +1410,13 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     // caught by EnsureMovementState's now-removed map-mismatch check, which is exactly the bug this
     // helper fixes: MapClientSessionWarpTests.MovementIntoTutorialDoor_... teleports within
     // "iz_int03", so map-equality alone cannot detect that the previous walk state is stale.
-    private void TeleportTo(string map, ushort x, ushort y)
+    // `reason`/`source` are DIAGNOSTIC-ONLY provenance for the [MAP ROUTING] log (why/through what this
+    // session's canonical map id changed) and never influence the teleport. Parallel map variants
+    // (prt_fild08 vs prt_fild08c ...) are separate canonical maps with isolated visibility and World
+    // simulations; this line makes every transition between them attributable.
+    private void TeleportTo(string map, ushort x, ushort y, string reason = "teleport", string? source = null)
     {
+        MapLogger.Info($"[MAP ROUTING] charId={_charId} accountId={_accountId} fromMap='{_mapName}' toMap='{map}' reason={reason} source={source ?? "unspecified"} position=({x},{y})");
         _mapName = map;
         _x = x;
         _y = y;
@@ -1822,7 +1831,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
                 {
                     MapLogger.Info($"[iRO MAP DEBUG] Warp destination compatibility-resolved map='{warpAction.Map}' pinned=({warpAction.X},{warpAction.Y}) -> effective=({resolvedX},{resolvedY})");
                 }
-                TeleportTo(warpAction.Map, resolvedX, resolvedY);
+                TeleportTo(warpAction.Map, resolvedX, resolvedY, reason: "warp", source: $"generated-warp:{warp.Name}");
             }
         }
 
@@ -3882,7 +3891,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         MapLogger.Info($"[iRO MAP DEBUG] Script warp entity='{execution.EntityId}' map='{_mapName}' -> map='{map}' x={warp.X} y={warp.Y}");
         var sourceMap = _presenceMapId ?? _mapName;
         await LeavePlayerWorldAsync(PlayerSessionLifecycle.AuthenticatedButNotWorldVisible, cancellationToken);
-        TeleportTo(map, warp.X, warp.Y); _positionDirty = true; _visibleActorIds.Clear(); _monsterVisibility.Reset();
+        TeleportTo(map, warp.X, warp.Y, reason: "script", source: $"script-warp:{execution.EntityId}"); _positionDirty = true; _visibleActorIds.Clear(); _monsterVisibility.Reset();
         await TransferDistributedPresenceAsync(sourceMap, _mapName, _x, _y, cancellationToken);
         await WriteAsync(IroMapTransitionPackets.BuildSameServerMapChange(_mapName, _x, _y), cancellationToken);
         await PersistPositionIfDirtyAsync(cancellationToken);
@@ -4038,7 +4047,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         if (string.IsNullOrWhiteSpace(map)) throw new InvalidOperationException("Generated script warp map is empty.");
         var sourceMap = _presenceMapId ?? _mapName;
         await LeavePlayerWorldAsync(PlayerSessionLifecycle.AuthenticatedButNotWorldVisible, cancellationToken);
-        TeleportTo(map, x, y); _positionDirty = true; _visibleActorIds.Clear(); _monsterVisibility.Reset();
+        TeleportTo(map, x, y, reason: "script", source: "generated-script-warp"); _positionDirty = true; _visibleActorIds.Clear(); _monsterVisibility.Reset();
         await TransferDistributedPresenceAsync(sourceMap, _mapName, _x, _y, cancellationToken);
         await WriteAsync(IroMapTransitionPackets.BuildSameServerMapChange(map, x, y), cancellationToken);
         await PersistPositionIfDirtyAsync(cancellationToken);
