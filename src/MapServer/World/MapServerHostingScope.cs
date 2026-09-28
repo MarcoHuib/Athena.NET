@@ -12,27 +12,33 @@ namespace Athena.Net.MapServer.World;
 // data is then missing; an unserved map's generated spawns are retained as source truth but never
 // instantiated).
 //
-// Current scope covers exactly what Athena.NET genuinely hosts today: the complete tutorial family
-// and its five source-corresponding Izlude -> prt_fild08 -> Prontera corridors. CharServer's pinned
-// start-point configuration selects iz_int or iz_int01..04; the generated scripts consequently
-// derive izlude, izlude_a..d and the matching prt_fild08, prt_fild08a..d. Hosting only the `d`
-// member stranded legitimate `01` players on izlude_a. This remains an explicit scope decision,
-// not a derivation from collision coverage. An earlier version of this comment claimed pinned
-// `legacy/rathena/db/map_cache.dat` had no collision data for `prt_fild08` at all - that claim is
-// now KNOWN STALE. MapCollisionStartupLoader's ruleset-specific overlay merge (added to fix the
-// live Prontera collision crash - see ai/map-server.md's "Live stock-iRO acceptance fixes"
-// section) resolved this incidentally: pinned `legacy/rathena/db/re/map_cache.dat` genuinely
-// contains a real `prt_fild08` record (400x400) alongside its `a`/`b`/`c`/`d` instanced
-// duplicates. See `MapCollisionStartupLoaderTests.Load_RenewalRuleSet_RealPinnedMapCache_
-// PrtFild08BaseMapNowResolvesViaOverlay` for the regression proof this data now exists.
+// Current scope covers exactly what Athena.NET genuinely hosts today: the tutorial family (iz_int,
+// int_land), Izlude, the Izlude Academy floors (iz_ac01, iz_ac02 - active Renewal warps lead from Izlude
+// into iz_ac01 and between the floors, so a served Izlude must not route players into an unhosted map), and
+// the Izlude -> prt_fild08 -> Prontera corridor - ONE canonical copy of each. MobSpawnMaps deliberately
+// does NOT include iz_ac01/iz_ac02: their only effective spawns (4 Academy training dummies in the
+// Renewal-active npc/re/jobs/novice/academy.txt) were never hosted before and are a separate content decision.
+// Pinned rAthena also ships parallel "channel" copies of these maps (iz_int01..04, int_land01..04,
+// izlude_a..d, prt_fild08a..d, iz_ac01_a..d, iz_ac02_a..d - the 24-entry alias table in
+// Shared/MapIdentity/CanonicalMapPolicy.cs). Athena.NET does not host channels: those maps are not
+// served, own no World simulation, and every character location / warp destination naming one is
+// canonicalized onto its canonical map at the CharServer read/write boundary and at MapServer's
+// TeleportTo. Their pinned/generated source stays in the repository purely as source coverage
+// (source representation is not runtime activation). This remains an explicit scope decision, not a
+// derivation from collision coverage. MapCollisionStartupLoader's ruleset-specific overlay merge
+// resolves the canonical maps' collision (`legacy/rathena/db/re/map_cache.dat` contains a real
+// `prt_fild08` record - see `MapCollisionStartupLoaderTests.Load_RenewalRuleSet_RealPinnedMapCache_
+// PrtFild08BaseMapNowResolvesViaOverlay`).
 public static class MapServerHostingScope
 {
     public static readonly IReadOnlySet<string> ServedMaps = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {
-        "int_land", "int_land01", "int_land02", "int_land03", "int_land04",
-        "iz_int", "iz_int01", "iz_int02", "iz_int03", "iz_int04",
-        "izlude", "izlude_a", "izlude_b", "izlude_c", "izlude_d",
-        "prt_fild08", "prt_fild08a", "prt_fild08b", "prt_fild08c", "prt_fild08d",
+        "int_land",
+        "iz_ac01",
+        "iz_ac02",
+        "iz_int",
+        "izlude",
+        "prt_fild08",
         "prontera",
     };
 
@@ -44,11 +50,11 @@ public static class MapServerHostingScope
     // (e.g. the Poring spawn at legacy/rathena/npc/re/mobs/fields/prontera.txt:97,
     // X:305,Y:233,Xs:10,Ys:10) - that gap is now closed (see MobSpawnCellSelector.cs's own doc
     // comment for the full rectangular/fixed-point search this selector now reproduces), so the
-    // complete source-backed prt_fild08 family is included below.
+    // canonical prt_fild08 map is included below (its channel copies are not - see the type comment).
     public static readonly IReadOnlySet<string> MobSpawnMaps = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {
-        "int_land", "int_land01", "int_land02", "int_land03", "int_land04",
-        "prt_fild08", "prt_fild08a", "prt_fild08b", "prt_fild08c", "prt_fild08d",
+        "int_land",
+        "prt_fild08",
         "prontera",
     };
 

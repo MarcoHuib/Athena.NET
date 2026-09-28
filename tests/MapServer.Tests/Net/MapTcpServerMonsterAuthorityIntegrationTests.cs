@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Collections.Concurrent;
 using System.Linq;
 using System.Net;
 using System.Net.Sockets;
@@ -12,6 +13,7 @@ using Athena.Net.World.Contracts;
 using Microsoft.Extensions.DependencyInjection;
 using Orleans.Hosting;
 using Orleans.TestingHost;
+using System.Reflection;
 
 namespace Athena.Net.MapServer.Tests.Net;
 
@@ -59,7 +61,8 @@ public sealed class MapTcpServerMonsterAuthorityIntegrationTests : IAsyncLifetim
     }
 
     private static async Task<(TcpClient Client, NetworkStream Stream, MapClientSession Session, Task RunTask, TcpListener Listener)> ConnectSessionAsync(
-        MapTcpServer server, MapServerWorld world, IWorldRuntime worldRuntime, uint accountId, string mapId, ushort x, ushort y, CharacterGameplayState? gameplayState = null)
+        MapTcpServer server, MapServerWorld world, IWorldRuntime worldRuntime, uint accountId, string mapId, ushort x, ushort y, CharacterGameplayState? gameplayState = null,
+        Func<PlayerAttackActionOutcome, CancellationToken, Task>? playerAttackFanout = null)
     {
         var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
@@ -85,7 +88,7 @@ public sealed class MapTcpServerMonsterAuthorityIntegrationTests : IAsyncLifetim
             monsterProjections: world.MonsterProjections, combat: world.Combat, combatState: world.CombatState,
             movementPathProvider: world.MovementPathProvider, collisionProvider: world.Collision,
             players: world.Players, playerVisibility: world.PlayerVisibility, visibilityOptions: world.Visibility,
-            distributedWorld: worldRuntime);
+            distributedWorld: worldRuntime, playerAttackFanout: playerAttackFanout, lethalAttackGate: server.LethalAttackGateForTest);
         var run = session.RunAsync(CancellationToken.None);
         var auth = new MapAuthOkData(accountId, accountId, 1, 2, 0, 0, false, mapId, x, y, 0, 0, 1, "Fixture", HairStyle: 4, HairColor: 2, ClothesColor: 1);
         await session.CompleteIroAuthenticationAsync(auth);
@@ -1235,6 +1238,117 @@ public sealed class MapTcpServerMonsterAuthorityIntegrationTests : IAsyncLifetim
     // correct CALL-SITE wiring (NotifyMonsterRespawnedAsync calling ForgetProjectedForActor with the
     // right identity) is proven by MapClientSessionRespawnCleanupTests.cs. Both are re-run alongside
     // this substep's own verification pass, not re-derived here.
+    // Live multiplayer regression: the player-vs-monster combat ACTION (0x08C8) is AREA-visible, not
+    // attacker-socket-only (see PlayerAttackActionOutcome's own doc comment) - a nearby bystander must
+    // see the killing blow's own action packet BEFORE the authoritative Died vanish, exactly as it
+    // already does for a monster's own attack. Sessions here are constructed directly (ConnectSessionAsync,
+    // not MapTcpServer's real accept loop), so this test wires `playerAttackFanout` to `server`'s own
+    // FanOutPlayerAttackActionAsync explicitly and injects both into `server`'s `_sessions` via the same
+    // narrow reflection seam MapTcpServerRunAsyncSupervisionTests already establishes as this project's
+    // accepted pattern for a production-only dictionary with no other test seam.
+    private static void InjectSession(MapTcpServer server, int sessionId, MapClientSession session)
+    {
+        var field = typeof(MapTcpServer).GetField("_sessions", BindingFlags.NonPublic | BindingFlags.Instance)
+            ?? throw new InvalidOperationException("MapTcpServer._sessions field not found - test seam broken by a rename.");
+        var sessions = (ConcurrentDictionary<int, MapClientSession>)field.GetValue(server)!;
+        sessions[sessionId] = session;
+    }
+
+    [Fact]
+    public async Task PlayerAttack_LethalHit_BystanderReceivesTheKillingActionBeforeTheVanish()
+    {
+        var mapId = "izlude";
+        var world = MakeWorld(mapId, respawnDelayMs: 60_000); // long respawn - irrelevant to this test, kept out of the way.
+        var worldRuntime = new OrleansWorldRuntime(_cluster.Client, Resolver());
+        var server = new MapTcpServer(new MapConfigStore(new MapConfig(), "unused.conf"), new CharServerConnector(new MapConfigStore(new MapConfig(), "unused.conf")), world, worldRuntime);
+
+        var (clientAttacker, streamAttacker, sessionAttacker, runAttacker, _) = await ConnectSessionAsync(
+            server, world, worldRuntime, accountId: 900, mapId, (ushort)(MonsterX - 1), MonsterY, playerAttackFanout: server.FanOutPlayerAttackActionAsync);
+        var (clientBystander, streamBystander, sessionBystander, runBystander, _) = await ConnectSessionAsync(
+            server, world, worldRuntime, accountId: 901, mapId, (ushort)(MonsterX + 1), MonsterY, playerAttackFanout: server.FanOutPlayerAttackActionAsync);
+        InjectSession(server, 1, sessionAttacker);
+        InjectSession(server, 2, sessionBystander);
+        using var _disposeAttacker = clientAttacker;
+        using var _disposeBystander = clientBystander;
+
+        await server.ProcessOneMonsterTickAsync([sessionAttacker, sessionBystander], CancellationToken.None);
+        await server.ProcessOneMonsterTickAsync([sessionAttacker, sessionBystander], CancellationToken.None);
+        await ReadUntilMonsterDiscoveryAsync(streamAttacker);
+        await ReadUntilMonsterDiscoveryAsync(streamBystander);
+
+        Assert.True(world.MonsterProjections.TryGet(mapId, out var projection));
+        var monster = Assert.Single(projection.AllInstances);
+
+        // The attacker's own stream also carries its own action/HP-info/progression/vanish tail for
+        // every hit - drain it continuously in the background (the established pattern this file's own
+        // PlayerAttack_LethalHit_CallsTryMarkMonsterDead_... test already uses) so those unread response
+        // packets never fill the OS socket buffer and stall the session's own send path.
+        using var attackerDrainCts = new CancellationTokenSource();
+        var attackerDrainTask = Task.Run(async () =>
+        {
+            var sink = new byte[4096];
+            try { while (!attackerDrainCts.IsCancellationRequested) await streamAttacker.ReadAsync(sink, attackerDrainCts.Token); }
+            catch (OperationCanceledException) { } catch (IOException) { }
+        });
+
+        await streamAttacker.WriteAsync(BuildAttackPacket(monster.ActorId));
+
+        // Walk the bystander's own stream generically (mirroring ReadUntilVanishAsync's own framing),
+        // recording every player-attack action seen, until the authoritative Died vanish arrives - proves
+        // BOTH that the bystander receives the action (the live regression's exact fix) AND that it
+        // arrives strictly before the vanish (never after), for however many hits this attacker's own
+        // real-attack-delay cadence actually produces before the kill lands. Interleaved with driving the
+        // ordinary tick loop (never a manual "verification" RPC call) - the SAME real-World-feed
+        // Died-fan-out path KillThroughRealAttack_BystanderPresent_... already proves, exercised here
+        // together with the new action fan-out.
+        var actionsSeenByBystander = new List<(uint Src, uint Dst, uint Damage)>();
+        byte[]? vanish = null;
+        var readTask = Task.Run(async () =>
+        {
+            while (vanish is null)
+            {
+                var header = await ReadExact(streamBystander, 2);
+                var opcode = BinaryPrimitives.ReadInt16LittleEndian(header);
+                if (opcode == (short)PacketConstants.ZcNotifyAct3)
+                {
+                    var body = await ReadExact(streamBystander, PacketConstants.ZcNotifyAct3Length - 2);
+                    var full = (byte[])[.. header, .. body];
+                    actionsSeenByBystander.Add((BinaryPrimitives.ReadUInt32LittleEndian(full.AsSpan(2)), BinaryPrimitives.ReadUInt32LittleEndian(full.AsSpan(6)), BinaryPrimitives.ReadUInt32LittleEndian(full.AsSpan(22))));
+                }
+                else if (opcode == (short)PacketConstants.ZcNotifyVanish)
+                {
+                    vanish = (byte[])[.. header, .. await ReadExact(streamBystander, PacketConstants.ZcNotifyVanishLength - 2)];
+                }
+                else
+                {
+                    await SkipPacketBodyAsync(streamBystander, opcode);
+                }
+            }
+        });
+
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(15);
+        while (DateTime.UtcNow < deadline && !readTask.IsCompleted)
+        {
+            await server.ProcessOneMonsterTickAsync([sessionAttacker, sessionBystander], CancellationToken.None);
+            await Task.Delay(20);
+        }
+        await readTask.WaitAsync(TimeSpan.FromSeconds(5));
+        attackerDrainCts.Cancel();
+        try { await attackerDrainTask; } catch { /* Expected once the stream is torn down. */ }
+
+        Assert.NotNull(vanish);
+        Assert.Equal(monster.ActorId, BinaryPrimitives.ReadUInt32LittleEndian(vanish!.AsSpan(2)));
+        Assert.Equal(PacketConstants.ZcNotifyVanishReasonDied, vanish[6]);
+        Assert.NotEmpty(actionsSeenByBystander); // The live regression: this used to be empty.
+        Assert.All(actionsSeenByBystander, action => Assert.Equal(900u, action.Src));
+        Assert.All(actionsSeenByBystander, action => Assert.Equal(monster.ActorId, action.Dst));
+        Assert.All(actionsSeenByBystander, action => Assert.True(action.Damage > 0));
+
+        clientAttacker.Close(); clientBystander.Close();
+        await runAttacker.WaitAsync(TimeSpan.FromSeconds(5));
+        await runBystander.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
     [Fact]
     public async Task KillThroughRealAttack_BystanderPresent_RespawnContinuity_StaleIncarnationRejected()
     {
@@ -1358,7 +1472,7 @@ public sealed class MapTcpServerMonsterAuthorityIntegrationTests : IAsyncLifetim
     // fixed-length opcode" - the caller falls back to the dynamic, self-describing length-prefixed
     // shape (ZcNotifyNewEntry/ZcNotifyStandEntry, matching ReadDynamic's own 4-byte-header/2-byte-
     // length shape used elsewhere in this file).
-    private static int KnownFixedPacketLength(short opcode) => opcode switch
+    internal static int KnownFixedPacketLength(short opcode) => opcode switch
     {
         (short)PacketConstants.ZcNotifyAct3 => PacketConstants.ZcNotifyAct3Length,
         (short)PacketConstants.ZcHpInfo => PacketConstants.ZcHpInfoLength,

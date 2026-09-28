@@ -91,7 +91,7 @@ public sealed class MapClientSessionAttackerIdentityTests
         var stream = client.GetStream();
 
         var allocator = new WorldActorIdAllocator();
-        var spawnDefinition = new MobSpawnDefinition(GeneratedMobs.GPoring, "int_land03", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "test", 0));
+        var spawnDefinition = new MobSpawnDefinition(GeneratedMobs.GPoring, "int_land", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "test", 0));
         var registry = new MonsterRegistry([spawnDefinition], allocator.Allocate, new FixedCellSelector(75, 51), TimeProvider.System);
         var questDrops = new QuestDropResolver([]);
         var target = registry.AllInstances[0];
@@ -105,7 +105,7 @@ public sealed class MapClientSessionAttackerIdentityTests
         var gameplayPersistence = new FixedGameplayStatePersistence(WeakFreshNovice());
         var session = new MapClientSession(
             1, serverClient, new CharServerConnector(ConfigStore()), true,
-            "int_land03", 75, 51, WorldMapRegistry.Tutorial,
+            "int_land", 75, 51, WorldMapRegistry.Tutorial,
             gameplayStatePersistence: gameplayPersistence,
             accountId: LiveAccountId, charId: LiveCharId, monsterProjections: monsterProjections, combat: combat,
             combatState: combatState, distributedWorld: fakeWorld);
@@ -113,7 +113,7 @@ public sealed class MapClientSessionAttackerIdentityTests
         // CharacterName must be non-empty for EnterPlayerWorldAsync's own BuildCurrentPresence check
         // to succeed - required so RegisterPresenceAsync (and thus this test's own strict presence
         // validation) actually runs.
-        await session.CompleteIroAuthenticationAsync(new(LiveAccountId, LiveCharId, 1, 2, 0, 0, false, "int_land03", 75, 51, 0, 0, 0, CharacterName: "TestNovice"));
+        await session.CompleteIroAuthenticationAsync(new(LiveAccountId, LiveCharId, 1, 2, 0, 0, false, "int_land", 75, 51, 0, 0, 0, CharacterName: "TestNovice"));
 
         await ReadExact(stream, 4 + 6 + 6 + 13);
         await ReadDynamic(stream);
@@ -327,6 +327,76 @@ public sealed class MapClientSessionAttackerIdentityTests
 
         client.Close();
         await run.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    // Test 5 - live-reproduction regression for the wrong-facing monster attack: proves the
+    // ACTUAL SERIALIZED 0x08C8 (ZC_NOTIFY_ACT3) wire packet a real monster->player attack produces
+    // carries the player's runtime actor/GID (AccountId), never CharacterId, using the exact live
+    // capture shape (AccountId=2_000_000, CharacterId=1) - values deliberately different so this
+    // test cannot pass merely because AccountId == CharacterId.
+    //
+    // Root cause this guards: MonsterAttackCadenceExecutor.TryApplyAttackAsync used to construct
+    // MonsterAttackActionOutcome with `target.CharacterId` (a WorldPlayerTargetReference field - the
+    // correct id for World-side matching/RPCs) in the VictimAccountId slot, so the wire dstId ended
+    // up as the CharacterId (1) instead of the real AccountId (2_000_000) - reproducing the live
+    // symptom (`targetCharacterId=1` logged, `victimAccountId=1` sent) exactly.
+    [Fact]
+    public async Task MonsterAttackOutcome_WireDstId_IsPlayerAccountId_NotCharacterId()
+    {
+        var world = MakeWorld();
+        const string mapId = "izlude";
+        var presenceId = Guid.NewGuid();
+        var epoch = WorldSimulationEpoch.NewEpoch();
+        const uint monsterActorId = 901;
+        var incarnation = WorldMonsterIncarnationId.First;
+        var target = new WorldPlayerTargetReference(LiveCharId, presenceId);
+        var monsterInstance = new WorldMonsterInstance(
+            monsterActorId, incarnation, mapId, MobId: 1002, X: 100, Y: 100,
+            WorldMonsterLifecycleState.Alive, IsWalking: false, DestinationX: 100, DestinationY: 100,
+            WorldMonsterEngagementState.InAttackRange, target, CurrentHp: 55, MaxHp: 55);
+
+        var scripted = new ScriptedWorldRuntime
+        {
+            FixedEpoch = epoch,
+            FixedSnapshot = [monsterInstance],
+            OnValidateMonsterAttackWindow = query =>
+            {
+                Assert.Equal(LiveCharId, query.TargetCharacterId);
+                Assert.NotEqual(LiveAccountId, query.TargetCharacterId);
+                return new WorldMonsterAttackWindowResult(WorldMonsterAttackWindowStatus.Valid);
+            },
+        };
+
+        var (session, client) = await MakeWorldVisibleSessionAsync(world, scripted, mapId, accountId: LiveAccountId, charId: LiveCharId, presenceId: presenceId);
+        using var _dispose = client;
+        var stream = client.GetStream();
+
+        Assert.Equal(LiveAccountId, session.AccountId);
+        Assert.Equal(LiveCharId, session.CharacterId);
+        Assert.NotEqual(session.AccountId, session.CharacterId);
+
+        var server = new MapTcpServer(ConfigStore(), new CharServerConnector(ConfigStore()), world, scripted);
+        await server.ProcessOneMonsterTickAsync([session], CancellationToken.None); // Bootstraps the projection/combat-state; no attack yet (NextAttackAt unset -> due immediately next tick).
+
+        // Tick 1's own PollAndReconcileMapAsync discovers the monster (0x09FF stand-entry) before
+        // the cadence executor runs - drain that discovery packet first, it is unrelated to this
+        // test's own identity assertion.
+        var discoveryPacket = await ReadDynamic(stream);
+        Assert.Equal((short)PacketConstants.ZcNotifyStandEntry, BinaryPrimitives.ReadInt16LittleEndian(discoveryPacket));
+
+        await server.ProcessOneMonsterTickAsync([session], CancellationToken.None); // Actually executes the attack and fans out the outcome.
+
+        var damagePacket = await ReadExact(stream, PacketConstants.ZcNotifyAct3Length);
+        Assert.Equal((short)PacketConstants.ZcNotifyAct3, BinaryPrimitives.ReadInt16LittleEndian(damagePacket));
+
+        var srcId = BinaryPrimitives.ReadUInt32LittleEndian(damagePacket.AsSpan(2));
+        var targetId = BinaryPrimitives.ReadUInt32LittleEndian(damagePacket.AsSpan(6));
+
+        Assert.Equal(monsterActorId, srcId);
+        Assert.Equal(LiveAccountId, targetId); // 2_000_000 - the real runtime actor/GID Ragexe expects.
+        Assert.NotEqual(LiveCharId, targetId); // 1 - must never leak the CharacterId onto the wire here.
+
+        await session.DisposeAsync();
     }
 
     private static MapServerWorld MakeWorld()

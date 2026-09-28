@@ -27,6 +27,17 @@ public sealed class MapTcpServer
     private readonly TcpListener _listener;
     private readonly ConcurrentDictionary<int, MapClientSession> _sessions = new();
     private readonly MonsterAttackCadenceExecutor _cadenceExecutor;
+    // Cross-session (this gateway process only) ordering primitive for a lethal player attack action
+    // vs this SAME process's own Died feed dispatch - see LethalAttackProjectionGate's own doc comment.
+    private readonly LethalAttackProjectionGate _lethalAttackGate = new();
+    // Test-only exposure so a fixture that constructs MapClientSession directly (not via HandleClientAsync's
+    // own real accept path) can still wire the SAME gate instance in. Never used by any production code path.
+    internal LethalAttackProjectionGate LethalAttackGateForTest => _lethalAttackGate;
+    // Defensive upper bound on FanOutEntryAsync's own wait below: normal release happens the instant
+    // the attacking session's local action fan-out completes (microseconds to low milliseconds), never
+    // this long in practice. This bound exists only so a stuck/disconnected attacker session can never
+    // block THIS ONE life's Died dispatch forever - it is a fail-safe, not the ordering mechanism.
+    private static readonly TimeSpan LethalAttackGateWaitTimeout = TimeSpan.FromSeconds(5);
     // Item 7 of the Step 6 correctness-hardening pass: maps whose monster-feed reconciliation hit a
     // DETERMINISTIC invariant/configuration failure (see IsDeterministicInvariantFailure below) -
     // never retried by the ordinary per-tick loop, since a deterministic failure would simply
@@ -48,7 +59,26 @@ public sealed class MapTcpServer
         var config = _configStore.Current;
         _listener = new TcpListener(config.BindIp, config.MapPort);
         _cadenceExecutor = new MonsterAttackCadenceExecutor(_world.MonsterProjections, _world.CombatState, _worldRuntime, timeProvider ?? TimeProvider.System);
+        // Reconstructs this process's contribution to CharServer's own aggregate the instant a
+        // (re)connection to CharServer succeeds - see CharServerConnector.CurrentUserCountProvider's
+        // own doc comment for why this is necessary on top of the per-event reports below.
+        _charConnector.CurrentUserCountProvider = () => (uint)_sessions.Values.Count(session => session.IsAuthenticated);
     }
+
+    // Recomputes this process's own currently-authenticated player count and reports it to
+    // CharServer (which aggregates across every registered MapServer and forwards the total to
+    // LoginServer via LcUserCount - see MapServerRegistry.TotalUsers/LoginServerConnector.
+    // TrySendUserCount on the CharServer side). Called exactly twice per session lifecycle: once when
+    // MapClientSession's own authentication succeeds (_onAuthenticated, wired at construction below),
+    // and once - unconditionally, whether or not the session ever authenticated - right after it is
+    // removed from _sessions on disconnect, so the count can only ever go down for a session that
+    // never actually incremented it, never negative.
+    private void ReportAuthenticatedUserCount() => _ = _charConnector.TrySendUserCountAsync((uint)_sessions.Values.Count(session => session.IsAuthenticated));
+
+    // Test-only read of the exact count ReportAuthenticatedUserCount would report - lets a test
+    // assert the counting logic itself (authenticated-only, disconnect-decrements, never negative)
+    // without needing a live CharServerConnector connection. Never called from any production path.
+    internal int AuthenticatedSessionCountForTest => _sessions.Values.Count(session => session.IsAuthenticated);
 
     // Focused tests which exercise the existing process-local simulation do not start an Orleans
     // cluster. Production startup always uses the overload above and requires IWorldRuntime.
@@ -414,12 +444,17 @@ public sealed class MapTcpServer
         // whitespace map ids, so grouping such a session together with real sessions (or polling for
         // map id "") is a bug this filter exists to prevent, never merely a cosmetic grouping choice.
         var eligibleSessions = sessions.Where(session => session.IsWorldMapEligible).ToArray();
+        // DEBUG-LOG-ONLY tick timing (see MonsterTickTiming) - never read by any decision.
+        var tickStartedAt = Stopwatch.GetTimestamp();
+        var timing = new MonsterTickTiming();
         foreach (var mapGroup in eligibleSessions.GroupBy(session => session.CurrentMapName, StringComparer.OrdinalIgnoreCase))
         {
             if (_permanentlyFailedMaps.ContainsKey(mapGroup.Key)) continue; // Item 7: a deterministic invariant failure already logged for this map - never hot-loop retrying it.
+            timing.MapCount++;
+            var mapPollStartedAt = Stopwatch.GetTimestamp();
             try
             {
-                await PollAndReconcileMapAsync(mapGroup.Key, mapGroup.ToArray(), cancellationToken);
+                await PollAndReconcileMapAsync(mapGroup.Key, mapGroup.ToArray(), timing, cancellationToken);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -451,6 +486,7 @@ public sealed class MapTcpServer
                 // tick's own poll naturally retries from the same, unadvanced cursor.
                 MapLogger.Error($"[WORLD] Transient World RPC failure reconciling map '{mapGroup.Key}' - other maps still proceed, this map retries next tick: {ex}");
             }
+            timing.PollAndReconcileTicks += Stopwatch.GetTimestamp() - mapPollStartedAt;
             // Item 3's own correction: the earlier broad, UNCONDITIONAL `catch (Exception ex)` that
             // used to sit here (with no `when` filter) would have caught EVERY exception type not
             // already classified as deterministic/transient above - including a genuine local
@@ -463,7 +499,11 @@ public sealed class MapTcpServer
             // it behind an infinite per-map retry.
         }
 
+        var cadenceStartedAt = Stopwatch.GetTimestamp();
         var cadenceResult = await _cadenceExecutor.ProcessAsync(eligibleSessions, cancellationToken);
+        timing.CadenceTicks = Stopwatch.GetTimestamp() - cadenceStartedAt;
+        timing.AttackActions = cadenceResult.AttackActions.Count;
+        timing.SessionCount = eligibleSessions.Length;
         foreach (var session in eligibleSessions)
         {
             // NotifyMonsterAttackOutcomeAsync owns its own visibility/victim rules internally
@@ -472,6 +512,7 @@ public sealed class MapTcpServer
             // per session per outcome.
             foreach (var action in cadenceResult.AttackActions)
             {
+                var outcomeStartedAt = Stopwatch.GetTimestamp();
                 try
                 {
                     await session.NotifyMonsterAttackOutcomeAsync(action, cancellationToken);
@@ -484,6 +525,7 @@ public sealed class MapTcpServer
                 {
                     // Server shutdown.
                 }
+                timing.OutcomeFanOutTicks += Stopwatch.GetTimestamp() - outcomeStartedAt;
             }
 
             // Item 6 of the Step 6 correctness-hardening pass: retry any pending World life-state
@@ -492,6 +534,7 @@ public sealed class MapTcpServer
             // the transition that created it - a transient RPC failure must not leave a player
             // locally Dead while World indefinitely still reports IsAlive=true. A no-op call
             // (no RPC at all) when nothing is pending for this session.
+            var pendingLifeStartedAt = Stopwatch.GetTimestamp();
             try
             {
                 await session.TryReconcilePendingLifeStateAsync(cancellationToken);
@@ -504,7 +547,47 @@ public sealed class MapTcpServer
             {
                 // Server shutdown.
             }
+            timing.PendingLifeTicks += Stopwatch.GetTimestamp() - pendingLifeStartedAt;
         }
+
+        LogTickTimingSummary(timing, Stopwatch.GetTimestamp() - tickStartedAt);
+    }
+
+    // DEBUG-LOG-ONLY per-tick timing (no behavior, not guarded by the verbose toggle): raw
+    // Stopwatch ticks accumulated by ProcessOneMonsterTickAsync/PollAndReconcileMapAsync and turned
+    // into ONE summary line only for a tick that is slow (>= TickSummaryThresholdMs) or that carried a
+    // monster attack. Answers "where did start-to-start > 100 ms go" without a telemetry framework.
+    private sealed class MonsterTickTiming
+    {
+        public long PollAndReconcileTicks;
+        public long PollRpcTicks;
+        public long CadenceTicks;
+        public long OutcomeFanOutTicks;
+        public long PendingLifeTicks;
+        public int Entries;
+        public int AttackActions;
+        public int MapCount;
+        public int SessionCount;
+    }
+
+    private const double TickSummaryThresholdMs = 15;
+
+    private static double TicksToMs(long ticks) => Stopwatch.GetElapsedTime(0, ticks).TotalMilliseconds;
+
+    private static void LogTickTimingSummary(MonsterTickTiming timing, long totalTicks)
+    {
+        var totalMs = TicksToMs(totalTicks);
+        if (totalMs < TickSummaryThresholdMs && timing.AttackActions == 0) return;
+
+        static string F(double value) => value.ToString("F1", System.Globalization.CultureInfo.InvariantCulture);
+        var pollReconcileMs = TicksToMs(timing.PollAndReconcileTicks);
+        var pollRpcMs = TicksToMs(timing.PollRpcTicks);
+        MapLogger.Info(
+            $"[iRO MAP DEBUG] Monster tick timing totalMs={F(totalMs)} pollAndReconcileMs={F(pollReconcileMs)} pollRpcMs={F(pollRpcMs)} " +
+            $"applyAndFanOutMs={F(Math.Max(0, pollReconcileMs - pollRpcMs))} cadenceMs={F(TicksToMs(timing.CadenceTicks))} " +
+            $"outcomeFanOutMs={F(TicksToMs(timing.OutcomeFanOutTicks))} pendingLifeMs={F(TicksToMs(timing.PendingLifeTicks))} " +
+            $"entries={timing.Entries} attackActions={timing.AttackActions} maps={timing.MapCount} sessions={timing.SessionCount} " +
+            $"t={F(Stopwatch.GetElapsedTime(0).TotalMilliseconds)}ms");
     }
 
     // Polls World's monster feed for exactly ONE map and applies the BINDING bootstrap/resync/
@@ -515,16 +598,21 @@ public sealed class MapTcpServer
     //     1. projection  2. combat-state  3. every active session  4. THEN advance the cursor
     //   Ready with incremental Entries -> apply each entry in order, fan out any resulting movement
     //     packet per WorldMonsterMovementKind, THEN advance the cursor
-    private async Task PollAndReconcileMapAsync(string mapId, IReadOnlyCollection<MapClientSession> mapSessions, CancellationToken cancellationToken)
+    private async Task PollAndReconcileMapAsync(string mapId, IReadOnlyCollection<MapClientSession> mapSessions, MonsterTickTiming timing, CancellationToken cancellationToken)
     {
         var projection = _world.MonsterProjections.GetOrCreate(mapId);
         WorldMonsterFeedPage page;
+        var pollStartedAt = Stopwatch.GetTimestamp();
+        var cursorBeforePoll = projection.Cursor;
         try
         {
-            page = await _worldRuntime.PollMonsterFeedAsync(projection.Cursor, mapId, cancellationToken);
+            page = await _worldRuntime.PollMonsterFeedAsync(cursorBeforePoll, mapId, cancellationToken);
         }
-        catch (IOException) { return; }
-        catch (OperationCanceledException) { return; }
+        catch (IOException) { timing.PollRpcTicks += Stopwatch.GetTimestamp() - pollStartedAt; return; }
+        catch (OperationCanceledException) { timing.PollRpcTicks += Stopwatch.GetTimestamp() - pollStartedAt; return; }
+        timing.PollRpcTicks += Stopwatch.GetTimestamp() - pollStartedAt;
+        timing.Entries += page.Entries?.Count ?? 0;
+        LogFeedPollDiagnostics(mapId, page, cursorBeforePoll, pollStartedAt);
 
         if (page.Status == WorldMonsterFeedStatus.SpawnInitializationRequired)
         {
@@ -555,6 +643,37 @@ public sealed class MapTcpServer
             await FanOutEntryAsync(entry, page.SimulationEpoch, mapSessions, cancellationToken);
         }
         projection.CommitCursor(page.SimulationEpoch, page.AsOfSequence);
+    }
+
+    // DEBUG-LOG-ONLY movement-lag diagnostics (no behavior): one line per poll that carried
+    // incremental entries or a snapshot, or whose RPC was slow. Lets a live capture separate real
+    // Orleans/feed latency from client-interpolation effects: rpcMs is the PollMonsterFeedAsync
+    // round trip, sincePrevPollMs is the real poll cadence for this map (Task.Delay(100ms) +
+    // processing, NOT a fixed-rate timer), cursorLag is how many World sequences this poll had to
+    // catch up on (asOfSequence - cursor.Sequence; ~0 means the feed is being consumed promptly).
+    private readonly ConcurrentDictionary<string, long> _debugLastPollTimestampByMap = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly double DebugSlowPollThresholdMs = 25;
+
+    private void LogFeedPollDiagnostics(string mapId, WorldMonsterFeedPage page, WorldMonsterFeedCursor? cursorBeforePoll, long pollStartedAt)
+    {
+        if (!MonsterDebugLog.Verbose) return;
+        var finishedAt = Stopwatch.GetTimestamp();
+        var rpcMs = Stopwatch.GetElapsedTime(pollStartedAt, finishedAt).TotalMilliseconds;
+        var previous = _debugLastPollTimestampByMap.TryGetValue(mapId, out var previousStart) ? previousStart : (long?)null;
+        _debugLastPollTimestampByMap[mapId] = pollStartedAt;
+
+        var entryCount = page.Entries?.Count ?? 0;
+        var hasSnapshot = page.Snapshot is { Count: > 0 };
+        if (entryCount == 0 && !hasSnapshot && rpcMs < DebugSlowPollThresholdMs) return;
+
+        var sincePrevMs = previous is { } prev ? Stopwatch.GetElapsedTime(prev, pollStartedAt).TotalMilliseconds.ToString("F1", System.Globalization.CultureInfo.InvariantCulture) : "none";
+        var firstSeq = entryCount > 0 ? page.Entries![0].Sequence : (long?)null;
+        var lastSeq = entryCount > 0 ? page.Entries![entryCount - 1].Sequence : (long?)null;
+        var cursorLag = cursorBeforePoll is { } cursor ? (page.AsOfSequence - cursor.Sequence).ToString() : "bootstrap";
+        MapLogger.Info(
+            $"[iRO MAP DEBUG] Feed poll map={mapId} status={page.Status} rpcMs={rpcMs.ToString("F1", System.Globalization.CultureInfo.InvariantCulture)} sincePrevPollMs={sincePrevMs} " +
+            $"entries={entryCount} seq=[{firstSeq?.ToString() ?? "-"}..{lastSeq?.ToString() ?? "-"}] asOf={page.AsOfSequence} cursorLag={cursorLag} snapshot={(hasSnapshot ? page.Snapshot!.Count.ToString() : "no")} " +
+            $"t={Stopwatch.GetElapsedTime(0).TotalMilliseconds.ToString("F1", System.Globalization.CultureInfo.InvariantCulture)}ms");
     }
 
     // Requirement 4: builds the per-map WorldMonsterSpawnBatch from the existing generated spawn
@@ -616,6 +735,37 @@ public sealed class MapTcpServer
         }
     }
 
+    // Local, same-gateway-process fan-out for a player's already-World-confirmed attack action (see
+    // PlayerAttackActionOutcome's own doc comment for why MapClientSession never iterates sibling
+    // sessions itself - this is the ONE place that does, mirroring FanOutEntryAsync's own role for
+    // the monster feed). Every CURRENTLY connected session - the attacker's own session included -
+    // gets exactly one call; each session's own NotifyPlayerAttackActionAsync owns its map/visibility
+    // gate and decides independently whether the action is actually wire-visible to it.
+    //
+    // ARCHITECTURE NOTE: this fan-out only reaches sessions connected to THIS MapServer process. Two
+    // players connected through two different MapServer gateway replicas do not yet share player
+    // combat-action visibility this way - that requires a World/Orleans player/combat event feed
+    // (the same migration PlayerVisibilityCoordinator/PlayerPresenceRegistry already need for
+    // cross-replica player visibility in general - see ai/map-server.md), which is out of scope here.
+    internal async Task FanOutPlayerAttackActionAsync(PlayerAttackActionOutcome action, CancellationToken cancellationToken)
+    {
+        foreach (var session in _sessions.Values)
+        {
+            try
+            {
+                await session.NotifyPlayerAttackActionAsync(action, cancellationToken);
+            }
+            catch (IOException)
+            {
+                // Client disconnected; HandleClientAsync's own cleanup removes it from _sessions.
+            }
+            catch (OperationCanceledException)
+            {
+                // Server shutdown.
+            }
+        }
+    }
+
     // Fans out one incremental feed entry to every session on this map. `Died` is fanned out to
     // EVERY session on the map, passing the EXACT life identity (item 1 of the Step 6 final
     // correctness pass corrected this from ActorId-only) - MapClientSession.NotifyMonsterDiedAsync
@@ -632,11 +782,28 @@ public sealed class MapTcpServer
     // not-visible (removed on death) re-discovers the NEW incarnation exactly like any other
     // newly-visible actor. Every OTHER kind carrying a MovementKind is projected via its own explicit
     // WorldMonsterMovementKind (never inferred from IsWalking - see that type's own doc comment).
-    private async Task FanOutEntryAsync(WorldMonsterFeedEntry entry, WorldSimulationEpoch epoch, IReadOnlyCollection<MapClientSession> mapSessions, CancellationToken cancellationToken)
+    internal async Task FanOutEntryAsync(WorldMonsterFeedEntry entry, WorldSimulationEpoch epoch, IReadOnlyCollection<MapClientSession> mapSessions, CancellationToken cancellationToken)
     {
         if (entry.Kind == WorldMonsterFeedEntryKind.Died)
         {
             var life = new WorldMonsterLifeReference(entry.Instance.MapId, epoch, entry.ActorId, entry.IncarnationId);
+            // Live multiplayer regression fix: if a local player-attack lethal hit for this EXACT life
+            // is currently being projected (LethalAttackProjectionGate.Enter was called before the
+            // World RPC that produced this very Died entry was even dispatched - see
+            // MapClientSession.EnterLethalInFlight), wait for that session to finish fanning its own
+            // final 0x08C8 out to every local session BEFORE this Died vanish reaches anyone - so no
+            // observer can ever see the vanish without having first seen the killing action. Bounded
+            // (LethalAttackGateWaitTimeout) so a stuck/disconnected attacker can never block this one
+            // life's Died dispatch forever; a life with no open gate returns immediately, so this adds
+            // no latency to the overwhelmingly common non-racing case, and never touches any OTHER life.
+            try
+            {
+                await _lethalAttackGate.WaitAsync(life).WaitAsync(LethalAttackGateWaitTimeout, cancellationToken);
+            }
+            catch (TimeoutException)
+            {
+                MapLogger.Warning($"[iRO MAP DEBUG] LethalAttackProjectionGate wait timed out mobActorId={life.ActorId} map={life.MapId} - proceeding with Died fan-out anyway.");
+            }
             foreach (var session in mapSessions)
             {
                 try
@@ -673,11 +840,12 @@ public sealed class MapTcpServer
         // transitional local combat-state entry must no longer suppress this projection.
         var actor = new WorldMonsterActorView(entry.Instance);
         var movementKind = entry.Kind == WorldMonsterFeedEntryKind.Respawned ? null : entry.MovementKind;
+        var feedContext = $"seq={entry.Sequence} kind={entry.Kind} movement={entry.MovementKind?.ToString() ?? "none"}"; // DEBUG-LOG-ONLY correlation text.
         foreach (var session in mapSessions)
         {
             try
             {
-                await session.NotifyMonsterMovedAsync(actor, movementKind, entry.Instance, cancellationToken);
+                await session.NotifyMonsterMovedAsync(actor, movementKind, entry.Instance, cancellationToken, feedContext);
             }
             catch (IOException) { /* Client disconnected; HandleClientAsync's own cleanup removes it from _sessions. */ }
             catch (OperationCanceledException) { /* Server shutdown. */ }
@@ -694,7 +862,7 @@ public sealed class MapTcpServer
         MapLogger.Info($"[iRO MAP DEBUG] Client connected: {endpoint}");
 
         using (client)
-        await using (var session = new MapClientSession(sessionId, client, _charConnector, _world, _worldRuntime))
+        await using (var session = new MapClientSession(sessionId, client, _charConnector, _world, _worldRuntime, FanOutPlayerAttackActionAsync, _lethalAttackGate, ReportAuthenticatedUserCount))
         {
             _sessions[sessionId] = session;
             try
@@ -716,6 +884,11 @@ public sealed class MapTcpServer
             finally
             {
                 _sessions.TryRemove(sessionId, out _);
+                // Covers every disconnect path (normal close, IOException, OperationCanceledException,
+                // an unexpected exception) uniformly - a session that never authenticated simply does
+                // not change the count (it was never included in it), and this can never go negative
+                // since the count is always recomputed fresh from the current _sessions contents.
+                ReportAuthenticatedUserCount();
             }
         }
 

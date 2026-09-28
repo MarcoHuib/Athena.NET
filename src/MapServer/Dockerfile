@@ -2,6 +2,12 @@ ARG DOTNET_SDK_IMAGE=mcr.microsoft.com/dotnet/sdk:10.0-preview
 
 FROM ${DOTNET_SDK_IMAGE} AS build
 WORKDIR /src
+# MapServer compiles source shared with CharServer (src/Shared: generic CanonicalMapPolicy + generated alias data)
+# and references the WorldServer runtime/contract projects (which in turn link MapServer source files), so every
+# one of those trees must be in the build context for restore/publish.
+COPY Directory.Build.props ./
+COPY src/Shared/ ./src/Shared/
+COPY src/WorldServer/ ./src/WorldServer/
 COPY src/MapServer/ ./src/MapServer/
 RUN dotnet restore src/MapServer/MapServer.csproj
 RUN dotnet publish src/MapServer/MapServer.csproj -c Release -o /app/out

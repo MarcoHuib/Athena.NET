@@ -9,6 +9,7 @@ on:
     paths:
       - "tools/WorldDataImporter/**"
       - "tests/WorldDataImporter.Tests/**"
+      - "src/Shared/MapIdentity/Generated/**"
       - ".github/workflows/world-data-importer-ci.yml"
       - "Directory.Build.*"
       - "*.sln"
@@ -16,6 +17,7 @@ on:
     paths:
       - "tools/WorldDataImporter/**"
       - "tests/WorldDataImporter.Tests/**"
+      - "src/Shared/MapIdentity/Generated/**"
       - ".github/workflows/world-data-importer-ci.yml"
       - "Directory.Build.*"
       - "*.sln"

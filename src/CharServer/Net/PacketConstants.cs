@@ -29,6 +29,8 @@ public static class PacketConstants
     public const short LcAccountDataResponse = 0x2717;
     public const short LcKeepAliveResponse = 0x2718;
     public const short LcIpSyncRequest = 0x2735;
+    /// <summary>CharServer -&gt; LoginServer: aggregated online-player count across every registered MapServer (stock rAthena packet id, see src/LoginServer/Net/PacketConstants.cs). 6 bytes (2 header + 4 uint32 count).</summary>
+    public const short LcUserCount = 0x2714;
     public const short LcPincodeUpdate = 0x2738;
     public const short LcPincodeAuthFail = 0x2739;
 
@@ -78,6 +80,8 @@ public static class PacketConstants
     public const short MapSkillListGetResponse = 0x2b3a;
     public const short MapSkillLearnRequest = 0x2b3b;
     public const short MapSkillLearnResponse = 0x2b3c;
+    /// <summary>MapServer -&gt; CharServer: this MapServer's current authenticated-player count (Athena.NET-internal, not stock-iRO). 6 bytes (2 header + 4 uint32 count). Never accumulated - always an absolute snapshot for this ONE MapServer connection.</summary>
+    public const short MapSendUserCount = 0x2b3d;
 
     public const short ChReqConnect = 0x65;
     public const short ChSelectChar = 0x66;

@@ -10,7 +10,7 @@ public sealed class CharacterPositionPersistenceTests
     {
         var character = new CharCharacter
         {
-            LastMap = "iz_int03",
+            LastMap = "iz_int",
             LastX = 55,
             LastY = 22,
             SaveMap = "iz_int",
@@ -20,7 +20,7 @@ public sealed class CharacterPositionPersistenceTests
 
         var location = ClientSession.ResolveCharacterLocation(character);
 
-        Assert.Equal(("iz_int03", (ushort)55, (ushort)22), location);
+        Assert.Equal(("iz_int", (ushort)55, (ushort)22), location);
     }
 
     [Fact]
@@ -28,13 +28,13 @@ public sealed class CharacterPositionPersistenceTests
     {
         var character = new CharCharacter
         {
-            SaveMap = "iz_int02",
+            SaveMap = "iz_int",
             SaveX = 18,
             SaveY = 26,
         };
 
         Assert.Equal(
-            ("iz_int02", (ushort)18, (ushort)26),
+            ("iz_int", (ushort)18, (ushort)26),
             ClientSession.ResolveCharacterLocation(character));
     }
 

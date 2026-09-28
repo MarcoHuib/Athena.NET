@@ -8,9 +8,9 @@ public sealed class IroWireCompatibilityTests
     // diverging from pinned legacy/rathena/npc/re/warps/fields/prontera_fild.txt:105's own computed
     // (156,26) - see IroWireCompatibility's own doc comment for the full provenance.
     [Fact]
-    public void ResolveVerifiedWarpDestinationOverride_PrtFild08dToProntera_ReturnsCaptureVerified156_34()
+    public void ResolveVerifiedWarpDestinationOverride_PrtFild08ToProntera_ReturnsCaptureVerified156_34()
     {
-        var (x, y) = IroWireCompatibility.ResolveVerifiedWarpDestinationOverride("prt_fild08d", "prontera", pinnedX: 156, pinnedY: 26);
+        var (x, y) = IroWireCompatibility.ResolveVerifiedWarpDestinationOverride("prt_fild08", "prontera", pinnedX: 156, pinnedY: 26);
         Assert.Equal((ushort)156, x);
         Assert.Equal((ushort)34, y);
     }
@@ -30,7 +30,7 @@ public sealed class IroWireCompatibilityTests
     [Fact]
     public void ResolveVerifiedWarpDestinationOverride_UnrelatedDestinationMap_ReturnsPinnedValueUnchanged()
     {
-        var (x, y) = IroWireCompatibility.ResolveVerifiedWarpDestinationOverride("prt_fild08d", "some_other_map", pinnedX: 10, pinnedY: 20);
+        var (x, y) = IroWireCompatibility.ResolveVerifiedWarpDestinationOverride("prt_fild08", "some_other_map", pinnedX: 10, pinnedY: 20);
         Assert.Equal((ushort)10, x);
         Assert.Equal((ushort)20, y);
     }

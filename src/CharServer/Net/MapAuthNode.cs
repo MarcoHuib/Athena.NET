@@ -1,4 +1,9 @@
+using Athena.Net.Shared.MapIdentity;
+
 namespace Athena.Net.CharServer.Net;
+
+// MapName is canonicalized on construction (CanonicalMapPolicy): whatever location a caller resolved, the
+// 0x02EB the MapServer receives never names a legacy channel-copy map.
 
 public sealed record MapAuthNode(
     uint AccountId,
@@ -27,4 +32,7 @@ public sealed record MapAuthNode(
     ushort RobeAppearance = 0,
     uint Option = 0,
     byte Karma = 0,
-    short Manner = 0);
+    short Manner = 0)
+{
+    public string MapName { get; init; } = CanonicalMapPolicy.Canonicalize(MapName);
+}

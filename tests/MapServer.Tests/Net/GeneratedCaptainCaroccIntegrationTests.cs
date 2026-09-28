@@ -11,16 +11,16 @@ namespace Athena.Net.MapServer.Tests.Net;
 
 public sealed class GeneratedCaptainCaroccIntegrationTests
 {
-    private const string EntityId = "npc:int_land03:captain carocc#intro_npc03_03";
+    private const string EntityId = "npc:int_land:captain carocc#intro_npc03";
 
     [Fact]
     public async Task VisibleRealNpc_ClicksGeneratedOnClickCompletesQuest21001HealsAndAppliesStatuses()
     {
         var entity = Assert.Single(GeneratedScriptRegistry.Entities, item => item.Id == EntityId);
-        Assert.Equal(new WorldActorComponent("Captain Carocc#intro_npc03_03", "int_land03", 78, 103, 5, 873, 0), entity.Actor);
+        Assert.Equal(new WorldActorComponent("Captain Carocc#intro_npc03", "int_land", 78, 103, 5, 873, 0), entity.Actor);
         var registry = new WorldMapRegistry([], [entity]);
-        var actor = Assert.Single(registry.GetVisibleWarpActors("int_land03", 78, 103));
-        Assert.True(registry.TryGetInteraction(actor.ActorId, "int_land03", out var bound, out _));
+        var actor = Assert.Single(registry.GetVisibleWarpActors("int_land", 78, 103));
+        Assert.True(registry.TryGetInteraction(actor.ActorId, "int_land", out var bound, out _));
         Assert.Same(entity, bound);
 
         var listener = new TcpListener(IPAddress.Loopback, 0); listener.Start();
@@ -29,12 +29,12 @@ public sealed class GeneratedCaptainCaroccIntegrationTests
         await using var stream = client.GetStream();
         var questPersistence = new RecordingQuestPersistence(21001, CharacterQuestStatus.Active); // quest 21001 already active, matching the capture's own quest state; 21008 defaults to Absent (case 0).
         var gameplayPersistence = new RecordingGameplayStatePersistence(new(9, 0, 0, 1, 1, 0, 0, 20, 5, 40, 11, 48, 0, 1, 1, 1, 1, 1, 1));
-        await using var session = new MapClientSession(1, serverClient, new CharServerConnector(new MapConfigStore(new MapConfig(), "unused.conf")), true, "int_land03", 78, 103, registry,
+        await using var session = new MapClientSession(1, serverClient, new CharServerConnector(new MapConfigStore(new MapConfig(), "unused.conf")), true, "int_land", 78, 103, registry,
             questPersistence: questPersistence, gameplayStatePersistence: gameplayPersistence, accountId: 7, charId: 9);
         var run = session.RunAsync(CancellationToken.None);
         // Unlike the gameplay-state-free Wounded Swordsman fixture, Captain's script needs
         // CharacterGameplayState loaded (heal/getexp), which only CompleteIroAuthenticationAsync does.
-        await session.CompleteIroAuthenticationAsync(new(7, 9, 1, 2, 0, 0, false, "int_land03", 78, 103, 0, 0, 0));
+        await session.CompleteIroAuthenticationAsync(new(7, 9, 1, 2, 0, 0, false, "int_land", 78, 103, 0, 0, 0));
         var bootstrap = new byte[29]; await stream.ReadExactlyAsync(bootstrap);
         await ReadDynamic(stream); // 0x0B32 skill list
 
@@ -217,7 +217,7 @@ public sealed class GeneratedCaptainCaroccIntegrationTests
 
         var entity = Assert.Single(GeneratedScriptRegistry.Entities, item => item.Id == EntityId);
         var registry = new WorldMapRegistry([], [entity]);
-        var actor = Assert.Single(registry.GetVisibleWarpActors("int_land03", 78, 103));
+        var actor = Assert.Single(registry.GetVisibleWarpActors("int_land", 78, 103));
 
         var listener = new TcpListener(IPAddress.Loopback, 0); listener.Start();
         using var client = new TcpClient(); var connect = client.ConnectAsync((IPEndPoint)listener.LocalEndpoint);
@@ -225,10 +225,10 @@ public sealed class GeneratedCaptainCaroccIntegrationTests
         await using var stream = client.GetStream();
         var questPersistence = new RecordingQuestPersistence(21001, CharacterQuestStatus.Active);
         var gameplayPersistence = new RecordingGameplayStatePersistence(new(9, 0, 0, 1, 1, 0, 0, 20, 5, 40, 11, 48, 0, 1, 1, 1, 1, 1, 1));
-        await using var session = new MapClientSession(1, serverClient, new CharServerConnector(new MapConfigStore(new MapConfig(), "unused.conf")), true, "int_land03", 78, 103, registry,
+        await using var session = new MapClientSession(1, serverClient, new CharServerConnector(new MapConfigStore(new MapConfig(), "unused.conf")), true, "int_land", 78, 103, registry,
             questPersistence: questPersistence, gameplayStatePersistence: gameplayPersistence, accountId: 7, charId: 9, rates: rates);
         var run = session.RunAsync(CancellationToken.None);
-        await session.CompleteIroAuthenticationAsync(new(7, 9, 1, 2, 0, 0, false, "int_land03", 78, 103, 0, 0, 0));
+        await session.CompleteIroAuthenticationAsync(new(7, 9, 1, 2, 0, 0, false, "int_land", 78, 103, 0, 0, 0));
         await ReadExact(stream, 29); // bootstrap
         await ReadDynamic(stream); // 0x0B32 skill list
 

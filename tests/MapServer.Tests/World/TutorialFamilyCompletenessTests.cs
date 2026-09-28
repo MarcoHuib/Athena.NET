@@ -52,8 +52,12 @@ public sealed class TutorialFamilyCompletenessTests
                 missing.Add($"Navigation(intro_evt02) missing for '{izInt}'");
             if (!GeneratedMobSpawnRegistry.GetForMap(intLand).Any(s => s.Mob.AegisName == "G_PORING"))
                 missing.Add($"MobSpawn(G_PORING) missing for '{intLand}'");
-            if (!world.MonsterSpawns.Any(spawn => spawn.Map == intLand))
+            // Runtime composition covers ONLY the canonical map; the copies stay source coverage.
+            var composed = world.MonsterSpawns.Any(spawn => spawn.Map == intLand);
+            if (suffix.Length == 0 && !composed)
                 missing.Add($"Composed monster instances missing for '{intLand}'");
+            if (suffix.Length > 0 && composed)
+                missing.Add($"Composed monster instances must NOT exist for the copy '{intLand}'");
         }
 
         Assert.True(missing.Count == 0, "Incomplete tutorial family coverage:\n" + string.Join('\n', missing));

@@ -8,6 +8,7 @@ using Athena.Net.MapServer.Gameplay.Rates;
 using Athena.Net.MapServer.Logging;
 using Athena.Net.MapServer.World;
 using Athena.Net.MapServer.World.GeneratedScripts;
+using Athena.Net.Shared.MapIdentity;
 using Athena.Net.World.Contracts;
 
 namespace Athena.Net.MapServer.Net;
@@ -124,6 +125,21 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         public DateTimeOffset NextAttackAt { get; set; }
         public bool DueNowFixposPending { get; set; }
     }
+
+    // DEBUG-LOG-ONLY per-turn timing scratchpad (never read by a gameplay decision): created by
+    // PerformDueRepeatAttackAsync and flowed via AsyncLocal so PerformDueRepeatAttackCoreAsync can mark
+    // "this turn genuinely reached an attack attempt" (PerformDueRepeatAttackAsync is also entered for
+    // stale/no-op turns, which must stay silent) and record where the turn ended.
+    private sealed class AttackTurnTrace
+    {
+        public bool Engaged;
+        public string Outcome = "not-executed";
+        public double LegalityMs;
+        public double QuestResolveMs;
+        public int QuestRuleCount;
+    }
+
+    private static readonly AsyncLocal<AttackTurnTrace?> CurrentAttackTurn = new();
 
     // Step 7 substep 9: the pending idempotency-carrying damage attempt mechanism (built and tested
     // in isolation in substep 8, against a scriptable test seam) is now the LIVE player->monster
@@ -248,6 +264,19 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     private volatile string _lastPacketWrittenDescription = "<none>";
     private readonly CancellationTokenSource _sessionCancellation = new();
     private readonly VisibleActorTracker _visibleActorIds = new();
+    // See the production constructor overload's own doc comment for what this is and why it is
+    // never resolved by iterating sibling sessions directly.
+    private readonly Func<PlayerAttackActionOutcome, CancellationToken, Task>? _playerAttackFanout;
+    // Cross-session (this gateway process only) per-life ordering primitive for a lethal player hit -
+    // see LethalAttackProjectionGate's own doc comment. Null (every non-MapTcpServer caller, including
+    // every existing test fixture) means no cross-session ordering is needed/available; this session's
+    // own per-session LethalDeathProjectionArbiter still protects its OWN Died-vs-action race either way.
+    private readonly LethalAttackProjectionGate? _lethalAttackGate;
+    // Invoked exactly once, synchronously, the instant CompleteIroAuthenticationAsync's own success
+    // tail sets _authenticated - lets MapTcpServer (the only production caller) recompute and report
+    // its own authenticated-player count to CharServer immediately, rather than on a polling cadence.
+    // Null (every existing test fixture / standalone tool) is a safe no-op.
+    private readonly Action? _onAuthenticated;
     // Item 3 of the Step 6 correctness-hardening pass: the single, internally-synchronized owner of
     // "which monster ActorIds this session currently believes are visible, at which IncarnationId"
     // plus "the last SimulationEpoch this session fully reconciled against" - see
@@ -278,6 +307,16 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     // "ApplyMonsterDamageAsync itself still in flight" window FakeCombatWorldRuntime's own
     // BeforeApplyMonsterDamageReturns hook already covers.
     internal Func<Task>? DebugBeforeMonsterVanishSendAsync { get; set; }
+
+    // Live multiplayer race regression (cross-session lethal action-vs-Died-vanish ordering): test-
+    // only hook, always null in production. Awaited immediately BEFORE ProjectPlayerAttackActionAsync
+    // inside HandleLethalDamageResultAsync's own tail - i.e. AFTER World's lethal RPC has returned and
+    // EnterLethalInFlight/LethalAttackProjectionGate.Enter has already run, but BEFORE this session's
+    // own final action has been fanned out and the gate released. Lets a test deterministically prove
+    // MapTcpServer.FanOutEntryAsync's own Died-dispatch genuinely blocks on the still-open gate during
+    // this exact window (a real barrier, never Task.Delay/timing) before resuming this session's own
+    // action fan-out and gate release.
+    internal Func<Task>? DebugBeforeLethalActionFanoutAsync { get; set; }
 
     // Test seam standing in for the real World.ApplyMonsterDamageAsync RPC - the ONE production
     // call site every attack dispatch (both the first send and every internal retry) funnels
@@ -377,11 +416,20 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     // WorldMapRegistry.Tutorial: that static singleton builds its OWN private WorldActorIdAllocator,
     // so silently falling back to it here would reintroduce a second, independent actor-ID
     // namespace alongside the composed MonsterRegistry's shared one.
-    public MapClientSession(int sessionId, TcpClient client, CharServerConnector charConnector, MapServerWorld world, IWorldRuntime worldRuntime)
+    // `playerAttackFanout`: the ONE seam through which a resolved player-vs-monster attack action
+    // reaches every other session on this gateway process (see PlayerAttackActionOutcome's own doc
+    // comment). MapTcpServer supplies it (bound to its own live session set - see
+    // MapTcpServer.FanOutPlayerAttackActionAsync) when constructing a production session; this
+    // session never holds a reference to any sibling session itself. Null (every non-MapTcpServer
+    // caller, including every existing test fixture) falls back to notifying only this session -
+    // see NotifyPlayerAttackActionAsync's own call sites for exactly where that fallback applies.
+    public MapClientSession(int sessionId, TcpClient client, CharServerConnector charConnector, MapServerWorld world, IWorldRuntime worldRuntime,
+        Func<PlayerAttackActionOutcome, CancellationToken, Task>? playerAttackFanout = null, LethalAttackProjectionGate? lethalAttackGate = null,
+        Action? onAuthenticated = null)
         : this(sessionId, client, charConnector, world.Maps, monsterProjections: world.MonsterProjections, combat: world.Combat,
                movementPathProvider: world.MovementPathProvider, collisionProvider: world.Collision, rates: world.Rates,
                players: world.Players, playerVisibility: world.PlayerVisibility, visibilityOptions: world.Visibility, distributedWorld: worldRuntime,
-               combatState: world.CombatState)
+               combatState: world.CombatState, playerAttackFanout: playerAttackFanout, lethalAttackGate: lethalAttackGate, onAuthenticated: onAuthenticated)
     {
     }
 
@@ -406,7 +454,10 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         PlayerVisibilityCoordinator? playerVisibility = null,
         WorldVisibilityOptions? visibilityOptions = null,
         IWorldRuntime? distributedWorld = null,
-        MonsterAttackCadenceStore? combatState = null)
+        MonsterAttackCadenceStore? combatState = null,
+        Func<PlayerAttackActionOutcome, CancellationToken, Task>? playerAttackFanout = null,
+        LethalAttackProjectionGate? lethalAttackGate = null,
+        Action? onAuthenticated = null)
     {
         SessionId = sessionId;
         _client = client;
@@ -431,6 +482,9 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         _players = players ?? new PlayerPresenceRegistry(_visibilityOptions);
         _playerVisibility = playerVisibility ?? new PlayerVisibilityCoordinator(_players, _visibilityOptions);
         _distributedWorld = distributedWorld;
+        _playerAttackFanout = playerAttackFanout;
+        _lethalAttackGate = lethalAttackGate;
+        _onAuthenticated = onAuthenticated;
         _statusEffects = new CharacterStatusEffectState(_timeProvider);
     }
 
@@ -465,7 +519,10 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         PlayerVisibilityCoordinator? playerVisibility = null,
         WorldVisibilityOptions? visibilityOptions = null,
         IWorldRuntime? distributedWorld = null,
-        MonsterAttackCadenceStore? combatState = null)
+        MonsterAttackCadenceStore? combatState = null,
+        Func<PlayerAttackActionOutcome, CancellationToken, Task>? playerAttackFanout = null,
+        LethalAttackProjectionGate? lethalAttackGate = null,
+        Action? onAuthenticated = null)
         : this(
             sessionId,
             client,
@@ -495,11 +552,14 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
             playerVisibility,
             visibilityOptions,
             distributedWorld,
-            combatState)
+            combatState,
+            playerAttackFanout,
+            lethalAttackGate,
+            onAuthenticated)
     {
         _iroAuthRequested = iroAuthenticated;
         _authRequested = iroAuthenticated;
-        _mapName = mapName;
+        _mapName = CanonicalMapPolicy.Canonicalize(mapName);
         _x = x;
         _y = y;
         _authenticated = iroAuthenticated;
@@ -549,6 +609,11 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     // ProcessOneMonsterTickAsync's own doc comment for why grouping/polling by map id must first
     // filter to sessions where this is true.
     internal bool IsWorldMapEligible { get { lock (_playerPresenceGate) return _playerLifecycle == PlayerSessionLifecycle.WorldVisible && _presenceId is not null; } }
+    // Online-user-count reporting seam (MapTcpServer.ReportAuthenticatedUserCount): true once this
+    // session's map authentication has succeeded - the same condition CompleteIroAuthenticationAsync's
+    // own success tail sets _authenticated for. Never true for an accepted-but-not-yet-authenticated
+    // TCP connection or a failed authentication attempt.
+    internal bool IsAuthenticated => _authenticated;
     // Syncs against real elapsed walking time on every read (no background timer - mirrors
     // CharacterStatusEffectState's lazy-on-read expiration model), so any caller (tests, a future
     // melee-range check, actor visibility) always observes the character's ACTUAL current cell
@@ -656,7 +721,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
 
         if (_iroAuthRequested)
         {
-            _mapName = authOk.MapName;
+            _mapName = CanonicalMapPolicy.Canonicalize(authOk.MapName);
             _x = authOk.X;
             _y = authOk.Y;
             _ = CompleteIroAuthenticationSafelyAsync(authOk);
@@ -694,7 +759,14 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
 
         _accountId = authOk.AccountId;
         _charId = authOk.CharId;
-        _mapName = authOk.MapName;
+        // DIAGNOSTIC-ONLY provenance next to the later per-transition [MAP ROUTING] lines. CharServer already
+        // canonicalizes the persisted location before it reaches MapAuthNode; a legacy channel-copy name
+        // arriving here anyway (older CharServer / direct test auth) is folded onto its canonical map and
+        // reported as character-load-canonicalized instead of being hosted as a separate map.
+        var loadedMap = CanonicalMapPolicy.Canonicalize(authOk.MapName);
+        var loadReason = string.Equals(loadedMap, authOk.MapName, StringComparison.Ordinal) ? "character-load" : "character-load-canonicalized";
+        MapLogger.Info($"[MAP ROUTING] charId={_charId} accountId={_accountId} fromMap='{(loadReason == "character-load" ? "<none>" : authOk.MapName)}' toMap='{loadedMap}' reason={loadReason} source=CharServer.MapAuthNode(persisted-location) position=({authOk.X},{authOk.Y})");
+        _mapName = loadedMap;
         _x = authOk.X;
         _y = authOk.Y;
         _gameplayState = new CharacterGameplayStateSession(authOk.AccountId, state, _gameplayStatePersistence, skillRead.Snapshot!, _skillPersistence);
@@ -720,6 +792,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         _authenticated = true; _positionDirty = false;
         lock (_playerPresenceGate) _playerLifecycle = PlayerSessionLifecycle.AuthenticatedButNotWorldVisible;
         MapLogger.Info($"[iRO MAP DEBUG] 0x0C1F MapAuthNode authentication succeeded accountId={authOk.AccountId} charId={authOk.CharId} sessionMatch=true gameplayStateVersion={state.Version}");
+        _onAuthenticated?.Invoke();
         EnsureRuntimeLoopsStarted();
         await SendIroInitialBootstrapAsync(authOk, _sessionCancellation.Token);
     }
@@ -1136,7 +1209,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
             _pendingDamageAttempt = null;
         }
         finally { _attackGate.Release(); }
-        if (leakedPendingLifeOnDisconnect is { } disconnectLife) _lethalDeathArbiter.CompleteInFlight(disconnectLife, markProjected: false);
+        if (leakedPendingLifeOnDisconnect is { } disconnectLife) CompleteLethalInFlight(disconnectLife, markProjected: false);
 
         // Join ALL runtime loops before touching anything they can still access. This is the
         // invariant the earlier lifecycle audit found missing: cancellation is only a request: it
@@ -1391,8 +1464,20 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     // caught by EnsureMovementState's now-removed map-mismatch check, which is exactly the bug this
     // helper fixes: MapClientSessionWarpTests.MovementIntoTutorialDoor_... teleports within
     // "iz_int03", so map-equality alone cannot detect that the previous walk state is stale.
-    private void TeleportTo(string map, ushort x, ushort y)
+    // `reason`/`source` are DIAGNOSTIC-ONLY provenance for the [MAP ROUTING] log (why/through what this
+    // session's canonical map id changed) and never influence the teleport. Legacy channel aliases
+    // (prt_fild08c ...) are canonicalized below BEFORE any world/visibility identity is used, so prt_fild08 and
+    // prt_fild08c denote the same runtime world after canonicalization; the log line makes every transition,
+    // including a folded alias, attributable.
+    private void TeleportTo(string map, ushort x, ushort y, string reason = "teleport", string? source = null)
     {
+        // Every warp / script warp / teleport funnels through here, so this is the one runtime boundary where
+        // a destination naming a legacy channel copy (izlude_a, prt_fild08c ... - a source-layer value that
+        // stays untouched in the generated data) is folded onto its canonical map. Logged only when it happens.
+        var requestedMap = map;
+        map = CanonicalMapPolicy.Canonicalize(map);
+        var canonicalized = string.Equals(requestedMap, map, StringComparison.Ordinal) ? string.Empty : $" canonicalizedFrom='{requestedMap}'";
+        MapLogger.Info($"[MAP ROUTING] charId={_charId} accountId={_accountId} fromMap='{_mapName}' toMap='{map}' reason={reason} source={source ?? "unspecified"} position=({x},{y}){canonicalized}");
         _mapName = map;
         _x = x;
         _y = y;
@@ -1434,7 +1519,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
             _pendingDamageAttempt = null;
         }
         finally { _attackGate.Release(); }
-        if (leakedPendingLife is { } life) _lethalDeathArbiter.CompleteInFlight(life, markProjected: false);
+        if (leakedPendingLife is { } life) CompleteLethalInFlight(life, markProjected: false);
     }
 
     // Reconciles _x/_y against real elapsed walking time. Pinned rAthena's authoritative position
@@ -1648,7 +1733,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         var fromX = _x;
         var fromY = _y;
         MapLogger.Info(
-            $"[iRO MAP DEBUG] Movement request from=({fromX},{fromY}) target=({request.TargetX},{request.TargetY})");
+            $"[iRO MAP DEBUG] Movement request from=({fromX},{fromY}) target=({request.TargetX},{request.TargetY}) t={CombatTiming.ClockMs()}ms");
 
         var resolution = await ResolveWorldMovementTargetAsync(fromX, fromY, request.TargetX, request.TargetY, cancellationToken);
         if (resolution is MovementGameplayRejected rejected)
@@ -1721,7 +1806,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
             resolved.TargetX,
             resolved.TargetY);
         MapLogger.Info(
-            $"[iRO MAP DEBUG] Sending 0x0087 len=12 from=({fromX},{fromY}) to=({resolved.TargetX},{resolved.TargetY})");
+            $"[iRO MAP DEBUG] Sending 0x0087 len=12 from=({fromX},{fromY}) to=({resolved.TargetX},{resolved.TargetY}) t={CombatTiming.ClockMs()}ms");
         await WriteAsync(response, cancellationToken);
         await StartPresenceMovementAsync(fromX, fromY, resolved.TargetX, resolved.TargetY, movementTick, cancellationToken);
 
@@ -1807,7 +1892,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
                 {
                     MapLogger.Info($"[iRO MAP DEBUG] Warp destination compatibility-resolved map='{warpAction.Map}' pinned=({warpAction.X},{warpAction.Y}) -> effective=({resolvedX},{resolvedY})");
                 }
-                TeleportTo(warpAction.Map, resolvedX, resolvedY);
+                TeleportTo(warpAction.Map, resolvedX, resolvedY, reason: "warp", source: $"generated-warp:{warp.Name}");
             }
         }
 
@@ -1849,14 +1934,25 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     // forcing an extra hit ahead of an already-ticking cooldown.
     private async Task HandleIroAttackRequestAsync(byte[] packet, CancellationToken cancellationToken)
     {
+        // DEBUG-LOG-ONLY timing: `receivedT` places the 0x0437 on the same clock as every other
+        // "t=" investigation log; handlerTotalMs includes the inline due-now attack execution.
+        var requestReceivedAt = CombatTiming.Now();
+        var requestReceivedClock = CombatTiming.ClockMs();
         if (!IroAttackRequestPacket.TryParse(packet, out var request)) return;
         var targetActorId = request.TargetActorId;
+        CombatTiming.SetContext($"player-attack:actorId={targetActorId}");
         if (_combat is null || _gameplayState is null) return;
-        if (!TryGetProjectedMonster(targetActorId, out var target) || target.Instance.Lifecycle != WorldMonsterLifecycleState.Alive) return;
+        if (!TryGetProjectedMonster(targetActorId, out var target) || target.Instance.Lifecycle != WorldMonsterLifecycleState.Alive)
+        {
+            CombatTiming.Log("PLAYER ATTACK REQUEST", $"actorId={targetActorId} accepted=false reason=target-not-projected-alive receivedT={requestReceivedClock}ms handlerTotalMs={CombatTiming.F(CombatTiming.ElapsedMsSince(requestReceivedAt))}");
+            return;
+        }
 
         RepeatAttackState newState;
         bool dueNow;
+        var attackGateRequestedAt = CombatTiming.Now();
         await _attackGate.WaitAsync(cancellationToken);
+        var attackGateWaitMs = CombatTiming.ElapsedMsSince(attackGateRequestedAt);
         try
         {
             // Pinned unit_attack (unit.cpp:2942-2978): a request ALWAYS updates the target
@@ -1937,12 +2033,14 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
             // documented rather than silently approximated.
             await PerformDueRepeatAttackAsync(newState, cancellationToken);
             try { _attackSignal.Release(); } catch (SemaphoreFullException) { }
+            CombatTiming.Log("PLAYER ATTACK REQUEST", $"actorId={targetActorId} accepted=true dueNow=true attackGateWaitMs={CombatTiming.F(attackGateWaitMs)} receivedT={requestReceivedClock}ms handlerTotalMs={CombatTiming.F(CombatTiming.ElapsedMsSince(requestReceivedAt))}");
             return;
         }
 
         // Not yet due - wake the loop so it can register its own delay wait toward the (possibly
         // earlier-than-previously-computed) NextAttackAt, exactly as before.
         try { _attackSignal.Release(); } catch (SemaphoreFullException) { }
+        CombatTiming.Log("PLAYER ATTACK REQUEST", $"actorId={targetActorId} accepted=true dueNow=false attackGateWaitMs={CombatTiming.F(attackGateWaitMs)} receivedT={requestReceivedClock}ms handlerTotalMs={CombatTiming.F(CombatTiming.ElapsedMsSince(requestReceivedAt))}");
     }
 
     // One repeat-attack scheduler per session (not one Task.Delay/Timer per hit), mirroring
@@ -2124,6 +2222,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
             if (questStates.ContainsKey(rule.QuestId)) continue;
             questStates[rule.QuestId] = await _questPersistence.GetQuestStateAsync(_accountId, _charId, rule.QuestId, cancellationToken) ?? CharacterQuestStatus.Absent;
         }
+        if (CurrentAttackTurn.Value is { } questTrace) questTrace.QuestRuleCount = questStates.Count; // DEBUG-LOG-ONLY: number of CharServer quest-state reads this attack awaited.
         return questId => questStates.GetValueOrDefault(questId, CharacterQuestStatus.Absent);
     }
 
@@ -2157,11 +2256,23 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         // moment this method was entered. Never awaited/invoked in production (always null there).
         if (DebugBeforeAttackExecutionGateAsync is { } beforeGate) await beforeGate();
 
+        // DEBUG-LOG-ONLY timing (see AttackTurnTrace): how long this turn waited for the execution
+        // gate, for the short _attackGate prelude, and how long the due-now 0x0088 write took.
+        var turnStartedAt = CombatTiming.Now();
+        var trace = new AttackTurnTrace();
+        CurrentAttackTurn.Value = trace;
+        CombatTiming.SetContext($"player-attack:actorId={expected.TargetActorId}");
+        double preludeGateWaitMs = 0, fixposWriteMs = 0;
+        var fixposSent = false;
+        var execGateRequestedAt = CombatTiming.Now();
         await _attackExecutionGate.WaitAsync(cancellationToken);
+        var execGateWaitMs = CombatTiming.ElapsedMsSince(execGateRequestedAt);
         try
         {
             bool sendDueNowFixpos;
+            var preludeGateRequestedAt = CombatTiming.Now();
             await _attackGate.WaitAsync(cancellationToken);
+            preludeGateWaitMs = CombatTiming.ElapsedMsSince(preludeGateRequestedAt);
             try
             {
                 // Re-validate: a packet handler may have replaced _repeatAttack since `expected` was
@@ -2196,7 +2307,10 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
                 // method's own _attackExecutionGate acquisition, which is what actually provides the
                 // ordering/race-freedom guarantee described above.
                 SyncPositionToNow();
+                var fixposWriteStartedAt = CombatTiming.Now();
                 await WriteAsync(IroMonsterActorPackets.BuildStopMove(_accountId, _x, _y), cancellationToken);
+                fixposWriteMs = CombatTiming.ElapsedMsSince(fixposWriteStartedAt);
+                fixposSent = true;
             }
 
             await PerformPendingOrFreshAttackTurnAsync(expected, cancellationToken);
@@ -2204,6 +2318,14 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         finally
         {
             _attackExecutionGate.Release();
+            // Silent for stale/no-op turns; one line per turn that genuinely reached an attack attempt.
+            if (trace.Engaged)
+            {
+                CombatTiming.Log("PLAYER ATTACK EXEC",
+                    $"actorId={expected.TargetActorId} outcome={trace.Outcome} execGateWaitMs={CombatTiming.F(execGateWaitMs)} preludeGateWaitMs={CombatTiming.F(preludeGateWaitMs)} " +
+                    $"fixposSent={fixposSent.ToString().ToLowerInvariant()} fixposWriteMs={CombatTiming.F(fixposWriteMs)} legalityMs={CombatTiming.F(trace.LegalityMs)} " +
+                    $"questResolveMs={CombatTiming.F(trace.QuestResolveMs)} questRules={trace.QuestRuleCount} turnMs={CombatTiming.F(CombatTiming.ElapsedMsSince(turnStartedAt))}");
+            }
         }
     }
 
@@ -2265,6 +2387,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         if (pendingLife is { } life)
         {
             if (_timeProvider.GetUtcNow() < pendingNextRetryAt) return; // Not yet due - a no-op with respect to World.
+            if (CurrentAttackTurn.Value is { } retryTrace) { retryTrace.Engaged = true; retryTrace.Outcome = "pending-retry-dispatched"; }
 
             // Due: resend the exact stored payload verbatim - never resolve the current
             // RepeatAttackState/target, never call MonsterFeedProjection.TryGetLife, never resolve
@@ -2308,12 +2431,20 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
 
         var command = new WorldMonsterDamageCommand(life, CharacterId, _presenceId ?? Guid.Empty, sequence, damage, acquireEngagement);
         WorldMonsterDamageResult result;
+        // DEBUG-LOG-ONLY: correlate every deeper line of this hit (gameplay mutate, CharServer update)
+        // with its AttackSequence, and time the World damage RPC on its own.
+        CombatTiming.SetContext($"player-attack:actorId={life.ActorId}:seq={sequence}");
+        var worldRpcStartedAt = CombatTiming.Now();
         try
         {
             result = await dispatcher(command, cancellationToken);
+            CombatTiming.Log("PLAYER ATTACK WORLD",
+                $"actorId={life.ActorId} sequence={sequence} worldDamageRpcMs={CombatTiming.F(CombatTiming.ElapsedMsSince(worldRpcStartedAt))} status={result.Status} killed={result.KilledByThisHit.ToString().ToLowerInvariant()} hpBefore={result.HpBefore} hpAfter={result.HpAfter}");
         }
         catch (Exception ex) when (IsTransientWorldRpcFailure(ex, cancellationToken))
         {
+            CombatTiming.Log("PLAYER ATTACK WORLD",
+                $"actorId={life.ActorId} sequence={sequence} worldDamageRpcMs={CombatTiming.F(CombatTiming.ElapsedMsSince(worldRpcStartedAt))} status=TransientRpcFailure exception={ex.GetType().Name}");
             // Transient failure: registration stays open across the retry - never CompleteInFlight
             // here. Only advance NextRetryAt, and ONLY if the stored pending attempt is still THIS
             // exact logical attempt (compared by AttackSequence - guards against a retire-then-
@@ -2351,7 +2482,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
                 }
             }
             finally { _attackGate.Release(); }
-            if (retiredLife is { } life2) _lethalDeathArbiter.CompleteInFlight(life2, markProjected: false);
+            if (retiredLife is { } life2) CompleteLethalInFlight(life2, markProjected: false);
             try { _pendingRetrySignal.Release(); } catch (SemaphoreFullException) { }
             throw;
         }
@@ -2393,7 +2524,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
 
             case WorldMonsterDamageStatus.Applied or WorldMonsterDamageStatus.ReplayedSequence:
             {
-                var diedObserved = _lethalDeathArbiter.CompleteInFlight(life, markProjected: false);
+                var diedObserved = CompleteLethalInFlight(life, markProjected: false);
                 if (diedObserved)
                 {
                     await PerformDeferredAuthoritativeDiedAsync(life.ActorId, cancellationToken);
@@ -2407,22 +2538,27 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
                     finally { _attackGate.Release(); }
                 }
 
-                var tick = unchecked((uint)Environment.TickCount);
                 var damageDealt = result.HpBefore - result.HpAfter;
-                var damagePacket = IroMonsterCombatPackets.BuildNotifyAct3(_accountId, life.ActorId, tick, srcSpeed: 460, dstSpeed: (uint)targetSnapshot.StaticMob.DamageMotion, damage: damageDealt, div: 1, actionType: 0);
-                await WriteAsync(damagePacket, cancellationToken);
+                var attackAction = new PlayerAttackActionOutcome(_accountId, life.ActorId, _mapName, damageDealt, SrcSpeed: 460, DstSpeed: (uint)targetSnapshot.StaticMob.DamageMotion, Lethal: false);
+                var nonLethalWritesStartedAt = CombatTiming.Now();
+                await ProjectPlayerAttackActionAsync(attackAction, cancellationToken);
+                var nonLethalDamageWrittenAt = CombatTiming.Now();
 
+                var nonLethalHpWritten = false;
                 if (_visibleActorIds.IsActorVisible(life.ActorId))
                 {
                     var hpInfoPacket = IroMonsterCombatPackets.BuildHpInfo(life.ActorId, result.HpAfter, result.MaxHp);
                     await WriteAsync(hpInfoPacket, cancellationToken);
+                    nonLethalHpWritten = true;
                 }
+                CombatTiming.Log("PLAYER ATTACK RESULT",
+                    $"actorId={life.ActorId} killed=false damageWriteMs={CombatTiming.F(CombatTiming.ElapsedMs(nonLethalWritesStartedAt, nonLethalDamageWrittenAt))} hpWriteMs={(nonLethalHpWritten ? CombatTiming.F(CombatTiming.ElapsedMsSince(nonLethalDamageWrittenAt)) : "skipped")} writesTotalMs={CombatTiming.F(CombatTiming.ElapsedMsSince(nonLethalWritesStartedAt))}");
                 return;
             }
 
             case WorldMonsterDamageStatus.StaleSequence:
             {
-                var diedObserved = _lethalDeathArbiter.CompleteInFlight(life, markProjected: false);
+                var diedObserved = CompleteLethalInFlight(life, markProjected: false);
                 if (diedObserved)
                 {
                     await PerformDeferredAuthoritativeDiedAsync(life.ActorId, cancellationToken);
@@ -2442,7 +2578,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
 
             case WorldMonsterDamageStatus.Conflict:
             {
-                var diedObserved = _lethalDeathArbiter.CompleteInFlight(life, markProjected: false);
+                var diedObserved = CompleteLethalInFlight(life, markProjected: false);
                 if (diedObserved) await PerformDeferredAuthoritativeDiedAsync(life.ActorId, cancellationToken);
                 MapLogger.Warning($"[iRO MAP DEBUG] ApplyMonsterDamageAsync returned Conflict mobActorId={life.ActorId} - fail-closed, never rearmed.");
                 if (ReferenceEquals(_repeatAttack, originRepeatAttackState)) ClearRepeatAttackIfCurrent(originRepeatAttackState);
@@ -2451,7 +2587,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
 
             case WorldMonsterDamageStatus.StaleLifeReference:
             {
-                var diedObserved = _lethalDeathArbiter.CompleteInFlight(life, markProjected: false);
+                var diedObserved = CompleteLethalInFlight(life, markProjected: false);
                 if (diedObserved) await PerformDeferredAuthoritativeDiedAsync(life.ActorId, cancellationToken);
                 if (ReferenceEquals(_repeatAttack, originRepeatAttackState)) ClearRepeatAttackIfCurrent(originRepeatAttackState);
                 _combatState?.Remove(MonsterCombatKey.From(life));
@@ -2461,7 +2597,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
             case WorldMonsterDamageStatus.StaleAttackerPresence:
             case WorldMonsterDamageStatus.AttackerNotEngageable:
             {
-                var diedObserved = _lethalDeathArbiter.CompleteInFlight(life, markProjected: false);
+                var diedObserved = CompleteLethalInFlight(life, markProjected: false);
                 if (diedObserved) await PerformDeferredAuthoritativeDiedAsync(life.ActorId, cancellationToken);
                 if (ReferenceEquals(_repeatAttack, originRepeatAttackState)) ClearRepeatAttackIfCurrent(originRepeatAttackState);
                 return;
@@ -2469,7 +2605,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
 
             case WorldMonsterDamageStatus.AlreadyDead:
             {
-                var diedObserved = _lethalDeathArbiter.CompleteInFlight(life, markProjected: false);
+                var diedObserved = CompleteLethalInFlight(life, markProjected: false);
                 if (diedObserved) await PerformDeferredAuthoritativeDiedAsync(life.ActorId, cancellationToken);
                 if (ReferenceEquals(_repeatAttack, originRepeatAttackState)) ClearRepeatAttackIfCurrent(originRepeatAttackState);
                 return;
@@ -2491,42 +2627,75 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     {
         if (ReferenceEquals(_repeatAttack, originRepeatAttackState)) ClearRepeatAttackIfCurrent(originRepeatAttackState); // no reschedule for a lethal hit
 
+        // DEBUG-LOG-ONLY lethal-tail timing (Stopwatch): World's lethal result is already in hand when
+        // this method is entered, so lethalTailStartedAt == "World confirmed the kill". The tail is a
+        // strictly serial chain of awaits - two socket writes, the EXP CharServer/SQL round trip, the
+        // progression writes, then the death vanish - and the quest-drop inventory persistence runs
+        // AFTER the vanish while _attackExecutionGate is still held.
+        var lethalTailStartedAt = CombatTiming.Now();
+        double lethalDamageWriteMs = 0, lethalHpWriteMs = 0, progressionPersistMs = 0, progressionWritesMs = 0, vanishWriteMs = 0;
+        var progressionPacketCount = 0;
         var lethalCommitLife = life;
         try
         {
-            var tick = unchecked((uint)Environment.TickCount);
             var damageDealt = result.HpBefore - result.HpAfter;
-            var damagePacket = IroMonsterCombatPackets.BuildNotifyAct3(_accountId, life.ActorId, tick, srcSpeed: 460, dstSpeed: (uint)targetSnapshot.StaticMob.DamageMotion, damage: damageDealt, div: 1, actionType: 0);
-            await WriteAsync(damagePacket, cancellationToken);
+            var attackAction = new PlayerAttackActionOutcome(_accountId, life.ActorId, _mapName, damageDealt, SrcSpeed: 460, DstSpeed: (uint)targetSnapshot.StaticMob.DamageMotion, Lethal: true);
+            var lethalDamageWriteStartedAt = CombatTiming.Now();
+            if (DebugBeforeLethalActionFanoutAsync is { } beforeActionFanoutHook) await beforeActionFanoutHook(); // Test-only seam - see that field's own doc comment. Always null in production.
+            await ProjectPlayerAttackActionAsync(attackAction, cancellationToken);
+            // Release the shared cross-session gate the INSTANT this session's own action has been fanned
+            // out to every other local session - not later, when the rest of this tail (EXP/progression/
+            // the vanish itself) finishes. Nothing past this point needs to hold up a bystander's own Died
+            // dispatch (see LethalAttackProjectionGate's own doc comment for the exact race this closes).
+            _lethalAttackGate?.Exit(life);
+            lethalDamageWriteMs = CombatTiming.ElapsedMsSince(lethalDamageWriteStartedAt);
 
             if (_visibleActorIds.IsActorVisible(life.ActorId))
             {
                 var hpInfoPacket = IroMonsterCombatPackets.BuildHpInfo(life.ActorId, 0, result.MaxHp);
+                var lethalHpWriteStartedAt = CombatTiming.Now();
                 await WriteAsync(hpInfoPacket, cancellationToken);
+                lethalHpWriteMs = CombatTiming.ElapsedMsSince(lethalHpWriteStartedAt);
             }
 
             var (ratedBaseExp, ratedJobExp) = ExperienceRewardService.ResolveReward(_rates, targetSnapshot.StaticMob.BaseExp, targetSnapshot.StaticMob.JobExp, ExperienceSource.Monster);
+            var progressionPersistStartedAt = CombatTiming.Now();
             var progression = await new CharacterProgressionService(_gameplayState!).AddExperienceAsync(ratedBaseExp, ratedJobExp, cancellationToken);
+            progressionPersistMs = CombatTiming.ElapsedMsSince(progressionPersistStartedAt);
             if (progression is null)
             {
                 MapLogger.Warning($"[iRO MAP DEBUG] Monster EXP persistence failed actorId={life.ActorId}; no progression packets sent.");
             }
             else
             {
+                var progressionWritesStartedAt = CombatTiming.Now();
                 foreach (var packet in IroCharacterProgressionPackets.Build(_accountId, progression.Value))
+                {
                     await WriteAsync(packet, cancellationToken);
+                    progressionPacketCount++;
+                }
+                progressionWritesMs = CombatTiming.ElapsedMsSince(progressionWritesStartedAt);
             }
 
             MapLogger.Info($"[iRO MAP DEBUG] Monster died actorId={life.ActorId} mob={targetSnapshot.StaticMob.AegisName}");
             if (DebugBeforeMonsterVanishSendAsync is { } beforeVanishHook) await beforeVanishHook(); // Test-only seam - see that field's own doc comment. Always null in production.
-            await SendMonsterVanishAsync(life.ActorId, PacketConstants.ZcNotifyVanishReasonDied, cancellationToken);
+            var vanishWriteStartedAt = CombatTiming.Now();
+            await SendMonsterVanishAsync(life.ActorId, PacketConstants.ZcNotifyVanishReasonDied, "Died-local-lethal-hit", cancellationToken);
+            vanishWriteMs = CombatTiming.ElapsedMsSince(vanishWriteStartedAt);
+            CombatTiming.Log("LETHAL",
+                $"actorId={life.ActorId} damageWriteMs={CombatTiming.F(lethalDamageWriteMs)} hpWriteMs={CombatTiming.F(lethalHpWriteMs)} progressionPersistMs={CombatTiming.F(progressionPersistMs)} " +
+                $"progressionWritesMs={CombatTiming.F(progressionWritesMs)} progressionPackets={progressionPacketCount} vanishWriteMs={CombatTiming.F(vanishWriteMs)} " +
+                $"worldResultToVanishMs={CombatTiming.F(CombatTiming.ElapsedMsSince(lethalTailStartedAt))}");
 
             lethalCommitLife = null;
             _lethalDeathArbiter.CompleteInFlight(life, markProjected: true);
 
             var outcome = _combat!.BuildOutcome(result, targetSnapshot, isMiss, questStatusSnapshot);
+            var questDropsStartedAt = CombatTiming.Now();
+            var questDropsProcessed = 0;
             foreach (var drop in outcome.QuestDrops)
             {
+                questDropsProcessed++;
                 if (!GeneratedItems.ById.TryGetValue(drop.ItemId, out var itemDefinition))
                 {
                     MapLogger.Warning($"[iRO MAP DEBUG] Quest drop references unregistered itemId={drop.ItemId}; skipping client notification.");
@@ -2552,10 +2721,16 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
                 MapLogger.Info($"[iRO MAP DEBUG] Sending 0x0B41 itemId={itemDefinition.Id} count={drop.Count} clientIndex={clientIndex}");
                 await WriteAsync(pickupPacket, cancellationToken);
             }
+
+            // DEBUG-LOG-ONLY: quest-drop inventory persistence (a CharServer round trip per drop) runs
+            // after the vanish but while _attackExecutionGate is still held, so it can delay the NEXT
+            // attack turn/fixpos even though the death already reached the client.
+            CombatTiming.Log("LETHAL AFTERMATH",
+                $"actorId={life.ActorId} questDrops={questDropsProcessed} questDropsPersistAndWriteMs={CombatTiming.F(CombatTiming.ElapsedMsSince(questDropsStartedAt))} lethalTailTotalMs={CombatTiming.F(CombatTiming.ElapsedMsSince(lethalTailStartedAt))}");
         }
         catch
         {
-            if (lethalCommitLife is { } leaked) _lethalDeathArbiter.CompleteInFlight(leaked, markProjected: false);
+            if (lethalCommitLife is { } leaked) CompleteLethalInFlight(leaked, markProjected: false);
             throw;
         }
     }
@@ -2612,7 +2787,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
             // this, a warp/disconnect could observe the published _pendingDamageAttempt, clear it,
             // and call CompleteInFlight BEFORE this BeginInFlight below ever runs, leaving an
             // orphaned arbiter registration that nothing will ever complete.
-            _lethalDeathArbiter.BeginInFlight(life);
+            EnterLethalInFlight(life);
         }
         finally { _attackGate.Release(); }
         try { _pendingRetrySignal.Release(); } catch (SemaphoreFullException) { }
@@ -2684,7 +2859,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
                 QuestStatusSnapshot = questStatusSnapshot,
                 NextRetryAt = _timeProvider.GetUtcNow().AddMilliseconds(attackDelayMs),
             };
-            _lethalDeathArbiter.BeginInFlight(life);
+            EnterLethalInFlight(life);
         }
         finally { _attackGate.Release(); }
         try { _pendingRetrySignal.Release(); } catch (SemaphoreFullException) { }
@@ -2736,7 +2911,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
             _pendingDamageAttempt = null;
         }
         finally { _attackGate.Release(); }
-        if (retiredLife is { } life) _lethalDeathArbiter.CompleteInFlight(life, markProjected: false);
+        if (retiredLife is { } life) CompleteLethalInFlight(life, markProjected: false);
         try { _pendingRetrySignal.Release(); } catch (SemaphoreFullException) { }
     }
 
@@ -2816,6 +2991,11 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         }
         finally { _attackGate.Release(); }
 
+        // DEBUG-LOG-ONLY: this turn genuinely reached an attack attempt (past the stale/already-executed
+        // guards above); everything below records where it ended.
+        var turnTrace = CurrentAttackTurn.Value;
+        var legalityStartedAt = CombatTiming.Now();
+        if (turnTrace is not null) { turnTrace.Engaged = true; turnTrace.Outcome = "aborted-missing-state"; }
         if (_combat is null || _gameplayState is null || _distributedWorld is null || _combatState is null) { ClearRepeatAttackIfCurrent(expected); return; }
         // Epoch and instance MUST be captured under the SAME MonsterFeedProjection lock acquisition
         // (TryGetLife) - reading the instance via TryGetProjectedMonster and CurrentEpoch as two
@@ -2825,6 +3005,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         // WorldMonsterLifeReference whose epoch does not actually correspond to the instance data.
         if (_monsterProjections is null || !_monsterProjections.TryGet(_mapName, out var projection) || !projection.TryGetLife(expected.TargetActorId, out var epoch, out var targetInstance) || targetInstance.Lifecycle != WorldMonsterLifecycleState.Alive)
         {
+            if (turnTrace is not null) turnTrace.Outcome = "aborted-target-not-alive";
             ClearRepeatAttackIfCurrent(expected);
             return;
         }
@@ -2856,6 +3037,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
                     break;
                 default:
                     MapLogger.Warning($"[iRO MAP DEBUG] Equipped right-hand item did not resolve to a weapon (resolution={weaponResolution.Resolution}); rejecting attack.");
+                    if (turnTrace is not null) turnTrace.Outcome = "aborted-weapon-unresolved";
                     ClearRepeatAttackIfCurrent(expected);
                     return;
             }
@@ -2884,7 +3066,8 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         {
             var clientDistance = ClientDistance.DistanceClient(dxForRangeCheck, dyForRangeCheck);
             MapLogger.Info(
-                $"[iRO MAP DEBUG] Attack range rejected player=({_x},{_y}) targetActorId={expected.TargetActorId} target=({targetPositionForRangeCheck.X},{targetPositionForRangeCheck.Y}) weapon={(equippedWeapon is null ? "unarmed" : $"{equippedWeapon.AegisName}/{equippedWeapon.Id}")} range={effectiveRangeForRangeCheck} clientDistance={clientDistance}");
+                $"[iRO MAP DEBUG] Attack range rejected player=({_x},{_y}) targetActorId={expected.TargetActorId} target=({targetPositionForRangeCheck.X},{targetPositionForRangeCheck.Y}) weapon={(equippedWeapon is null ? "unarmed" : $"{equippedWeapon.AegisName}/{equippedWeapon.Id}")} range={effectiveRangeForRangeCheck} clientDistance={clientDistance} t={CombatTiming.ClockMs()}ms");
+            if (turnTrace is not null) { turnTrace.Outcome = "range-rejected"; turnTrace.LegalityMs = CombatTiming.ElapsedMsSince(legalityStartedAt); }
             // Live-acceptance wire-fidelity fix: pinned clif_movetoattack (clif.cpp:8172-8184) sets
             // `packet.currentAttRange = sd.battle_status.rhw.range` - the attacker's RAW/base weapon
             // range (status_get_range, this project's own resolvedRange), NEVER the temporary +1
@@ -2902,7 +3085,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
             // (ai/iro-2026-wire.md has no 0x0139 entry) - see that type's own doc comment. This log
             // line exists so a live PACKETVER 20220406 capture, once obtained, can be diffed
             // byte-for-byte against what Athena actually sent.
-            MapLogger.Info($"[iRO MAP DEBUG] Sending 0x0139 (PINNED-SOURCE-BACKED, NOT capture-verified) len={failurePacket.Length} bytes={Convert.ToHexString(failurePacket)}");
+            MapLogger.Info($"[iRO MAP DEBUG] Sending 0x0139 (PINNED-SOURCE-BACKED, NOT capture-verified) len={failurePacket.Length} bytes={Convert.ToHexString(failurePacket)} t={CombatTiming.ClockMs()}ms");
             await WriteAsync(failurePacket, cancellationToken);
             // Pinned unit_attack_timer_sub's far-away branch never re-arms ud->attacktimer - only
             // the tail AFTER a real hit lands does that (unit.cpp:3333, "if (attack_continue &&
@@ -2934,7 +3117,8 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         if (!BasicAttackDistanceValidator.HasDirectAttackPath(_collisionProvider, _mapName, _x, _y, targetPositionForRangeCheck.X, targetPositionForRangeCheck.Y, effectiveRangeForRangeCheck))
         {
             MapLogger.Info(
-                $"[iRO MAP DEBUG] Attack range rejected (no direct attack path) player=({_x},{_y}) targetActorId={expected.TargetActorId} target=({targetPositionForRangeCheck.X},{targetPositionForRangeCheck.Y}) range={effectiveRangeForRangeCheck}");
+                $"[iRO MAP DEBUG] Attack range rejected (no direct attack path) player=({_x},{_y}) targetActorId={expected.TargetActorId} target=({targetPositionForRangeCheck.X},{targetPositionForRangeCheck.Y}) range={effectiveRangeForRangeCheck} t={CombatTiming.ClockMs()}ms");
+            if (turnTrace is not null) { turnTrace.Outcome = "no-direct-attack-path"; turnTrace.LegalityMs = CombatTiming.ElapsedMsSince(legalityStartedAt); }
             ClearRepeatAttackIfCurrent(expected);
             return;
         }
@@ -2951,7 +3135,13 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         // _pendingDamageAttempt is published, BeginInFlight runs, or ApplyMonsterDamageAsync is
         // called. If this throws, propagate exactly as today's pre-checks: no pending attempt
         // exists, World is never called, nothing needs to be cleaned up.
+        // DEBUG-LOG-ONLY: legality = everything from the turn engaging up to here (weapon resolve, range
+        // and line-of-attack checks, damage calculation); the quest-state read is timed separately since
+        // it awaits CharServer BEFORE the World damage RPC.
+        var questResolveStartedAt = CombatTiming.Now();
+        if (turnTrace is not null) turnTrace.LegalityMs = CombatTiming.ElapsedMs(legalityStartedAt, questResolveStartedAt);
         var questStatusSnapshot = await ResolveActiveQuestStatesAsync(target.MobId, cancellationToken);
+        if (turnTrace is not null) { turnTrace.QuestResolveMs = CombatTiming.ElapsedMsSince(questResolveStartedAt); turnTrace.Outcome = "dispatched"; }
 
         await AllocateAndDispatchFreshDamageAttemptAsync(expected, life, candidate.Damage, candidate.IsMiss, acquireEngagement, target, attackDelayMs, questStatusSnapshot, cancellationToken);
     }
@@ -3053,12 +3243,20 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         if (_gameplayState is null) return null;
 
         var before = _gameplayState.State.CurrentHp;
-        var mutated = await _gameplayState.MutateAsync(current =>
+        // MutateIfChangedAsync (not MutateAsync): a miss / zero-damage hit, or a hit on an already-dead
+        // player, produces a candidate identical to the current state - "nothing happened" must NOT cost
+        // a durable write. The old unconditional MutateAsync performed one full MapServer -> CharServer
+        // -> SQL round trip (and bumped the row version) for every such attack, awaited serially inside
+        // the shared monster tick (measured live: ~90 ms for a miss, stalling the whole map's feed
+        // projection). A real HP change still persists exactly once, unchanged. The unchanged-candidate
+        // decision is made under the per-character mutation lock against the state the callback saw, and
+        // there is no stale-row hazard for a no-op: the compare-and-swap it skips only protects a WRITE.
+        var mutated = await _gameplayState.MutateIfChangedAsync(current =>
         {
             if (current.CurrentHp == 0) return current; // Already dead - no further reduction (pinned status_isdead target check).
             var after = damage >= current.CurrentHp ? 0u : current.CurrentHp - damage;
             return current with { CurrentHp = after };
-        }, cancellationToken);
+        }, cancellationToken, reason: "mob-basic-attack");
 
         if (mutated is null) return null; // Persistence rejected the mutation (stale row) - treat as a normal "target no longer valid this tick", not an error.
 
@@ -3758,7 +3956,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         MapLogger.Info($"[iRO MAP DEBUG] Script warp entity='{execution.EntityId}' map='{_mapName}' -> map='{map}' x={warp.X} y={warp.Y}");
         var sourceMap = _presenceMapId ?? _mapName;
         await LeavePlayerWorldAsync(PlayerSessionLifecycle.AuthenticatedButNotWorldVisible, cancellationToken);
-        TeleportTo(map, warp.X, warp.Y); _positionDirty = true; _visibleActorIds.Clear(); _monsterVisibility.Reset();
+        TeleportTo(map, warp.X, warp.Y, reason: "script", source: $"script-warp:{execution.EntityId}"); _positionDirty = true; _visibleActorIds.Clear(); _monsterVisibility.Reset();
         await TransferDistributedPresenceAsync(sourceMap, _mapName, _x, _y, cancellationToken);
         await WriteAsync(IroMapTransitionPackets.BuildSameServerMapChange(_mapName, _x, _y), cancellationToken);
         await PersistPositionIfDirtyAsync(cancellationToken);
@@ -3766,6 +3964,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
 
     private async Task<bool> SavePointAsync(string map, ushort x, ushort y, CancellationToken cancellationToken)
     {
+        map = CanonicalMapPolicy.Canonicalize(map); // Save points, like positions, only ever name canonical maps.
         var saved = await _positionPersistence.SavePointAsync(_accountId, _charId, map, x, y, cancellationToken);
         if (saved) MapLogger.Info($"SavePoint persistence succeeded charId={_charId} map='{map}' x={x} y={y}.");
         else MapLogger.Warning($"SavePoint persistence failed charId={_charId} map='{map}' x={x} y={y}.");
@@ -3914,9 +4113,9 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         if (string.IsNullOrWhiteSpace(map)) throw new InvalidOperationException("Generated script warp map is empty.");
         var sourceMap = _presenceMapId ?? _mapName;
         await LeavePlayerWorldAsync(PlayerSessionLifecycle.AuthenticatedButNotWorldVisible, cancellationToken);
-        TeleportTo(map, x, y); _positionDirty = true; _visibleActorIds.Clear(); _monsterVisibility.Reset();
+        TeleportTo(map, x, y, reason: "script", source: "generated-script-warp"); _positionDirty = true; _visibleActorIds.Clear(); _monsterVisibility.Reset();
         await TransferDistributedPresenceAsync(sourceMap, _mapName, _x, _y, cancellationToken);
-        await WriteAsync(IroMapTransitionPackets.BuildSameServerMapChange(map, x, y), cancellationToken);
+        await WriteAsync(IroMapTransitionPackets.BuildSameServerMapChange(_mapName, x, y), cancellationToken);
         await PersistPositionIfDirtyAsync(cancellationToken);
     }
 
@@ -4582,7 +4781,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
                 currentHp: instance.CurrentHp,
                 maxHp: instance.MaxHp);
             MapLogger.Info(
-                $"[iRO MAP DEBUG] Sending monster actor id={instance.ActorId} name='{actor.Name}' class={actor.MobId} map='{instance.MapId}' x={instance.X} y={instance.Y} hp={instance.CurrentHp}/{instance.MaxHp}");
+                $"[iRO MAP DEBUG] Sending monster actor id={instance.ActorId} name='{actor.Name}' class={actor.MobId} map='{instance.MapId}' x={instance.X} y={instance.Y} hp={instance.CurrentHp}/{instance.MaxHp} incarnationId={instance.IncarnationId.Value} playerPosition=({_x},{_y}) source=map-load-or-player-move-scan t={DebugNowMs()}ms");
             await WriteAsync(packet, cancellationToken);
         }
     }
@@ -4672,7 +4871,10 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     // below still needs to run for a not-yet-visible actor regardless of whether this particular
     // call happens to carry a movement transition, since discovery is triggered by proximity, not
     // by the specific entry kind that happened to be processed.
-    public async Task NotifyMonsterMovedAsync(IMonsterActorView actor, WorldMonsterMovementKind? movementKind, WorldMonsterInstance instance, CancellationToken cancellationToken)
+    //
+    // `feedContext` is DEBUG-LOG-ONLY correlation text (feed sequence/kind, or "reconcile-snapshot")
+    // supplied by the caller - it never influences behavior.
+    public async Task NotifyMonsterMovedAsync(IMonsterActorView actor, WorldMonsterMovementKind? movementKind, WorldMonsterInstance instance, CancellationToken cancellationToken, string? feedContext = null)
     {
         if (instance.ActorId != actor.ActorId || !instance.IncarnationId.Value.Equals(actor.IncarnationId.Value) ||
             !string.Equals(instance.MapId, actor.Map, StringComparison.OrdinalIgnoreCase))
@@ -4709,6 +4911,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
                     currentHp: instance.CurrentHp,
                     maxHp: instance.MaxHp);
                 await WriteAsync(walkingDiscoveryPacket, cancellationToken);
+                if (MonsterDebugLog.Verbose) MapLogger.Info($"[iRO MAP DEBUG] Sent 0x09FD walk discovery actorId={actor.ActorId} incarnationId={instance.IncarnationId.Value} map={_mapName} from=({position.X},{position.Y}) to=({walkingDiscoveryDestination.X},{walkingDiscoveryDestination.Y}) playerPosition=({_x},{_y}) accountId={_accountId} {DebugRecordWalkPacket(actor.ActorId, position.X, position.Y, walkingDiscoveryDestination.X, walkingDiscoveryDestination.Y)} feed={feedContext ?? "none"} t={DebugNowMs()}ms");
                 return;
             }
 
@@ -4723,6 +4926,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
                 currentHp: instance.CurrentHp,
                 maxHp: instance.MaxHp);
             await WriteAsync(standPacket, cancellationToken);
+            if (MonsterDebugLog.Verbose) MapLogger.Info($"[iRO MAP DEBUG] Sent 0x09FF stand discovery actorId={actor.ActorId} incarnationId={instance.IncarnationId.Value} map={_mapName} position=({position.X},{position.Y}) playerPosition=({_x},{_y}) accountId={_accountId} feed={feedContext ?? "none"} t={DebugNowMs()}ms");
             return;
         }
 
@@ -4734,7 +4938,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         // rediscovers it later via this same method's own discovery branch if it re-enters range.
         if (!_visibilityOptions.IsVisible(_mapName, _x, _y, actor.Map, position.X, position.Y))
         {
-            await SendMonsterVanishAsync(actor.ActorId, PacketConstants.ZcNotifyVanishReasonOutOfSight, cancellationToken);
+            await SendMonsterVanishAsync(actor.ActorId, PacketConstants.ZcNotifyVanishReasonOutOfSight, "OutOfSight-movement", cancellationToken, (position.X, position.Y), feedContext);
             return;
         }
 
@@ -4758,7 +4962,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
                 // 0x0088 is sent, at the mob's authoritative CURRENT cell.
                 var fixPosPacket = IroMonsterActorPackets.BuildStopMove(actor.ActorId, position.X, position.Y);
                 await WriteAsync(fixPosPacket, cancellationToken);
-                MapLogger.Info($"[iRO MAP DEBUG] Sent 0x0088 fixpos mobActorId={actor.ActorId} accountId={_accountId} mobPosition=({position.X},{position.Y})");
+                if (MonsterDebugLog.Verbose) MapLogger.Info($"[iRO MAP DEBUG] Sent 0x0088 fixpos mobActorId={actor.ActorId} accountId={_accountId} mobPosition=({position.X},{position.Y}) {DebugSinceLastWalk(actor.ActorId)} feed={feedContext ?? "none"} t={DebugNowMs()}ms");
                 return;
 
             case WorldMonsterMovementKind.WalkStarted:
@@ -4776,7 +4980,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
                     currentHp: instance.CurrentHp,
                     maxHp: instance.MaxHp);
                 await WriteAsync(walkPacket, cancellationToken);
-                MapLogger.Info($"[iRO MAP DEBUG] Sent 0x09FD walk-entry mobActorId={actor.ActorId} accountId={_accountId} from=({position.X},{position.Y}) to=({destination.X},{destination.Y})");
+                if (MonsterDebugLog.Verbose) MapLogger.Info($"[iRO MAP DEBUG] Sent 0x09FD walk-entry mobActorId={actor.ActorId} accountId={_accountId} from=({position.X},{position.Y}) to=({destination.X},{destination.Y}) {DebugRecordWalkPacket(actor.ActorId, position.X, position.Y, destination.X, destination.Y)} feed={feedContext ?? "none"} t={DebugNowMs()}ms");
                 return;
         }
     }
@@ -4791,17 +4995,109 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     // (NotifyMonsterDiedAsync's own attacker-dedup case, or a redundant vanish request) still needs
     // its own _monsterVisibility entry removed, or a later Respawned/resync could compare a fresh
     // incarnation against stale leftover metadata for the OLD life.
-    private async Task SendMonsterVanishAsync(uint actorId, byte reason, CancellationToken cancellationToken)
+    // Bug-2 live-reproduction observability (debug-only, additive): `reasonLabel` is a short,
+    // human-readable tag distinguishing WHY this call happened (Died, OutOfSight-movement,
+    // OutOfSight-resync, epoch-changed, incarnation-changed) - the wire `reason` byte alone
+    // (OutOfSight vs Died) cannot distinguish those sub-cases, and the existing discovery log
+    // (SendVisibleMonsterActorsAsync/NotifyMonsterMovedAsync's own "Sending monster actor"/"Sent
+    // 0x09FD" lines) needs a matching vanish-side log to let a live capture correlate
+    // discovered -> moved -> vanished -> rediscovered by ActorId. No lifecycle/behavior change -
+    // this method's existing early-return/dedup semantics (via _visibleActorIds.TryMarkNotVisible)
+    // are untouched; only a log line was added, using the incarnation this session believed it had
+    // BEFORE removal (Snapshot() is a full copy, cheap here since vanish is not a hot per-tick path).
+    private async Task SendMonsterVanishAsync(uint actorId, byte reason, string reasonLabel, CancellationToken cancellationToken, (ushort X, ushort Y)? lastProjectedPosition = null, string? feedContext = null)
     {
+        WorldMonsterIncarnationId incarnation = default;
+        foreach (var pair in _monsterVisibility.Snapshot())
+        {
+            if (pair.ActorId == actorId) { incarnation = pair.IncarnationId; break; }
+        }
+        var positionLabel = lastProjectedPosition is { } pos ? $"({pos.X},{pos.Y})" : "unknown";
         _monsterVisibility.Remove(actorId);
-        if (!_visibleActorIds.TryMarkNotVisible(actorId)) return;
+        DebugForgetWalkPacket(actorId);
+        if (!_visibleActorIds.TryMarkNotVisible(actorId))
+        {
+            if (MonsterDebugLog.Verbose) MapLogger.Info($"[iRO MAP DEBUG] Monster vanish suppressed (already not visible) actorId={actorId} incarnationId={incarnation.Value} map={_mapName} lastProjectedPosition={positionLabel} playerPosition=({_x},{_y}) accountId={_accountId} reason={reasonLabel} wireReason={reason} feed={feedContext ?? "none"} t={DebugNowMs()}ms");
+            return;
+        }
+        if (MonsterDebugLog.Verbose) MapLogger.Info($"[iRO MAP DEBUG] Sending 0x0080 vanish actorId={actorId} incarnationId={incarnation.Value} map={_mapName} lastProjectedPosition={positionLabel} playerPosition=({_x},{_y}) accountId={_accountId} reason={reasonLabel} wireReason={reason} feed={feedContext ?? "none"} t={DebugNowMs()}ms");
         await WriteAsync(IroMonsterCombatPackets.BuildNotifyVanish(actorId, reason), cancellationToken);
+    }
+
+    // DEBUG-LOG-ONLY monster-walk-packet bookkeeping for the movement-lag investigation: remembers,
+    // per actor, when this session last received a 0x09FD and what it carried, so the NEXT
+    // 0x09FD/0x0088 for the same actor can log the real elapsed time and how far `From` advanced.
+    // Never read by any gameplay/projection decision.
+    private readonly Dictionary<uint, (long Timestamp, ushort FromX, ushort FromY, ushort DestX, ushort DestY)> _debugLastWalkPacket = [];
+    private readonly Lock _debugWalkGate = new();
+
+    private static string DebugNowMs() =>
+        System.Diagnostics.Stopwatch.GetElapsedTime(0).TotalMilliseconds.ToString("F1", System.Globalization.CultureInfo.InvariantCulture);
+
+    private string DebugRecordWalkPacket(uint actorId, ushort fromX, ushort fromY, ushort destX, ushort destY)
+    {
+        var now = System.Diagnostics.Stopwatch.GetTimestamp();
+        (long Timestamp, ushort FromX, ushort FromY, ushort DestX, ushort DestY) previous;
+        bool hadPrevious;
+        lock (_debugWalkGate)
+        {
+            hadPrevious = _debugLastWalkPacket.TryGetValue(actorId, out previous);
+            _debugLastWalkPacket[actorId] = (now, fromX, fromY, destX, destY);
+        }
+        if (!hadPrevious) return "sinceLastWalkMs=none";
+        var elapsedMs = System.Diagnostics.Stopwatch.GetElapsedTime(previous.Timestamp, now).TotalMilliseconds;
+        var fromAdvanceCells = Math.Max(Math.Abs(fromX - previous.FromX), Math.Abs(fromY - previous.FromY));
+        return $"sinceLastWalkMs={elapsedMs.ToString("F1", System.Globalization.CultureInfo.InvariantCulture)} prevFrom=({previous.FromX},{previous.FromY}) prevTo=({previous.DestX},{previous.DestY}) fromAdvanceCells={fromAdvanceCells}";
+    }
+
+    private string DebugSinceLastWalk(uint actorId)
+    {
+        (long Timestamp, ushort FromX, ushort FromY, ushort DestX, ushort DestY) previous;
+        bool hadPrevious;
+        lock (_debugWalkGate) hadPrevious = _debugLastWalkPacket.TryGetValue(actorId, out previous);
+        if (!hadPrevious) return "sinceLastWalkMs=none";
+        var elapsedMs = System.Diagnostics.Stopwatch.GetElapsedTime(previous.Timestamp).TotalMilliseconds;
+        return $"sinceLastWalkMs={elapsedMs.ToString("F1", System.Globalization.CultureInfo.InvariantCulture)} lastWalkTo=({previous.DestX},{previous.DestY})";
+    }
+
+    private void DebugForgetWalkPacket(uint actorId)
+    {
+        lock (_debugWalkGate) _debugLastWalkPacket.Remove(actorId);
     }
 
     // World `Died` fan-out: called by MapTcpServer.FanOutEntryAsync for EVERY session on the map
     // when World's feed reports a monster Died, not merely the attacker's own session - takes the
     // EXACT life identity (`life`), never only an ActorId, so the arbitration below can never
     // conflate two different incarnations of the same ActorId.
+    // Registers a lethal-capable attempt for `life` in BOTH this session's own per-session
+    // LethalDeathProjectionArbiter (unchanged - defers THIS session's own concurrently-observed Died
+    // for the exact same life) AND, when this session was constructed by MapTcpServer, the SHARED
+    // cross-session LethalAttackProjectionGate (see that type's own doc comment) - called at the
+    // SAME two allocation-time call sites BeginInFlight itself always used, before the World RPC that
+    // may report KilledByThisHit is ever dispatched.
+    private void EnterLethalInFlight(WorldMonsterLifeReference life)
+    {
+        _lethalDeathArbiter.BeginInFlight(life);
+        _lethalAttackGate?.Enter(life);
+    }
+
+    // Retires this session's own per-session arbiter registration for `life`, exactly as
+    // CompleteInFlight always did. For every NON-lethal-success retirement (markProjected: false -
+    // a rejection status, a fatal dispatch exception, or a disconnect/replace leak cleanup) this ALSO
+    // releases the shared cross-session gate immediately, since no player-attack action fan-out is
+    // coming from this attempt at all. The one lethal-success retirement (markProjected: true, inside
+    // HandleLethalDamageResultAsync's own tail) deliberately does NOT release the gate here - that
+    // path releases it explicitly, early, right after its own action has been fanned out (well before
+    // EXP/progression/the vanish itself), so bystanders' Died dispatch is never held up waiting on
+    // work they do not need. Calling LethalAttackProjectionGate.Exit a second time for the same life
+    // is a safe no-op either way.
+    private bool CompleteLethalInFlight(WorldMonsterLifeReference life, bool markProjected)
+    {
+        var diedObservedWhilePending = _lethalDeathArbiter.CompleteInFlight(life, markProjected);
+        if (!markProjected) _lethalAttackGate?.Exit(life);
+        return diedObservedWhilePending;
+    }
+
     //
     // World's ApplyMonsterDamageAsync commits the authoritative Alive->Dead transition and its Died
     // feed entry BEFORE the attacking session's own local lethal projection (damage packet, HP-info,
@@ -4824,7 +5120,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     public async Task NotifyMonsterDiedAsync(WorldMonsterLifeReference life, CancellationToken cancellationToken)
     {
         if (_lethalDeathArbiter.TryDeferDiedWhileInFlight(life)) return;
-        await SendMonsterVanishAsync(life.ActorId, PacketConstants.ZcNotifyVanishReasonDied, cancellationToken);
+        await SendMonsterVanishAsync(life.ActorId, PacketConstants.ZcNotifyVanishReasonDied, "Died-world-feed", cancellationToken);
     }
 
     // Performs the exact same wire vanish + visibility cleanup NotifyMonsterDiedAsync's own ordinary
@@ -4835,7 +5131,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     // method (rather than inlining SendMonsterVanishAsync at each of those call sites) so the "this
     // is the deferred-cleanup half of the arbitration" intent reads clearly at each call site.
     private async Task PerformDeferredAuthoritativeDiedAsync(uint actorId, CancellationToken cancellationToken) =>
-        await SendMonsterVanishAsync(actorId, PacketConstants.ZcNotifyVanishReasonDied, cancellationToken);
+        await SendMonsterVanishAsync(actorId, PacketConstants.ZcNotifyVanishReasonDied, "Died-deferred-arbitration", cancellationToken);
 
     // Step 7 substep 7 (§14.5): the real Respawned hook LethalDeathProjectionArbiter's own
     // ForgetProjectedForActor doc comment anticipated. Called by MapTcpServer.FanOutEntryAsync for
@@ -4906,7 +5202,11 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
 
             if (epochChanged || !stillAliveWithSameIncarnation)
             {
-                await SendMonsterVanishAsync(previouslyVisibleActorId, PacketConstants.ZcNotifyVanishReasonOutOfSight, cancellationToken);
+                var resyncReason = epochChanged ? "OutOfSight-resync-epoch-changed"
+                    : fresh is null ? "OutOfSight-resync-absent-or-dead"
+                    : "OutOfSight-resync-incarnation-changed";
+                var resyncPosition = fresh is { } freshForLog ? ((ushort X, ushort Y)?)(freshForLog.X, freshForLog.Y) : null;
+                await SendMonsterVanishAsync(previouslyVisibleActorId, PacketConstants.ZcNotifyVanishReasonOutOfSight, resyncReason, cancellationToken, resyncPosition, "reconcile-snapshot");
                 continue;
             }
 
@@ -4916,7 +5216,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
             // stillAliveWithSameIncarnation being true proves the TryGetValue above succeeded.
             if (!_visibilityOptions.IsVisible(_mapName, _x, _y, fresh!.MapId, fresh.X, fresh.Y))
             {
-                await SendMonsterVanishAsync(previouslyVisibleActorId, PacketConstants.ZcNotifyVanishReasonOutOfSight, cancellationToken);
+                await SendMonsterVanishAsync(previouslyVisibleActorId, PacketConstants.ZcNotifyVanishReasonOutOfSight, "OutOfSight-resync-aoi-exit", cancellationToken, (fresh.X, fresh.Y), "reconcile-snapshot");
             }
         }
 
@@ -4932,7 +5232,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         {
             try
             {
-                await NotifyMonsterMovedAsync(new WorldMonsterActorView(instance), movementKind: null, instance, cancellationToken);
+                await NotifyMonsterMovedAsync(new WorldMonsterActorView(instance), movementKind: null, instance, cancellationToken, "reconcile-snapshot");
             }
             catch (IOException) { /* Client disconnected; HandleClientAsync's own cleanup removes it from _sessions. */ }
             catch (OperationCanceledException) { /* Server shutdown. */ }
@@ -4959,6 +5259,41 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     //     return; }" - SP_HP is PLAYER-SELF-ONLY (clif_updatestatus targets exactly one session,
     //     never AREA) and is skipped ENTIRELY when hp==0 - a miss/zero-damage hit never produces an
     //     HP packet, matching this method's own HpChanged guard below exactly.
+    // The one call site both the non-lethal and lethal player-attack tails use to project the combat
+    // ACTION: goes through `_playerAttackFanout` when this session was constructed by MapTcpServer
+    // (production - every currently connected session, attacker included, gets exactly one call to
+    // NotifyPlayerAttackActionAsync below), or falls back to notifying only THIS session when no
+    // fan-out delegate is configured (every existing single-session test fixture/standalone tool -
+    // identical wire effect to before this fan-out existed). Either branch calls
+    // NotifyPlayerAttackActionAsync exactly once for this session, so the attacker can never receive
+    // a duplicate 0x08C8.
+    private Task ProjectPlayerAttackActionAsync(PlayerAttackActionOutcome action, CancellationToken cancellationToken) =>
+        _playerAttackFanout is { } fanout ? fanout(action, cancellationToken) : NotifyPlayerAttackActionAsync(action, cancellationToken);
+
+    // AREA-visible player-attack action projection (mirrors NotifyMonsterAttackOutcomeAsync's own
+    // map/visibility rules for a monster's own attack - see PlayerAttackActionOutcome's own doc
+    // comment for the pinned clif_damage citation both share). The attacking session ALWAYS
+    // receives the packet regardless of its own _visibleActorIds bookkeeping (pinned rAthena's own
+    // AREA broadcast always reaches the attacker - clif.cpp:5297 sends to AREA, which includes the
+    // source); every OTHER session requires the monster to already be in its own visible set, the
+    // same rule NotifyMonsterAttackOutcomeAsync applies. Progression/quest/inventory effects of the
+    // hit are NEVER part of this projection - those stay attacker-only, written directly by
+    // HandleLethalDamageResultAsync on the attacker's own session exactly as before this fan-out was
+    // introduced. Monster HP-info (the mob's own health-bar overlay) is likewise untouched here -
+    // it stays a separate, self-only write on the attacker's session (see HandleDamageResultAsync/
+    // HandleLethalDamageResultAsync) pending a documented decision on its own AREA visibility.
+    internal async Task NotifyPlayerAttackActionAsync(PlayerAttackActionOutcome action, CancellationToken cancellationToken)
+    {
+        if (!string.Equals(action.Map, _mapName, StringComparison.OrdinalIgnoreCase)) return;
+        var isAttacker = action.AttackerActorId == _accountId;
+        if (!isAttacker && !_visibleActorIds.IsActorVisible(action.MobActorId)) return;
+
+        var tick = unchecked((uint)Environment.TickCount);
+        var damagePacket = IroMonsterCombatPackets.BuildNotifyAct3(action.AttackerActorId, action.MobActorId, tick, action.SrcSpeed, action.DstSpeed, action.Damage, div: 1, actionType: 0);
+        await WriteAsync(damagePacket, cancellationToken);
+        MapLogger.Info($"[iRO MAP DEBUG] PLAYER ATTACK FANOUT attackerActorId={action.AttackerActorId} targetActorId={action.MobActorId} observerAccountId={_accountId} damage={action.Damage} map={action.Map} lethal={action.Lethal.ToString().ToLowerInvariant()}");
+    }
+
     public async Task NotifyMonsterAttackOutcomeAsync(MonsterAttackActionOutcome action, CancellationToken cancellationToken)
     {
         if (!string.Equals(action.Map, _mapName, StringComparison.OrdinalIgnoreCase)) return;
@@ -5267,13 +5602,25 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
 
     private async Task WriteAsync(byte[] payload, CancellationToken cancellationToken)
     {
+        // DEBUG-LOG-ONLY contention timing: every packet write of this session is serialized through
+        // _writeLock (the monster tick, this session's movement loop, its packet replies and the attack
+        // path all write here). Only a lock wait or a socket write of at least
+        // CombatTiming.SlowWriteThresholdMs is logged, so ordinary packets add no log output.
+        var lockRequestedAt = CombatTiming.Now();
         await _writeLock.WaitAsync(cancellationToken);
+        var lockAcquiredAt = CombatTiming.Now();
         try
         {
             await _stream.WriteAsync(payload, cancellationToken);
+            var writtenAt = CombatTiming.Now();
             // Only reached if the write above did not throw - see this field's own doc comment.
             var packetId = payload.Length >= 2 ? BinaryPrimitives.ReadInt16LittleEndian(payload) : (short)-1;
             _lastPacketWrittenDescription = $"0x{packetId:X4} len={payload.Length}";
+
+            var lockWaitMs = CombatTiming.ElapsedMs(lockRequestedAt, lockAcquiredAt);
+            var socketWriteMs = CombatTiming.ElapsedMs(lockAcquiredAt, writtenAt);
+            if (lockWaitMs >= CombatTiming.SlowWriteThresholdMs || socketWriteMs >= CombatTiming.SlowWriteThresholdMs)
+                CombatTiming.Log("SOCKET WRITE", $"packet=0x{packetId:X4} len={payload.Length} lockWaitMs={CombatTiming.F(lockWaitMs)} socketWriteMs={CombatTiming.F(socketWriteMs)}");
         }
         finally
         {

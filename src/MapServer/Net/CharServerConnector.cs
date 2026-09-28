@@ -60,6 +60,15 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
 
     public bool IsConnected => _connection != null;
 
+    // Set once by MapTcpServer (the only production caller) right after construction - lets this
+    // connector recompute and re-announce the CURRENT authenticated-player count the instant a
+    // (re)connection to CharServer succeeds, exactly like TrySendMapListAsync already re-announces
+    // this process's served maps on every (re)connect. Without this, a MapServer that reconnects
+    // after a transient CharServer outage would leave CharServer's own aggregate permanently missing
+    // this process's contribution until the next unrelated auth/disconnect event happened to trigger
+    // a fresh report.
+    public Func<uint>? CurrentUserCountProvider { get; set; }
+
     public Task WaitUntilReadyAsync(CancellationToken cancellationToken)
         => _initialReady.Task.WaitAsync(cancellationToken);
 
@@ -152,10 +161,27 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
     {
         var connection=_connection; if(connection is null)return null;
         var pending=new TaskCompletionSource<CharacterGameplayState?>(TaskCreationOptions.RunContinuationsAsynchronously);
-        if(!_pendingGameplayUpdates.TryAdd(expected.CharacterId,pending))return null;
+        if(!_pendingGameplayUpdates.TryAdd(expected.CharacterId,pending))
+        {
+            // DEBUG-LOG-ONLY: a second update for the same character while one is still in flight is
+            // rejected (null) instead of queued - make that visible in the combat timing timeline.
+            CombatTiming.Log("CHAR GAMEPLAY UPDATE", $"charId={expected.CharacterId} expectedVersion={expected.Version} rejected=update-already-in-flight");
+            return null;
+        }
         using var registration=cancellationToken.Register(()=>pending.TrySetCanceled(cancellationToken));
-        try { await connection.WriteAsync(MapCharacterGameplayStateProtocol.BuildUpdateRequest(accountId,expected,updated),cancellationToken); return await pending.Task; }
-        finally { _pendingGameplayUpdates.TryRemove(expected.CharacterId,out _); }
+        // DEBUG-LOG-ONLY timing (Stopwatch, monotonic): separates the socket write to CharServer from the
+        // wait for its response (CharServer persistence/SQL + reply). No payload data is logged.
+        var startedAt=CombatTiming.Now(); long writtenAt=0; CharacterGameplayState? persisted=null;
+        try { await connection.WriteAsync(MapCharacterGameplayStateProtocol.BuildUpdateRequest(accountId,expected,updated),cancellationToken); writtenAt=CombatTiming.Now(); persisted=await pending.Task; return persisted; }
+        finally
+        {
+            _pendingGameplayUpdates.TryRemove(expected.CharacterId,out _);
+            var endedAt=CombatTiming.Now();
+            var writeMs=CombatTiming.ElapsedMs(startedAt,writtenAt==0?endedAt:writtenAt);
+            var responseWaitMs=writtenAt==0?0:CombatTiming.ElapsedMs(writtenAt,endedAt);
+            CombatTiming.Log("CHAR GAMEPLAY UPDATE",
+                $"charId={expected.CharacterId} expectedVersion={expected.Version} writeMs={CombatTiming.F(writeMs)} responseWaitMs={CombatTiming.F(responseWaitMs)} totalMs={CombatTiming.F(CombatTiming.ElapsedMs(startedAt,endedAt))} success={(persisted is not null).ToString().ToLowerInvariant()} resultingVersion={(persisted is null ? "none" : persisted.Version.ToString())}");
+        }
     }
 
     public async Task<CharacterInventoryReadResult> GetInventoryAsync(uint accountId, uint characterId, CancellationToken cancellationToken)
@@ -318,6 +344,7 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
             _connection = connection;
             _initialReady.TrySetResult(true);
             _ = TrySendMapListAsync();
+            if (CurrentUserCountProvider is { } currentUserCountProvider) _ = TrySendUserCountAsync(currentUserCountProvider());
 
             await ListenAsync(stream, cancellationToken);
             _connection = null;
@@ -909,6 +936,26 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
         var buffer = new byte[4];
         BinaryPrimitives.WriteInt16LittleEndian(buffer.AsSpan(0, 2), PacketConstants.MapSendMaps);
         BinaryPrimitives.WriteUInt16LittleEndian(buffer.AsSpan(2, 2), 4);
+        return connection.WriteAsync(buffer, CancellationToken.None);
+    }
+
+    // Reports THIS MapServer process's own current authenticated-player count to CharServer as an
+    // absolute snapshot (never a delta - see MapServerRegistry.UpdateUserCount's own doc comment on
+    // the CharServer side). Public: MapTcpServer calls this the instant a session authenticates or
+    // an authenticated session disconnects, so CharServer's own aggregate stays correct without any
+    // polling lag. A no-op (Task.CompletedTask) while not currently connected - CurrentUserCountProvider
+    // above covers the reconnect case instead.
+    public Task TrySendUserCountAsync(uint count)
+    {
+        var connection = _connection;
+        if (connection == null)
+        {
+            return Task.CompletedTask;
+        }
+
+        var buffer = new byte[6];
+        BinaryPrimitives.WriteInt16LittleEndian(buffer.AsSpan(0, 2), PacketConstants.MapSendUserCount);
+        BinaryPrimitives.WriteUInt32LittleEndian(buffer.AsSpan(2, 4), count);
         return connection.WriteAsync(buffer, CancellationToken.None);
     }
 

@@ -117,6 +117,7 @@ public sealed class CharTcpServer
                 client,
                 _configStore,
                 _mapRegistry,
+                _loginConnector,
                 _mapAuthManager,
                 _dbFactory,
                 new MapServiceAuthenticationService(_mapServerServiceTokenProvider),

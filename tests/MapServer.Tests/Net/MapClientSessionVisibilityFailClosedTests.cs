@@ -26,7 +26,7 @@ public sealed class MapClientSessionVisibilityFailClosedTests
 {
     private const uint AccountId = 31;
     private const uint CharId = 33;
-    private const string MapId = "int_land03";
+    private const string MapId = "int_land";
     private const int PoringMobId = 1002;
 
     private static CharacterGameplayState FreshNovice() => new(

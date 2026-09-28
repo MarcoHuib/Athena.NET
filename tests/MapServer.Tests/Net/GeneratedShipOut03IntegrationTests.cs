@@ -13,9 +13,9 @@ public sealed class GeneratedShipOut03IntegrationTests
     [Fact]
     public async Task RealShipExit_IsVisibleAndExecutesGeneratedSavePointThenWarp()
     {
-        var entity = WorldMapRegistry.Tutorial.EntitiesById["warp:iz_int03:ship_out03"];
-        var actor = Assert.Single(WorldMapRegistry.Tutorial.GetVisibleWarpActors("iz_int03", 56, 15), item => item.Name == "#ship_out03");
-        Assert.Equal(new WorldActorComponent("#ship_out03", "iz_int03", 56, 15, 0, 45), entity.Actor);
+        var entity = WorldMapRegistry.Tutorial.EntitiesById["warp:iz_int:ship_out"];
+        var actor = Assert.Single(WorldMapRegistry.Tutorial.GetVisibleWarpActors("iz_int", 56, 15), item => item.Name == "#ship_out");
+        Assert.Equal(new WorldActorComponent("#ship_out", "iz_int", 56, 15, 0, 45), entity.Actor);
 
         var listener = new TcpListener(IPAddress.Loopback, 0); listener.Start();
         using var client = new TcpClient(); var connect = client.ConnectAsync((IPEndPoint)listener.LocalEndpoint);
@@ -23,7 +23,7 @@ public sealed class GeneratedShipOut03IntegrationTests
         await using var stream = client.GetStream();
         var persistence = new RecordingPositionPersistence();
         var clock = new ControllableTimeProvider();
-        await using var session = new MapClientSession(1, serverClient, new CharServerConnector(new MapConfigStore(new MapConfig(), "unused.conf")), true, "iz_int03", 51, 30,
+        await using var session = new MapClientSession(1, serverClient, new CharServerConnector(new MapConfigStore(new MapConfig(), "unused.conf")), true, "iz_int", 51, 30,
             WorldMapRegistry.Tutorial, positionPersistence: persistence, accountId: 7, charId: 9, timeProvider: clock);
         var run = session.RunAsync(CancellationToken.None);
 
@@ -53,9 +53,9 @@ public sealed class GeneratedShipOut03IntegrationTests
         Assert.Equal(actor.ActorId, BinaryPrimitives.ReadUInt32LittleEndian(shipSpawn.AsSpan(5)));
         var mapChange = await ReadExact(stream, 22);
         Assert.Equal((short)0x0091, BinaryPrimitives.ReadInt16LittleEndian(mapChange));
-        Assert.Equal("int_land03.gat", System.Text.Encoding.ASCII.GetString(mapChange.AsSpan(2, 16)).TrimEnd('\0'));
-        Assert.Equal(("int_land03", (ushort)77, (ushort)101), persistence.SavePoint);
-        Assert.Equal("int_land03", session.CurrentMapName);
+        Assert.Equal("int_land.gat", System.Text.Encoding.ASCII.GetString(mapChange.AsSpan(2, 16)).TrimEnd('\0'));
+        Assert.Equal(("int_land", (ushort)77, (ushort)101), persistence.SavePoint);
+        Assert.Equal("int_land", session.CurrentMapName);
         Assert.Equal((ushort)85, session.CurrentX);
         Assert.Equal((ushort)107, session.CurrentY);
         Assert.Null(session.ActiveScriptState);

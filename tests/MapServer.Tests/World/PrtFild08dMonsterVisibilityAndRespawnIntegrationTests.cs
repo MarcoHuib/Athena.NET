@@ -83,13 +83,13 @@ public sealed class PrtFild08dMonsterVisibilityAndRespawnIntegrationTests
     }
 
     [Fact]
-    public async Task PlayerEnteringPrtFild08d_DiscoversSourceBackedPoring_ThroughNormalVisibilityPipeline_ThenKillsAndRespawnsItThroughTheGenericPipeline()
+    public async Task PlayerEnteringPrtFild08_DiscoversSourceBackedPoring_ThroughNormalVisibilityPipeline_ThenKillsAndRespawnsItThroughTheGenericPipeline()
     {
         // Real generated spawn declaration (source-backed: legacy/rathena/npc/re/mobs/academy.txt,
-        // ordinary Poring/1002, count 110, delay 5000 for prt_fild08d - ai/world-data.md), not a
+        // ordinary Poring/1002, count 110, delay 5000 for the canonical prt_fild08 - ai/world-data.md), not a
         // hand-authored test fixture. Only the CELL SELECTOR is a test double (deterministic
         // placement), matching every other MapClientSession integration test's own convention.
-        var spawn = GeneratedMobSpawnRegistry.GetForMap("prt_fild08d").Single(s => s.Mob == GeneratedMobs.Poring);
+        var spawn = GeneratedMobSpawnRegistry.GetForMap("prt_fild08").Single(s => s.Mob == GeneratedMobs.Poring && s.Source.File.EndsWith("/academy.txt", StringComparison.Ordinal) && s.Count == 110);
         Assert.Same(GeneratedMobs.Poring, spawn.Mob);
         Assert.Equal(110, spawn.Count);
         Assert.Equal(5000, spawn.RespawnDelay);
@@ -103,7 +103,7 @@ public sealed class PrtFild08dMonsterVisibilityAndRespawnIntegrationTests
         combatState.Register(target.Map, epoch, target.ActorId, new WorldMonsterIncarnationId(target.IncarnationId.Value));
         var combat = new MonsterCombatCoordinator(new QuestDropResolver(Generated.GameData.Quests.GeneratedQuestDrops.All), new RenewalBasicAttackRules());
         var monsterProjections = WorldMonsterProjectionTestHelper.SeedProjection(target.Map, epoch, combatState, registry.AllInstances);
-        Assert.Equal("prt_fild08d", target.Map);
+        Assert.Equal("prt_fild08", target.Map);
         Assert.Equal(GeneratedMobs.Poring.Id, target.Spawn.Mob.Id);
         Assert.NotEqual(2401, target.Spawn.Mob.Id); // Real ordinary Poring (1002), never the tutorial G_PORING (2401).
 
@@ -123,12 +123,12 @@ public sealed class PrtFild08dMonsterVisibilityAndRespawnIntegrationTests
 
         var session = new MapClientSession(
             1, serverClient, new CharServerConnector(new MapConfigStore(new MapConfig(), "unused.conf")), true,
-            "prt_fild08d", 500, 500, WorldMapRegistry.Tutorial,
+            "prt_fild08", 500, 500, WorldMapRegistry.Tutorial,
             questPersistence: new NoOpQuestPersistence(), gameplayStatePersistence: new FixedGameplayStatePersistence(StrongNovice()),
             accountId: AccountId, charId: CharId, monsterProjections: monsterProjections, combat: combat,
             inventoryPersistence: new NoOpInventoryPersistence(), combatState: combatState, distributedWorld: fakeWorld);
         var run = session.RunAsync(CancellationToken.None);
-        await session.CompleteIroAuthenticationAsync(new(AccountId, CharId, 1, 2, 0, 0, false, "prt_fild08d", 500, 500, 0, 0, 0));
+        await session.CompleteIroAuthenticationAsync(new(AccountId, CharId, 1, 2, 0, 0, false, "prt_fild08", 500, 500, 0, 0, 0));
 
         // Fixed 4-packet iRO bootstrap (0x0B18/0x0283/0x0ADE/0x02EB) plus the variable-length
         // 0x0B32 skill list that always follows it - same as every other MapClientSession test.

@@ -33,6 +33,7 @@ internal static partial class WorldDataImporterCli
                 "generate-mob-spawns" => await GenerateMobSpawnsAsync(args[1..]),
                 "generate-maps" => await GenerateMapsAsync(args[1..]),
                 "generate-warps" => await GenerateWarpsAsync(args[1..]),
+                "generate-canonical-maps" => await GenerateCanonicalMapsAsync(args[1..]),
                 "compile-quest-drop" => await CompileQuestDropAsync(args[1..]),
                 "compile-item" => await CompileItemAsync(args[1..]),
                 "compile-map-collision" => await CompileMapCollisionAsync(args[1..]),
@@ -1049,6 +1050,7 @@ internal static partial class WorldDataImporterCli
         Console.Error.WriteLine("WorldDataImporter generate-mob-spawns --rathena-root <folder> [--rathena-commit <sha>] --output <MapServer/Generated/World directory>");
         Console.Error.WriteLine("WorldDataImporter generate-maps --rathena-root <folder> [--rathena-commit <sha>] --output <MapServer/Generated/World directory>");
         Console.Error.WriteLine("WorldDataImporter generate-warps --rathena-root <folder> [--rathena-commit <sha>] --output <MapServer/Generated/World directory>");
+        Console.Error.WriteLine("WorldDataImporter generate-canonical-maps --rathena-root <folder> [--rathena-commit <sha>] --families <canonical-map-families.json> --output <src/Shared/MapIdentity/Generated directory>");
         Console.Error.WriteLine("WorldDataImporter compile-quest-drop --rathena-root <folder> --rathena-commit <sha> --quest-id <id> --output <QuestDrops.cs>");
         Console.Error.WriteLine("WorldDataImporter compile-item --rathena-root <folder> --rathena-commit <sha> --item-id <id> [--item-db-file <path>] --class-name <n> --constant-name <n> --output <Item.cs>");
         Console.Error.WriteLine("WorldDataImporter compile-map-collision --input <local.gat> --map <name> --output <local.athmap>");

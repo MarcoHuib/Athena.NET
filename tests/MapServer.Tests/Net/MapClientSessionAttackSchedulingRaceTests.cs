@@ -152,7 +152,7 @@ public sealed class MapClientSessionAttackSchedulingRaceTests
         var stream = client.GetStream();
 
         var allocator = new WorldActorIdAllocator();
-        var spawnDefinition = new MobSpawnDefinition(GeneratedMobs.GPoring, "int_land03", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "test", 0));
+        var spawnDefinition = new MobSpawnDefinition(GeneratedMobs.GPoring, "int_land", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "test", 0));
         var registry = new MonsterRegistry([spawnDefinition], allocator.Allocate, new FixedCellSelector(monsterX, monsterY), timeProvider ?? TimeProvider.System);
         var questDrops = new QuestDropResolver(GeneratedQuestDrops.All);
         var target = registry.AllInstances[0];
@@ -170,7 +170,7 @@ public sealed class MapClientSessionAttackSchedulingRaceTests
 
         var session = new MapClientSession(
             1, serverClient, new CharServerConnector(new MapConfigStore(new MapConfig(), "unused.conf")), true,
-            "int_land03", playerX, playerY, WorldMapRegistry.Tutorial,
+            "int_land", playerX, playerY, WorldMapRegistry.Tutorial,
             gameplayStatePersistence: gameplayPersistence,
             accountId: AccountId, charId: CharId, monsterProjections: monsterProjections, combat: combat,
             inventoryPersistence: inventoryPersistence, inventoryListPersistence: inventoryListPersistence,
@@ -179,7 +179,7 @@ public sealed class MapClientSessionAttackSchedulingRaceTests
         // A real World presence is required for HandleIroMovementAsync's own fresh-movement path
         // (test D exercises movement) - CharacterName must be non-empty for
         // EnterPlayerWorldAsync's own BuildCurrentPresence check to succeed.
-        await session.CompleteIroAuthenticationAsync(new(AccountId, CharId, 1, 2, 0, 0, false, "int_land03", playerX, playerY, 0, 0, 0, CharacterName: "TestNovice"));
+        await session.CompleteIroAuthenticationAsync(new(AccountId, CharId, 1, 2, 0, 0, false, "int_land", playerX, playerY, 0, 0, 0, CharacterName: "TestNovice"));
 
         await ReadExact(stream, 4 + 6 + 6 + 13);
         await ReadDynamic(stream);

@@ -8,6 +8,8 @@ on:
     branches: [ main ]
     paths:
       - "src/MapServer/**"
+      - "src/Shared/**"
+      - "src/WorldServer/**"
       - "tests/MapServer.Tests/**"
       - ".github/workflows/map-server-ci.yml"
       - "Directory.Build.*"
@@ -17,6 +19,8 @@ on:
   pull_request:
     paths:
       - "src/MapServer/**"
+      - "src/Shared/**"
+      - "src/WorldServer/**"
       - "tests/MapServer.Tests/**"
       - ".github/workflows/map-server-ci.yml"
       - "Directory.Build.*"
@@ -37,3 +41,12 @@ jobs:
           dotnet-version: '10.0.x'
       - name: Test
         run: dotnet test tests/MapServer.Tests/MapServer.Tests.csproj --configuration Release
+
+  # Reproduces the real Docker build context (dotnet test from a full checkout cannot): every source tree the
+  # MapServer project compiles or references (src/Shared, src/WorldServer) must be copied by the Dockerfile.
+  docker-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build MapServer image
+        run: docker build -f src/MapServer/Dockerfile -t athena-map-server:ci .

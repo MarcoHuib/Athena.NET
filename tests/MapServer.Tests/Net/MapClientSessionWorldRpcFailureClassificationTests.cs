@@ -91,7 +91,7 @@ public sealed class MapClientSessionWorldRpcFailureClassificationTests
         using var disposableClient = client;
 
         var allocator = new WorldActorIdAllocator();
-        var spawnDefinition = new MobSpawnDefinition(GeneratedMobs.GPoring, "int_land03", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "test", 0));
+        var spawnDefinition = new MobSpawnDefinition(GeneratedMobs.GPoring, "int_land", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "test", 0));
         var registry = new MonsterRegistry([spawnDefinition], allocator.Allocate, new FixedCellSelector(75, 51), TimeProvider.System);
         var questDrops = new QuestDropResolver([]);
         var target = registry.AllInstances[0];
@@ -114,7 +114,7 @@ public sealed class MapClientSessionWorldRpcFailureClassificationTests
         var dispatchCallCount = 0;
         var session = new MapClientSession(
             1, serverClient, new CharServerConnector(new MapConfigStore(new MapConfig(), "unused.conf")), true,
-            "int_land03", 75, 51, WorldMapRegistry.Tutorial,
+            "int_land", 75, 51, WorldMapRegistry.Tutorial,
             gameplayStatePersistence: gameplayPersistence,
             accountId: AccountId, charId: CharId, monsterProjections: monsterProjections, combat: combat,
             combatState: combatState, distributedWorld: fakeWorld)
@@ -126,7 +126,7 @@ public sealed class MapClientSessionWorldRpcFailureClassificationTests
             },
         };
         var run = session.RunAsync(CancellationToken.None);
-        await session.CompleteIroAuthenticationAsync(new(AccountId, CharId, 1, 2, 0, 0, false, "int_land03", 75, 51, 0, 0, 0));
+        await session.CompleteIroAuthenticationAsync(new(AccountId, CharId, 1, 2, 0, 0, false, "int_land", 75, 51, 0, 0, 0));
 
         await ReadExact(stream, 4 + 6 + 6 + 13);
         await ReadDynamic(stream); // 0x0B32 skill list
@@ -193,7 +193,7 @@ public sealed class MapClientSessionWorldRpcFailureClassificationTests
         using var disposableClient = client;
 
         var allocator = new WorldActorIdAllocator();
-        var spawnDefinition = new MobSpawnDefinition(GeneratedMobs.GPoring, "int_land03", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "test", 0));
+        var spawnDefinition = new MobSpawnDefinition(GeneratedMobs.GPoring, "int_land", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "test", 0));
         var registry = new MonsterRegistry([spawnDefinition], allocator.Allocate, new FixedCellSelector(75, 51), TimeProvider.System);
         var questDrops = new QuestDropResolver([]);
         var target = registry.AllInstances[0];
@@ -211,12 +211,12 @@ public sealed class MapClientSessionWorldRpcFailureClassificationTests
 
         var session = new MapClientSession(
             1, serverClient, new CharServerConnector(new MapConfigStore(new MapConfig(), "unused.conf")), true,
-            "int_land03", 75, 51, WorldMapRegistry.Tutorial,
+            "int_land", 75, 51, WorldMapRegistry.Tutorial,
             gameplayStatePersistence: gameplayPersistence,
             accountId: AccountId, charId: CharId, monsterProjections: monsterProjections, combat: combat,
             combatState: combatState, distributedWorld: fakeWorld);
         var run = session.RunAsync(CancellationToken.None);
-        await session.CompleteIroAuthenticationAsync(new(AccountId, CharId, 1, 2, 0, 0, false, "int_land03", 75, 51, 0, 0, 0));
+        await session.CompleteIroAuthenticationAsync(new(AccountId, CharId, 1, 2, 0, 0, false, "int_land", 75, 51, 0, 0, 0));
 
         await ReadExact(stream, 4 + 6 + 6 + 13);
         await ReadDynamic(stream);

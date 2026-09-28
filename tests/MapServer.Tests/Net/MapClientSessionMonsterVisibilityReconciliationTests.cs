@@ -17,7 +17,7 @@ namespace Athena.Net.MapServer.Tests.Net;
 // than a full Orleans TestCluster - none of these behaviors depend on real grain semantics).
 public sealed class MapClientSessionMonsterVisibilityReconciliationTests
 {
-    private const string MapId = "int_land03";
+    private const string MapId = "int_land";
     private const int PoringMobId = 1002;
     private const ushort ViewerX = 100;
     private const ushort ViewerY = 100;
@@ -88,6 +88,76 @@ public sealed class MapClientSessionMonsterVisibilityReconciliationTests
         Assert.Equal((short)PacketConstants.ZcNotifyVanish, BinaryPrimitives.ReadInt16LittleEndian(vanishPacket));
         Assert.Equal(actorId, BinaryPrimitives.ReadUInt32LittleEndian(vanishPacket.AsSpan(2)));
         Assert.Equal(PacketConstants.ZcNotifyVanishReasonOutOfSight, vanishPacket[6]);
+
+        client.Close();
+        await run.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    // Live-diagnosis regression (actor 111000109 logged two 0x0080 OutOfSight vanishes with no
+    // visible discovery between them). Per-session invariant proven here, by driving the exact
+    // incremental fan-out shape (NotifyMonsterMovedAsync with the feed's own movement kinds):
+    //   NotVisible -> Discovered -> (moving while visible) -> OutOfSight(0x0080) -> NotVisible
+    // and ONLY a real re-entry (a genuine 0x09FF/0x09FD rediscovery) may make a SECOND 0x0080 legal.
+    // Feed entries that keep reporting the actor outside the AOI (every movement kind, including
+    // ChaseInterrupted/WalkStarted, and stale-looking bare null-kind entries) must be silent - they
+    // must neither vanish again nor reconstruct any hidden projection state.
+    [Fact]
+    public async Task MonsterVisibility_SecondVanishRequiresRealRediscovery_NoPacketsWhileOutsideAoi()
+    {
+        var (client, stream, session, run) = await SetupViewerAsync();
+        using var _ = client;
+
+        var incarnation = WorldMonsterIncarnationId.First;
+        const uint actorId = 1;
+        var inside = Alive(actorId, incarnation, x: (ushort)(ViewerX + 1), y: ViewerY);
+        var outsideX = (ushort)(ViewerX + WorldVisibilityOptions.DefaultAreaSize + 5);
+        var outside = inside with { X = outsideX };
+        var outsideFurther = inside with { X = (ushort)(outsideX + 1) };
+        var outsideWalking = outsideFurther with { IsWalking = true, DestinationX = (ushort)(outsideX + 3), DestinationY = ViewerY };
+
+        async Task Notify(WorldMonsterInstance instance, WorldMonsterMovementKind? kind) =>
+            await session.NotifyMonsterMovedAsync(new WorldMonsterActorView(instance), kind, instance, CancellationToken.None);
+
+        async Task AssertNothingSentAsync()
+        {
+            await stream.WriteAsync(new byte[] { 0x1c, 0x0b });
+            var pingReply = await ReadExact(stream, 2);
+            Assert.Equal((short)PacketConstants.ZcPingLive, BinaryPrimitives.ReadInt16LittleEndian(pingReply));
+        }
+
+        // 1. Discover.
+        await Notify(inside, kind: null);
+        var discovery = await ReadDynamic(stream);
+        Assert.Equal((short)PacketConstants.ZcNotifyStandEntry, BinaryPrimitives.ReadInt16LittleEndian(discovery));
+
+        // 2-3. Movement takes it outside the AOI: exactly one 0x0080.
+        await Notify(outside, WorldMonsterMovementKind.CellCrossed);
+        var firstVanish = await ReadExact(stream, PacketConstants.ZcNotifyVanishLength);
+        Assert.Equal((short)PacketConstants.ZcNotifyVanish, BinaryPrimitives.ReadInt16LittleEndian(firstVanish));
+        Assert.Equal(actorId, BinaryPrimitives.ReadUInt32LittleEndian(firstVanish.AsSpan(2)));
+        Assert.Equal(PacketConstants.ZcNotifyVanishReasonOutOfSight, firstVanish[6]);
+
+        // 4-5. Further feed entries while still outside the AOI: NO second vanish, NO packet at all.
+        await Notify(outsideFurther, WorldMonsterMovementKind.CellCrossed);
+        await Notify(outsideWalking, WorldMonsterMovementKind.WalkStarted);
+        await Notify(outsideFurther, WorldMonsterMovementKind.WalkFinished);
+        await Notify(outsideFurther, WorldMonsterMovementKind.ChaseInterrupted);
+        await Notify(outsideFurther, kind: null);
+        await AssertNothingSentAsync();
+
+        // 6-7. Real re-entry: a genuine rediscovery (0x09FF) is sent.
+        await Notify(inside, WorldMonsterMovementKind.CellCrossed);
+        var rediscovery = await ReadDynamic(stream);
+        Assert.Equal((short)PacketConstants.ZcNotifyStandEntry, BinaryPrimitives.ReadInt16LittleEndian(rediscovery));
+        Assert.Equal(actorId, BinaryPrimitives.ReadUInt32LittleEndian(rediscovery.AsSpan(5)));
+
+        // 8-9. Leaving again after a real rediscovery makes the SECOND 0x0080 legal - exactly one.
+        await Notify(outside, WorldMonsterMovementKind.CellCrossed);
+        var secondVanish = await ReadExact(stream, PacketConstants.ZcNotifyVanishLength);
+        Assert.Equal((short)PacketConstants.ZcNotifyVanish, BinaryPrimitives.ReadInt16LittleEndian(secondVanish));
+        Assert.Equal(actorId, BinaryPrimitives.ReadUInt32LittleEndian(secondVanish.AsSpan(2)));
+        await Notify(outsideFurther, WorldMonsterMovementKind.CellCrossed);
+        await AssertNothingSentAsync();
 
         client.Close();
         await run.WaitAsync(TimeSpan.FromSeconds(5));
@@ -490,8 +560,8 @@ public sealed class MapClientSessionMonsterVisibilityReconciliationTests
 
         var incarnation = WorldMonsterIncarnationId.First;
         const uint actorId = 1;
-        var actorOnMapA = new WorldMonsterActorView(Alive(actorId, incarnation, x: ViewerX, y: ViewerY)); // MapId = "int_land03" (MapId const).
-        var instanceOnMapB = Alive(actorId, incarnation, x: ViewerX, y: ViewerY) with { MapId = "int_land04" };
+        var actorOnMapA = new WorldMonsterActorView(Alive(actorId, incarnation, x: ViewerX, y: ViewerY)); // MapId = "int_land" (MapId const).
+        var instanceOnMapB = Alive(actorId, incarnation, x: ViewerX, y: ViewerY) with { MapId = "izlude" };
 
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
             session.NotifyMonsterMovedAsync(actorOnMapA, movementKind: null, instanceOnMapB, CancellationToken.None));

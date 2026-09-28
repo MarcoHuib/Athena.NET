@@ -354,11 +354,10 @@ frames 539..560          two movement pairs on int_land01
 ### Initial world state and UI
 
 `0x0071` proves `iz_int01.gat`; `0x02EB` independently proves spawn
-`(22,37,direction 0)`. Athena's `iz_int03 (18,26)` is selected from the configured
-five-entry `start_point` list and persisted in character state. Both `iz_int01`
-and `iz_int03` are real parallel intro instances and share client resources.
-The capture concerns one character/tutorial instance and does not prove Athena's
-configured selection is obsolete, so no start-point change is made.
+`(22,37,direction 0)`. (Historical: Athena used to pick `iz_int03 (18,26)` from a five-entry
+`start_point` list; `iz_int01..04` are parallel intro instances of `iz_int` that share client resources.
+Athena.NET now hosts only the canonical `iz_int` - see "Canonical maps" below - and new Renewal
+characters always start on `iz_int (18,26)`.)
 
 Captured `0x0AE2` is exactly seven bytes: uint16 ID, uint8 UI type `7`, int32
 data `0`, little-endian. OpenKore calls it `open_ui`; rAthena's matching enum calls
@@ -1760,6 +1759,106 @@ look to observers already seeing that player), player death/respawn interaction 
 stealth/invisibility/GM-visibility filtering, and a capture-proven byte-for-byte `0x09FE` layout
 (currently Reference-backed via the shared idle-unit serializer, one byte shorter than `0x09FF`
 for its missing standing/alive-state byte - see `IroPlayerActorPackets.SpawnFixedLength`).
+
+## Canonical maps (legacy channel copies removed)
+
+Pinned rAthena ships the intro/Academy route as parallel "channel" copies of the same physical maps
+(`F_IzludeChannel`, `start_point` = `iz_int,iz_int01..04`, `izlude_a..d`, `prt_fild08a..d`, ...). Athena.NET
+does **not** keep channels: two characters that ended up on `prt_fild08` and `prt_fild08c` were on two
+isolated maps, so they could not see each other or share monsters. All copies are folded onto ONE canonical
+map so every character shares one World simulation, one actor-id space and one visibility domain.
+
+- **Policy** = generic mechanism + explicit generated data. `src/Shared/MapIdentity/CanonicalMapPolicy.cs` is a
+  content-free resolver (exact case-insensitive table lookup, `.gat` tolerated, chain/duplicate/self-alias
+  rejected; no suffix or pattern inference). The 24 alias relationships live only in
+  `src/Shared/MapIdentity/Generated/GeneratedCanonicalMapAliases.cs`, which `WorldDataImporter
+  generate-canonical-maps` emits from the explicit importer-owned data file
+  `tools/WorldDataImporter/canonical-map-families.json` (6 families, each with pinned-source evidence). The
+  generator validates every name against the effective pinned map cache and requires each alias to be
+  cell-for-cell identical to its canonical map; geometry alone never creates an alias. Both CharServer and
+  MapServer compile those same two files via `<Compile Include="../Shared/...">` (no CharServer -> MapServer
+  dependency, no new project). Aliases: `izlude_a..d -> izlude`, `prt_fild08a..d -> prt_fild08`,
+  `iz_int01..04 -> iz_int`, `int_land01..04 -> int_land`, `iz_ac01_a..d -> iz_ac01`, `iz_ac02_a..d ->
+  iz_ac02`. PvP maps, `1@...` instances, `new_1-1..5-1`, seasonal/event maps and any other identical-geometry
+  map are never touched. Every alias has identical geometry, so coordinates carry over unchanged.
+- **Boundaries** that canonicalize: CharServer character creation (`SelectStartPoint`; Renewal `start_point`
+  is now only `iz_int,18,26`, and an old conf that still lists `iz_int01..04` can never create a copy),
+  character read (`ResolveCharacterLocation` for `last_map`, then `save_map`; `MapAuthNode`; the char-list
+  last-map field), CharServer persistence writes (position and save point store canonical names only), and
+  MapServer auth load, `TeleportTo` (every warp / script warp / `WarpAsync`) and the save-point request. No
+  manual DB edit is needed: a row persisted on `prt_fild08c` simply loads on `prt_fild08` at the same cell and
+  is rewritten canonically at the next position/save-point save.
+- **Hosting**: the aliases are removed from `MapServerHostingScope.ServedMaps` / `MobSpawnMaps`, so they own no
+  monster simulation and no active warp. The canonical Academy floors `iz_ac01`/`iz_ac02` ARE served (active
+  Renewal warps lead Izlude -> iz_ac01 <-> iz_ac02) but are not in `MobSpawnMaps` (their only effective spawns,
+  4 training dummies, are a separate content decision). Their pinned/generated source (maps, warps, NPC/script entities,
+  spawn declarations) stays in the repository as source coverage - source representation is not runtime
+  activation. A warp/script destination naming an alias is resolved to the canonical map at `TeleportTo`
+  without editing the generated source.
+- **Logging**: `[MAP ROUTING] ... reason=character-load-canonicalized fromMap='prt_fild08c' toMap='prt_fild08'`
+  (CharServer at character select; MapServer at auth load if an alias ever reaches it) and a
+  `canonicalizedFrom='<alias>'` suffix on a warp/script transition that was folded. `[CHAR START MAP]` is kept.
+- `PlayerVisibilityCoordinator` is unchanged: it still isolates DIFFERENT map ids; canonicalization makes the
+  copies the same map id.
+- **Live check**: log in two characters (one persisted on `prt_fild08`, one on `prt_fild08c`); CharServer logs
+  `character-load-canonicalized` for the second, both sessions log `toMap='prt_fild08'`, the MapServer monster
+  tick reports one map for two sessions (`maps=1 sessions=2`), each sees the other, both see the same
+  monster actor ids, and a monster killed by one disappears for the other.
+- Tests: `CanonicalMapHostingTests`, `CanonicalPrtFild08PopulationTests`, `GeneratedWarpLoadProfilesTests`,
+  `CanonicalMapMultiplayerIntegrationTests` (real Orleans World), `CharacterMapRoutingTests` (CharServer).
+
+## Player-attack combat action is AREA-visible (same-gateway fan-out)
+
+Pinned rAthena's `clif_damage` broadcasts the attack ACTION packet (`0x08C8`) to `AREA`, so every
+nearby client - not just the attacker's own socket - sees a hit landing, exactly like a monster's
+own attack already does (`MonsterAttackActionOutcome`/`MapTcpServer.FanOutEntryAsync`-adjacent
+`NotifyMonsterAttackOutcomeAsync`). Before this fix `MapClientSession` wrote the player's own
+`0x08C8` directly to itself only; a nearby second player never saw the animation even though both
+shared the same authoritative World monster state.
+
+`PlayerAttackActionOutcome` (`src/MapServer/Net/PlayerAttackActionOutcome.cs`) is the transient,
+non-authoritative DTO both the non-lethal and lethal player-attack tails build from World's
+already-applied `ApplyMonsterDamageAsync` result (World is still called exactly once per hit).
+`MapClientSession.ProjectPlayerAttackActionAsync` hands it to `_playerAttackFanout` when one is
+configured (production: `MapTcpServer.FanOutPlayerAttackActionAsync`, bound at session construction
+- the ONE place a session's attack action reaches any sibling session; a `MapClientSession` never
+holds a reference to another session itself) or falls back to notifying only itself (every existing
+single-session test fixture, unchanged). The fan-out calls every currently connected session's
+`NotifyPlayerAttackActionAsync` - attacker included, so there is never a duplicate write - which
+gates on map equality and (for everyone except the attacker, who always receives it, matching
+pinned `clif_damage`'s own AREA-includes-source semantics) `_visibleActorIds.IsActorVisible(mob)`,
+the SAME visibility set the monster-attack fan-out already uses. Attacker-only effects (self HP-info,
+EXP/progression, quest drops) are untouched and never broadcast.
+
+**Limitation**: this fan-out only reaches sessions on the SAME MapServer gateway process. Two
+players connected through different MapServer replicas do not yet share player-combat-action
+visibility this way - that needs a World/Orleans player/combat event feed (the same migration
+`PlayerVisibilityCoordinator`/`PlayerPresenceRegistry` already need for player visibility in
+general), out of scope here.
+
+## Lethal player attack vs the World Died feed (a second, cross-session ordering race)
+
+The player-attack fan-out above closed the non-lethal gap, but live testing then exposed a narrower
+race on LETHAL hits specifically: World's Died feed entry for a life becomes independently pollable
+the instant `ApplyMonsterDamageAsync` reports `KilledByThisHit`, and `MapTcpServer`'s own monster-tick
+loop can observe and fan that Died vanish out to bystanders BEFORE the attacking session has finished
+building/fanning out its own final `0x08C8` for that same hit - an observer could then see the vanish
+with no preceding action (or never receive the action at all, since its own visibility check would by
+then correctly find the monster already marked not-visible).
+
+`LethalAttackProjectionGate` (`src/MapServer/Net/LethalAttackProjectionGate.cs`) closes this: a small,
+per-life (`WorldSimulationEpoch`/`ActorId`/`IncarnationId`), purely in-memory ordering primitive owned by
+`MapTcpServer` - never authoritative state, never a second copy of World's damage/death decision.
+`MapClientSession.EnterLethalInFlight` opens it at the SAME point `LethalDeathProjectionArbiter.
+BeginInFlight` always ran (before the World RPC that may report a kill is even dispatched, so no Died
+entry for that life can ever exist before the gate does); `HandleLethalDamageResultAsync` closes it the
+instant its own action has been fanned out (well before EXP/progression/the vanish itself, so nothing
+unrelated holds up bystanders); every other retirement path (`CompleteLethalInFlight`) closes it
+immediately. `MapTcpServer.FanOutEntryAsync`'s Died branch awaits the gate for that exact life (bounded
+by a 5 s defensive timeout against a stuck/disconnected attacker, never the mechanism itself) before
+notifying any session. Unrelated monsters, and even a different incarnation of the same ActorId, are
+never serialized against each other. `LethalDeathProjectionArbiter` itself is unchanged - it still
+handles the attacker's OWN per-session copy of this race exactly as before.
 
 ## Izlude -> prt_fild08d -> Prontera travel corridor
 

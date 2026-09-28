@@ -61,6 +61,8 @@ public static class PacketConstants
     // (see CharacterSkillService.ValidateUpgrade).
     public const short MapSkillLearnRequest = 0x2b3b;
     public const short MapSkillLearnResponse = 0x2b3c;
+    /// <summary>MapServer -&gt; CharServer: this MapServer's current authenticated-player count (Athena.NET-internal, not stock-iRO). 6 bytes (2 header + 4 uint32 count). Must match src/CharServer/Net/PacketConstants.cs exactly.</summary>
+    public const short MapSendUserCount = 0x2b3d;
 
     public const short CzEnter = 0x72;
     public const short CzEnter2 = 0x436;

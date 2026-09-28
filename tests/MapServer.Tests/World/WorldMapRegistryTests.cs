@@ -1,3 +1,4 @@
+using Athena.Net.MapServer.Generated.World;
 using Athena.Net.MapServer.World;
 using Athena.Net.MapServer.World.GeneratedScripts;
 
@@ -11,7 +12,9 @@ public sealed class WorldMapRegistryTests
         var registry = WorldMapRegistry.Tutorial;
         // Every canonical ordinary warp whose trigger is on an explicitly served map
         // is live. Destination maps do not determine ownership or activation.
-        Assert.True(registry.StaticWarpCount >= 46);
+        // Exactly the Renewal-effective warps whose source map is hosted (channel copies and pre-re rows excluded).
+        Assert.Equal(MapServerHostingScope.ServedMaps.Sum(map => GeneratedWarpLoadProfiles.GetForMap(map, WarpLoadProfile.AthenaIroEffective).Count), registry.StaticWarpCount);
+        Assert.True(registry.StaticWarpCount > 0);
         // 35 = the full 5-map tutorial family (base iz_int/int_land + 01..04), not just the 01..04
         // instanced variants: 2 Wounded Swordsman states x 5 maps (iz_int/01/02/03/04) + Captain
         // Carocc x 5 (int_land/01/02/03/04) + Lumin x 5 + Sailor x 5 (int_land/01/02/03/04) +
@@ -61,32 +64,41 @@ public sealed class WorldMapRegistryTests
         // deliberately does NOT assert, and IroWireCompatibility's own doc comment for why the
         // generated value here stays an untouched, faithful reproduction of pinned source.
         var registry = WorldMapRegistry.Tutorial;
-        // izlude-prontera-travel-trace.txt sections H/J: izlude_d <-> prt_fild08d.
-        Assert.True(registry.TryFindWarp("izlude_d", 20, 98, out var izludeExit));
-        Assert.Equal(("prt_fild08d", (ushort)367, (ushort)212), (izludeExit.DestinationMap, izludeExit.DestinationX, izludeExit.DestinationY));
-        Assert.True(registry.TryFindWarp("prt_fild08d", 371, 212, out var fieldBackToIzlude));
-        Assert.Equal(("izlude_d", (ushort)24, (ushort)98), (fieldBackToIzlude.DestinationMap, fieldBackToIzlude.DestinationX, fieldBackToIzlude.DestinationY));
-        // Section J: prt_fild08d -> prontera (one-way in pinned source; no reverse door exists).
+        // izlude-prontera-travel-trace.txt sections H/J, now on the CANONICAL corridor izlude <-> prt_fild08
+        // (the izlude_a..d / prt_fild08a..d copies are canonicalized onto it and never hosted).
+        Assert.True(registry.TryFindWarp("izlude", 20, 98, out var izludeExit));
+        Assert.Equal(("prt_fild08", (ushort)367, (ushort)212), (izludeExit.DestinationMap, izludeExit.DestinationX, izludeExit.DestinationY));
+        // The Renewal row wins over the pre-Renewal npc/pre-re row for the same trigger (izlude 35,78):
+        // see GeneratedWarpLoadProfilesTests for the generic source-layer guarantee.
+        Assert.True(registry.TryFindWarp("prt_fild08", 371, 212, out var fieldBackToIzlude));
+        Assert.Equal(("izlude", (ushort)24, (ushort)98), (fieldBackToIzlude.DestinationMap, fieldBackToIzlude.DestinationX, fieldBackToIzlude.DestinationY));
+        Assert.Equal("legacy/rathena/npc/re/warps/cities/izlude.txt", fieldBackToIzlude.Source.File);
+        // Section J: prt_fild08 -> prontera (one-way in pinned source; no reverse door exists).
         // (156,26) is the PINNED value, matching legacy/rathena/npc/re/warps/fields/
-        // prontera_fild.txt:105 exactly - it is deliberately NOT the capture-verified (156,34).
-        Assert.True(registry.TryFindWarp("prt_fild08d", 170, 378, out var fieldToProntera));
+        // prontera_fild.txt exactly - it is deliberately NOT the capture-verified (156,34).
+        Assert.True(registry.TryFindWarp("prt_fild08", 170, 378, out var fieldToProntera));
         Assert.Equal(("prontera", (ushort)156, (ushort)26), (fieldToProntera.DestinationMap, fieldToProntera.DestinationX, fieldToProntera.DestinationY));
+        // The channel copies' own doors are source coverage only: no warp is active on an alias map.
+        Assert.False(registry.TryFindWarp("izlude_d", 20, 98, out _));
+        Assert.False(registry.TryFindWarp("prt_fild08d", 371, 212, out _));
     }
 
     [Fact]
-    public void GeneratedTutorialActorsAndNavigation_MatchPinnedInstance03Source()
+    public void GeneratedTutorialActorsAndNavigation_MatchPinnedSource()
     {
+        // Source-layer entities of the instanced copies stay represented (pinned/generated source is kept)...
         var captain = WorldMapRegistry.Tutorial.EntitiesById["npc:int_land03:captain carocc#intro_npc03_03"].Actor!;
         Assert.Equal(("int_land03", (ushort)78, (ushort)103, (ushort)873), (captain.Map, captain.X, captain.Y, captain.Class));
         var lumin = WorldMapRegistry.Tutorial.EntitiesById["npc:int_land03:lumin#new_ship03"].Actor!;
         Assert.Equal(("int_land03", (ushort)73, (ushort)100), (lumin.Map, lumin.X, lumin.Y));
-        var start = Assert.Single(WorldMapRegistry.Tutorial.GetNavigationAt("iz_int03", 18, 26));
-        Assert.Equal(("iz_int03", (ushort)52, (ushort)30), (start.DestinationMap, start.DestinationX, start.DestinationY));
-        var instance01Start = Assert.Single(WorldMapRegistry.Tutorial.GetNavigationAt("iz_int01", 18, 26));
-        Assert.Equal((ushort)52, instance01Start.DestinationX);
-        Assert.True(WorldMapRegistry.Tutorial.TryFindWarp("iz_int01", 27, 30, out var instance01RoomOut));
-        Assert.Equal("iz_int01", instance01RoomOut.DestinationMap);
-        Assert.Contains(WorldMapRegistry.Tutorial.GetVisibleWarpActors("iz_int01", 56, 32), actor => actor.EntityId == "npc:iz_int01:wounded swordsman#intro_npc01_iz_int01");
+        // ...but the runtime behaviour lives on the canonical maps.
+        var start = Assert.Single(WorldMapRegistry.Tutorial.GetNavigationAt("iz_int", 18, 26));
+        Assert.Equal(("iz_int", (ushort)52, (ushort)30), (start.DestinationMap, start.DestinationX, start.DestinationY));
+        Assert.True(WorldMapRegistry.Tutorial.TryFindWarp("iz_int", 27, 30, out var roomOut));
+        Assert.Equal("iz_int", roomOut.DestinationMap);
+        Assert.Contains(WorldMapRegistry.Tutorial.GetVisibleWarpActors("iz_int", 56, 32), actor => actor.EntityId == "npc:iz_int:wounded swordsman#intro_npc01_iz_int");
+        // No door is active on an instanced copy.
+        Assert.False(WorldMapRegistry.Tutorial.TryFindWarp("iz_int01", 27, 30, out _));
     }
 
     [Fact]
@@ -98,8 +110,7 @@ public sealed class WorldMapRegistryTests
         Assert.True(WorldMapRegistry.Tutorial.TryFindWarp("iz_int", 48, 31, out var roomIn));
         Assert.Equal(("iz_int", (ushort)22, (ushort)30), (roomIn.DestinationMap, roomIn.DestinationX, roomIn.DestinationY));
         Assert.Equal(63, roomIn.SourceLine);
-        Assert.True(WorldMapRegistry.Tutorial.TryFindWarp("iz_int03", 27, 30, out var instanceRoomOut));
-        Assert.Equal(("iz_int03", (ushort)51, (ushort)30), (instanceRoomOut.DestinationMap, instanceRoomOut.DestinationX, instanceRoomOut.DestinationY));
+        Assert.False(WorldMapRegistry.Tutorial.TryFindWarp("iz_int03", 27, 30, out _)); // Copy doors are inert source coverage.
     }
 
     [Fact]

@@ -67,22 +67,16 @@ public sealed class MapServerWorldGameplayRulesTests
         // A real (non-Empty) provider makes Build compose RathenaCompatibleMobSpawnCellSelector
         // (see MapServerWorld.Build's own doc comment on the explicit either/or selector choice),
         // which throws for any SERVED generated spawn map the provider doesn't cover - so this
-        // provider must supply every map MapServerHostingScope.MobSpawnMaps declares (Academy's
-        // int_land/01/02/03/04 - the FULL family, not just the *0N instanced duplicates - and the
-        // complete prt_fild08/a/b/c/d family, now that rectangular/fixed-point spawn geometry is
-        // implemented - see MobSpawnCellSelector.cs's own doc comment), each large enough to
-        // satisfy the pinned map-edge margin.
-        var maps = new[]
-            {
-                "int_land", "int_land01", "int_land02", "int_land03", "int_land04",
-                "prt_fild08", "prt_fild08a", "prt_fild08b", "prt_fild08c", "prt_fild08d", "prontera",
-            }
+        // provider must supply every map MapServerHostingScope.MobSpawnMaps declares (the canonical
+        // int_land, prt_fild08 and prontera - the a/b/c/d and 01..04 channel copies are not hosted),
+        // each large enough to satisfy the pinned map-edge margin.
+        var maps = new[] { "int_land", "prt_fild08", "prontera" }
             .Select(name => new MapCollisionMap(name, 100, 100, Enumerable.Repeat(MapCellFlags.Walkable, 100 * 100).ToArray()));
         var provider = new MapCollisionProvider(maps);
 
         var world = MapServerWorld.Build(new GameplayRuleServices(new RenewalBasicAttackRules()), collisionProvider: provider, servedMaps: MapServerHostingScope.ServedMaps, mobSpawnMaps: MapServerHostingScope.MobSpawnMaps);
 
-        Assert.True(world.Collision.TryGetMap("int_land03", out var resolved));
+        Assert.True(world.Collision.TryGetMap("int_land", out var resolved));
         Assert.True(resolved.IsWalkable(0, 0));
     }
 
@@ -105,9 +99,8 @@ public sealed class MapServerWorldGameplayRulesTests
     [Fact]
     public void Build_WithRealButIncompleteCollisionProvider_ThrowsForUncoveredSpawnMap_NeverFallsBackSilently()
     {
-        // Covers every int_land family member EXCEPT the generic base map, so this specifically
-        // guards against silently tolerating a missing generic/base map (the exact shape of the
-        // regression this task fixes) rather than an arbitrary uncovered instanced duplicate.
+        // Covers every hosted spawn map EXCEPT the canonical int_land, so this specifically guards
+        // against silently tolerating a missing base map rather than an arbitrary uncovered one.
         // servedMaps is now REQUIRED here (generate-mob-spawns/ai/world-data.md: production
         // registration now feeds GeneratedMobSpawnLoadProfiles.AthenaIroEffective - the
         // Renewal-active + explicit Athena-overlay subset of the 10,065 valid pinned declarations
@@ -116,7 +109,7 @@ public sealed class MapServerWorldGameplayRulesTests
         // (MapServerApp.RunAsync always passes MapServerHostingScope.ServedMaps) so this test still
         // exercises exactly the intended int_land gap rather than tripping on an unrelated served
         // map (e.g. "prontera") this fixture never intended to cover.
-        var maps = new[] { "int_land01", "int_land02", "int_land03", "int_land04", "prt_fild08d", "prontera" }
+        var maps = new[] { "prt_fild08", "prontera" }
             .Select(name => new MapCollisionMap(name, 100, 100, Enumerable.Repeat(MapCellFlags.Walkable, 100 * 100).ToArray()));
         var provider = new MapCollisionProvider(maps); // Generic int_land deliberately uncovered.
 
@@ -241,14 +234,14 @@ public sealed class MapServerHostingScopeStartupValidationTests
     [Fact]
     public void RequireCollisionForAllServedMaps_ProponentServedMapWithZeroMobSpawns_StillFailsWhenCollisionAbsent()
     {
-        Assert.DoesNotContain(GeneratedScriptRegistry.MobSpawns, spawn => string.Equals(spawn.Map, "izlude_d", StringComparison.OrdinalIgnoreCase));
-        Assert.Contains("izlude_d", MapServerHostingScope.ServedMaps);
+        Assert.DoesNotContain(GeneratedScriptRegistry.MobSpawns, spawn => string.Equals(spawn.Map, "izlude", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains("izlude", MapServerHostingScope.ServedMaps);
 
-        var provider = CollisionProviderFor(MapServerHostingScope.ServedMaps.Where(map => !string.Equals(map, "izlude_d", StringComparison.OrdinalIgnoreCase)).ToArray());
+        var provider = CollisionProviderFor(MapServerHostingScope.ServedMaps.Where(map => !string.Equals(map, "izlude", StringComparison.OrdinalIgnoreCase)).ToArray());
 
         var exception = Assert.Throws<InvalidOperationException>(() =>
             MapServerHostingScope.RequireCollisionForAllServedMaps(provider));
-        Assert.Contains("izlude_d", exception.Message);
+        Assert.Contains("izlude", exception.Message);
     }
 
     [Fact]
@@ -275,12 +268,12 @@ public sealed class MapServerHostingScopeStartupValidationTests
     [Fact]
     public void RequireCollisionForAllServedMaps_MultipleServedMapsMissing_NamesEveryOneOfThem()
     {
-        var provider = CollisionProviderFor("int_land", "int_land01", "int_land02", "int_land03", "int_land04");
+        var provider = CollisionProviderFor("int_land");
 
         var exception = Assert.Throws<InvalidOperationException>(() =>
             MapServerHostingScope.RequireCollisionForAllServedMaps(provider));
 
-        foreach (var missingMap in MapServerHostingScope.ServedMaps.Except(["int_land", "int_land01", "int_land02", "int_land03", "int_land04"]))
+        foreach (var missingMap in MapServerHostingScope.ServedMaps.Except(["int_land"]))
             Assert.Contains(missingMap, exception.Message);
     }
 
@@ -330,9 +323,10 @@ public sealed class MapServerWorldProductionCollisionCompositionTests
         // map cache.
         var world = MapServerWorld.Build(new GameplayRuleServices(new RenewalBasicAttackRules()), collisionProvider: provider, servedMaps: MapServerHostingScope.ServedMaps, mobSpawnMaps: MapServerHostingScope.MobSpawnMaps);
 
-        var intLandFamily = new[] { "int_land", "int_land01", "int_land02", "int_land03", "int_land04" };
-        var gPorings = GameplayRulesLocalMonsterRegistryTestHelper.BuildLocalRegistry(world).AllInstances.Where(instance => intLandFamily.Contains(instance.Map)).ToArray();
-        Assert.Equal(200, gPorings.Length);
+        var intLandFamily = new[] { "int_land" }; // One canonical map: the 01..04 copies are not hosted.
+        var gPorings = GameplayRulesLocalMonsterRegistryTestHelper.BuildLocalRegistry(world).AllInstances.Where(instance => instance.Map.StartsWith("int_land", StringComparison.OrdinalIgnoreCase)).ToArray();
+        Assert.Equal(40, gPorings.Length);
+        Assert.All(gPorings, instance => Assert.Equal("int_land", instance.Map));
 
         foreach (var instance in gPorings)
         {
@@ -390,7 +384,7 @@ public sealed class MapServerWorldServedMapsTests
 
         var world = MapServerWorld.Build(new GameplayRuleServices(new RenewalBasicAttackRules()), collisionProvider: provider, servedMaps: MapServerHostingScope.ServedMaps, mobSpawnMaps: MapServerHostingScope.MobSpawnMaps);
 
-        Assert.Contains("izlude_d", MapServerHostingScope.ServedMaps);
+        Assert.Contains("izlude", MapServerHostingScope.ServedMaps);
         Assert.True(GameplayRulesLocalMonsterRegistryTestHelper.BuildLocalRegistry(world).AllInstances.Count > 0);
     }
 
@@ -428,11 +422,9 @@ public sealed class MapServerWorldServedMapsTests
     [Fact]
     public void ServedMapWithMissingCollisionData_FailsLoudly()
     {
-        // prt_fild08d IS served but deliberately not covered by this provider - every other
-        // spawn-activated map (including the rest of the prt_fild08 family, now that rectangular
-        // spawn geometry is implemented) IS covered, so this isolates prt_fild08d specifically.
-        var provider = CollisionProviderFor("int_land", "int_land01", "int_land02", "int_land03", "int_land04",
-            "prt_fild08", "prt_fild08a", "prt_fild08b", "prt_fild08c", "prontera");
+        // prt_fild08 IS served but deliberately not covered by this provider - every other
+        // spawn-activated map IS covered, so this isolates prt_fild08 specifically.
+        var provider = CollisionProviderFor("int_land", "prontera");
 
         // Step 6 cutover: cell selection no longer happens inside Build itself (see
         // BuildLocalRegistry's own doc comment above) - exercised here against a locally-built
@@ -440,41 +432,33 @@ public sealed class MapServerWorldServedMapsTests
         var world = MapServerWorld.Build(new GameplayRuleServices(new RenewalBasicAttackRules()), collisionProvider: provider, servedMaps: MapServerHostingScope.ServedMaps, mobSpawnMaps: MapServerHostingScope.MobSpawnMaps);
         var exception = Assert.Throws<InvalidOperationException>(() => GameplayRulesLocalMonsterRegistryTestHelper.BuildLocalRegistry(world, provider));
 
-        Assert.Contains("prt_fild08d", exception.Message);
+        Assert.Contains("prt_fild08", exception.Message);
     }
 
-    // prt_fild08d IS served and IS covered by collision data - its RENEWAL-ACTIVE source-backed
-    // population must instantiate. GeneratedMobSpawnRegistry.All (repository-wide source coverage)
-    // holds 8 declarations for this map: academy.txt's 110 Poring + 100 Lunatic + 100 Fabre + 30
-    // Little Poring = 340 (npc/re/mobs/academy.txt - pinned-disabled at
-    // npc/re/scripts_monsters.conf:5, activated here only via the explicit Athena overlay,
-    // AthenaOverlaySourceFiles), PLUS npc/events/christmas_2013.txt:1706-1707 (5 Smokey's Gift Box +
-    // 5 Smokey's Sock) and npc/events/halloween_2013.txt:831,1134 (1 Organic Jakk + 4 Inorganic
-    // Jakk) - 15 more, for a repository total of 355 (GeneratedMobSpawnRegistryTests locks this).
-    // Runtime activation (GeneratedScriptRegistry.Register) now consumes
-    // GeneratedMobSpawnLoadProfiles.AthenaIroEffective, NOT GeneratedMobSpawnRegistry.All -
-    // christmas_2013.txt/halloween_2013.txt are pinned-disabled (commented `npc:` directives in
-    // npc/scripts_athena.conf) and NOT part of Athena's explicit overlay allow-list, so they are
-    // correctly represented but INACTIVE: only academy.txt's 340 (Renewal-disabled but
-    // Athena-overlay-active) actually instantiate here.
+    // The canonical prt_fild08 IS served and IS covered by collision data - its EFFECTIVE population must
+    // instantiate: Renewal fields (271) + championmobs (5) + the Athena academy overlay (340) = 616
+    // (CanonicalPrtFild08PopulationTests locks the per-class breakdown). Events (christmas_2013,
+    // halloween_2013, ...) and pre-re declarations are represented but INACTIVE, and the former channel
+    // copy prt_fild08d hosts nothing.
     [Fact]
-    public void PrtFild08d_ServedAndCollisionBacked_InstantiatesFullSourceBackedPopulation()
+    public void PrtFild08_ServedAndCollisionBacked_InstantiatesTheCanonicalPopulation()
     {
-        var provider = CollisionProviderFor("int_land", "int_land01", "int_land02", "int_land03", "int_land04",
-            "prt_fild08", "prt_fild08a", "prt_fild08b", "prt_fild08c", "prt_fild08d", "prontera");
+        var provider = CollisionProviderFor("int_land", "prt_fild08", "prontera");
 
         var world = MapServerWorld.Build(new GameplayRuleServices(new RenewalBasicAttackRules()), collisionProvider: provider, servedMaps: MapServerHostingScope.ServedMaps, mobSpawnMaps: MapServerHostingScope.MobSpawnMaps);
 
-        var onPrtFild08d = GameplayRulesLocalMonsterRegistryTestHelper.BuildLocalRegistry(world).AllInstances.Where(instance => instance.Map == "prt_fild08d").ToArray();
-        Assert.Equal(340, onPrtFild08d.Length);
-        Assert.Equal(110, onPrtFild08d.Count(instance => instance.Spawn.Mob.AegisName == "PORING"));
-        Assert.Equal(100, onPrtFild08d.Count(instance => instance.Spawn.Mob.AegisName == "LUNATIC"));
-        Assert.Equal(100, onPrtFild08d.Count(instance => instance.Spawn.Mob.AegisName == "FABRE"));
-        Assert.Equal(30, onPrtFild08d.Count(instance => instance.Spawn.Mob.AegisName == "LITTLE_PORING"));
-        Assert.Equal(0, onPrtFild08d.Count(instance => instance.Spawn.Mob.AegisName == "XMAS_SMOKEY_GIFT"));
-        Assert.Equal(0, onPrtFild08d.Count(instance => instance.Spawn.Mob.AegisName == "XMAS_SMOKEY_SOCK"));
-        Assert.Equal(0, onPrtFild08d.Count(instance => instance.Spawn.Mob.AegisName == "ORGANIC_JAKK"));
-        Assert.Equal(0, onPrtFild08d.Count(instance => instance.Spawn.Mob.AegisName == "INORGANIC_JAKK"));
-        Assert.All(onPrtFild08d, instance => Assert.True(instance.IsAlive));
+        var registry = GameplayRulesLocalMonsterRegistryTestHelper.BuildLocalRegistry(world);
+        var onPrtFild08 = registry.AllInstances.Where(instance => instance.Map == "prt_fild08").ToArray();
+        Assert.Equal(616, onPrtFild08.Length);
+        Assert.Equal(197, onPrtFild08.Count(instance => instance.Spawn.Mob.AegisName == "PORING"));
+        Assert.Equal(167, onPrtFild08.Count(instance => instance.Spawn.Mob.AegisName == "LUNATIC"));
+        Assert.Equal(177, onPrtFild08.Count(instance => instance.Spawn.Mob.AegisName == "FABRE"));
+        Assert.Equal(50, onPrtFild08.Count(instance => instance.Spawn.Mob.AegisName == "LITTLE_PORING"));
+        Assert.Equal(0, onPrtFild08.Count(instance => instance.Spawn.Mob.AegisName == "XMAS_SMOKEY_GIFT"));
+        Assert.Equal(0, onPrtFild08.Count(instance => instance.Spawn.Mob.AegisName == "XMAS_SMOKEY_SOCK"));
+        Assert.Equal(0, onPrtFild08.Count(instance => instance.Spawn.Mob.AegisName == "ORGANIC_JAKK"));
+        Assert.Equal(0, onPrtFild08.Count(instance => instance.Spawn.Mob.AegisName == "INORGANIC_JAKK"));
+        Assert.All(onPrtFild08, instance => Assert.True(instance.IsAlive));
+        Assert.DoesNotContain(registry.AllInstances, instance => instance.Map.StartsWith("prt_fild08", StringComparison.Ordinal) && instance.Map != "prt_fild08");
     }
 }
