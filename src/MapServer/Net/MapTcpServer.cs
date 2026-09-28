@@ -519,12 +519,15 @@ public sealed class MapTcpServer
     {
         var projection = _world.MonsterProjections.GetOrCreate(mapId);
         WorldMonsterFeedPage page;
+        var pollStartedAt = Stopwatch.GetTimestamp();
+        var cursorBeforePoll = projection.Cursor;
         try
         {
-            page = await _worldRuntime.PollMonsterFeedAsync(projection.Cursor, mapId, cancellationToken);
+            page = await _worldRuntime.PollMonsterFeedAsync(cursorBeforePoll, mapId, cancellationToken);
         }
         catch (IOException) { return; }
         catch (OperationCanceledException) { return; }
+        LogFeedPollDiagnostics(mapId, page, cursorBeforePoll, pollStartedAt);
 
         if (page.Status == WorldMonsterFeedStatus.SpawnInitializationRequired)
         {
@@ -555,6 +558,36 @@ public sealed class MapTcpServer
             await FanOutEntryAsync(entry, page.SimulationEpoch, mapSessions, cancellationToken);
         }
         projection.CommitCursor(page.SimulationEpoch, page.AsOfSequence);
+    }
+
+    // DEBUG-LOG-ONLY movement-lag diagnostics (no behavior): one line per poll that carried
+    // incremental entries or a snapshot, or whose RPC was slow. Lets a live capture separate real
+    // Orleans/feed latency from client-interpolation effects: rpcMs is the PollMonsterFeedAsync
+    // round trip, sincePrevPollMs is the real poll cadence for this map (Task.Delay(100ms) +
+    // processing, NOT a fixed-rate timer), cursorLag is how many World sequences this poll had to
+    // catch up on (asOfSequence - cursor.Sequence; ~0 means the feed is being consumed promptly).
+    private readonly ConcurrentDictionary<string, long> _debugLastPollTimestampByMap = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly double DebugSlowPollThresholdMs = 25;
+
+    private void LogFeedPollDiagnostics(string mapId, WorldMonsterFeedPage page, WorldMonsterFeedCursor? cursorBeforePoll, long pollStartedAt)
+    {
+        var finishedAt = Stopwatch.GetTimestamp();
+        var rpcMs = Stopwatch.GetElapsedTime(pollStartedAt, finishedAt).TotalMilliseconds;
+        var previous = _debugLastPollTimestampByMap.TryGetValue(mapId, out var previousStart) ? previousStart : (long?)null;
+        _debugLastPollTimestampByMap[mapId] = pollStartedAt;
+
+        var entryCount = page.Entries?.Count ?? 0;
+        var hasSnapshot = page.Snapshot is { Count: > 0 };
+        if (entryCount == 0 && !hasSnapshot && rpcMs < DebugSlowPollThresholdMs) return;
+
+        var sincePrevMs = previous is { } prev ? Stopwatch.GetElapsedTime(prev, pollStartedAt).TotalMilliseconds.ToString("F1", System.Globalization.CultureInfo.InvariantCulture) : "none";
+        var firstSeq = entryCount > 0 ? page.Entries![0].Sequence : (long?)null;
+        var lastSeq = entryCount > 0 ? page.Entries![entryCount - 1].Sequence : (long?)null;
+        var cursorLag = cursorBeforePoll is { } cursor ? (page.AsOfSequence - cursor.Sequence).ToString() : "bootstrap";
+        MapLogger.Info(
+            $"[iRO MAP DEBUG] Feed poll map={mapId} status={page.Status} rpcMs={rpcMs.ToString("F1", System.Globalization.CultureInfo.InvariantCulture)} sincePrevPollMs={sincePrevMs} " +
+            $"entries={entryCount} seq=[{firstSeq?.ToString() ?? "-"}..{lastSeq?.ToString() ?? "-"}] asOf={page.AsOfSequence} cursorLag={cursorLag} snapshot={(hasSnapshot ? page.Snapshot!.Count.ToString() : "no")} " +
+            $"t={Stopwatch.GetElapsedTime(0).TotalMilliseconds.ToString("F1", System.Globalization.CultureInfo.InvariantCulture)}ms");
     }
 
     // Requirement 4: builds the per-map WorldMonsterSpawnBatch from the existing generated spawn
@@ -673,11 +706,12 @@ public sealed class MapTcpServer
         // transitional local combat-state entry must no longer suppress this projection.
         var actor = new WorldMonsterActorView(entry.Instance);
         var movementKind = entry.Kind == WorldMonsterFeedEntryKind.Respawned ? null : entry.MovementKind;
+        var feedContext = $"seq={entry.Sequence} kind={entry.Kind} movement={entry.MovementKind?.ToString() ?? "none"}"; // DEBUG-LOG-ONLY correlation text.
         foreach (var session in mapSessions)
         {
             try
             {
-                await session.NotifyMonsterMovedAsync(actor, movementKind, entry.Instance, cancellationToken);
+                await session.NotifyMonsterMovedAsync(actor, movementKind, entry.Instance, cancellationToken, feedContext);
             }
             catch (IOException) { /* Client disconnected; HandleClientAsync's own cleanup removes it from _sessions. */ }
             catch (OperationCanceledException) { /* Server shutdown. */ }

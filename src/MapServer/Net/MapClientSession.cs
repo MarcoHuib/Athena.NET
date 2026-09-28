@@ -4582,7 +4582,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
                 currentHp: instance.CurrentHp,
                 maxHp: instance.MaxHp);
             MapLogger.Info(
-                $"[iRO MAP DEBUG] Sending monster actor id={instance.ActorId} name='{actor.Name}' class={actor.MobId} map='{instance.MapId}' x={instance.X} y={instance.Y} hp={instance.CurrentHp}/{instance.MaxHp}");
+                $"[iRO MAP DEBUG] Sending monster actor id={instance.ActorId} name='{actor.Name}' class={actor.MobId} map='{instance.MapId}' x={instance.X} y={instance.Y} hp={instance.CurrentHp}/{instance.MaxHp} incarnationId={instance.IncarnationId.Value} playerPosition=({_x},{_y}) source=map-load-or-player-move-scan t={DebugNowMs()}ms");
             await WriteAsync(packet, cancellationToken);
         }
     }
@@ -4672,7 +4672,10 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     // below still needs to run for a not-yet-visible actor regardless of whether this particular
     // call happens to carry a movement transition, since discovery is triggered by proximity, not
     // by the specific entry kind that happened to be processed.
-    public async Task NotifyMonsterMovedAsync(IMonsterActorView actor, WorldMonsterMovementKind? movementKind, WorldMonsterInstance instance, CancellationToken cancellationToken)
+    //
+    // `feedContext` is DEBUG-LOG-ONLY correlation text (feed sequence/kind, or "reconcile-snapshot")
+    // supplied by the caller - it never influences behavior.
+    public async Task NotifyMonsterMovedAsync(IMonsterActorView actor, WorldMonsterMovementKind? movementKind, WorldMonsterInstance instance, CancellationToken cancellationToken, string? feedContext = null)
     {
         if (instance.ActorId != actor.ActorId || !instance.IncarnationId.Value.Equals(actor.IncarnationId.Value) ||
             !string.Equals(instance.MapId, actor.Map, StringComparison.OrdinalIgnoreCase))
@@ -4709,6 +4712,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
                     currentHp: instance.CurrentHp,
                     maxHp: instance.MaxHp);
                 await WriteAsync(walkingDiscoveryPacket, cancellationToken);
+                MapLogger.Info($"[iRO MAP DEBUG] Sent 0x09FD walk discovery actorId={actor.ActorId} incarnationId={instance.IncarnationId.Value} map={_mapName} from=({position.X},{position.Y}) to=({walkingDiscoveryDestination.X},{walkingDiscoveryDestination.Y}) playerPosition=({_x},{_y}) accountId={_accountId} {DebugRecordWalkPacket(actor.ActorId, position.X, position.Y, walkingDiscoveryDestination.X, walkingDiscoveryDestination.Y)} feed={feedContext ?? "none"} t={DebugNowMs()}ms");
                 return;
             }
 
@@ -4723,6 +4727,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
                 currentHp: instance.CurrentHp,
                 maxHp: instance.MaxHp);
             await WriteAsync(standPacket, cancellationToken);
+            MapLogger.Info($"[iRO MAP DEBUG] Sent 0x09FF stand discovery actorId={actor.ActorId} incarnationId={instance.IncarnationId.Value} map={_mapName} position=({position.X},{position.Y}) playerPosition=({_x},{_y}) accountId={_accountId} feed={feedContext ?? "none"} t={DebugNowMs()}ms");
             return;
         }
 
@@ -4734,7 +4739,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         // rediscovers it later via this same method's own discovery branch if it re-enters range.
         if (!_visibilityOptions.IsVisible(_mapName, _x, _y, actor.Map, position.X, position.Y))
         {
-            await SendMonsterVanishAsync(actor.ActorId, PacketConstants.ZcNotifyVanishReasonOutOfSight, "OutOfSight-movement", cancellationToken, (position.X, position.Y));
+            await SendMonsterVanishAsync(actor.ActorId, PacketConstants.ZcNotifyVanishReasonOutOfSight, "OutOfSight-movement", cancellationToken, (position.X, position.Y), feedContext);
             return;
         }
 
@@ -4758,7 +4763,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
                 // 0x0088 is sent, at the mob's authoritative CURRENT cell.
                 var fixPosPacket = IroMonsterActorPackets.BuildStopMove(actor.ActorId, position.X, position.Y);
                 await WriteAsync(fixPosPacket, cancellationToken);
-                MapLogger.Info($"[iRO MAP DEBUG] Sent 0x0088 fixpos mobActorId={actor.ActorId} accountId={_accountId} mobPosition=({position.X},{position.Y})");
+                MapLogger.Info($"[iRO MAP DEBUG] Sent 0x0088 fixpos mobActorId={actor.ActorId} accountId={_accountId} mobPosition=({position.X},{position.Y}) {DebugSinceLastWalk(actor.ActorId)} feed={feedContext ?? "none"} t={DebugNowMs()}ms");
                 return;
 
             case WorldMonsterMovementKind.WalkStarted:
@@ -4776,7 +4781,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
                     currentHp: instance.CurrentHp,
                     maxHp: instance.MaxHp);
                 await WriteAsync(walkPacket, cancellationToken);
-                MapLogger.Info($"[iRO MAP DEBUG] Sent 0x09FD walk-entry mobActorId={actor.ActorId} accountId={_accountId} from=({position.X},{position.Y}) to=({destination.X},{destination.Y})");
+                MapLogger.Info($"[iRO MAP DEBUG] Sent 0x09FD walk-entry mobActorId={actor.ActorId} accountId={_accountId} from=({position.X},{position.Y}) to=({destination.X},{destination.Y}) {DebugRecordWalkPacket(actor.ActorId, position.X, position.Y, destination.X, destination.Y)} feed={feedContext ?? "none"} t={DebugNowMs()}ms");
                 return;
         }
     }
@@ -4801,7 +4806,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     // this method's existing early-return/dedup semantics (via _visibleActorIds.TryMarkNotVisible)
     // are untouched; only a log line was added, using the incarnation this session believed it had
     // BEFORE removal (Snapshot() is a full copy, cheap here since vanish is not a hot per-tick path).
-    private async Task SendMonsterVanishAsync(uint actorId, byte reason, string reasonLabel, CancellationToken cancellationToken, (ushort X, ushort Y)? lastProjectedPosition = null)
+    private async Task SendMonsterVanishAsync(uint actorId, byte reason, string reasonLabel, CancellationToken cancellationToken, (ushort X, ushort Y)? lastProjectedPosition = null, string? feedContext = null)
     {
         WorldMonsterIncarnationId incarnation = default;
         foreach (var pair in _monsterVisibility.Snapshot())
@@ -4810,13 +4815,55 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         }
         var positionLabel = lastProjectedPosition is { } pos ? $"({pos.X},{pos.Y})" : "unknown";
         _monsterVisibility.Remove(actorId);
+        DebugForgetWalkPacket(actorId);
         if (!_visibleActorIds.TryMarkNotVisible(actorId))
         {
-            MapLogger.Info($"[iRO MAP DEBUG] Monster vanish suppressed (already not visible) actorId={actorId} incarnationId={incarnation.Value} map={_mapName} lastProjectedPosition={positionLabel} accountId={_accountId} reason={reasonLabel} wireReason={reason}");
+            MapLogger.Info($"[iRO MAP DEBUG] Monster vanish suppressed (already not visible) actorId={actorId} incarnationId={incarnation.Value} map={_mapName} lastProjectedPosition={positionLabel} playerPosition=({_x},{_y}) accountId={_accountId} reason={reasonLabel} wireReason={reason} feed={feedContext ?? "none"} t={DebugNowMs()}ms");
             return;
         }
-        MapLogger.Info($"[iRO MAP DEBUG] Sending 0x0080 vanish actorId={actorId} incarnationId={incarnation.Value} map={_mapName} lastProjectedPosition={positionLabel} accountId={_accountId} reason={reasonLabel} wireReason={reason}");
+        MapLogger.Info($"[iRO MAP DEBUG] Sending 0x0080 vanish actorId={actorId} incarnationId={incarnation.Value} map={_mapName} lastProjectedPosition={positionLabel} playerPosition=({_x},{_y}) accountId={_accountId} reason={reasonLabel} wireReason={reason} feed={feedContext ?? "none"} t={DebugNowMs()}ms");
         await WriteAsync(IroMonsterCombatPackets.BuildNotifyVanish(actorId, reason), cancellationToken);
+    }
+
+    // DEBUG-LOG-ONLY monster-walk-packet bookkeeping for the movement-lag investigation: remembers,
+    // per actor, when this session last received a 0x09FD and what it carried, so the NEXT
+    // 0x09FD/0x0088 for the same actor can log the real elapsed time and how far `From` advanced.
+    // Never read by any gameplay/projection decision.
+    private readonly Dictionary<uint, (long Timestamp, ushort FromX, ushort FromY, ushort DestX, ushort DestY)> _debugLastWalkPacket = [];
+    private readonly Lock _debugWalkGate = new();
+
+    private static string DebugNowMs() =>
+        System.Diagnostics.Stopwatch.GetElapsedTime(0).TotalMilliseconds.ToString("F1", System.Globalization.CultureInfo.InvariantCulture);
+
+    private string DebugRecordWalkPacket(uint actorId, ushort fromX, ushort fromY, ushort destX, ushort destY)
+    {
+        var now = System.Diagnostics.Stopwatch.GetTimestamp();
+        (long Timestamp, ushort FromX, ushort FromY, ushort DestX, ushort DestY) previous;
+        bool hadPrevious;
+        lock (_debugWalkGate)
+        {
+            hadPrevious = _debugLastWalkPacket.TryGetValue(actorId, out previous);
+            _debugLastWalkPacket[actorId] = (now, fromX, fromY, destX, destY);
+        }
+        if (!hadPrevious) return "sinceLastWalkMs=none";
+        var elapsedMs = System.Diagnostics.Stopwatch.GetElapsedTime(previous.Timestamp, now).TotalMilliseconds;
+        var fromAdvanceCells = Math.Max(Math.Abs(fromX - previous.FromX), Math.Abs(fromY - previous.FromY));
+        return $"sinceLastWalkMs={elapsedMs.ToString("F1", System.Globalization.CultureInfo.InvariantCulture)} prevFrom=({previous.FromX},{previous.FromY}) prevTo=({previous.DestX},{previous.DestY}) fromAdvanceCells={fromAdvanceCells}";
+    }
+
+    private string DebugSinceLastWalk(uint actorId)
+    {
+        (long Timestamp, ushort FromX, ushort FromY, ushort DestX, ushort DestY) previous;
+        bool hadPrevious;
+        lock (_debugWalkGate) hadPrevious = _debugLastWalkPacket.TryGetValue(actorId, out previous);
+        if (!hadPrevious) return "sinceLastWalkMs=none";
+        var elapsedMs = System.Diagnostics.Stopwatch.GetElapsedTime(previous.Timestamp).TotalMilliseconds;
+        return $"sinceLastWalkMs={elapsedMs.ToString("F1", System.Globalization.CultureInfo.InvariantCulture)} lastWalkTo=({previous.DestX},{previous.DestY})";
+    }
+
+    private void DebugForgetWalkPacket(uint actorId)
+    {
+        lock (_debugWalkGate) _debugLastWalkPacket.Remove(actorId);
     }
 
     // World `Died` fan-out: called by MapTcpServer.FanOutEntryAsync for EVERY session on the map
@@ -4931,7 +4978,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
                     : fresh is null ? "OutOfSight-resync-absent-or-dead"
                     : "OutOfSight-resync-incarnation-changed";
                 var resyncPosition = fresh is { } freshForLog ? ((ushort X, ushort Y)?)(freshForLog.X, freshForLog.Y) : null;
-                await SendMonsterVanishAsync(previouslyVisibleActorId, PacketConstants.ZcNotifyVanishReasonOutOfSight, resyncReason, cancellationToken, resyncPosition);
+                await SendMonsterVanishAsync(previouslyVisibleActorId, PacketConstants.ZcNotifyVanishReasonOutOfSight, resyncReason, cancellationToken, resyncPosition, "reconcile-snapshot");
                 continue;
             }
 
@@ -4941,7 +4988,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
             // stillAliveWithSameIncarnation being true proves the TryGetValue above succeeded.
             if (!_visibilityOptions.IsVisible(_mapName, _x, _y, fresh!.MapId, fresh.X, fresh.Y))
             {
-                await SendMonsterVanishAsync(previouslyVisibleActorId, PacketConstants.ZcNotifyVanishReasonOutOfSight, "OutOfSight-resync-aoi-exit", cancellationToken, (fresh.X, fresh.Y));
+                await SendMonsterVanishAsync(previouslyVisibleActorId, PacketConstants.ZcNotifyVanishReasonOutOfSight, "OutOfSight-resync-aoi-exit", cancellationToken, (fresh.X, fresh.Y), "reconcile-snapshot");
             }
         }
 
@@ -4957,7 +5004,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         {
             try
             {
-                await NotifyMonsterMovedAsync(new WorldMonsterActorView(instance), movementKind: null, instance, cancellationToken);
+                await NotifyMonsterMovedAsync(new WorldMonsterActorView(instance), movementKind: null, instance, cancellationToken, "reconcile-snapshot");
             }
             catch (IOException) { /* Client disconnected; HandleClientAsync's own cleanup removes it from _sessions. */ }
             catch (OperationCanceledException) { /* Server shutdown. */ }
