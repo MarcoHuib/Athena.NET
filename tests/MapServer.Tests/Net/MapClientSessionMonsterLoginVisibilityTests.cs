@@ -86,7 +86,7 @@ public sealed class MapClientSessionMonsterLoginVisibilityTests
 
         var fakeWorld = new FakeCombatWorldRuntime();
         var allocator = new WorldActorIdAllocator();
-        var spawnDefinition = new MobSpawnDefinition(GeneratedMobs.GPoring, "int_land03", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "test", 0));
+        var spawnDefinition = new MobSpawnDefinition(GeneratedMobs.GPoring, "int_land", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "test", 0));
         var registry = new MonsterRegistry([spawnDefinition], allocator.Allocate, new FixedCellSelector(75, 51), TimeProvider.System);
         var monster = registry.AllInstances[0];
         var epoch = WorldSimulationEpoch.NewEpoch();
@@ -101,12 +101,12 @@ public sealed class MapClientSessionMonsterLoginVisibilityTests
             StatPoints: 0, SkillPoints: 0, Strength: 9, Agility: 9, Vitality: 9, Intelligence: 9, Dexterity: 9, Luck: 9);
         var session = new MapClientSession(
             1, serverClient, new CharServerConnector(new MapConfigStore(new MapConfig(), "unused.conf")), true,
-            "int_land03", 75, 51, WorldMapRegistry.Tutorial,
+            "int_land", 75, 51, WorldMapRegistry.Tutorial,
             gameplayStatePersistence: new FixedGameplayStatePersistence(state),
             accountId: AccountId, charId: CharId, monsterProjections: monsterProjections, combat: combat,
             combatState: combatState, distributedWorld: fakeWorld);
         var run = session.RunAsync(CancellationToken.None);
-        await session.CompleteIroAuthenticationAsync(new(AccountId, CharId, 1, 2, 0, 0, false, "int_land03", 75, 51, 0, 0, 0, CharacterName: "TestNovice"));
+        await session.CompleteIroAuthenticationAsync(new(AccountId, CharId, 1, 2, 0, 0, false, "int_land", 75, 51, 0, 0, 0, CharacterName: "TestNovice"));
 
         await ReadExact(stream, 4 + 6 + 6 + 13);
         await ReadDynamic(stream);
@@ -122,7 +122,7 @@ public sealed class MapClientSessionMonsterLoginVisibilityTests
         Assert.Equal((short)PacketConstants.ZcNotifyStandEntry, BinaryPrimitives.ReadInt16LittleEndian(discovery));
         Assert.Equal(monster.ActorId, BinaryPrimitives.ReadUInt32LittleEndian(discovery.AsSpan(5)));
 
-        Assert.True(monsterProjections.TryGet("int_land03", out var projection));
+        Assert.True(monsterProjections.TryGet("int_land", out var projection));
         return (client, stream, session, run, projection!, epoch, monster, combatState);
     }
 

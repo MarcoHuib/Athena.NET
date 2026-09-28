@@ -14,7 +14,7 @@ public sealed class GeneratedIntroToIzludeIntegrationTests
     [Fact]
     public async Task RealRathenaOnTouch_UsesGeneratedAsyncScriptAndExistingQuestPersistence()
     {
-        var entity = Assert.Single(GeneratedScriptRegistry.Entities, item => item.Id == "warp:int_land04:intro_to_izlude_d");
+        var entity = Assert.Single(GeneratedScriptRegistry.Entities, item => item.Id == "warp:int_land:intro_to_izlude");
         var registry = new WorldMapRegistry([], [entity]);
         var listener = new TcpListener(IPAddress.Loopback, 0); listener.Start();
         using var client = new TcpClient();
@@ -26,7 +26,7 @@ public sealed class GeneratedIntroToIzludeIntegrationTests
         persistence.Quests[21008] = CharacterQuestStatus.Active;
         persistence.Quests[21001] = CharacterQuestStatus.Active;
         var clock = new ControllableTimeProvider();
-        await using var session = new MapClientSession(1, serverClient, connector, true, "int_land04", 54, 64, registry,
+        await using var session = new MapClientSession(1, serverClient, connector, true, "int_land", 54, 64, registry,
             positionPersistence: persistence, questPersistence: persistence, accountId: 7, charId: 9, timeProvider: clock);
         var run = session.RunAsync(CancellationToken.None);
 
@@ -72,15 +72,15 @@ public sealed class GeneratedIntroToIzludeIntegrationTests
         AssertQuestRemove(21001, await ReadExact(stream, 6));
         var mapChange = await ReadExact(stream, 22);
         Assert.Equal((short)0x0091, BinaryPrimitives.ReadInt16LittleEndian(mapChange));
-        Assert.Equal("izlude_d.gat", System.Text.Encoding.ASCII.GetString(mapChange.AsSpan(2, 16)).TrimEnd('\0'));
+        Assert.Equal("izlude.gat", System.Text.Encoding.ASCII.GetString(mapChange.AsSpan(2, 16)).TrimEnd('\0'));
 
         await WaitUntilAsync(() => session.ActiveGeneratedScriptEntityId is null);
         Assert.Null(session.ActiveScriptState);
         Assert.Null(session.ActiveGeneratedScriptEntityId);
         Assert.Equal(CharacterQuestStatus.Completed, persistence.Quests[21008]);
         Assert.Equal(CharacterQuestStatus.Completed, persistence.Quests[21001]);
-        Assert.Equal(("izlude_d", (ushort)196, (ushort)209), persistence.Position);
-        Assert.Equal(("izlude_d", (ushort)128, (ushort)142), persistence.SavePoint);
+        Assert.Equal(("izlude", (ushort)196, (ushort)209), persistence.Position);
+        Assert.Equal(("izlude", (ushort)128, (ushort)142), persistence.SavePoint);
 
         client.Close(); await run.WaitAsync(TimeSpan.FromSeconds(5)); listener.Stop();
     }

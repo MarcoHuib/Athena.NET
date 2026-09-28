@@ -16,4 +16,8 @@
     <PackageReference Include="OpenTelemetry" Version="1.17.0" />
     <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.17.0" />
   </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="../Shared/MapIdentity/CanonicalMapPolicy.cs" Link="Shared/MapIdentity/CanonicalMapPolicy.cs" />
+  </ItemGroup>
 </Project>

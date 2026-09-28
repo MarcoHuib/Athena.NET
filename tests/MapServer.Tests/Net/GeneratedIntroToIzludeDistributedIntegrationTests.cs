@@ -17,8 +17,8 @@ namespace Athena.Net.MapServer.Tests.Net;
 // MapClientSession with no distributedWorld, so it only ever exercises the LOCAL fallback movement
 // path (MapClientSession.ResolveMovementTarget) - never MovePlayerAsync/TruncateMovementAsync(by
 // index)/AdvanceMovementAsync/the real WorldPartitionGrain. This test drives the exact same real
-// generated #intro_to_izlude_d OnTouch entity through a REAL Orleans TestCluster-hosted
-// IWorldPartitionGrain, backed by the REAL production collision data for int_land04 (via
+// generated #intro_to_izlude OnTouch entity through a REAL Orleans TestCluster-hosted
+// IWorldPartitionGrain, backed by the REAL production collision data for int_land (via
 // RathenaCompatibleMovementPathProvider over the pinned map_cache.dat), so the actual production
 // movement boundary (World as collision authority, index-based truncation, timed per-cell advance)
 // is what gets proven end-to-end - not just the local fallback.
@@ -39,7 +39,7 @@ public sealed class GeneratedIntroToIzludeDistributedIntegrationTests : IAsyncLi
     [Fact]
     public async Task RealRathenaOnTouch_ThroughDistributedWorldAuthority_UsesGeneratedAsyncScript()
     {
-        var entity = Assert.Single(GeneratedScriptRegistry.Entities, item => item.Id == "warp:int_land04:intro_to_izlude_d");
+        var entity = Assert.Single(GeneratedScriptRegistry.Entities, item => item.Id == "warp:int_land:intro_to_izlude");
         var registry = new WorldMapRegistry([], [entity]);
         var listener = new TcpListener(IPAddress.Loopback, 0); listener.Start();
         using var client = new TcpClient();
@@ -55,7 +55,7 @@ public sealed class GeneratedIntroToIzludeDistributedIntegrationTests : IAsyncLi
         // instance decides which partition/grain key a map routes to, independent of whatever
         // resolver the silo's own WorldPartitionGrain instances are constructed with (silo DI is
         // not reachable from _cluster.ServiceProvider, which is the CLIENT'S service provider).
-        var resolver = WorldPartitionTopologyLoader.Load(Path.Combine(FindRepositoryRoot(), "conf", "world_partitions.json"), ["int_land04", "izlude_d"]);
+        var resolver = WorldPartitionTopologyLoader.Load(Path.Combine(FindRepositoryRoot(), "conf", "world_partitions.json"), ["int_land", "izlude"]);
         var worldRuntime = new OrleansWorldRuntime(_cluster.Client, resolver);
         var gameplayState = new CharacterGameplayState(9, 1, 0, 10, 5, 0, 0, 100, 20, 100, 20, 0, 0, 9, 9, 9, 9, 9, 9);
 
@@ -68,7 +68,7 @@ public sealed class GeneratedIntroToIzludeDistributedIntegrationTests : IAsyncLi
         // boundary requires a real _presenceId, which is ONLY ever set inside EnterPlayerWorldAsync
         // (triggered by 0x007D below), unlike GeneratedIntroToIzludeIntegrationTests' local-fallback
         // sibling test, which needs neither.
-        var auth = new MapAuthOkData(7, 9, 1, 2, 0, 0, false, "int_land04", 54, 64, 0, 0, 1, "Fixture",
+        var auth = new MapAuthOkData(7, 9, 1, 2, 0, 0, false, "int_land", 54, 64, 0, 0, 1, "Fixture",
             HairStyle: 4, HairColor: 2, ClothesColor: 1);
         await session.CompleteIroAuthenticationAsync(auth);
         await ReadExact(stream, 29);
@@ -83,7 +83,7 @@ public sealed class GeneratedIntroToIzludeDistributedIntegrationTests : IAsyncLi
         // 0x007D at all, so EnterPlayerWorldAsync/SendVisibleWarpActorsAsync never run - meaning
         // ITS ReadActorId call consumes the NPC's own actor-spawn packet, deferred until arrival),
         // this test genuinely drives CzNotifyActorInit to get a real _presenceId, which means the
-        // real #intro_to_izlude_d NPC actor gets sent here at ordinary map-load time instead -
+        // real #intro_to_izlude NPC actor gets sent here at ordinary map-load time instead -
         // capture its actorId from THIS packet (same 9-byte header shape ReadActorId assumes:
         // IroWorldActorPackets.BuildWorldActor's [opcode:2][length:2][objectType:1][actorId:4]).
         var npcActorHeader = await ReadExact(stream, 9);
@@ -130,15 +130,15 @@ public sealed class GeneratedIntroToIzludeDistributedIntegrationTests : IAsyncLi
         AssertQuestRemove(21001, await ReadExact(stream, 6));
         var mapChange = await ReadExact(stream, 22);
         Assert.Equal((short)0x0091, BinaryPrimitives.ReadInt16LittleEndian(mapChange));
-        Assert.Equal("izlude_d.gat", System.Text.Encoding.ASCII.GetString(mapChange.AsSpan(2, 16)).TrimEnd('\0'));
+        Assert.Equal("izlude.gat", System.Text.Encoding.ASCII.GetString(mapChange.AsSpan(2, 16)).TrimEnd('\0'));
 
         await WaitUntilAsync(() => session.ActiveGeneratedScriptEntityId is null);
         Assert.Null(session.ActiveScriptState);
         Assert.Null(session.ActiveGeneratedScriptEntityId);
         Assert.Equal(CharacterQuestStatus.Completed, persistence.Quests[21008]);
         Assert.Equal(CharacterQuestStatus.Completed, persistence.Quests[21001]);
-        Assert.Equal(("izlude_d", (ushort)196, (ushort)209), persistence.Position);
-        Assert.Equal(("izlude_d", (ushort)128, (ushort)142), persistence.SavePoint);
+        Assert.Equal(("izlude", (ushort)196, (ushort)209), persistence.Position);
+        Assert.Equal(("izlude", (ushort)128, (ushort)142), persistence.SavePoint);
 
         client.Close(); await run.WaitAsync(TimeSpan.FromSeconds(5)); listener.Stop();
     }
@@ -150,19 +150,19 @@ public sealed class GeneratedIntroToIzludeDistributedIntegrationTests : IAsyncLi
     [Fact]
     public async Task OrleansWorldRuntime_CancelMovementAsync_HonorsCancellationToken()
     {
-        var resolver = WorldPartitionTopologyLoader.Load(Path.Combine(FindRepositoryRoot(), "conf", "world_partitions.json"), ["int_land04", "izlude_d"]);
+        var resolver = WorldPartitionTopologyLoader.Load(Path.Combine(FindRepositoryRoot(), "conf", "world_partitions.json"), ["int_land", "izlude"]);
         var worldRuntime = new OrleansWorldRuntime(_cluster.Client, resolver);
         using var cts = new CancellationTokenSource();
         cts.Cancel();
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => worldRuntime.CancelMovementAsync(
-            new WorldMovementCancellation(Guid.NewGuid(), Guid.NewGuid(), 1, "int_land04"), cts.Token));
+            new WorldMovementCancellation(Guid.NewGuid(), Guid.NewGuid(), 1, "int_land"), cts.Token));
     }
 
     public sealed class TopologyConfigurator : ISiloConfigurator
     {
         public void Configure(ISiloBuilder siloBuilder) => siloBuilder.Services
-            .AddSingleton<IWorldPartitionResolver>(WorldPartitionTopologyLoader.Load(Path.Combine(FindRepositoryRoot(), "conf", "world_partitions.json"), ["int_land04", "izlude_d"]))
+            .AddSingleton<IWorldPartitionResolver>(WorldPartitionTopologyLoader.Load(Path.Combine(FindRepositoryRoot(), "conf", "world_partitions.json"), ["int_land", "izlude"]))
             .AddSingleton<IMapCollisionProvider>(_ => MapCollisionStartupLoader.Load(
                 [], System.IO.Path.Combine(FindRepositoryRoot(), "legacy/rathena/db/map_cache.dat"),
                 Athena.Net.MapServer.Gameplay.Rules.RagnarokRuleSet.Renewal))

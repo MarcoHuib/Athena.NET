@@ -2,9 +2,10 @@ using Athena.Net.MapServer.World;
 
 namespace Athena.Net.MapServer.Tests.World;
 
-// Regression coverage for the "generic iz_int is an incomplete tutorial variant" bug: a new
-// character can start on any of iz_int/iz_int01/iz_int02/iz_int03/iz_int04 (see start_point
-// config), so every member of this family must be a functionally equivalent tutorial slice - not
+// Regression coverage for the "generic iz_int is an incomplete tutorial variant" bug: the canonical
+// iz_int/int_land must be a complete tutorial slice (Athena.NET no longer hosts the iz_int01..04 /
+// int_land01..04 copies - see CanonicalMapPolicy - but their pinned source stays represented, which the
+// per-suffix entity tests below keep verifying), not
 // just the *0N instanced duplicates, with the generic/base map silently missing placements that
 // only ever existed via emission-selection exclusions in the compile-npc-world/compile-navigation
 // regeneration commands (tools/WorldDataImporter/README.md, ai/world-data.md's "Regeneration"
@@ -141,19 +142,32 @@ public sealed class WorldMapRegistryFamilyTests
         Assert.Equal((ushort)57, entity.Actor.Y);
     }
 
+    // Only the canonical corridor (suffix "") is hosted; the a..d / 01..04 copies keep their pinned/generated
+    // source (asserted by the entity tests above) but are canonicalized onto the canonical maps and never
+    // served, so none of their doors is active.
     [Theory]
     [MemberData(nameof(TravelVariants))]
-    public void EveryConfiguredTutorialVariant_HasItsSourceBackedHostedTravelCorridor(
+    public void OnlyTheCanonicalTravelCorridorIsHosted_TheCopiesAreSourceCoverageOnly(
         string tutorialSuffix, string izludeMap, string fieldMap)
     {
-        Assert.Contains("int_land" + tutorialSuffix, MapServerHostingScope.ServedMaps);
-        Assert.Contains(izludeMap, MapServerHostingScope.ServedMaps);
-        Assert.Contains(fieldMap, MapServerHostingScope.ServedMaps);
         var registry = WorldMapRegistry.Tutorial;
-        Assert.True(registry.TryFindWarp(izludeMap, 20, 98, out var exit));
-        Assert.Equal((fieldMap, (ushort)367, (ushort)212), (exit.DestinationMap, exit.DestinationX, exit.DestinationY));
-        Assert.True(registry.TryFindWarp(fieldMap, 170, 378, out var toProntera));
-        Assert.Equal("prontera", toProntera.DestinationMap);
+        if (tutorialSuffix.Length == 0)
+        {
+            Assert.Contains("int_land", MapServerHostingScope.ServedMaps);
+            Assert.Contains(izludeMap, MapServerHostingScope.ServedMaps);
+            Assert.Contains(fieldMap, MapServerHostingScope.ServedMaps);
+            Assert.True(registry.TryFindWarp(izludeMap, 20, 98, out var exit));
+            Assert.Equal((fieldMap, (ushort)367, (ushort)212), (exit.DestinationMap, exit.DestinationX, exit.DestinationY));
+            Assert.True(registry.TryFindWarp(fieldMap, 170, 378, out var toProntera));
+            Assert.Equal("prontera", toProntera.DestinationMap);
+            return;
+        }
+
+        Assert.DoesNotContain("int_land" + tutorialSuffix, MapServerHostingScope.ServedMaps);
+        Assert.DoesNotContain(izludeMap, MapServerHostingScope.ServedMaps);
+        Assert.DoesNotContain(fieldMap, MapServerHostingScope.ServedMaps);
+        Assert.False(registry.TryFindWarp(izludeMap, 20, 98, out _));
+        Assert.False(registry.TryFindWarp(fieldMap, 170, 378, out _));
     }
 
     [Theory]

@@ -15,11 +15,12 @@ namespace Athena.Net.MapServer.Tests.Net;
 //                             introduced to the others and observes the SAME monster actor identities.
 //   Different map ids      -> fully isolated player visibility and monster simulations.
 //
-// Live evidence (accountId 2000050 on prt_fild08, accountId 2000000 on prt_fild08c) was NOT a
-// visibility bug: the two characters were on two legitimate PARALLEL map variants (start_point picks
-// one of iz_int/iz_int01..04 at random; each family leads to its own izlude_x / prt_fild08x - see
-// CharacterMapRoutingTests and ai/map-server.md). These tests keep both halves of that contract honest;
-// the second deliberately asserts that two different map ids are NEVER made visible to each other.
+// Live evidence (accountId 2000050 on prt_fild08, accountId 2000000 on prt_fild08c) was NOT a visibility
+// bug: the two characters were on two PARALLEL channel copies of the same field (start_point used to pick
+// one of iz_int/iz_int01..04 at random). Athena.NET has since removed the channels: the copies are
+// canonicalized onto ONE shared map (CanonicalMapPolicy), which CanonicalMapMultiplayerIntegrationTests
+// proves end to end against a real World grain. The isolation half of this contract still holds for
+// genuinely DISTINCT maps, which is what the second test below keeps honest.
 public sealed class MapRoutingMultiplayerInvariantTests
 {
     private const uint AccountA = 2_000_050;
@@ -161,7 +162,7 @@ public sealed class MapRoutingMultiplayerInvariantTests
     [Fact]
     public async Task SameCanonicalMap_TwoAuthenticatedSessions_SeeEachOther_AndObserveTheSameWorldMonsterActors()
     {
-        const string mapId = "prt_fild08c";
+        const string mapId = "prt_fild08";
         var world = MakeWorld();
         var runtime = new PerMapWorldRuntime();
         var monsters = new[] { Monster(111_000_001, mapId, 258, 200), Monster(111_000_002, mapId, 260, 202) };
@@ -199,18 +200,18 @@ public sealed class MapRoutingMultiplayerInvariantTests
 
         Assert.True(world.MonsterProjections.TryGet(mapId, out var projection));
         Assert.Equal(monsters.Length, projection.AllInstances.Length);
-        Assert.False(world.MonsterProjections.TryGet("prt_fild08", out _)); // No sibling-variant simulation was ever created.
+        Assert.False(world.MonsterProjections.TryGet("prt_fild08c", out _)); // No sibling-copy simulation was ever created.
         await a.Session.DisposeAsync();
         await b.Session.DisposeAsync();
     }
 
     [Fact]
-    public async Task DifferentMapVariants_SamePhysicalCoordinates_AreIsolated_NoCrossVisibility_NoSharedMonsters()
+    public async Task DistinctMaps_SamePhysicalCoordinates_AreIsolated_NoCrossVisibility_NoSharedMonsters()
     {
-        // The live incident: prt_fild08 (account 2000050) vs prt_fild08c (account 2000000), standing at
-        // effectively the same physical spot. Different canonical map ids MUST stay isolated.
+        // Two genuinely different canonical maps (not channel copies of one map) at the same coordinates:
+        // different map ids MUST stay isolated.
         const string baseMap = "prt_fild08";
-        const string variantMap = "prt_fild08c";
+        const string variantMap = "prt_fild07";
         var world = MakeWorld();
         var runtime = new PerMapWorldRuntime();
         var baseMonsters = new[] { Monster(111_000_001, baseMap, 258, 200), Monster(111_000_002, baseMap, 260, 202) };
@@ -231,8 +232,8 @@ public sealed class MapRoutingMultiplayerInvariantTests
         await AssertNothingMoreSentAsync(a.Stream);
         await AssertNothingMoreSentAsync(b.Stream);
 
-        // One tick, TWO maps (the "maps=2 sessions=2" shape from the live log): each session receives only
-        // its own map's monsters and the two projections are separate instances.
+        // One tick, TWO maps: each session receives only its own map's monsters and the two projections
+        // are separate instances.
         var server = new MapTcpServer(ConfigStore(), new CharServerConnector(ConfigStore()), world, runtime);
         await server.ProcessOneMonsterTickAsync([a.Session, b.Session], CancellationToken.None);
 

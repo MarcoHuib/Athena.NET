@@ -1358,7 +1358,7 @@ public sealed class MapTcpServerMonsterAuthorityIntegrationTests : IAsyncLifetim
     // fixed-length opcode" - the caller falls back to the dynamic, self-describing length-prefixed
     // shape (ZcNotifyNewEntry/ZcNotifyStandEntry, matching ReadDynamic's own 4-byte-header/2-byte-
     // length shape used elsewhere in this file).
-    private static int KnownFixedPacketLength(short opcode) => opcode switch
+    internal static int KnownFixedPacketLength(short opcode) => opcode switch
     {
         (short)PacketConstants.ZcNotifyAct3 => PacketConstants.ZcNotifyAct3Length,
         (short)PacketConstants.ZcHpInfo => PacketConstants.ZcHpInfoLength,

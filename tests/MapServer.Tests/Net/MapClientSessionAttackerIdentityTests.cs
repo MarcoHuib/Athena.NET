@@ -91,7 +91,7 @@ public sealed class MapClientSessionAttackerIdentityTests
         var stream = client.GetStream();
 
         var allocator = new WorldActorIdAllocator();
-        var spawnDefinition = new MobSpawnDefinition(GeneratedMobs.GPoring, "int_land03", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "test", 0));
+        var spawnDefinition = new MobSpawnDefinition(GeneratedMobs.GPoring, "int_land", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "test", 0));
         var registry = new MonsterRegistry([spawnDefinition], allocator.Allocate, new FixedCellSelector(75, 51), TimeProvider.System);
         var questDrops = new QuestDropResolver([]);
         var target = registry.AllInstances[0];
@@ -105,7 +105,7 @@ public sealed class MapClientSessionAttackerIdentityTests
         var gameplayPersistence = new FixedGameplayStatePersistence(WeakFreshNovice());
         var session = new MapClientSession(
             1, serverClient, new CharServerConnector(ConfigStore()), true,
-            "int_land03", 75, 51, WorldMapRegistry.Tutorial,
+            "int_land", 75, 51, WorldMapRegistry.Tutorial,
             gameplayStatePersistence: gameplayPersistence,
             accountId: LiveAccountId, charId: LiveCharId, monsterProjections: monsterProjections, combat: combat,
             combatState: combatState, distributedWorld: fakeWorld);
@@ -113,7 +113,7 @@ public sealed class MapClientSessionAttackerIdentityTests
         // CharacterName must be non-empty for EnterPlayerWorldAsync's own BuildCurrentPresence check
         // to succeed - required so RegisterPresenceAsync (and thus this test's own strict presence
         // validation) actually runs.
-        await session.CompleteIroAuthenticationAsync(new(LiveAccountId, LiveCharId, 1, 2, 0, 0, false, "int_land03", 75, 51, 0, 0, 0, CharacterName: "TestNovice"));
+        await session.CompleteIroAuthenticationAsync(new(LiveAccountId, LiveCharId, 1, 2, 0, 0, false, "int_land", 75, 51, 0, 0, 0, CharacterName: "TestNovice"));
 
         await ReadExact(stream, 4 + 6 + 6 + 13);
         await ReadDynamic(stream);

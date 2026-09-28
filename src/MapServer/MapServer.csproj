@@ -38,4 +38,8 @@
     </PropertyGroup>
   </Target>
 
+
+  <ItemGroup>
+    <Compile Include="../Shared/MapIdentity/CanonicalMapPolicy.cs" Link="Shared/MapIdentity/CanonicalMapPolicy.cs" />
+  </ItemGroup>
 </Project>

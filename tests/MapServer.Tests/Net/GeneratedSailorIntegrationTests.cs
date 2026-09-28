@@ -17,7 +17,7 @@ namespace Athena.Net.MapServer.Tests.Net;
 // pinned rAthena's real item 611 throughout, per this task's explicit discrepancy policy.
 public sealed class GeneratedSailorIntegrationTests
 {
-    private const string EntityId = "npc:int_land03:sailor#intro_npc04_03";
+    private const string EntityId = "npc:int_land:sailor#intro_npc04";
     private const uint AccountId = 7;
     private const uint CharId = 9;
     private const uint Quest21008 = 21008;
@@ -166,10 +166,10 @@ public sealed class GeneratedSailorIntegrationTests
             Func<RecordingInventoryPersistence, ICharacterInventoryPersistence>? persistenceOverride)
         {
             var entity = Assert.Single(GeneratedScriptRegistry.Entities, item => item.Id == EntityId);
-            Assert.Equal(new WorldActorComponent("Sailor#intro_npc04_03", "int_land03", 58, 69, 5, 100, 0), entity.Actor);
+            Assert.Equal(new WorldActorComponent("Sailor#intro_npc04", "int_land", 58, 69, 5, 100, 0), entity.Actor);
             var registry = new WorldMapRegistry([], [entity]);
-            var actor = Assert.Single(registry.GetVisibleWarpActors("int_land03", 58, 69));
-            Assert.True(registry.TryGetInteraction(actor.ActorId, "int_land03", out _, out _));
+            var actor = Assert.Single(registry.GetVisibleWarpActors("int_land", 58, 69));
+            Assert.True(registry.TryGetInteraction(actor.ActorId, "int_land", out _, out _));
 
             var listener = new TcpListener(IPAddress.Loopback, 0); listener.Start();
             var client = new TcpClient(); var connect = client.ConnectAsync((IPEndPoint)listener.LocalEndpoint);
@@ -180,11 +180,11 @@ public sealed class GeneratedSailorIntegrationTests
             ICharacterInventoryPersistence inventoryPersistence = persistenceOverride?.Invoke(recordingInventoryPersistence) ?? recordingInventoryPersistence;
             var inventoryListPersistence = new RecordingInventoryListPersistence(initialInventory);
 
-            var session = new MapClientSession(1, serverClient, new CharServerConnector(new MapConfigStore(new MapConfig(), "unused.conf")), true, "int_land03", 58, 69, registry,
+            var session = new MapClientSession(1, serverClient, new CharServerConnector(new MapConfigStore(new MapConfig(), "unused.conf")), true, "int_land", 58, 69, registry,
                 questPersistence: questPersistence, accountId: AccountId, charId: CharId, gameplayStatePersistence: new FixedGameplayStatePersistence(),
                 inventoryPersistence: inventoryPersistence, inventoryListPersistence: inventoryListPersistence);
             var run = session.RunAsync(CancellationToken.None);
-            await session.CompleteIroAuthenticationAsync(new(AccountId, CharId, 1, 2, 0, 0, false, "int_land03", 58, 69, 5, 0, 0));
+            await session.CompleteIroAuthenticationAsync(new(AccountId, CharId, 1, 2, 0, 0, false, "int_land", 58, 69, 5, 0, 0));
             var stream = client.GetStream();
             await ReadExact(stream, 29); // authenticated iRO bootstrap
             var skillListHeader = await ReadExact(stream, 4); // 0x0B32 header

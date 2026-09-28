@@ -8,8 +8,8 @@ public sealed class WarpActorTests
     public void ImportedStaticWarp_ProducesStableLogicalActor()
     {
         var actors = WorldMapRegistry.Tutorial
-            .GetVisibleWarpActors("iz_int03", 18, 26)
-            .Where(actor => actor.Name == "#room_out03")
+            .GetVisibleWarpActors("iz_int", 18, 26)
+            .Where(actor => actor.Name == "#room_out")
             .ToArray();
 
         var actor = Assert.Single(actors);

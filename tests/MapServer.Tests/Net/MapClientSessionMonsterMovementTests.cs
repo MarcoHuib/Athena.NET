@@ -125,7 +125,7 @@ public sealed class MapClientSessionMonsterMovementTests
 
         var allocator = new WorldActorIdAllocator();
         var registry = sharedRegistry ?? new MonsterRegistry(
-            [new MobSpawnDefinition(GeneratedMobs.GPoring, "int_land03", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "test", 0))],
+            [new MobSpawnDefinition(GeneratedMobs.GPoring, "int_land", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "test", 0))],
             allocator.Allocate, new FixedCellSelector(75, 51), TimeProvider.System);
         var target = sharedTarget ?? registry.AllInstances[0];
 
@@ -145,11 +145,11 @@ public sealed class MapClientSessionMonsterMovementTests
 
         var session = new MapClientSession(
             1, serverClient, new CharServerConnector(new MapConfigStore(new MapConfig(), "unused.conf")), true,
-            "int_land03", 75, 51, WorldMapRegistry.Tutorial,
+            "int_land", 75, 51, WorldMapRegistry.Tutorial,
             gameplayStatePersistence: new FixedGameplayStatePersistence(FreshNovice()),
             accountId: AccountId, charId: CharId, monsterProjections: monsterProjections, combatState: combatStateForVisibility);
         var run = session.RunAsync(CancellationToken.None);
-        await session.CompleteIroAuthenticationAsync(new(AccountId, CharId, 1, 2, 0, 0, false, "int_land03", 75, 51, 0, 0, 0));
+        await session.CompleteIroAuthenticationAsync(new(AccountId, CharId, 1, 2, 0, 0, false, "int_land", 75, 51, 0, 0, 0));
 
         // Consume the fixed iRO bootstrap burst (0x0B18/0x0283/0x0ADE/0x02EB) - no inventory
         // packets follow here since no inventory list persistence override was supplied for this
@@ -263,7 +263,7 @@ public sealed class MapClientSessionMonsterMovementTests
     {
         var allocator = new WorldActorIdAllocator();
         var registry = new MonsterRegistry(
-            [new MobSpawnDefinition(GeneratedMobs.GPoring, "int_land03", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "test", 0))],
+            [new MobSpawnDefinition(GeneratedMobs.GPoring, "int_land", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "test", 0))],
             allocator.Allocate, new FixedCellSelector(75, 51), TimeProvider.System);
         var target = registry.AllInstances[0];
         IMonsterActorView actor = target; // Compiles without any cast helper - MobInstance implements the interface directly.
@@ -357,13 +357,13 @@ public sealed class MapClientSessionMonsterMovementTests
     {
         var clock = new Athena.Net.MapServer.Tests.World.FakeTimeProvider();
         var allocator = new WorldActorIdAllocator();
-        // The session's own fixed player position (SetupAsync's "int_land03", 75, 51) must be
+        // The session's own fixed player position (SetupAsync's "int_land", 75, 51) must be
         // within the 14-cell visibility range of the mob's spawn cell for MakeVisibleAsync's
         // initial 0x007D spawn read to ever complete.
-        var spawn = new MobSpawnDefinition(GeneratedMobs.GPoring, "int_land03", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "test", 0));
+        var spawn = new MobSpawnDefinition(GeneratedMobs.GPoring, "int_land", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "test", 0));
         var registry = new MonsterRegistry([spawn], allocator.Allocate, new FixedCellSelector(70, 51), clock);
         var target = registry.AllInstances[0];
-        var map = new MapCollisionMap("int_land03", 90, 90, Enumerable.Repeat(MapCellFlags.Walkable, 90 * 90).ToArray());
+        var map = new MapCollisionMap("int_land", 90, 90, Enumerable.Repeat(MapCellFlags.Walkable, 90 * 90).ToArray());
         var collisionProvider = new MapCollisionProvider([map]);
         var pathProvider = new RathenaCompatibleMovementPathProvider(collisionProvider);
         var monsterRuntime = new MonsterRuntime(registry, collisionProvider, pathProvider, clock);
@@ -481,7 +481,7 @@ public sealed class MapClientSessionMonsterMovementTests
         var allocator = new WorldActorIdAllocator();
         // 200 cells away - far outside the 14-cell visibility range used by both
         // MonsterRegistry.GetVisibleInstances and NotifyMonsterMovedAsync's own discovery check.
-        var farSpawn = new MobSpawnDefinition(GeneratedMobs.GPoring, "int_land03", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "test", 0));
+        var farSpawn = new MobSpawnDefinition(GeneratedMobs.GPoring, "int_land", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "test", 0));
         var registry = new MonsterRegistry([farSpawn], allocator.Allocate, new FixedCellSelector(275, 275), TimeProvider.System);
         var farTarget = registry.AllInstances[0];
 
@@ -520,7 +520,7 @@ public sealed class MapClientSessionMonsterMovementTests
         // call, so no hit beyond the one this test deliberately drives can ever occur.
         var clock = new Athena.Net.MapServer.Tests.Testing.ControllableTimeProvider();
         var allocator = new WorldActorIdAllocator();
-        var spawn = new MobSpawnDefinition(GeneratedMobs.GPoring, "int_land03", 1, RespawnDelay: 5000, RespawnRandomDelay: 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "test", 0));
+        var spawn = new MobSpawnDefinition(GeneratedMobs.GPoring, "int_land", 1, RespawnDelay: 5000, RespawnRandomDelay: 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "test", 0));
         var registry = new MonsterRegistry([spawn], allocator.Allocate, new FixedCellSelector(75, 51), clock);
         var questDrops = new QuestDropResolver(GeneratedQuestDrops.All);
         var target = registry.AllInstances[0];
@@ -543,12 +543,12 @@ public sealed class MapClientSessionMonsterMovementTests
 
         var session = new MapClientSession(
             1, serverClient, new CharServerConnector(new MapConfigStore(new MapConfig(), "unused.conf")), true,
-            "int_land03", 75, 51, WorldMapRegistry.Tutorial,
+            "int_land", 75, 51, WorldMapRegistry.Tutorial,
             gameplayStatePersistence: new FixedGameplayStatePersistence(StrongNovice()),
             accountId: AccountId, charId: CharId, monsterProjections: monsterProjections, combat: combat, timeProvider: clock, combatState: combatState,
             distributedWorld: fakeWorld);
         var run = session.RunAsync(CancellationToken.None);
-        await session.CompleteIroAuthenticationAsync(new(AccountId, CharId, 1, 2, 0, 0, false, "int_land03", 75, 51, 0, 0, 0));
+        await session.CompleteIroAuthenticationAsync(new(AccountId, CharId, 1, 2, 0, 0, false, "int_land", 75, 51, 0, 0, 0));
         await ReadExact(stream, 4 + 6 + 6 + 13);
         await ReadDynamic(stream); // 0x0B32 skill list
         await MakeVisibleAsync(stream, target);
@@ -611,7 +611,7 @@ public sealed class MapClientSessionMonsterMovementTests
     public async Task NotifyMonsterMovedAsync_MonsterOnADifferentMap_SendsNothing()
     {
         var allocator = new WorldActorIdAllocator();
-        var otherMapSpawn = new MobSpawnDefinition(GeneratedMobs.GPoring, "int_land04", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "test", 0));
+        var otherMapSpawn = new MobSpawnDefinition(GeneratedMobs.GPoring, "izlude", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "test", 0));
         var registry = new MonsterRegistry([otherMapSpawn], allocator.Allocate, new FixedCellSelector(75, 51), TimeProvider.System);
         var otherMapTarget = registry.AllInstances[0];
 
@@ -643,7 +643,7 @@ public sealed class MapClientSessionMonsterMovementTests
         const int monsterCount = 12;
         var allocator = new WorldActorIdAllocator();
         var spawns = Enumerable.Range(0, monsterCount)
-            .Select(i => new MobSpawnDefinition(GeneratedMobs.GPoring, "int_land03", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "test", i)))
+            .Select(i => new MobSpawnDefinition(GeneratedMobs.GPoring, "int_land", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "test", i)))
             .ToArray();
         var positions = Enumerable.Range(0, monsterCount).Select(i => (ushort)(68 + i)).ToArray();
         var registry = new MonsterRegistry(spawns, allocator.Allocate, new SequentialCellSelector(positions), TimeProvider.System);

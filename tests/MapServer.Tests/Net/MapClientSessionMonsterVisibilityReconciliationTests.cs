@@ -17,7 +17,7 @@ namespace Athena.Net.MapServer.Tests.Net;
 // than a full Orleans TestCluster - none of these behaviors depend on real grain semantics).
 public sealed class MapClientSessionMonsterVisibilityReconciliationTests
 {
-    private const string MapId = "int_land03";
+    private const string MapId = "int_land";
     private const int PoringMobId = 1002;
     private const ushort ViewerX = 100;
     private const ushort ViewerY = 100;
@@ -560,8 +560,8 @@ public sealed class MapClientSessionMonsterVisibilityReconciliationTests
 
         var incarnation = WorldMonsterIncarnationId.First;
         const uint actorId = 1;
-        var actorOnMapA = new WorldMonsterActorView(Alive(actorId, incarnation, x: ViewerX, y: ViewerY)); // MapId = "int_land03" (MapId const).
-        var instanceOnMapB = Alive(actorId, incarnation, x: ViewerX, y: ViewerY) with { MapId = "int_land04" };
+        var actorOnMapA = new WorldMonsterActorView(Alive(actorId, incarnation, x: ViewerX, y: ViewerY)); // MapId = "int_land" (MapId const).
+        var instanceOnMapB = Alive(actorId, incarnation, x: ViewerX, y: ViewerY) with { MapId = "izlude" };
 
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
             session.NotifyMonsterMovedAsync(actorOnMapA, movementKind: null, instanceOnMapB, CancellationToken.None));

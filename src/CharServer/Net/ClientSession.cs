@@ -8,6 +8,7 @@ using Athena.Net.CharServer.Config;
 using Athena.Net.CharServer.Db;
 using Athena.Net.CharServer.Db.Entities;
 using Athena.Net.CharServer.Logging;
+using Athena.Net.Shared.MapIdentity;
 using Microsoft.EntityFrameworkCore;
 
 namespace Athena.Net.CharServer.Net;
@@ -343,9 +344,9 @@ public sealed class ClientSession : IDisposable, ISession
 
         CharLogger.Debug($"[iRO DEBUG] Character select slot={slot} charId={character.CharId}");
 
-        var location = ResolveCharacterLocation(character);
+        var location = ResolveCharacterLocation(character, out var persistedMap);
         // DIAGNOSTIC-ONLY provenance of the map this login will be routed to (never used for a decision).
-        CharLogger.Info($"[MAP ROUTING] charId={character.CharId} accountId={_accountId} fromMap='{character.LastMap}' toMap='{location.MapName}' reason=character-select source={DescribeCharacterLocationSource(character)} position=({location.X},{location.Y})");
+        CharLogger.Info(FormatCharacterSelectRouting(character, _accountId, location, persistedMap));
 
         var node = new MapAuthNode(
             _accountId,
@@ -380,19 +381,39 @@ public sealed class ClientSession : IDisposable, ISession
         await SendZoneServerAsync(character.CharId, location.MapName, mapServer, cancellationToken);
     }
 
-    internal static (string MapName, ushort X, ushort Y) ResolveCharacterLocation(CharCharacter character)
+    internal static (string MapName, ushort X, ushort Y) ResolveCharacterLocation(CharCharacter character) => ResolveCharacterLocation(character, out _);
+
+    // The persisted location the character loads at. Legacy channel-copy maps (izlude_a..d,
+    // prt_fild08a..d, iz_int01..04, ... - CanonicalMapPolicy) are canonicalized here, at the read
+    // boundary, keeping the persisted coordinates: rows written before channels were removed load onto
+    // the shared canonical map with no manual DB edit. `persistedMap` is the map exactly as stored (for
+    // diagnostics only); the returned MapName is always canonical.
+    internal static (string MapName, ushort X, ushort Y) ResolveCharacterLocation(CharCharacter character, out string persistedMap)
     {
         if (!string.IsNullOrWhiteSpace(character.LastMap))
         {
-            return (character.LastMap, character.LastX, character.LastY);
+            persistedMap = character.LastMap;
+            return (CanonicalMapPolicy.Canonicalize(character.LastMap), character.LastX, character.LastY);
         }
 
         if (!string.IsNullOrWhiteSpace(character.SaveMap))
         {
-            return (character.SaveMap, character.SaveX, character.SaveY);
+            persistedMap = character.SaveMap;
+            return (CanonicalMapPolicy.Canonicalize(character.SaveMap), character.SaveX, character.SaveY);
         }
 
+        persistedMap = string.Empty;
         return ("prontera", 0, 0);
+    }
+
+    // DIAGNOSTIC-ONLY [MAP ROUTING] line for character selection. A legacy channel map that was folded
+    // onto its canonical map is called out explicitly (reason=character-load-canonicalized) so it is
+    // observable in logs; the ordinary case keeps reason=character-select.
+    internal static string FormatCharacterSelectRouting(CharCharacter character, uint accountId, (string MapName, ushort X, ushort Y) location, string persistedMap)
+    {
+        var canonicalized = !string.Equals(persistedMap, location.MapName, StringComparison.Ordinal) && persistedMap.Length > 0;
+        var reason = canonicalized ? "character-load-canonicalized" : "character-select";
+        return $"[MAP ROUTING] charId={character.CharId} accountId={accountId} fromMap='{persistedMap}' toMap='{location.MapName}' reason={reason} source={DescribeCharacterLocationSource(character)} position=({location.X},{location.Y})";
     }
 
     internal static byte ParseCharacterSelect(ReadOnlySpan<byte> packet)
@@ -2076,7 +2097,7 @@ public sealed class ClientSession : IDisposable, ISession
         // 142..157 - Last map
         WriteFixedString(
             buffer.Slice(142, 16),
-            character.LastMap);
+            CanonicalMapPolicy.Canonicalize(character.LastMap));
 
         // Delete time
         var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
@@ -2185,9 +2206,14 @@ public sealed class ClientSession : IDisposable, ISession
             return new StartPoint("iz_int", 18, 26);
         }
 
+        // Configured start points are canonicalized too, so an older conf that still lists the legacy
+        // intro copies (iz_int01..04) can never create a character on a channel copy.
         var index = Random.Shared.Next(points.Count);
-        provenance = $"{pool}[{index + 1}/{points.Count}] random pick among {string.Join(',', points.Select(point => point.Map))}";
-        return points[index];
+        var picked = points[index];
+        var canonicalMap = CanonicalMapPolicy.Canonicalize(picked.Map);
+        provenance = $"{pool}[{index + 1}/{points.Count}] random pick among {string.Join(',', points.Select(point => point.Map))}"
+            + (string.Equals(canonicalMap, picked.Map, StringComparison.Ordinal) ? string.Empty : $" canonicalized {picked.Map}->{canonicalMap}");
+        return string.Equals(canonicalMap, picked.Map, StringComparison.Ordinal) ? picked : new StartPoint(canonicalMap, picked.X, picked.Y);
     }
 
     // DIAGNOSTIC-ONLY: names which persisted field ResolveCharacterLocation used, for [MAP ROUTING].

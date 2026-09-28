@@ -2,6 +2,7 @@ ARG DOTNET_SDK_IMAGE=mcr.microsoft.com/dotnet/sdk:10.0-preview
 
 FROM ${DOTNET_SDK_IMAGE} AS build
 WORKDIR /src
+COPY src/Shared/ ./src/Shared/
 COPY src/CharServer/ ./src/CharServer/
 RUN dotnet restore src/CharServer/CharServer.csproj
 RUN dotnet publish src/CharServer/CharServer.csproj -c Release -o /app/out

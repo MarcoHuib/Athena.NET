@@ -12,7 +12,7 @@ namespace Athena.Net.MapServer.Tests.Net;
 
 public sealed class MapClientSessionWarpTests
 {
-    // Bug 1 root-cause regression (izlude_a (20,97) movement lock): spawning INSIDE a static warp's
+    // Bug 1 root-cause regression (izlude (20,97) movement lock): spawning INSIDE a static warp's
     // rectangle must fire the warp immediately on load (mirroring pinned clif_parse_LoadEndAck's
     // "so you don't need to walk 1 step first"), before any movement packet - never leaving the
     // player stuck making rejected movement requests forever.
@@ -27,12 +27,12 @@ public sealed class MapClientSessionWarpTests
         await connectTask;
         await using var clientStream = client.GetStream();
         var connector = new CharServerConnector(new MapConfigStore(new MapConfig(), "unused.conf"));
-        // iz001_a-shaped fixture: center (20,98) radius (3,3), destination prt_fild08a - matching
-        // the exact live izlude_a (20,97) scenario, which sits inside this rectangle at spawn.
-        var warp = new WarpDefinition("iz001_a", "izlude_a", 20, 98, 3, 3, "prt_fild08a", 25, 99, true, "test", 1);
+        // iz001_a-shaped fixture: center (20,98) radius (3,3), destination prt_fild08 - matching
+        // the exact live izlude (20,97) scenario, which sits inside this rectangle at spawn.
+        var warp = new WarpDefinition("iz001_a", "izlude", 20, 98, 3, 3, "prt_fild08", 25, 99, true, "test", 1);
         var registry = new WorldMapRegistry([warp]);
         await using var session = new MapClientSession(
-            1, serverClient, connector, iroAuthenticated: true, mapName: "izlude_a", x: 20, y: 97,
+            1, serverClient, connector, iroAuthenticated: true, mapName: "izlude", x: 20, y: 97,
             worldMapRegistry: registry);
         var runTask = session.RunAsync(CancellationToken.None);
 
@@ -45,7 +45,7 @@ public sealed class MapClientSessionWarpTests
         var mapChange = new byte[22];
         await clientStream.ReadExactlyAsync(mapChange);
         Assert.Equal((short)0x0091, BinaryPrimitives.ReadInt16LittleEndian(mapChange));
-        Assert.Equal("prt_fild08a", session.CurrentMapName);
+        Assert.Equal("prt_fild08", session.CurrentMapName);
         Assert.Equal((ushort)25, session.CurrentX);
         Assert.Equal((ushort)99, session.CurrentY);
 
@@ -178,7 +178,7 @@ public sealed class MapClientSessionWarpTests
         listener.Stop();
     }
 
-    // Issue 2 root-cause regression (prtf004_a on prt_fild08a): a warp actor entering the player's
+    // Issue 2 root-cause regression (prtf004 on prt_fild08): a warp actor entering the player's
     // visibility radius as their route approaches it must be sent to the client, even though the
     // route has a pending warp arrival - actor visibility must never be suppressed by
     // ResolvedMovementTarget.IntersectsWarp/IntersectsScript. The warp must become visible BEFORE
@@ -194,12 +194,12 @@ public sealed class MapClientSessionWarpTests
         await connectTask;
         await using var clientStream = client.GetStream();
         var connector = new CharServerConnector(new MapConfigStore(new MapConfig(), "unused.conf"));
-        // prtf004_a-shaped fixture, matching the exact live shape: the player's CURRENT cell (10,0)
+        // prtf004-shaped fixture, matching the exact live shape: the player's CURRENT cell (10,0)
         // is already within visibility range (WorldVisibilityOptions.DefaultAreaSize=14) of the
         // warp at click time, but the click's route intersects the warp - the live bug was
         // click-time visibility being skipped for exactly this reason (IntersectsWarp==true),
         // never a "walked gradually into range" scenario.
-        var warp = new WarpDefinition("prtf004_a", "test-warp-map", 20, 0, 3, 2, "other-map", 156, 26, true, "test", 1);
+        var warp = new WarpDefinition("prtf004", "test-warp-map", 20, 0, 3, 2, "other-map", 156, 26, true, "test", 1);
         var registry = new WorldMapRegistry([warp]);
         await using var session = new MapClientSession(
             1, serverClient, connector, iroAuthenticated: true, mapName: "test-warp-map", x: 10, y: 0,
@@ -240,7 +240,7 @@ public sealed class MapClientSessionWarpTests
         // Same shape as the warp-only test above, PLUS a monster placed within visibility range of
         // the player's own click-time cell, on a completely different bearing from the warp - the
         // trigger metadata belongs to the warp; it must not suppress the monster's visibility either.
-        var warp = new WarpDefinition("prtf004_a", "test-warp-map", 20, 0, 3, 2, "other-map", 156, 26, true, "test", 1);
+        var warp = new WarpDefinition("prtf004", "test-warp-map", 20, 0, 3, 2, "other-map", 156, 26, true, "test", 1);
         // Production (MapServerWorld.Build) shares ONE WorldActorIdAllocator between WorldMapRegistry
         // and MonsterRegistry so every actor kind draws from one ID namespace - a synthetic fixture
         // that instead gives each registry its OWN allocator can accidentally assign the warp and the
@@ -639,7 +639,7 @@ public sealed class MapClientSessionWarpTests
             serverClient,
             connector,
             iroAuthenticated: true,
-            mapName: "iz_int03",
+            mapName: "iz_int",
             x: 22,
             y: 31,
             positionPersistence: persistence);
@@ -661,7 +661,7 @@ public sealed class MapClientSessionWarpTests
         var mapChange = await ReadUntilOpcode(clientStream, 0x0091);
         Assert.Equal((ushort)51, BinaryPrimitives.ReadUInt16LittleEndian(mapChange.AsSpan(18)));
         Assert.Equal((ushort)30, BinaryPrimitives.ReadUInt16LittleEndian(mapChange.AsSpan(20)));
-        Assert.Equal("iz_int03", session.CurrentMapName);
+        Assert.Equal("iz_int", session.CurrentMapName);
         Assert.Equal((ushort)51, session.CurrentX);
         Assert.Equal((ushort)30, session.CurrentY);
 
@@ -671,7 +671,7 @@ public sealed class MapClientSessionWarpTests
         // Saves list, which SavePositionAsync may still be concurrently appending to) rather than
         // asserting on it immediately.
         var persisted = await persistence.Saved.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        Assert.Equal("iz_int03", persisted.MapName);
+        Assert.Equal("iz_int", persisted.MapName);
         Assert.Equal((ushort)51, persisted.X);
         Assert.Equal((ushort)30, persisted.Y);
         Assert.False(runTask.IsCompleted);
@@ -685,13 +685,13 @@ public sealed class MapClientSessionWarpTests
     // real field->Prontera door lands the client at (156,34), diverging from pinned
     // legacy/rathena/npc/re/warps/fields/prontera_fild.txt:105's own computed (156,26) - see
     // IroWireCompatibility's own doc comment. This end-to-end test proves the REAL generated
-    // prt_fild08d warp trigger (WorldMapRegistry.Tutorial, not a hand-built fixture), when actually
+    // prt_fild08 warp trigger (WorldMapRegistry.Tutorial, not a hand-built fixture), when actually
     // walked into via the normal movement path, produces a 0x0091 map-change AND a persisted
     // position at the capture-verified (156,34) - never the pinned (156,26)
     // WorldMapRegistryTests.TravelCorridorWarps_MatchGeneratedPinnedSourceValues separately (and
     // correctly) asserts as the untouched GENERATED value.
     [Fact]
-    public async Task MovementIntoPrtFild08dPronteraDoor_LandsAtCaptureVerified156_34_NeverPinned156_26()
+    public async Task MovementIntoPrtFild08PronteraDoor_LandsAtCaptureVerified156_34_NeverPinned156_26()
     {
         var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
@@ -702,14 +702,14 @@ public sealed class MapClientSessionWarpTests
         await using var clientStream = client.GetStream();
         var connector = new CharServerConnector(new MapConfigStore(new MapConfig(), "unused.conf"));
         var persistence = new RecordingPositionPersistence();
-        // prt_fild08d,170,378,0 warp prtf004_d 3,2,prontera,156,26 (pinned source) - starting
+        // prt_fild08,170,378,0 warp prtf004 3,2,prontera,156,26 (pinned source) - starting
         // adjacent to the door's own center so a short, direct movement request reaches it.
         await using var session = new MapClientSession(
             1,
             serverClient,
             connector,
             iroAuthenticated: true,
-            mapName: "prt_fild08d",
+            mapName: "prt_fild08",
             x: 170,
             y: 375,
             positionPersistence: persistence);
@@ -765,7 +765,7 @@ public sealed class MapClientSessionWarpTests
         // only whatever cell(s) real background scheduling happened to race through.
         var clock = new Athena.Net.MapServer.Tests.Testing.ControllableTimeProvider();
         await using var session = new MapClientSession(
-            1, serverClient, connector, iroAuthenticated: true, mapName: "iz_int03", x: 22, y: 31,
+            1, serverClient, connector, iroAuthenticated: true, mapName: "iz_int", x: 22, y: 31,
             positionPersistence: persistence, timeProvider: clock);
         var runTask = session.RunAsync(CancellationToken.None);
 
@@ -904,7 +904,7 @@ public sealed class MapClientSessionWarpTests
         await clientStream.ReadExactlyAsync(finalPing);
         Assert.Equal((short)0x0b1d, BinaryPrimitives.ReadInt16LittleEndian(finalPing));
 
-        Assert.Equal("iz_int03", session.CurrentMapName); // Never warped.
+        Assert.Equal("iz_int", session.CurrentMapName); // Never warped.
         Assert.Equal((ushort)22, session.CurrentX);
         Assert.Equal((ushort)40, session.CurrentY); // Reached the REPLACEMENT destination.
 

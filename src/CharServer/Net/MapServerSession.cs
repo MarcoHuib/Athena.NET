@@ -4,7 +4,9 @@ using System.Net.Sockets;
 using System.Text;
 using Athena.Net.CharServer.Config;
 using Athena.Net.CharServer.Db;
+using Athena.Net.CharServer.Db.Entities;
 using Athena.Net.CharServer.Logging;
+using Athena.Net.Shared.MapIdentity;
 using Microsoft.EntityFrameworkCore;
 
 namespace Athena.Net.CharServer.Net;
@@ -352,10 +354,24 @@ public sealed class MapServerSession : IDisposable, ISession
             return;
         }
 
-        character.LastMap = mapName;
+        ApplyLastPosition(character, mapName, x, y);
+        await db.SaveChangesAsync(cancellationToken);
+    }
+
+    // Persistence write boundary: only canonical map names are ever stored. A legacy channel copy
+    // reported by any client is folded here, so a row never (re)acquires an alias name.
+    internal static void ApplyLastPosition(CharCharacter character, string mapName, ushort x, ushort y)
+    {
+        character.LastMap = CanonicalMapPolicy.Canonicalize(mapName);
         character.LastX = x;
         character.LastY = y;
-        await db.SaveChangesAsync(cancellationToken);
+    }
+
+    internal static void ApplySavePoint(CharCharacter character, string mapName, ushort x, ushort y)
+    {
+        character.SaveMap = CanonicalMapPolicy.Canonicalize(mapName);
+        character.SaveX = x;
+        character.SaveY = y;
     }
 
     private async Task HandleSavePointAsync(byte[] packet, CancellationToken cancellationToken)
@@ -371,9 +387,9 @@ public sealed class MapServerSession : IDisposable, ISession
                 var character = db is null ? null : await db.Characters.FirstOrDefaultAsync(candidate => candidate.AccountId == accountId && candidate.CharId == charId && candidate.DeleteDate == 0, cancellationToken);
                 if (character is not null)
                 {
-                    character.SaveMap = mapName; character.SaveX = x; character.SaveY = y;
+                    ApplySavePoint(character, mapName, x, y);
                     await db!.SaveChangesAsync(cancellationToken); success = true;
-                    CharLogger.Info($"SavePoint persistence succeeded charId={charId} map='{mapName}' x={x} y={y}.");
+                    CharLogger.Info($"SavePoint persistence succeeded charId={charId} map='{character.SaveMap}' x={x} y={y}.");
                 }
             }
         }

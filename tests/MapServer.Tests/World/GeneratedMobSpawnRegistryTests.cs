@@ -284,7 +284,10 @@ public sealed class GeneratedMobSpawnLoadProfilesTests
 
         // Still reachable through a live built world exactly as today (unchanged behavior).
         var world = MapServerWorld.Build(new GameplayRuleServices(new RenewalBasicAttackRules()), servedMaps: MapServerHostingScope.ServedMaps, mobSpawnMaps: MapServerHostingScope.MobSpawnMaps);
-        Assert.Contains(LocalMonsterRegistryTestHelper.BuildLocalRegistry(world).AllInstances, instance => instance.Map == "prt_fild08d" && instance.Spawn.Mob.AegisName == "PORING");
+        // (on the canonical prt_fild08; the prt_fild08a..d channel copies are not hosted any more).
+        var instances = LocalMonsterRegistryTestHelper.BuildLocalRegistry(world).AllInstances;
+        Assert.Contains(instances, instance => instance.Map == "prt_fild08" && instance.Spawn.Source.File == "legacy/rathena/npc/re/mobs/academy.txt" && instance.Spawn.Mob.AegisName == "PORING");
+        Assert.DoesNotContain(instances, instance => instance.Map == "prt_fild08d");
     }
 
     // evt_zombie: still represented, still absent from both profiles (Disabled - halloween_2008.txt

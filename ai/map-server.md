@@ -354,11 +354,10 @@ frames 539..560          two movement pairs on int_land01
 ### Initial world state and UI
 
 `0x0071` proves `iz_int01.gat`; `0x02EB` independently proves spawn
-`(22,37,direction 0)`. Athena's `iz_int03 (18,26)` is selected from the configured
-five-entry `start_point` list and persisted in character state. Both `iz_int01`
-and `iz_int03` are real parallel intro instances and share client resources.
-The capture concerns one character/tutorial instance and does not prove Athena's
-configured selection is obsolete, so no start-point change is made.
+`(22,37,direction 0)`. (Historical: Athena used to pick `iz_int03 (18,26)` from a five-entry
+`start_point` list; `iz_int01..04` are parallel intro instances of `iz_int` that share client resources.
+Athena.NET now hosts only the canonical `iz_int` - see "Canonical maps" below - and new Renewal
+characters always start on `iz_int (18,26)`.)
 
 Captured `0x0AE2` is exactly seven bytes: uint16 ID, uint8 UI type `7`, int32
 data `0`, little-endian. OpenKore calls it `open_ui`; rAthena's matching enum calls
@@ -1760,6 +1759,43 @@ look to observers already seeing that player), player death/respawn interaction 
 stealth/invisibility/GM-visibility filtering, and a capture-proven byte-for-byte `0x09FE` layout
 (currently Reference-backed via the shared idle-unit serializer, one byte shorter than `0x09FF`
 for its missing standing/alive-state byte - see `IroPlayerActorPackets.SpawnFixedLength`).
+
+## Canonical maps (legacy channel copies removed)
+
+Pinned rAthena ships the intro/Academy route as parallel "channel" copies of the same physical maps
+(`F_IzludeChannel`, `start_point` = `iz_int,iz_int01..04`, `izlude_a..d`, `prt_fild08a..d`, ...). Athena.NET
+does **not** keep channels: two characters that ended up on `prt_fild08` and `prt_fild08c` were on two
+isolated maps, so they could not see each other or share monsters. All copies are folded onto ONE canonical
+map so every character shares one World simulation, one actor-id space and one visibility domain.
+
+- **Policy** (`src/Shared/MapIdentity/CanonicalMapPolicy.cs`, compiled into both CharServer and MapServer): an
+  explicit 24-entry alias table, no suffix stripping - `izlude_a..d -> izlude`, `prt_fild08a..d -> prt_fild08`,
+  `iz_int01..04 -> iz_int`, `int_land01..04 -> int_land`, `iz_ac01_a..d -> iz_ac01`, `iz_ac02_a..d -> iz_ac02`.
+  PvP maps, `1@...` instances, `new_1-1..5-1`, seasonal/event maps and any other identical-geometry map are
+  never touched. Every alias has cell-for-cell identical geometry, so coordinates carry over unchanged.
+- **Boundaries** that canonicalize: CharServer character creation (`SelectStartPoint`; Renewal `start_point`
+  is now only `iz_int,18,26`, and an old conf that still lists `iz_int01..04` can never create a copy),
+  character read (`ResolveCharacterLocation` for `last_map`, then `save_map`; `MapAuthNode`; the char-list
+  last-map field), CharServer persistence writes (position and save point store canonical names only), and
+  MapServer auth load, `TeleportTo` (every warp / script warp / `WarpAsync`) and the save-point request. No
+  manual DB edit is needed: a row persisted on `prt_fild08c` simply loads on `prt_fild08` at the same cell and
+  is rewritten canonically at the next position/save-point save.
+- **Hosting**: the aliases are removed from `MapServerHostingScope.ServedMaps` / `MobSpawnMaps`, so they own no
+  monster simulation and no active warp. Their pinned/generated source (maps, warps, NPC/script entities,
+  spawn declarations) stays in the repository as source coverage - source representation is not runtime
+  activation. A warp/script destination naming an alias is resolved to the canonical map at `TeleportTo`
+  without editing the generated source.
+- **Logging**: `[MAP ROUTING] ... reason=character-load-canonicalized fromMap='prt_fild08c' toMap='prt_fild08'`
+  (CharServer at character select; MapServer at auth load if an alias ever reaches it) and a
+  `canonicalizedFrom='<alias>'` suffix on a warp/script transition that was folded. `[CHAR START MAP]` is kept.
+- `PlayerVisibilityCoordinator` is unchanged: it still isolates DIFFERENT map ids; canonicalization makes the
+  copies the same map id.
+- **Live check**: log in two characters (one persisted on `prt_fild08`, one on `prt_fild08c`); CharServer logs
+  `character-load-canonicalized` for the second, both sessions log `toMap='prt_fild08'`, the MapServer monster
+  tick reports one map for two sessions (`maps=1 sessions=2`), each sees the other, both see the same
+  monster actor ids, and a monster killed by one disappears for the other.
+- Tests: `CanonicalMapHostingTests`, `CanonicalPrtFild08PopulationTests`, `GeneratedWarpLoadProfilesTests`,
+  `CanonicalMapMultiplayerIntegrationTests` (real Orleans World), `CharacterMapRoutingTests` (CharServer).
 
 ## Izlude -> prt_fild08d -> Prontera travel corridor
 

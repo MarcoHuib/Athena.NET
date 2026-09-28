@@ -99,7 +99,7 @@ public sealed class MapClientSessionLethalDeathProjectionRaceTests
         var stream = client.GetStream();
 
         var allocator = new WorldActorIdAllocator();
-        var spawnDefinition = new MobSpawnDefinition(GeneratedMobs.GPoring, "int_land03", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "test", 0));
+        var spawnDefinition = new MobSpawnDefinition(GeneratedMobs.GPoring, "int_land", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "test", 0));
         var registry = new MonsterRegistry([spawnDefinition], allocator.Allocate, new FixedCellSelector(75, 51), TimeProvider.System);
         var questDrops = new QuestDropResolver([]);
         var target = registry.AllInstances[0];
@@ -119,12 +119,12 @@ public sealed class MapClientSessionLethalDeathProjectionRaceTests
         var gameplayPersistence = new RecordingGameplayStatePersistence(StrongAttacker());
         var session = new MapClientSession(
             1, serverClient, new CharServerConnector(new MapConfigStore(new MapConfig(), "unused.conf")), true,
-            "int_land03", 75, 51, WorldMapRegistry.Tutorial,
+            "int_land", 75, 51, WorldMapRegistry.Tutorial,
             gameplayStatePersistence: gameplayPersistence,
             accountId: AccountId, charId: CharId, monsterProjections: monsterProjections, combat: combat,
             combatState: combatState, distributedWorld: fakeWorld);
         var run = session.RunAsync(CancellationToken.None);
-        await session.CompleteIroAuthenticationAsync(new(AccountId, CharId, 1, 2, 0, 0, false, "int_land03", 75, 51, 0, 0, 0));
+        await session.CompleteIroAuthenticationAsync(new(AccountId, CharId, 1, 2, 0, 0, false, "int_land", 75, 51, 0, 0, 0));
 
         await ReadExact(stream, 4 + 6 + 6 + 13);
         await ReadDynamic(stream);
@@ -397,9 +397,9 @@ public sealed class MapClientSessionLethalDeathProjectionRaceTests
         var arbiter = new LethalDeathProjectionArbiter();
         var oldIncarnation = WorldMonsterIncarnationId.First;
         var newIncarnation = oldIncarnation.Next();
-        var lifeOld = new WorldMonsterLifeReference("int_land03", WorldSimulationEpoch.NewEpoch(), 1, oldIncarnation);
+        var lifeOld = new WorldMonsterLifeReference("int_land", WorldSimulationEpoch.NewEpoch(), 1, oldIncarnation);
         var epoch = lifeOld.SimulationEpoch;
-        var lifeNew = new WorldMonsterLifeReference("int_land03", epoch, 1, newIncarnation);
+        var lifeNew = new WorldMonsterLifeReference("int_land", epoch, 1, newIncarnation);
 
         arbiter.BeginInFlight(lifeOld);
 
@@ -419,7 +419,7 @@ public sealed class MapClientSessionLethalDeathProjectionRaceTests
     public void Interleaving4_BystanderSession_DiedIsDeliveredImmediately_Unchanged()
     {
         var arbiter = new LethalDeathProjectionArbiter();
-        var life = new WorldMonsterLifeReference("int_land03", WorldSimulationEpoch.NewEpoch(), 1, WorldMonsterIncarnationId.First);
+        var life = new WorldMonsterLifeReference("int_land", WorldSimulationEpoch.NewEpoch(), 1, WorldMonsterIncarnationId.First);
 
         // No BeginInFlight call was ever made for this session/life - an ordinary bystander.
         var deferred = arbiter.TryDeferDiedWhileInFlight(life);

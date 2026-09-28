@@ -8,6 +8,7 @@ using Athena.Net.MapServer.Gameplay.Rates;
 using Athena.Net.MapServer.Logging;
 using Athena.Net.MapServer.World;
 using Athena.Net.MapServer.World.GeneratedScripts;
+using Athena.Net.Shared.MapIdentity;
 using Athena.Net.World.Contracts;
 
 namespace Athena.Net.MapServer.Net;
@@ -514,7 +515,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     {
         _iroAuthRequested = iroAuthenticated;
         _authRequested = iroAuthenticated;
-        _mapName = mapName;
+        _mapName = CanonicalMapPolicy.Canonicalize(mapName);
         _x = x;
         _y = y;
         _authenticated = iroAuthenticated;
@@ -671,7 +672,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
 
         if (_iroAuthRequested)
         {
-            _mapName = authOk.MapName;
+            _mapName = CanonicalMapPolicy.Canonicalize(authOk.MapName);
             _x = authOk.X;
             _y = authOk.Y;
             _ = CompleteIroAuthenticationSafelyAsync(authOk);
@@ -709,11 +710,14 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
 
         _accountId = authOk.AccountId;
         _charId = authOk.CharId;
-        // DIAGNOSTIC-ONLY: the map this session starts on is exactly the persisted LastMap CharServer
-        // resolved for the character (copied unchanged through MapAuthNode); this line makes that
-        // provenance visible next to the later per-transition [MAP ROUTING] lines.
-        MapLogger.Info($"[MAP ROUTING] charId={_charId} accountId={_accountId} fromMap='<none>' toMap='{authOk.MapName}' reason=character-load source=CharServer.MapAuthNode(persisted-location) position=({authOk.X},{authOk.Y})");
-        _mapName = authOk.MapName;
+        // DIAGNOSTIC-ONLY provenance next to the later per-transition [MAP ROUTING] lines. CharServer already
+        // canonicalizes the persisted location before it reaches MapAuthNode; a legacy channel-copy name
+        // arriving here anyway (older CharServer / direct test auth) is folded onto its canonical map and
+        // reported as character-load-canonicalized instead of being hosted as a separate map.
+        var loadedMap = CanonicalMapPolicy.Canonicalize(authOk.MapName);
+        var loadReason = string.Equals(loadedMap, authOk.MapName, StringComparison.Ordinal) ? "character-load" : "character-load-canonicalized";
+        MapLogger.Info($"[MAP ROUTING] charId={_charId} accountId={_accountId} fromMap='{(loadReason == "character-load" ? "<none>" : authOk.MapName)}' toMap='{loadedMap}' reason={loadReason} source=CharServer.MapAuthNode(persisted-location) position=({authOk.X},{authOk.Y})");
+        _mapName = loadedMap;
         _x = authOk.X;
         _y = authOk.Y;
         _gameplayState = new CharacterGameplayStateSession(authOk.AccountId, state, _gameplayStatePersistence, skillRead.Snapshot!, _skillPersistence);
@@ -1416,7 +1420,13 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     // simulations; this line makes every transition between them attributable.
     private void TeleportTo(string map, ushort x, ushort y, string reason = "teleport", string? source = null)
     {
-        MapLogger.Info($"[MAP ROUTING] charId={_charId} accountId={_accountId} fromMap='{_mapName}' toMap='{map}' reason={reason} source={source ?? "unspecified"} position=({x},{y})");
+        // Every warp / script warp / teleport funnels through here, so this is the one runtime boundary where
+        // a destination naming a legacy channel copy (izlude_a, prt_fild08c ... - a source-layer value that
+        // stays untouched in the generated data) is folded onto its canonical map. Logged only when it happens.
+        var requestedMap = map;
+        map = CanonicalMapPolicy.Canonicalize(map);
+        var canonicalized = string.Equals(requestedMap, map, StringComparison.Ordinal) ? string.Empty : $" canonicalizedFrom='{requestedMap}'";
+        MapLogger.Info($"[MAP ROUTING] charId={_charId} accountId={_accountId} fromMap='{_mapName}' toMap='{map}' reason={reason} source={source ?? "unspecified"} position=({x},{y}){canonicalized}");
         _mapName = map;
         _x = x;
         _y = y;
@@ -3899,6 +3909,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
 
     private async Task<bool> SavePointAsync(string map, ushort x, ushort y, CancellationToken cancellationToken)
     {
+        map = CanonicalMapPolicy.Canonicalize(map); // Save points, like positions, only ever name canonical maps.
         var saved = await _positionPersistence.SavePointAsync(_accountId, _charId, map, x, y, cancellationToken);
         if (saved) MapLogger.Info($"SavePoint persistence succeeded charId={_charId} map='{map}' x={x} y={y}.");
         else MapLogger.Warning($"SavePoint persistence failed charId={_charId} map='{map}' x={x} y={y}.");
@@ -4049,7 +4060,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         await LeavePlayerWorldAsync(PlayerSessionLifecycle.AuthenticatedButNotWorldVisible, cancellationToken);
         TeleportTo(map, x, y, reason: "script", source: "generated-script-warp"); _positionDirty = true; _visibleActorIds.Clear(); _monsterVisibility.Reset();
         await TransferDistributedPresenceAsync(sourceMap, _mapName, _x, _y, cancellationToken);
-        await WriteAsync(IroMapTransitionPackets.BuildSameServerMapChange(map, x, y), cancellationToken);
+        await WriteAsync(IroMapTransitionPackets.BuildSameServerMapChange(_mapName, x, y), cancellationToken);
         await PersistPositionIfDirtyAsync(cancellationToken);
     }
 

@@ -10,7 +10,7 @@ namespace Athena.Net.MapServer.Tests.Net;
 
 public sealed class GeneratedLuminIntegrationTests
 {
-    private const string EntityId = "npc:int_land03:lumin#new_ship03";
+    private const string EntityId = "npc:int_land:lumin#new_ship";
     private const string AuthoritativeCharacterName = "ServerOwnedHero";
 
     [Fact]
@@ -178,18 +178,18 @@ public sealed class GeneratedLuminIntegrationTests
         public static async Task<LuminFixture> StartAsync(ICharacterQuestPersistence persistence)
         {
             var entity = Assert.Single(GeneratedScriptRegistry.Entities, item => item.Id == EntityId);
-            Assert.Equal(new WorldActorComponent("Lumin#new_ship03", "int_land03", 73, 100, 3, 639, 0), entity.Actor);
+            Assert.Equal(new WorldActorComponent("Lumin#new_ship", "int_land", 73, 100, 3, 639, 0), entity.Actor);
             var registry = new WorldMapRegistry([], [entity]);
-            var actor = Assert.Single(registry.GetVisibleWarpActors("int_land03", 73, 100));
-            Assert.True(registry.TryGetInteraction(actor.ActorId, "int_land03", out _, out _));
+            var actor = Assert.Single(registry.GetVisibleWarpActors("int_land", 73, 100));
+            Assert.True(registry.TryGetInteraction(actor.ActorId, "int_land", out _, out _));
 
             var listener = new TcpListener(IPAddress.Loopback, 0); listener.Start();
             var client = new TcpClient(); var connect = client.ConnectAsync((IPEndPoint)listener.LocalEndpoint);
             var serverClient = await listener.AcceptTcpClientAsync(); await connect;
-            var session = new MapClientSession(1, serverClient, new CharServerConnector(new MapConfigStore(new MapConfig(), "unused.conf")), true, "int_land03", 73, 100, registry,
+            var session = new MapClientSession(1, serverClient, new CharServerConnector(new MapConfigStore(new MapConfig(), "unused.conf")), true, "int_land", 73, 100, registry,
                 questPersistence: persistence, accountId: 7, charId: 9, gameplayStatePersistence: new FixedGameplayStatePersistence());
             var run = session.RunAsync(CancellationToken.None);
-            await session.CompleteIroAuthenticationAsync(new(7, 9, 1, 2, 0, 0, false, "int_land03", 73, 100, 3, 0, 0, AuthoritativeCharacterName));
+            await session.CompleteIroAuthenticationAsync(new(7, 9, 1, 2, 0, 0, false, "int_land", 73, 100, 3, 0, 0, AuthoritativeCharacterName));
             var stream = client.GetStream();
             await ReadExact(stream, 29); // authenticated iRO bootstrap
             await ReadDynamic(stream); // 0x0B32 skill list

@@ -1089,6 +1089,30 @@ field with its load-class string (`"RenewalDefault"`/`"AthenaOverlay"`/`"PreRene
 exactly 10,068 entities, one per declaration); this is additive metadata, never a redefinition of
 the existing metric.
 
+### Canonical `prt_fild08` population (channel copies removed)
+
+The channel copies (`prt_fild08a..d` etc., see `ai/map-server.md` "Canonical maps") no longer host anything, so
+the one shared `prt_fild08` carries the effective population of the map id itself. Classification of the 51
+pinned declarations that target `prt_fild08` by source file / load class:
+
+| Source | Class | Declarations / monsters |
+|---|---|---|
+| `npc/re/mobs/fields/prontera.txt` | RenewalDefault | 21 / 271 |
+| `npc/re/mobs/championmobs.txt` | RenewalDefault (champion variants, active in the pinned graph) | 5 / 5 |
+| `npc/re/mobs/academy.txt` | AthenaOverlay (explicit Athena tutorial-content policy; the pinned file lists the base map with a..d) | 4 / 340 |
+| `npc/pre-re/mobs/fields/prontera.txt` | PreRenewalSource (inactive) | 4 / 140 |
+| `npc/events/{RWC_2011,StPatrick_2008,christmas_2008,christmas_2013,dumplingfestival,halloween_2006,halloween_2013,xmas}.txt` | Disabled (event content, represented but not active) | 17 |
+
+`AthenaIroEffective` (what runtime registration consumes) is RenewalDefault + AthenaOverlay = **30 declarations,
+616 monsters** (Poring 197, Lunatic 167, Fabre 177, Little Poring 50, Pupa 20, 5 champions). The old live
+numbers were simply "everything effective for that map id": base `prt_fild08` = Renewal fields + champions +
+academy (616), the copy `prt_fild08c` = academy only (340) because Renewal field spawns only target the base
+id. No pre-re, event or other disabled declaration was being activated; events remain independent (never
+permanently on or off) and pre-re never wins. Locked by `CanonicalPrtFild08PopulationTests`. The academy set
+stays active on the base map because Athena's explicit overlay policy activates the whole file and the pinned
+file itself names `prt_fild08` alongside its copies; removing it would be a policy change made by editing
+`AthenaOverlaySourceFiles`, not something inferred here.
+
 ## Travel corridor: Izlude family -> prt_fild08 family -> Prontera
 
 `izlude-prontera-travel-trace.txt` documents the captured `d` member of the next slice beyond
