@@ -15,10 +15,16 @@ LOGIN_SEX="${2:-M}"
 LOGIN_SEX="$(printf '%s' "$LOGIN_SEX" | tr '[:lower:]' '[:upper:]')"
 LOGIN_EMAIL="${3:-${LOGIN_USER}@players.athena.local}"
 
-if [ "${#LOGIN_USER}" -lt 4 ] || [ "${#LOGIN_USER}" -gt 23 ]; then
-  echo "Username must contain between 4 and 23 characters." >&2
+if [ -z "$LOGIN_USER" ]; then
+  echo "Username must not be empty." >&2
   exit 1
 fi
+
+# Credential policy (minimum/maximum length) is validated once, authoritatively,
+# by LoginServer's PlayerAccountProvisioningService.ValidateInput - not
+# re-implemented here, so this script's rules can never drift from
+# LoginConfig.AccountNameMinLength/PasswordMinLength. A policy violation still
+# fails cleanly; it just surfaces as LoginServer's own error message below.
 
 if [ "$LOGIN_SEX" != "M" ] && [ "$LOGIN_SEX" != "F" ]; then
   echo "Sex must be M or F." >&2

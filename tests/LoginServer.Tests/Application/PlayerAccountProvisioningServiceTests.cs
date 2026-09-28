@@ -309,6 +309,48 @@ public sealed class PlayerAccountProvisioningServiceTests : IDisposable
         Assert.Equal(1, await db.Users.CountAsync(u => u.UserName == "CollisionOne" || u.UserName == "CollisionTwo"));
     }
 
+    [Fact]
+    public async Task ProvisionAsync_FailureAfterIdentityUserIsTracked_LeavesTheSharedDbContextCleanForTheNextCall()
+    {
+        // Regression test for the execution-strategy retry-safety concern: the
+        // production ExecuteAsync(...) wrapper reuses the same DbContext
+        // instance (_db) across a retried delegate invocation. If a failure
+        // happens after UserManager.CreateAsync's own internal SaveChangesAsync
+        // has already tracked the new AthenaIdentityUser, but before this
+        // service's own SaveChangesAsync/CommitAsync, that tracked entity must
+        // not corrupt a later attempt on the same DbContext (this is what
+        // PlayerAccountProvisioningService.ChangeTracker.Clear() at the top of
+        // the retry delegate exists to prevent). SQLite's default execution
+        // strategy never retries automatically (unlike SQL Server's
+        // SqlServerRetryingExecutionStrategy), so this drives the same
+        // scenario directly: fail once via the allocator after the Identity
+        // user is already tracked (the allocator's exception propagates out of
+        // ProvisionAsync uncaught, same as production - only DbUpdateException
+        // is caught there - with the `await using` transaction rolling back on
+        // disposal), then call ProvisionAsync again on the same scoped
+        // service/DbContext, exactly as a retried delegate invocation would
+        // reuse it.
+        var allocator = new FailOnceRagnarokAccountIdAllocator(9_000_200);
+        var services = new ServiceCollection();
+        AddProvisioningStack(services, _connection, allocator);
+        await using var provider = services.BuildServiceProvider();
+
+        using var scope = provider.CreateScope();
+        var provisioning = scope.ServiceProvider.GetRequiredService<IPlayerAccountProvisioningService>();
+        var db = scope.ServiceProvider.GetRequiredService<AthenaIdentityDbContext>();
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => provisioning.ProvisionAsync("RetrySafe", "retrysafe@example.com", "password1", 'M', CancellationToken.None));
+
+        // Simulate what a retried execution-strategy delegate invocation does:
+        // call ProvisionAsync again on the very same DbContext/UserManager.
+        var retriedAttempt = await provisioning.ProvisionAsync("RetrySafe", "retrysafe@example.com", "password1", 'M', CancellationToken.None);
+
+        Assert.True(retriedAttempt.Success, retriedAttempt.ErrorMessage);
+        Assert.Equal(1, await db.Users.CountAsync(u => u.UserName == "RetrySafe"));
+        Assert.Equal(1, await db.GameAccounts.CountAsync(a => a.Id == retriedAttempt.GameAccountId));
+    }
+
     private sealed class FixedRagnarokAccountIdAllocator : IRagnarokAccountIdAllocator
     {
         private readonly uint _value;
@@ -316,6 +358,34 @@ public sealed class PlayerAccountProvisioningServiceTests : IDisposable
         public FixedRagnarokAccountIdAllocator(uint value) => _value = value;
 
         public Task<uint> AllocateAsync(AthenaIdentityDbContext db, CancellationToken cancellationToken) => Task.FromResult(_value);
+    }
+
+    /// <summary>
+    /// Throws on its first call (simulating a transient failure that occurs
+    /// after UserManager.CreateAsync has already tracked/saved the Identity
+    /// user but before the game account is persisted) and succeeds on every
+    /// call after that - standing in for the point in
+    /// PlayerAccountProvisioningService.ProvisionAsync where a real SQL
+    /// Server transient fault (triggering an execution-strategy retry) could
+    /// occur.
+    /// </summary>
+    private sealed class FailOnceRagnarokAccountIdAllocator : IRagnarokAccountIdAllocator
+    {
+        private readonly uint _value;
+        private bool _hasFailed;
+
+        public FailOnceRagnarokAccountIdAllocator(uint value) => _value = value;
+
+        public Task<uint> AllocateAsync(AthenaIdentityDbContext db, CancellationToken cancellationToken)
+        {
+            if (!_hasFailed)
+            {
+                _hasFailed = true;
+                throw new InvalidOperationException("Simulated transient allocation failure.");
+            }
+
+            return Task.FromResult(_value);
+        }
     }
 
     private static void AddProvisioningStack(ServiceCollection services, SqliteConnection connection, IRagnarokAccountIdAllocator allocator, LoginConfig? config = null)
