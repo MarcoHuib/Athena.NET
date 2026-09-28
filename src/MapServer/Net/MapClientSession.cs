@@ -2519,7 +2519,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
 
             MapLogger.Info($"[iRO MAP DEBUG] Monster died actorId={life.ActorId} mob={targetSnapshot.StaticMob.AegisName}");
             if (DebugBeforeMonsterVanishSendAsync is { } beforeVanishHook) await beforeVanishHook(); // Test-only seam - see that field's own doc comment. Always null in production.
-            await SendMonsterVanishAsync(life.ActorId, PacketConstants.ZcNotifyVanishReasonDied, cancellationToken);
+            await SendMonsterVanishAsync(life.ActorId, PacketConstants.ZcNotifyVanishReasonDied, "Died-local-lethal-hit", cancellationToken);
 
             lethalCommitLife = null;
             _lethalDeathArbiter.CompleteInFlight(life, markProjected: true);
@@ -4734,7 +4734,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         // rediscovers it later via this same method's own discovery branch if it re-enters range.
         if (!_visibilityOptions.IsVisible(_mapName, _x, _y, actor.Map, position.X, position.Y))
         {
-            await SendMonsterVanishAsync(actor.ActorId, PacketConstants.ZcNotifyVanishReasonOutOfSight, cancellationToken);
+            await SendMonsterVanishAsync(actor.ActorId, PacketConstants.ZcNotifyVanishReasonOutOfSight, "OutOfSight-movement", cancellationToken, (position.X, position.Y));
             return;
         }
 
@@ -4791,10 +4791,31 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     // (NotifyMonsterDiedAsync's own attacker-dedup case, or a redundant vanish request) still needs
     // its own _monsterVisibility entry removed, or a later Respawned/resync could compare a fresh
     // incarnation against stale leftover metadata for the OLD life.
-    private async Task SendMonsterVanishAsync(uint actorId, byte reason, CancellationToken cancellationToken)
+    // Bug-2 live-reproduction observability (debug-only, additive): `reasonLabel` is a short,
+    // human-readable tag distinguishing WHY this call happened (Died, OutOfSight-movement,
+    // OutOfSight-resync, epoch-changed, incarnation-changed) - the wire `reason` byte alone
+    // (OutOfSight vs Died) cannot distinguish those sub-cases, and the existing discovery log
+    // (SendVisibleMonsterActorsAsync/NotifyMonsterMovedAsync's own "Sending monster actor"/"Sent
+    // 0x09FD" lines) needs a matching vanish-side log to let a live capture correlate
+    // discovered -> moved -> vanished -> rediscovered by ActorId. No lifecycle/behavior change -
+    // this method's existing early-return/dedup semantics (via _visibleActorIds.TryMarkNotVisible)
+    // are untouched; only a log line was added, using the incarnation this session believed it had
+    // BEFORE removal (Snapshot() is a full copy, cheap here since vanish is not a hot per-tick path).
+    private async Task SendMonsterVanishAsync(uint actorId, byte reason, string reasonLabel, CancellationToken cancellationToken, (ushort X, ushort Y)? lastProjectedPosition = null)
     {
+        WorldMonsterIncarnationId incarnation = default;
+        foreach (var pair in _monsterVisibility.Snapshot())
+        {
+            if (pair.ActorId == actorId) { incarnation = pair.IncarnationId; break; }
+        }
+        var positionLabel = lastProjectedPosition is { } pos ? $"({pos.X},{pos.Y})" : "unknown";
         _monsterVisibility.Remove(actorId);
-        if (!_visibleActorIds.TryMarkNotVisible(actorId)) return;
+        if (!_visibleActorIds.TryMarkNotVisible(actorId))
+        {
+            MapLogger.Info($"[iRO MAP DEBUG] Monster vanish suppressed (already not visible) actorId={actorId} incarnationId={incarnation.Value} map={_mapName} lastProjectedPosition={positionLabel} accountId={_accountId} reason={reasonLabel} wireReason={reason}");
+            return;
+        }
+        MapLogger.Info($"[iRO MAP DEBUG] Sending 0x0080 vanish actorId={actorId} incarnationId={incarnation.Value} map={_mapName} lastProjectedPosition={positionLabel} accountId={_accountId} reason={reasonLabel} wireReason={reason}");
         await WriteAsync(IroMonsterCombatPackets.BuildNotifyVanish(actorId, reason), cancellationToken);
     }
 
@@ -4824,7 +4845,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     public async Task NotifyMonsterDiedAsync(WorldMonsterLifeReference life, CancellationToken cancellationToken)
     {
         if (_lethalDeathArbiter.TryDeferDiedWhileInFlight(life)) return;
-        await SendMonsterVanishAsync(life.ActorId, PacketConstants.ZcNotifyVanishReasonDied, cancellationToken);
+        await SendMonsterVanishAsync(life.ActorId, PacketConstants.ZcNotifyVanishReasonDied, "Died-world-feed", cancellationToken);
     }
 
     // Performs the exact same wire vanish + visibility cleanup NotifyMonsterDiedAsync's own ordinary
@@ -4835,7 +4856,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     // method (rather than inlining SendMonsterVanishAsync at each of those call sites) so the "this
     // is the deferred-cleanup half of the arbitration" intent reads clearly at each call site.
     private async Task PerformDeferredAuthoritativeDiedAsync(uint actorId, CancellationToken cancellationToken) =>
-        await SendMonsterVanishAsync(actorId, PacketConstants.ZcNotifyVanishReasonDied, cancellationToken);
+        await SendMonsterVanishAsync(actorId, PacketConstants.ZcNotifyVanishReasonDied, "Died-deferred-arbitration", cancellationToken);
 
     // Step 7 substep 7 (§14.5): the real Respawned hook LethalDeathProjectionArbiter's own
     // ForgetProjectedForActor doc comment anticipated. Called by MapTcpServer.FanOutEntryAsync for
@@ -4906,7 +4927,11 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
 
             if (epochChanged || !stillAliveWithSameIncarnation)
             {
-                await SendMonsterVanishAsync(previouslyVisibleActorId, PacketConstants.ZcNotifyVanishReasonOutOfSight, cancellationToken);
+                var resyncReason = epochChanged ? "OutOfSight-resync-epoch-changed"
+                    : fresh is null ? "OutOfSight-resync-absent-or-dead"
+                    : "OutOfSight-resync-incarnation-changed";
+                var resyncPosition = fresh is { } freshForLog ? ((ushort X, ushort Y)?)(freshForLog.X, freshForLog.Y) : null;
+                await SendMonsterVanishAsync(previouslyVisibleActorId, PacketConstants.ZcNotifyVanishReasonOutOfSight, resyncReason, cancellationToken, resyncPosition);
                 continue;
             }
 
@@ -4916,7 +4941,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
             // stillAliveWithSameIncarnation being true proves the TryGetValue above succeeded.
             if (!_visibilityOptions.IsVisible(_mapName, _x, _y, fresh!.MapId, fresh.X, fresh.Y))
             {
-                await SendMonsterVanishAsync(previouslyVisibleActorId, PacketConstants.ZcNotifyVanishReasonOutOfSight, cancellationToken);
+                await SendMonsterVanishAsync(previouslyVisibleActorId, PacketConstants.ZcNotifyVanishReasonOutOfSight, "OutOfSight-resync-aoi-exit", cancellationToken, (fresh.X, fresh.Y));
             }
         }
 

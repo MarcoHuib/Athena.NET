@@ -141,7 +141,16 @@ internal sealed class MonsterAttackCadenceExecutor(
         // mob's own DamageMotion is NEVER used here (that field serves the opposite direction).
         var srcSpeed = (uint)staticMob.AttackMotion;
         var dstSpeed = (uint)PlayerDamageMotionCalculator.Calculate(combatSnapshot.Agility);
-        return new MonsterAttackActionOutcome(monster.ActorId, key.MapId, monster.X, monster.Y, target.CharacterId, result.Damage, result.IsMiss, srcSpeed, dstSpeed, hpOutcome.HpAfter, hpOutcome.HpChanged);
+        // Live-reproduction fix: MonsterAttackActionOutcome.VictimAccountId is the wire-facing
+        // ZC_NOTIFY_ACT3 dstId (see that record's own doc comment) - the client's runtime
+        // actor/GID for the LOCAL PLAYER is its AccountId, never its CharacterId (MapClientSession.
+        // ActorId => _accountId; ai/iro-2026-wire.md's own "Map handoff and identity" section;
+        // pinned clif_damage's own targetID = dst.id, where a player bl.id is the account id).
+        // `target.CharacterId` (WorldPlayerTargetReference) is the correct id for every World-side
+        // call/match in this method (ValidateMonsterAttackWindowAsync, the targetSession lookup
+        // above) but must NEVER be reused here - targetSession (already resolved above) carries the
+        // real wire identity via its own AccountId property.
+        return new MonsterAttackActionOutcome(monster.ActorId, key.MapId, monster.X, monster.Y, targetSession.AccountId, result.Damage, result.IsMiss, srcSpeed, dstSpeed, hpOutcome.HpAfter, hpOutcome.HpChanged);
     }
 
     private static async Task<PlayerCombatSnapshot?> TrySnapshotAsync(MapClientSession session, CancellationToken cancellationToken)
