@@ -126,7 +126,7 @@ public sealed class MapClientSessionMonsterVisibilityReconciliationTests
         }
 
         // 1. Discover.
-        await Notify(inside, movementKind: null);
+        await Notify(inside, kind: null);
         var discovery = await ReadDynamic(stream);
         Assert.Equal((short)PacketConstants.ZcNotifyStandEntry, BinaryPrimitives.ReadInt16LittleEndian(discovery));
 
@@ -142,7 +142,7 @@ public sealed class MapClientSessionMonsterVisibilityReconciliationTests
         await Notify(outsideWalking, WorldMonsterMovementKind.WalkStarted);
         await Notify(outsideFurther, WorldMonsterMovementKind.WalkFinished);
         await Notify(outsideFurther, WorldMonsterMovementKind.ChaseInterrupted);
-        await Notify(outsideFurther, movementKind: null);
+        await Notify(outsideFurther, kind: null);
         await AssertNothingSentAsync();
 
         // 6-7. Real re-entry: a genuine rediscovery (0x09FF) is sent.
