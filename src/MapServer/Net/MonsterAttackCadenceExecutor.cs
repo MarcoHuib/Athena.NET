@@ -102,6 +102,10 @@ internal sealed class MonsterAttackCadenceExecutor(
 
         await _beforeFinalAttackRevalidation();
 
+        // DEBUG-LOG-ONLY correlation label so the generic gameplay-state mutation / CharServer round
+        // trip lines say which monster attack they belong to (see CombatTiming.Context).
+        CombatTiming.SetContext($"mob-attack:actorId={monster.ActorId}");
+
         // DEBUG-LOG-ONLY attack-path timing (never read by any decision): the three awaited steps that
         // run serially inside the shared monster tick for every attack that actually lands. Used to
         // attribute the extra tick time observed right after a monster attack.

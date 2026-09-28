@@ -152,10 +152,27 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
     {
         var connection=_connection; if(connection is null)return null;
         var pending=new TaskCompletionSource<CharacterGameplayState?>(TaskCreationOptions.RunContinuationsAsynchronously);
-        if(!_pendingGameplayUpdates.TryAdd(expected.CharacterId,pending))return null;
+        if(!_pendingGameplayUpdates.TryAdd(expected.CharacterId,pending))
+        {
+            // DEBUG-LOG-ONLY: a second update for the same character while one is still in flight is
+            // rejected (null) instead of queued - make that visible in the combat timing timeline.
+            CombatTiming.Log("CHAR GAMEPLAY UPDATE", $"charId={expected.CharacterId} expectedVersion={expected.Version} rejected=update-already-in-flight");
+            return null;
+        }
         using var registration=cancellationToken.Register(()=>pending.TrySetCanceled(cancellationToken));
-        try { await connection.WriteAsync(MapCharacterGameplayStateProtocol.BuildUpdateRequest(accountId,expected,updated),cancellationToken); return await pending.Task; }
-        finally { _pendingGameplayUpdates.TryRemove(expected.CharacterId,out _); }
+        // DEBUG-LOG-ONLY timing (Stopwatch, monotonic): separates the socket write to CharServer from the
+        // wait for its response (CharServer persistence/SQL + reply). No payload data is logged.
+        var startedAt=CombatTiming.Now(); long writtenAt=0; CharacterGameplayState? persisted=null;
+        try { await connection.WriteAsync(MapCharacterGameplayStateProtocol.BuildUpdateRequest(accountId,expected,updated),cancellationToken); writtenAt=CombatTiming.Now(); persisted=await pending.Task; return persisted; }
+        finally
+        {
+            _pendingGameplayUpdates.TryRemove(expected.CharacterId,out _);
+            var endedAt=CombatTiming.Now();
+            var writeMs=CombatTiming.ElapsedMs(startedAt,writtenAt==0?endedAt:writtenAt);
+            var responseWaitMs=writtenAt==0?0:CombatTiming.ElapsedMs(writtenAt,endedAt);
+            CombatTiming.Log("CHAR GAMEPLAY UPDATE",
+                $"charId={expected.CharacterId} expectedVersion={expected.Version} writeMs={CombatTiming.F(writeMs)} responseWaitMs={CombatTiming.F(responseWaitMs)} totalMs={CombatTiming.F(CombatTiming.ElapsedMs(startedAt,endedAt))} success={(persisted is not null).ToString().ToLowerInvariant()} resultingVersion={(persisted is null ? "none" : persisted.Version.ToString())}");
+        }
     }
 
     public async Task<CharacterInventoryReadResult> GetInventoryAsync(uint accountId, uint characterId, CancellationToken cancellationToken)

@@ -1,3 +1,4 @@
+using Athena.Net.MapServer.Logging;
 using Athena.Net.MapServer.World;
 
 namespace Athena.Net.MapServer.Net;
@@ -42,18 +43,33 @@ public sealed class CharacterGameplayStateSession
     public CharacterGameplayState State { get; private set; }
     public CharacterSkillSnapshot Skills { get; private set; }
 
-    public async Task<CharacterGameplayState?> MutateAsync(Func<CharacterGameplayState, CharacterGameplayState> mutation, CancellationToken cancellationToken)
+    // `reason` is DEBUG-LOG-ONLY correlation text ("mob-basic-attack", "experience", ...) for the combat
+    // timing log - it never influences the mutation. The per-session _mutationLock serializes EVERY
+    // gameplay-state mutation for this character (monster-tick HP mutation, the player's own EXP award,
+    // stat/skill changes), so lock wait is measured separately from the persistence round trip.
+    public async Task<CharacterGameplayState?> MutateAsync(Func<CharacterGameplayState, CharacterGameplayState> mutation, CancellationToken cancellationToken, string? reason = null)
     {
+        var lockRequestedAt = CombatTiming.Now();
         await _mutationLock.WaitAsync(cancellationToken);
+        var lockAcquiredAt = CombatTiming.Now();
+        CharacterGameplayState? persisted = null;
+        var expectedVersion = State.Version;
         try
         {
             var expected = State;
+            expectedVersion = expected.Version;
             var candidate = mutation(expected) with { CharacterId = expected.CharacterId, Version = expected.Version };
-            var persisted = await _persistence.UpdateAsync(_accountId, expected, candidate, cancellationToken);
+            persisted = await _persistence.UpdateAsync(_accountId, expected, candidate, cancellationToken);
             if (persisted is not null) State = persisted;
             return persisted;
         }
-        finally { _mutationLock.Release(); }
+        finally
+        {
+            _mutationLock.Release();
+            var endedAt = CombatTiming.Now();
+            CombatTiming.Log("GAMEPLAY MUTATE",
+                $"reason={reason ?? "unspecified"} charId={State.CharacterId} expectedVersion={expectedVersion} lockWaitMs={CombatTiming.F(CombatTiming.ElapsedMs(lockRequestedAt, lockAcquiredAt))} persistMs={CombatTiming.F(CombatTiming.ElapsedMs(lockAcquiredAt, endedAt))} totalMs={CombatTiming.F(CombatTiming.ElapsedMs(lockRequestedAt, endedAt))} success={(persisted is not null).ToString().ToLowerInvariant()}");
+        }
     }
 
     // Validates and, if valid, atomically persists a one-level skill-point spend, then replaces

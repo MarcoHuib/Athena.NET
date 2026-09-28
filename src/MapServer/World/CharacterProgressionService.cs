@@ -34,7 +34,7 @@ public sealed class CharacterProgressionService(CharacterGameplayStateSession st
         var before = stateSession.State;
         var calculation = Calculate(before, baseExperience, jobExperience);
         if (calculation.After == before) return calculation;
-        var persisted = await stateSession.MutateAsync(_ => calculation.After, cancellationToken);
+        var persisted = await stateSession.MutateAsync(_ => calculation.After, cancellationToken, reason: "experience");
         return persisted is null ? null : calculation with { After = persisted };
     }
 
