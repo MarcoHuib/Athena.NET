@@ -264,6 +264,9 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     private volatile string _lastPacketWrittenDescription = "<none>";
     private readonly CancellationTokenSource _sessionCancellation = new();
     private readonly VisibleActorTracker _visibleActorIds = new();
+    // See the production constructor overload's own doc comment for what this is and why it is
+    // never resolved by iterating sibling sessions directly.
+    private readonly Func<PlayerAttackActionOutcome, CancellationToken, Task>? _playerAttackFanout;
     // Item 3 of the Step 6 correctness-hardening pass: the single, internally-synchronized owner of
     // "which monster ActorIds this session currently believes are visible, at which IncarnationId"
     // plus "the last SimulationEpoch this session fully reconciled against" - see
@@ -393,11 +396,18 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     // WorldMapRegistry.Tutorial: that static singleton builds its OWN private WorldActorIdAllocator,
     // so silently falling back to it here would reintroduce a second, independent actor-ID
     // namespace alongside the composed MonsterRegistry's shared one.
-    public MapClientSession(int sessionId, TcpClient client, CharServerConnector charConnector, MapServerWorld world, IWorldRuntime worldRuntime)
+    // `playerAttackFanout`: the ONE seam through which a resolved player-vs-monster attack action
+    // reaches every other session on this gateway process (see PlayerAttackActionOutcome's own doc
+    // comment). MapTcpServer supplies it (bound to its own live session set - see
+    // MapTcpServer.FanOutPlayerAttackActionAsync) when constructing a production session; this
+    // session never holds a reference to any sibling session itself. Null (every non-MapTcpServer
+    // caller, including every existing test fixture) falls back to notifying only this session -
+    // see NotifyPlayerAttackActionAsync's own call sites for exactly where that fallback applies.
+    public MapClientSession(int sessionId, TcpClient client, CharServerConnector charConnector, MapServerWorld world, IWorldRuntime worldRuntime, Func<PlayerAttackActionOutcome, CancellationToken, Task>? playerAttackFanout = null)
         : this(sessionId, client, charConnector, world.Maps, monsterProjections: world.MonsterProjections, combat: world.Combat,
                movementPathProvider: world.MovementPathProvider, collisionProvider: world.Collision, rates: world.Rates,
                players: world.Players, playerVisibility: world.PlayerVisibility, visibilityOptions: world.Visibility, distributedWorld: worldRuntime,
-               combatState: world.CombatState)
+               combatState: world.CombatState, playerAttackFanout: playerAttackFanout)
     {
     }
 
@@ -422,7 +432,8 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         PlayerVisibilityCoordinator? playerVisibility = null,
         WorldVisibilityOptions? visibilityOptions = null,
         IWorldRuntime? distributedWorld = null,
-        MonsterAttackCadenceStore? combatState = null)
+        MonsterAttackCadenceStore? combatState = null,
+        Func<PlayerAttackActionOutcome, CancellationToken, Task>? playerAttackFanout = null)
     {
         SessionId = sessionId;
         _client = client;
@@ -447,6 +458,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         _players = players ?? new PlayerPresenceRegistry(_visibilityOptions);
         _playerVisibility = playerVisibility ?? new PlayerVisibilityCoordinator(_players, _visibilityOptions);
         _distributedWorld = distributedWorld;
+        _playerAttackFanout = playerAttackFanout;
         _statusEffects = new CharacterStatusEffectState(_timeProvider);
     }
 
@@ -481,7 +493,8 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         PlayerVisibilityCoordinator? playerVisibility = null,
         WorldVisibilityOptions? visibilityOptions = null,
         IWorldRuntime? distributedWorld = null,
-        MonsterAttackCadenceStore? combatState = null)
+        MonsterAttackCadenceStore? combatState = null,
+        Func<PlayerAttackActionOutcome, CancellationToken, Task>? playerAttackFanout = null)
         : this(
             sessionId,
             client,
@@ -511,7 +524,8 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
             playerVisibility,
             visibilityOptions,
             distributedWorld,
-            combatState)
+            combatState,
+            playerAttackFanout)
     {
         _iroAuthRequested = iroAuthenticated;
         _authRequested = iroAuthenticated;
@@ -2488,11 +2502,10 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
                     finally { _attackGate.Release(); }
                 }
 
-                var tick = unchecked((uint)Environment.TickCount);
                 var damageDealt = result.HpBefore - result.HpAfter;
-                var damagePacket = IroMonsterCombatPackets.BuildNotifyAct3(_accountId, life.ActorId, tick, srcSpeed: 460, dstSpeed: (uint)targetSnapshot.StaticMob.DamageMotion, damage: damageDealt, div: 1, actionType: 0);
+                var attackAction = new PlayerAttackActionOutcome(_accountId, life.ActorId, _mapName, damageDealt, SrcSpeed: 460, DstSpeed: (uint)targetSnapshot.StaticMob.DamageMotion, Lethal: false);
                 var nonLethalWritesStartedAt = CombatTiming.Now();
-                await WriteAsync(damagePacket, cancellationToken);
+                await ProjectPlayerAttackActionAsync(attackAction, cancellationToken);
                 var nonLethalDamageWrittenAt = CombatTiming.Now();
 
                 var nonLethalHpWritten = false;
@@ -2589,11 +2602,10 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         var lethalCommitLife = life;
         try
         {
-            var tick = unchecked((uint)Environment.TickCount);
             var damageDealt = result.HpBefore - result.HpAfter;
-            var damagePacket = IroMonsterCombatPackets.BuildNotifyAct3(_accountId, life.ActorId, tick, srcSpeed: 460, dstSpeed: (uint)targetSnapshot.StaticMob.DamageMotion, damage: damageDealt, div: 1, actionType: 0);
+            var attackAction = new PlayerAttackActionOutcome(_accountId, life.ActorId, _mapName, damageDealt, SrcSpeed: 460, DstSpeed: (uint)targetSnapshot.StaticMob.DamageMotion, Lethal: true);
             var lethalDamageWriteStartedAt = CombatTiming.Now();
-            await WriteAsync(damagePacket, cancellationToken);
+            await ProjectPlayerAttackActionAsync(attackAction, cancellationToken);
             lethalDamageWriteMs = CombatTiming.ElapsedMsSince(lethalDamageWriteStartedAt);
 
             if (_visibleActorIds.IsActorVisible(life.ActorId))
@@ -5176,6 +5188,41 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     //     return; }" - SP_HP is PLAYER-SELF-ONLY (clif_updatestatus targets exactly one session,
     //     never AREA) and is skipped ENTIRELY when hp==0 - a miss/zero-damage hit never produces an
     //     HP packet, matching this method's own HpChanged guard below exactly.
+    // The one call site both the non-lethal and lethal player-attack tails use to project the combat
+    // ACTION: goes through `_playerAttackFanout` when this session was constructed by MapTcpServer
+    // (production - every currently connected session, attacker included, gets exactly one call to
+    // NotifyPlayerAttackActionAsync below), or falls back to notifying only THIS session when no
+    // fan-out delegate is configured (every existing single-session test fixture/standalone tool -
+    // identical wire effect to before this fan-out existed). Either branch calls
+    // NotifyPlayerAttackActionAsync exactly once for this session, so the attacker can never receive
+    // a duplicate 0x08C8.
+    private Task ProjectPlayerAttackActionAsync(PlayerAttackActionOutcome action, CancellationToken cancellationToken) =>
+        _playerAttackFanout is { } fanout ? fanout(action, cancellationToken) : NotifyPlayerAttackActionAsync(action, cancellationToken);
+
+    // AREA-visible player-attack action projection (mirrors NotifyMonsterAttackOutcomeAsync's own
+    // map/visibility rules for a monster's own attack - see PlayerAttackActionOutcome's own doc
+    // comment for the pinned clif_damage citation both share). The attacking session ALWAYS
+    // receives the packet regardless of its own _visibleActorIds bookkeeping (pinned rAthena's own
+    // AREA broadcast always reaches the attacker - clif.cpp:5297 sends to AREA, which includes the
+    // source); every OTHER session requires the monster to already be in its own visible set, the
+    // same rule NotifyMonsterAttackOutcomeAsync applies. Progression/quest/inventory effects of the
+    // hit are NEVER part of this projection - those stay attacker-only, written directly by
+    // HandleLethalDamageResultAsync on the attacker's own session exactly as before this fan-out was
+    // introduced. Monster HP-info (the mob's own health-bar overlay) is likewise untouched here -
+    // it stays a separate, self-only write on the attacker's session (see HandleDamageResultAsync/
+    // HandleLethalDamageResultAsync) pending a documented decision on its own AREA visibility.
+    internal async Task NotifyPlayerAttackActionAsync(PlayerAttackActionOutcome action, CancellationToken cancellationToken)
+    {
+        if (!string.Equals(action.Map, _mapName, StringComparison.OrdinalIgnoreCase)) return;
+        var isAttacker = action.AttackerActorId == _accountId;
+        if (!isAttacker && !_visibleActorIds.IsActorVisible(action.MobActorId)) return;
+
+        var tick = unchecked((uint)Environment.TickCount);
+        var damagePacket = IroMonsterCombatPackets.BuildNotifyAct3(action.AttackerActorId, action.MobActorId, tick, action.SrcSpeed, action.DstSpeed, action.Damage, div: 1, actionType: 0);
+        await WriteAsync(damagePacket, cancellationToken);
+        MapLogger.Info($"[iRO MAP DEBUG] PLAYER ATTACK FANOUT attackerActorId={action.AttackerActorId} targetActorId={action.MobActorId} observerAccountId={_accountId} damage={action.Damage} map={action.Map} lethal={action.Lethal.ToString().ToLowerInvariant()}");
+    }
+
     public async Task NotifyMonsterAttackOutcomeAsync(MonsterAttackActionOutcome action, CancellationToken cancellationToken)
     {
         if (!string.Equals(action.Map, _mapName, StringComparison.OrdinalIgnoreCase)) return;

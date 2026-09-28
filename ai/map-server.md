@@ -1807,6 +1807,35 @@ map so every character shares one World simulation, one actor-id space and one v
 - Tests: `CanonicalMapHostingTests`, `CanonicalPrtFild08PopulationTests`, `GeneratedWarpLoadProfilesTests`,
   `CanonicalMapMultiplayerIntegrationTests` (real Orleans World), `CharacterMapRoutingTests` (CharServer).
 
+## Player-attack combat action is AREA-visible (same-gateway fan-out)
+
+Pinned rAthena's `clif_damage` broadcasts the attack ACTION packet (`0x08C8`) to `AREA`, so every
+nearby client - not just the attacker's own socket - sees a hit landing, exactly like a monster's
+own attack already does (`MonsterAttackActionOutcome`/`MapTcpServer.FanOutEntryAsync`-adjacent
+`NotifyMonsterAttackOutcomeAsync`). Before this fix `MapClientSession` wrote the player's own
+`0x08C8` directly to itself only; a nearby second player never saw the animation even though both
+shared the same authoritative World monster state.
+
+`PlayerAttackActionOutcome` (`src/MapServer/Net/PlayerAttackActionOutcome.cs`) is the transient,
+non-authoritative DTO both the non-lethal and lethal player-attack tails build from World's
+already-applied `ApplyMonsterDamageAsync` result (World is still called exactly once per hit).
+`MapClientSession.ProjectPlayerAttackActionAsync` hands it to `_playerAttackFanout` when one is
+configured (production: `MapTcpServer.FanOutPlayerAttackActionAsync`, bound at session construction
+- the ONE place a session's attack action reaches any sibling session; a `MapClientSession` never
+holds a reference to another session itself) or falls back to notifying only itself (every existing
+single-session test fixture, unchanged). The fan-out calls every currently connected session's
+`NotifyPlayerAttackActionAsync` - attacker included, so there is never a duplicate write - which
+gates on map equality and (for everyone except the attacker, who always receives it, matching
+pinned `clif_damage`'s own AREA-includes-source semantics) `_visibleActorIds.IsActorVisible(mob)`,
+the SAME visibility set the monster-attack fan-out already uses. Attacker-only effects (self HP-info,
+EXP/progression, quest drops) are untouched and never broadcast.
+
+**Limitation**: this fan-out only reaches sessions on the SAME MapServer gateway process. Two
+players connected through different MapServer replicas do not yet share player-combat-action
+visibility this way - that needs a World/Orleans player/combat event feed (the same migration
+`PlayerVisibilityCoordinator`/`PlayerPresenceRegistry` already need for player visibility in
+general), out of scope here.
+
 ## Izlude -> prt_fild08d -> Prontera travel corridor
 
 See `ai/world-data.md`'s "Travel corridor" section for the full content/tooling writeup

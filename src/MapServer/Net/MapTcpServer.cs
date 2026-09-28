@@ -705,6 +705,37 @@ public sealed class MapTcpServer
         }
     }
 
+    // Local, same-gateway-process fan-out for a player's already-World-confirmed attack action (see
+    // PlayerAttackActionOutcome's own doc comment for why MapClientSession never iterates sibling
+    // sessions itself - this is the ONE place that does, mirroring FanOutEntryAsync's own role for
+    // the monster feed). Every CURRENTLY connected session - the attacker's own session included -
+    // gets exactly one call; each session's own NotifyPlayerAttackActionAsync owns its map/visibility
+    // gate and decides independently whether the action is actually wire-visible to it.
+    //
+    // ARCHITECTURE NOTE: this fan-out only reaches sessions connected to THIS MapServer process. Two
+    // players connected through two different MapServer gateway replicas do not yet share player
+    // combat-action visibility this way - that requires a World/Orleans player/combat event feed
+    // (the same migration PlayerVisibilityCoordinator/PlayerPresenceRegistry already need for
+    // cross-replica player visibility in general - see ai/map-server.md), which is out of scope here.
+    internal async Task FanOutPlayerAttackActionAsync(PlayerAttackActionOutcome action, CancellationToken cancellationToken)
+    {
+        foreach (var session in _sessions.Values)
+        {
+            try
+            {
+                await session.NotifyPlayerAttackActionAsync(action, cancellationToken);
+            }
+            catch (IOException)
+            {
+                // Client disconnected; HandleClientAsync's own cleanup removes it from _sessions.
+            }
+            catch (OperationCanceledException)
+            {
+                // Server shutdown.
+            }
+        }
+    }
+
     // Fans out one incremental feed entry to every session on this map. `Died` is fanned out to
     // EVERY session on the map, passing the EXACT life identity (item 1 of the Step 6 final
     // correctness pass corrected this from ActorId-only) - MapClientSession.NotifyMonsterDiedAsync
@@ -784,7 +815,7 @@ public sealed class MapTcpServer
         MapLogger.Info($"[iRO MAP DEBUG] Client connected: {endpoint}");
 
         using (client)
-        await using (var session = new MapClientSession(sessionId, client, _charConnector, _world, _worldRuntime))
+        await using (var session = new MapClientSession(sessionId, client, _charConnector, _world, _worldRuntime, FanOutPlayerAttackActionAsync))
         {
             _sessions[sessionId] = session;
             try
