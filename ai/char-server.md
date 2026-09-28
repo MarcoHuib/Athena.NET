@@ -173,12 +173,15 @@ every other gameplay/persistence packet's own gate) updates the registry and for
 total to LoginServer via `LoginServerConnector.TrySendUserCount` (the existing stock `LcUserCount`
 packet, unchanged shape).
 
-LoginServer's own `MapUserCount` (`src/LoginServer/Net/ClientSession.cs`) is intentionally left
-unchanged: it reproduces pinned rAthena's `login_get_usercount`
-(`legacy/rathena/src/login/login.cpp:484-494`) exactly - a population-level CATEGORY (0=low/1=medium/
-2=high/3=over-high/4=disabled) gated by `usercount_low`/`medium`/`high` (default 200/500/1000), never
-a literal player count. One real online player is genuinely category 0 under the default thresholds,
-identical to zero players - correct, verified-pinned behavior, not a bug.
+LoginServer's `SendAcceptLoginAsync` (the current iRO `AC_ACCEPT_LOGIN`/0x0A4D server-list
+serializer, `src/LoginServer/Net/ClientSession.cs`) writes `CharServerInfo.Users` straight onto the
+wire, unmodified - an explicit Athena.NET/current-iRO product choice: the server-select screen shows
+the LITERAL online player count (0/1/2/.../10/...), never a population category. This deliberately
+diverges from pinned rAthena: `MapUserCount` (same file) still exists, unchanged, reproducing pinned
+rAthena's `login_get_usercount` (`legacy/rathena/src/login/login.cpp:484-494`) exactly - a
+population-level CATEGORY (0=low/1=medium/2=high/3=over-high/4=disabled) gated by
+`usercount_low`/`medium`/`high` (default 200/500/1000) - but it is simply no longer wired into this
+one wire path (retained, tested, available for any future non-iRO/legacy-compatible path).
 
 ### Config resolution
 

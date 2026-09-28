@@ -150,42 +150,56 @@ public sealed class ClientSessionWireCharacterizationTests
         }
     }
 
-    // Live bug fix regression: once CharServer aggregates and forwards the real online-player count
-    // (see CharServer.Tests/Net/MapServerSessionUserCountTests.cs and
-    // MapServerRegistryUserCountTests.cs for the rest of the pipeline), LoginServer's own
-    // CharServerInfo.Users for that char-server entry reflects it - this proves the SERVER-LIST
-    // PACKET actually carries that value through to the wire for exactly one online player.
-    //
-    // IMPORTANT: the wire field here is NOT a raw player count. MapUserCount (private, invoked below
-    // via reflection to assert self-consistently against whatever it actually returns) reproduces
-    // pinned rAthena's own login_get_usercount (legacy/rathena/src/login/login.cpp:484-494) EXACTLY:
-    // a population-level CATEGORY (0=low/1=medium/2=high/3=over-high/4=disabled), gated by
-    // usercount_low/medium/high (default 200/500/1000), never the literal number of players. One
-    // real online player is therefore genuinely category 0 under the default (and pinned rAthena's
-    // own default) thresholds - identical to zero players - which is CORRECT, verified-pinned
-    // behavior, not the bug. The bug this branch fixes is that CharServerInfo.Users itself never
-    // moved off its default (0) at all, because CharServer never aggregated/forwarded any count;
-    // this test proves it now does, and that MapUserCount's own category transform is applied
-    // exactly as before (deliberately NOT changed - see this file's own test below proving parity
-    // with pinned rAthena's thresholds).
-    [Fact]
-    public async Task SendAcceptLoginAsync_OneOnlinePlayer_ServerListCarriesTheAggregatedCount()
+    // Live bug (round 2): the counting pipeline was confirmed correct (CharServerInfo.Users really
+    // did reach 1), but the current iRO client still displayed 0 - because SendAcceptLoginAsync was
+    // passing server.Users through MapUserCount's population-CATEGORY transform (0=Smooth at
+    // <=usercount_low, default 200) instead of writing the literal count. Athena.NET/current-iRO
+    // product requirement: the server-select screen shows the ACTUAL online player count, not a
+    // category - deliberately NOT pinned rAthena's own login_get_usercount behavior (see
+    // MapUserCount_MatchesPinnedRAthenaLoginGetUsercountThresholds below, which proves that helper
+    // itself is untouched/still correct - it is simply no longer wired into this one wire path).
+    // These read the actual SERIALIZED 0x0A4D packet at its real field offset, never
+    // CharServerInfo.Users before serialization.
+    [Theory]
+    [InlineData((ushort)0, (ushort)0)]
+    [InlineData((ushort)1, (ushort)1)]
+    [InlineData((ushort)2, (ushort)2)]
+    [InlineData((ushort)200, (ushort)200)] // Exactly at the pinned usercount_low threshold - MapUserCount(200) would be category 0; the literal field must still read 200.
+    public async Task SendAcceptLoginAsync_ServerListCarriesTheLiteralOnlinePlayerCount(ushort users, ushort expectedWireValue)
     {
         using var fixture = ClientSessionFixture.Create();
-        fixture.RegisterCharServer(1, "Chaos", users: 1);
+        fixture.RegisterCharServer(1, "Chaos", users);
 
         var authResult = fixture.CreateAuthResult(accountId: 2000006, loginId1: 1, loginId2: 2, sex: 0, webAuthToken: string.Empty);
         var bytes = await fixture.InvokeSendAcceptLoginAsync(authResult, expectedLength: 96);
 
         var wireUserCount = BinaryPrimitives.ReadUInt16LittleEndian(bytes.AsSpan(64 + 26, 2));
-        var expected = fixture.InvokeMapUserCount(1);
-        Assert.Equal(expected, wireUserCount);
+        Assert.Equal(expectedWireValue, wireUserCount);
     }
 
-    // Pins that MapUserCount reproduces pinned rAthena's login_get_usercount thresholds exactly
-    // (legacy/rathena/src/login/login.cpp:484-494, default usercount_low/medium/high = 200/500/1000)
-    // - evidence that the category transform is intentional, verified-correct behavior and must NOT
-    // be replaced with a raw pass-through.
+    // Explicit proof the two are genuinely different for a value where the category transform would
+    // have masked the bug (1 online player: category 0, literal 1) - the exact live symptom.
+    [Fact]
+    public async Task SendAcceptLoginAsync_OneOnlinePlayer_DivergesFromTheCategoryTransform_AndShowsTheLiteralValue()
+    {
+        using var fixture = ClientSessionFixture.Create();
+        fixture.RegisterCharServer(1, "Chaos", users: 1);
+
+        var authResult = fixture.CreateAuthResult(accountId: 2000007, loginId1: 1, loginId2: 2, sex: 0, webAuthToken: string.Empty);
+        var bytes = await fixture.InvokeSendAcceptLoginAsync(authResult, expectedLength: 96);
+
+        var wireUserCount = BinaryPrimitives.ReadUInt16LittleEndian(bytes.AsSpan(64 + 26, 2));
+        var category = fixture.InvokeMapUserCount(1);
+
+        Assert.Equal((ushort)1, wireUserCount); // The live requirement: literal 1, not category 0.
+        Assert.Equal((ushort)0, category);      // MapUserCount itself is unchanged - still category 0 for 1 user.
+        Assert.NotEqual(category, wireUserCount);
+    }
+
+    // Characterization: MapUserCount reproduces pinned rAthena's login_get_usercount thresholds
+    // exactly (legacy/rathena/src/login/login.cpp:484-494, default usercount_low/medium/high =
+    // 200/500/1000) - retained, tested, and correct, simply no longer wired into the current iRO
+    // server-list path above.
     [Theory]
     [InlineData(0, 0)]
     [InlineData(1, 0)]
