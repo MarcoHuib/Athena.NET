@@ -47,18 +47,57 @@ public sealed class CharacterGameplayStateSession
     // timing log - it never influences the mutation. The per-session _mutationLock serializes EVERY
     // gameplay-state mutation for this character (monster-tick HP mutation, the player's own EXP award,
     // stat/skill changes), so lock wait is measured separately from the persistence round trip.
-    public async Task<CharacterGameplayState?> MutateAsync(Func<CharacterGameplayState, CharacterGameplayState> mutation, CancellationToken cancellationToken, string? reason = null)
+    //
+    // ALWAYS persists the candidate (even when it equals the current state) and returns the persisted
+    // row, whose compare-and-swap also proves the in-memory State is still the durable row. That
+    // contract is unchanged and callers that want "persist exactly what I computed" keep using it.
+    public Task<CharacterGameplayState?> MutateAsync(Func<CharacterGameplayState, CharacterGameplayState> mutation, CancellationToken cancellationToken, string? reason = null) =>
+        MutateCoreAsync(mutation, cancellationToken, reason, skipPersistenceWhenUnchanged: false);
+
+    // OPT-IN no-op-aware variant: identical to MutateAsync EXCEPT that when the candidate the mutation
+    // produces is field-for-field equal to the current State, NO durable write is performed and NO
+    // version bump happens - the current State is returned unchanged (non-null = "applied", exactly the
+    // state a caller would have observed). The equality check runs INSIDE the same per-character
+    // _mutationLock as the read of State, so "unchanged" is decided against the state the mutation
+    // actually saw, never a stale outside read.
+    //
+    // Why opt-in instead of changing MutateAsync for everyone (audit of every MutateAsync caller):
+    //   - CharacterProgressionService.AddExperienceAsync and CharacterHealService.HealAsync already
+    //     return early on an unchanged result BEFORE calling MutateAsync (their own result types
+    //     differ from a bare state, so each owns its no-op decision); they never reach MutateAsync
+    //     with an unchanged candidate.
+    //   - ApplyIncomingMobBasicAttackAsync was the ONLY caller that persisted an unchanged candidate
+    //     (a 0-damage/missed monster attack, or a hit on an already-dead player): one full
+    //     MapServer -> CharServer -> SQL round trip per miss, awaited serially inside the shared
+    //     monster tick (measured live: ~90 ms responseWait for a miss).
+    //   - Stat/skill mutations (IncreaseStatAsync, LearnSkillAsync) never produce an unchanged
+    //     candidate (validation rejects first) and use their own locked paths.
+    //   - No caller relies on a version bump for a logically unchanged mutation, but MutateAsync's
+    //     persisted-row compare-and-swap is also the only freshness check a caller could rely on, so a
+    //     GLOBAL skip would silently remove it for any future caller; making the skip opt-in keeps that
+    //     decision explicit at the call site that owns the semantics.
+    public Task<CharacterGameplayState?> MutateIfChangedAsync(Func<CharacterGameplayState, CharacterGameplayState> mutation, CancellationToken cancellationToken, string? reason = null) =>
+        MutateCoreAsync(mutation, cancellationToken, reason, skipPersistenceWhenUnchanged: true);
+
+    private async Task<CharacterGameplayState?> MutateCoreAsync(Func<CharacterGameplayState, CharacterGameplayState> mutation, CancellationToken cancellationToken, string? reason, bool skipPersistenceWhenUnchanged)
     {
         var lockRequestedAt = CombatTiming.Now();
         await _mutationLock.WaitAsync(cancellationToken);
         var lockAcquiredAt = CombatTiming.Now();
         CharacterGameplayState? persisted = null;
         var expectedVersion = State.Version;
+        var persistence = "called";
         try
         {
             var expected = State;
             expectedVersion = expected.Version;
             var candidate = mutation(expected) with { CharacterId = expected.CharacterId, Version = expected.Version };
+            if (skipPersistenceWhenUnchanged && candidate == expected)
+            {
+                persistence = "skipped-no-op";
+                persisted = expected;
+                return expected;
+            }
             persisted = await _persistence.UpdateAsync(_accountId, expected, candidate, cancellationToken);
             if (persisted is not null) State = persisted;
             return persisted;
@@ -68,7 +107,7 @@ public sealed class CharacterGameplayStateSession
             _mutationLock.Release();
             var endedAt = CombatTiming.Now();
             CombatTiming.Log("GAMEPLAY MUTATE",
-                $"reason={reason ?? "unspecified"} charId={State.CharacterId} expectedVersion={expectedVersion} lockWaitMs={CombatTiming.F(CombatTiming.ElapsedMs(lockRequestedAt, lockAcquiredAt))} persistMs={CombatTiming.F(CombatTiming.ElapsedMs(lockAcquiredAt, endedAt))} totalMs={CombatTiming.F(CombatTiming.ElapsedMs(lockRequestedAt, endedAt))} success={(persisted is not null).ToString().ToLowerInvariant()}");
+                $"reason={reason ?? "unspecified"} charId={State.CharacterId} expectedVersion={expectedVersion} persistence={persistence} lockWaitMs={CombatTiming.F(CombatTiming.ElapsedMs(lockRequestedAt, lockAcquiredAt))} persistMs={CombatTiming.F(CombatTiming.ElapsedMs(lockAcquiredAt, endedAt))} totalMs={CombatTiming.F(CombatTiming.ElapsedMs(lockRequestedAt, endedAt))} success={(persisted is not null).ToString().ToLowerInvariant()}");
         }
     }
 

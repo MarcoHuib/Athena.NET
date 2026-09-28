@@ -90,10 +90,12 @@ public sealed class CombatTimingInstrumentationTests
     }
 
     [Fact]
-    public async Task MutateAsync_NoOpMutation_StillPersistsOnce_CharacterizesCurrentBehavior()
+    public async Task MutateAsync_NoOpMutation_StillPersistsOnce_ContractUnchanged()
     {
-        // Pins CURRENT behavior the timing log exists to measure: there is no equality short-circuit, so
-        // even a mutation that changes nothing (a 0-damage monster attack) performs one persistence call.
+        // MutateAsync's contract is deliberately unchanged: it has no equality short-circuit, so a
+        // candidate equal to the current state still performs one persistence call. The no-op-aware
+        // behavior is the OPT-IN MutateIfChangedAsync (see MonsterAttackNoOpPersistenceTests), used by
+        // the monster-attack HP mutation so a miss no longer costs a CharServer round trip.
         var persistence = new ScriptedPersistence((expected, updated) => updated with { Version = expected.Version + 1 });
         var session = new CharacterGameplayStateSession(2_000_000, State(), persistence);
 

@@ -3169,7 +3169,15 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         if (_gameplayState is null) return null;
 
         var before = _gameplayState.State.CurrentHp;
-        var mutated = await _gameplayState.MutateAsync(current =>
+        // MutateIfChangedAsync (not MutateAsync): a miss / zero-damage hit, or a hit on an already-dead
+        // player, produces a candidate identical to the current state - "nothing happened" must NOT cost
+        // a durable write. The old unconditional MutateAsync performed one full MapServer -> CharServer
+        // -> SQL round trip (and bumped the row version) for every such attack, awaited serially inside
+        // the shared monster tick (measured live: ~90 ms for a miss, stalling the whole map's feed
+        // projection). A real HP change still persists exactly once, unchanged. The unchanged-candidate
+        // decision is made under the per-character mutation lock against the state the callback saw, and
+        // there is no stale-row hazard for a no-op: the compare-and-swap it skips only protects a WRITE.
+        var mutated = await _gameplayState.MutateIfChangedAsync(current =>
         {
             if (current.CurrentHp == 0) return current; // Already dead - no further reduction (pinned status_isdead target check).
             var after = damage >= current.CurrentHp ? 0u : current.CurrentHp - damage;

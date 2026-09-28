@@ -66,11 +66,13 @@ public sealed class MapClientSessionMonsterCombatTests
     private sealed class RecordingGameplayStatePersistence(CharacterGameplayState state) : ICharacterGameplayStatePersistence
     {
         public int Updates { get; private set; }
+        // When set, every update is REJECTED (returns null), like a CharServer persistence failure.
+        public bool FailUpdates { get; set; }
         public Task<CharacterGameplayState?> GetAsync(uint accountId, uint charId, CancellationToken cancellationToken) => Task.FromResult<CharacterGameplayState?>(state);
         public Task<CharacterGameplayState?> UpdateAsync(uint accountId, CharacterGameplayState expected, CharacterGameplayState updated, CancellationToken cancellationToken)
         {
             Updates++;
-            return Task.FromResult<CharacterGameplayState?>(updated);
+            return Task.FromResult<CharacterGameplayState?>(FailUpdates ? null : updated);
         }
     }
 
@@ -884,6 +886,121 @@ public sealed class MapClientSessionMonsterCombatTests
         await stream.WriteAsync(new byte[] { 0x1c, 0x0b });
         var next = await ReadExact(stream, 2);
         Assert.Equal((short)PacketConstants.ZcPingLive, BinaryPrimitives.ReadInt16LittleEndian(next)); // No pickup ack was sent.
+
+        client.Close();
+        await run.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    // Normal Poring (pinned mob_db.yml Id 1002): non-zero raw BaseExp/JobExp 150/40, used by the two
+    // lethal-tail EXP tests below. StrongNovice is already at max Base/Job level, so the award is
+    // capped-in-place: it changes the persisted state (EXP) without any level-up.
+    private static MobDefinition ExpBearingPoring() => new(1002, "PORING", "Poring", 1, 55, 1, 1, 2, 5,
+        6, 1, 1, 0, 6, 5, 1, 400, 1872, 672, 480, 150, 40,
+        MobMode.CanMove | MobMode.CanAttack,
+        new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "legacy/rathena/db/re/mob_db.yml", 136));
+
+    // Problem 2 (ORDERING, characterized - deliberately UNCHANGED): the lethal tail is
+    //   damage -> HP=0 -> EXP persistence -> progression packets -> death vanish.
+    // Pinned rAthena grants EXP synchronously in mob_dead (pc_gainexp sends the status packets at once)
+    // and only THEN clears the unit, DELAYED by 250 ms (mob.cpp:3636 clif_clearunit_delayed(CLR_DEAD,
+    // tick+250)); Athena's persist -> update -> notify rule means the EXP packets follow a durable
+    // write. Moving the vanish ahead of the EXP packets would invert the reference order without any
+    // capture evidence (the captured G_PORING kills award 0 EXP, so no capture shows EXP/vanish
+    // adjacency). This test pins the exact order so any future change is a conscious one.
+    [Fact]
+    public async Task Attack_LethalHit_WithExpNoLevelUp_PersistsOnce_SendsProgressionPacketsBeforeDeathVanish()
+    {
+        var (client, stream, session, run, target) = await SetupAsync(
+            new RecordingInventoryPersistence(), CharacterQuestStatus.Absent, mobDefinition: ExpBearingPoring());
+        using var _ = client;
+
+        await stream.WriteAsync(new byte[] { 0x7d, 0x00, 0xaa });
+        await ReadExact(stream, 15);
+        await ReadExact(stream, 6);
+        await ReadExact(stream, 4);
+        var actorId = BinaryPrimitives.ReadUInt32LittleEndian((await ReadDynamic(stream)).AsSpan(5));
+
+        var postDeathIds = new List<short>();
+        for (var i = 0; i < 20 && IsAlive(target); i++)
+        {
+            await stream.WriteAsync(AttackPacket(actorId));
+            await ReadFixposAsync(stream);
+            await ReadDamageAndHpInfoAsync(stream); // damage packet, then HP packet (HP=0 on the lethal hit)
+            if (IsAlive(target)) continue;
+            while (true)
+            {
+                var header = await ReadExact(stream, 2);
+                var id = BinaryPrimitives.ReadInt16LittleEndian(header);
+                var length = id switch
+                {
+                    PacketConstants.ZcLongLongParameterChange => 12,
+                    PacketConstants.ZcNotifyExperience => PacketConstants.ZcNotifyExperienceLength,
+                    PacketConstants.ZcNotifyEffect => PacketConstants.ZcNotifyEffectLength,
+                    PacketConstants.ZcParameterChange => 8,
+                    PacketConstants.ZcNotifyVanish => PacketConstants.ZcNotifyVanishLength,
+                    _ => throw new InvalidDataException($"Unexpected post-death packet 0x{id:X4}."),
+                };
+                await ReadExact(stream, length - 2);
+                postDeathIds.Add(id);
+                if (id == PacketConstants.ZcNotifyVanish) break;
+            }
+        }
+
+        Assert.False(IsAlive(target));
+        Assert.Equal(PacketConstants.ZcNotifyVanish, postDeathIds[^1]);                     // The vanish is the LAST post-death packet...
+        Assert.Contains(PacketConstants.ZcNotifyExperience, postDeathIds.Take(postDeathIds.Count - 1)); // ...after the EXP packets.
+        Assert.Equal(2, postDeathIds.Count(id => id == PacketConstants.ZcNotifyExperience));  // Base + Job gain.
+        Assert.Equal(0, postDeathIds.Count(id => id == PacketConstants.ZcNotifyEffect));      // No level-up visual.
+        Assert.Equal(1, _lastGameplayPersistence!.Updates);                                   // EXP persisted exactly once.
+        Assert.Equal(150UL, session.GameplayState!.State.BaseExperience);
+        Assert.Equal(40UL, session.GameplayState.State.JobExperience);
+        Assert.Equal((ushort)99, session.GameplayState.State.BaseLevel);
+
+        client.Close();
+        await run.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    // Failure policy after an authoritative death (documented, unchanged): World has ALREADY committed
+    // the kill, so a CharServer EXP persistence rejection does not resurrect the monster or block its
+    // projection - the damage/HP=0/vanish still reach the client, NO progression packets are sent, the
+    // in-memory state is NOT mutated (no phantom EXP), and a warning is logged. The EXP for that kill is
+    // not retried (World's AttackSequence ledger makes a replay of the same hit return the original
+    // result, and a fresh hit on a dead monster is AlreadyDead), so it is lost - loudly, never silently.
+    [Fact]
+    public async Task Attack_LethalHit_ExpPersistenceFails_StillVanishesMonster_NoProgressionPackets_StateUnchanged()
+    {
+        var (client, stream, session, run, target) = await SetupAsync(
+            new RecordingInventoryPersistence(), CharacterQuestStatus.Absent, mobDefinition: ExpBearingPoring());
+        using var _ = client;
+        _lastGameplayPersistence!.FailUpdates = true;
+
+        await stream.WriteAsync(new byte[] { 0x7d, 0x00, 0xaa });
+        await ReadExact(stream, 15);
+        await ReadExact(stream, 6);
+        await ReadExact(stream, 4);
+        var actorId = BinaryPrimitives.ReadUInt32LittleEndian((await ReadDynamic(stream)).AsSpan(5));
+
+        for (var i = 0; i < 20 && IsAlive(target); i++)
+        {
+            await stream.WriteAsync(AttackPacket(actorId));
+            await ReadFixposAsync(stream);
+            await ReadDamageAndHpInfoAsync(stream);
+            if (IsAlive(target)) continue;
+            // The very next packet is the death vanish: no progression packet in between.
+            var vanish = await ReadExact(stream, PacketConstants.ZcNotifyVanishLength);
+            Assert.Equal((short)PacketConstants.ZcNotifyVanish, BinaryPrimitives.ReadInt16LittleEndian(vanish));
+            Assert.Equal(actorId, BinaryPrimitives.ReadUInt32LittleEndian(vanish.AsSpan(2)));
+            Assert.Equal(PacketConstants.ZcNotifyVanishReasonDied, vanish[6]);
+        }
+
+        Assert.False(IsAlive(target));
+        await stream.WriteAsync(new byte[] { 0x1c, 0x0b });
+        var next = await ReadExact(stream, 2);
+        Assert.Equal((short)PacketConstants.ZcPingLive, BinaryPrimitives.ReadInt16LittleEndian(next)); // Nothing else followed.
+        Assert.Equal(1, _lastGameplayPersistence.Updates);                    // The write was attempted...
+        Assert.Equal(0UL, session.GameplayState!.State.BaseExperience);       // ...and NOT applied locally.
+        Assert.Equal(0UL, session.GameplayState.State.JobExperience);
+        Assert.Equal(1UL, session.GameplayState.State.Version);
 
         client.Close();
         await run.WaitAsync(TimeSpan.FromSeconds(5));
