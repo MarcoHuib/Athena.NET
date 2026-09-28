@@ -4712,7 +4712,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
                     currentHp: instance.CurrentHp,
                     maxHp: instance.MaxHp);
                 await WriteAsync(walkingDiscoveryPacket, cancellationToken);
-                MapLogger.Info($"[iRO MAP DEBUG] Sent 0x09FD walk discovery actorId={actor.ActorId} incarnationId={instance.IncarnationId.Value} map={_mapName} from=({position.X},{position.Y}) to=({walkingDiscoveryDestination.X},{walkingDiscoveryDestination.Y}) playerPosition=({_x},{_y}) accountId={_accountId} {DebugRecordWalkPacket(actor.ActorId, position.X, position.Y, walkingDiscoveryDestination.X, walkingDiscoveryDestination.Y)} feed={feedContext ?? "none"} t={DebugNowMs()}ms");
+                if (MonsterDebugLog.Verbose) MapLogger.Info($"[iRO MAP DEBUG] Sent 0x09FD walk discoveryactorId={actor.ActorId} incarnationId={instance.IncarnationId.Value} map={_mapName} from=({position.X},{position.Y}) to=({walkingDiscoveryDestination.X},{walkingDiscoveryDestination.Y}) playerPosition=({_x},{_y}) accountId={_accountId} {DebugRecordWalkPacket(actor.ActorId, position.X, position.Y, walkingDiscoveryDestination.X, walkingDiscoveryDestination.Y)} feed={feedContext ?? "none"} t={DebugNowMs()}ms");
                 return;
             }
 
@@ -4727,7 +4727,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
                 currentHp: instance.CurrentHp,
                 maxHp: instance.MaxHp);
             await WriteAsync(standPacket, cancellationToken);
-            MapLogger.Info($"[iRO MAP DEBUG] Sent 0x09FF stand discovery actorId={actor.ActorId} incarnationId={instance.IncarnationId.Value} map={_mapName} position=({position.X},{position.Y}) playerPosition=({_x},{_y}) accountId={_accountId} feed={feedContext ?? "none"} t={DebugNowMs()}ms");
+            if (MonsterDebugLog.Verbose) MapLogger.Info($"[iRO MAP DEBUG] Sent 0x09FF stand discoveryactorId={actor.ActorId} incarnationId={instance.IncarnationId.Value} map={_mapName} position=({position.X},{position.Y}) playerPosition=({_x},{_y}) accountId={_accountId} feed={feedContext ?? "none"} t={DebugNowMs()}ms");
             return;
         }
 
@@ -4763,7 +4763,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
                 // 0x0088 is sent, at the mob's authoritative CURRENT cell.
                 var fixPosPacket = IroMonsterActorPackets.BuildStopMove(actor.ActorId, position.X, position.Y);
                 await WriteAsync(fixPosPacket, cancellationToken);
-                MapLogger.Info($"[iRO MAP DEBUG] Sent 0x0088 fixpos mobActorId={actor.ActorId} accountId={_accountId} mobPosition=({position.X},{position.Y}) {DebugSinceLastWalk(actor.ActorId)} feed={feedContext ?? "none"} t={DebugNowMs()}ms");
+                if (MonsterDebugLog.Verbose) MapLogger.Info($"[iRO MAP DEBUG] Sent 0x0088 fixposmobActorId={actor.ActorId} accountId={_accountId} mobPosition=({position.X},{position.Y}) {DebugSinceLastWalk(actor.ActorId)} feed={feedContext ?? "none"} t={DebugNowMs()}ms");
                 return;
 
             case WorldMonsterMovementKind.WalkStarted:
@@ -4781,7 +4781,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
                     currentHp: instance.CurrentHp,
                     maxHp: instance.MaxHp);
                 await WriteAsync(walkPacket, cancellationToken);
-                MapLogger.Info($"[iRO MAP DEBUG] Sent 0x09FD walk-entry mobActorId={actor.ActorId} accountId={_accountId} from=({position.X},{position.Y}) to=({destination.X},{destination.Y}) {DebugRecordWalkPacket(actor.ActorId, position.X, position.Y, destination.X, destination.Y)} feed={feedContext ?? "none"} t={DebugNowMs()}ms");
+                if (MonsterDebugLog.Verbose) MapLogger.Info($"[iRO MAP DEBUG] Sent 0x09FD walk-entrymobActorId={actor.ActorId} accountId={_accountId} from=({position.X},{position.Y}) to=({destination.X},{destination.Y}) {DebugRecordWalkPacket(actor.ActorId, position.X, position.Y, destination.X, destination.Y)} feed={feedContext ?? "none"} t={DebugNowMs()}ms");
                 return;
         }
     }
@@ -4818,10 +4818,10 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         DebugForgetWalkPacket(actorId);
         if (!_visibleActorIds.TryMarkNotVisible(actorId))
         {
-            MapLogger.Info($"[iRO MAP DEBUG] Monster vanish suppressed (already not visible) actorId={actorId} incarnationId={incarnation.Value} map={_mapName} lastProjectedPosition={positionLabel} playerPosition=({_x},{_y}) accountId={_accountId} reason={reasonLabel} wireReason={reason} feed={feedContext ?? "none"} t={DebugNowMs()}ms");
+            if (MonsterDebugLog.Verbose) MapLogger.Info($"[iRO MAP DEBUG] Monster vanish suppressed(already not visible) actorId={actorId} incarnationId={incarnation.Value} map={_mapName} lastProjectedPosition={positionLabel} playerPosition=({_x},{_y}) accountId={_accountId} reason={reasonLabel} wireReason={reason} feed={feedContext ?? "none"} t={DebugNowMs()}ms");
             return;
         }
-        MapLogger.Info($"[iRO MAP DEBUG] Sending 0x0080 vanish actorId={actorId} incarnationId={incarnation.Value} map={_mapName} lastProjectedPosition={positionLabel} playerPosition=({_x},{_y}) accountId={_accountId} reason={reasonLabel} wireReason={reason} feed={feedContext ?? "none"} t={DebugNowMs()}ms");
+        if (MonsterDebugLog.Verbose) MapLogger.Info($"[iRO MAP DEBUG] Sending 0x0080 vanishactorId={actorId} incarnationId={incarnation.Value} map={_mapName} lastProjectedPosition={positionLabel} playerPosition=({_x},{_y}) accountId={_accountId} reason={reasonLabel} wireReason={reason} feed={feedContext ?? "none"} t={DebugNowMs()}ms");
         await WriteAsync(IroMonsterCombatPackets.BuildNotifyVanish(actorId, reason), cancellationToken);
     }
 

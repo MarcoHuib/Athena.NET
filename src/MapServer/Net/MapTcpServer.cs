@@ -414,12 +414,17 @@ public sealed class MapTcpServer
         // whitespace map ids, so grouping such a session together with real sessions (or polling for
         // map id "") is a bug this filter exists to prevent, never merely a cosmetic grouping choice.
         var eligibleSessions = sessions.Where(session => session.IsWorldMapEligible).ToArray();
+        // DEBUG-LOG-ONLY tick timing (see MonsterTickTiming) - never read by any decision.
+        var tickStartedAt = Stopwatch.GetTimestamp();
+        var timing = new MonsterTickTiming();
         foreach (var mapGroup in eligibleSessions.GroupBy(session => session.CurrentMapName, StringComparer.OrdinalIgnoreCase))
         {
             if (_permanentlyFailedMaps.ContainsKey(mapGroup.Key)) continue; // Item 7: a deterministic invariant failure already logged for this map - never hot-loop retrying it.
+            timing.MapCount++;
+            var mapPollStartedAt = Stopwatch.GetTimestamp();
             try
             {
-                await PollAndReconcileMapAsync(mapGroup.Key, mapGroup.ToArray(), cancellationToken);
+                await PollAndReconcileMapAsync(mapGroup.Key, mapGroup.ToArray(), timing, cancellationToken);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -451,6 +456,7 @@ public sealed class MapTcpServer
                 // tick's own poll naturally retries from the same, unadvanced cursor.
                 MapLogger.Error($"[WORLD] Transient World RPC failure reconciling map '{mapGroup.Key}' - other maps still proceed, this map retries next tick: {ex}");
             }
+            timing.PollAndReconcileTicks += Stopwatch.GetTimestamp() - mapPollStartedAt;
             // Item 3's own correction: the earlier broad, UNCONDITIONAL `catch (Exception ex)` that
             // used to sit here (with no `when` filter) would have caught EVERY exception type not
             // already classified as deterministic/transient above - including a genuine local
@@ -463,7 +469,11 @@ public sealed class MapTcpServer
             // it behind an infinite per-map retry.
         }
 
+        var cadenceStartedAt = Stopwatch.GetTimestamp();
         var cadenceResult = await _cadenceExecutor.ProcessAsync(eligibleSessions, cancellationToken);
+        timing.CadenceTicks = Stopwatch.GetTimestamp() - cadenceStartedAt;
+        timing.AttackActions = cadenceResult.AttackActions.Count;
+        timing.SessionCount = eligibleSessions.Length;
         foreach (var session in eligibleSessions)
         {
             // NotifyMonsterAttackOutcomeAsync owns its own visibility/victim rules internally
@@ -472,6 +482,7 @@ public sealed class MapTcpServer
             // per session per outcome.
             foreach (var action in cadenceResult.AttackActions)
             {
+                var outcomeStartedAt = Stopwatch.GetTimestamp();
                 try
                 {
                     await session.NotifyMonsterAttackOutcomeAsync(action, cancellationToken);
@@ -484,6 +495,7 @@ public sealed class MapTcpServer
                 {
                     // Server shutdown.
                 }
+                timing.OutcomeFanOutTicks += Stopwatch.GetTimestamp() - outcomeStartedAt;
             }
 
             // Item 6 of the Step 6 correctness-hardening pass: retry any pending World life-state
@@ -492,6 +504,7 @@ public sealed class MapTcpServer
             // the transition that created it - a transient RPC failure must not leave a player
             // locally Dead while World indefinitely still reports IsAlive=true. A no-op call
             // (no RPC at all) when nothing is pending for this session.
+            var pendingLifeStartedAt = Stopwatch.GetTimestamp();
             try
             {
                 await session.TryReconcilePendingLifeStateAsync(cancellationToken);
@@ -504,7 +517,47 @@ public sealed class MapTcpServer
             {
                 // Server shutdown.
             }
+            timing.PendingLifeTicks += Stopwatch.GetTimestamp() - pendingLifeStartedAt;
         }
+
+        LogTickTimingSummary(timing, Stopwatch.GetTimestamp() - tickStartedAt);
+    }
+
+    // DEBUG-LOG-ONLY per-tick timing (no behavior, not guarded by the verbose toggle): raw
+    // Stopwatch ticks accumulated by ProcessOneMonsterTickAsync/PollAndReconcileMapAsync and turned
+    // into ONE summary line only for a tick that is slow (>= TickSummaryThresholdMs) or that carried a
+    // monster attack. Answers "where did start-to-start > 100 ms go" without a telemetry framework.
+    private sealed class MonsterTickTiming
+    {
+        public long PollAndReconcileTicks;
+        public long PollRpcTicks;
+        public long CadenceTicks;
+        public long OutcomeFanOutTicks;
+        public long PendingLifeTicks;
+        public int Entries;
+        public int AttackActions;
+        public int MapCount;
+        public int SessionCount;
+    }
+
+    private const double TickSummaryThresholdMs = 15;
+
+    private static double TicksToMs(long ticks) => Stopwatch.GetElapsedTime(0, ticks).TotalMilliseconds;
+
+    private static void LogTickTimingSummary(MonsterTickTiming timing, long totalTicks)
+    {
+        var totalMs = TicksToMs(totalTicks);
+        if (totalMs < TickSummaryThresholdMs && timing.AttackActions == 0) return;
+
+        static string F(double value) => value.ToString("F1", System.Globalization.CultureInfo.InvariantCulture);
+        var pollReconcileMs = TicksToMs(timing.PollAndReconcileTicks);
+        var pollRpcMs = TicksToMs(timing.PollRpcTicks);
+        MapLogger.Info(
+            $"[iRO MAP DEBUG] Monster tick timing totalMs={F(totalMs)} pollAndReconcileMs={F(pollReconcileMs)} pollRpcMs={F(pollRpcMs)} " +
+            $"applyAndFanOutMs={F(Math.Max(0, pollReconcileMs - pollRpcMs))} cadenceMs={F(TicksToMs(timing.CadenceTicks))} " +
+            $"outcomeFanOutMs={F(TicksToMs(timing.OutcomeFanOutTicks))} pendingLifeMs={F(TicksToMs(timing.PendingLifeTicks))} " +
+            $"entries={timing.Entries} attackActions={timing.AttackActions} maps={timing.MapCount} sessions={timing.SessionCount} " +
+            $"t={F(Stopwatch.GetElapsedTime(0).TotalMilliseconds)}ms");
     }
 
     // Polls World's monster feed for exactly ONE map and applies the BINDING bootstrap/resync/
@@ -515,7 +568,7 @@ public sealed class MapTcpServer
     //     1. projection  2. combat-state  3. every active session  4. THEN advance the cursor
     //   Ready with incremental Entries -> apply each entry in order, fan out any resulting movement
     //     packet per WorldMonsterMovementKind, THEN advance the cursor
-    private async Task PollAndReconcileMapAsync(string mapId, IReadOnlyCollection<MapClientSession> mapSessions, CancellationToken cancellationToken)
+    private async Task PollAndReconcileMapAsync(string mapId, IReadOnlyCollection<MapClientSession> mapSessions, MonsterTickTiming timing, CancellationToken cancellationToken)
     {
         var projection = _world.MonsterProjections.GetOrCreate(mapId);
         WorldMonsterFeedPage page;
@@ -525,8 +578,10 @@ public sealed class MapTcpServer
         {
             page = await _worldRuntime.PollMonsterFeedAsync(cursorBeforePoll, mapId, cancellationToken);
         }
-        catch (IOException) { return; }
-        catch (OperationCanceledException) { return; }
+        catch (IOException) { timing.PollRpcTicks += Stopwatch.GetTimestamp() - pollStartedAt; return; }
+        catch (OperationCanceledException) { timing.PollRpcTicks += Stopwatch.GetTimestamp() - pollStartedAt; return; }
+        timing.PollRpcTicks += Stopwatch.GetTimestamp() - pollStartedAt;
+        timing.Entries += page.Entries?.Count ?? 0;
         LogFeedPollDiagnostics(mapId, page, cursorBeforePoll, pollStartedAt);
 
         if (page.Status == WorldMonsterFeedStatus.SpawnInitializationRequired)
@@ -571,6 +626,7 @@ public sealed class MapTcpServer
 
     private void LogFeedPollDiagnostics(string mapId, WorldMonsterFeedPage page, WorldMonsterFeedCursor? cursorBeforePoll, long pollStartedAt)
     {
+        if (!MonsterDebugLog.Verbose) return;
         var finishedAt = Stopwatch.GetTimestamp();
         var rpcMs = Stopwatch.GetElapsedTime(pollStartedAt, finishedAt).TotalMilliseconds;
         var previous = _debugLastPollTimestampByMap.TryGetValue(mapId, out var previousStart) ? previousStart : (long?)null;

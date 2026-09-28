@@ -102,8 +102,13 @@ internal sealed class MonsterAttackCadenceExecutor(
 
         await _beforeFinalAttackRevalidation();
 
+        // DEBUG-LOG-ONLY attack-path timing (never read by any decision): the three awaited steps that
+        // run serially inside the shared monster tick for every attack that actually lands. Used to
+        // attribute the extra tick time observed right after a monster attack.
+        var validateStartedAt = System.Diagnostics.Stopwatch.GetTimestamp();
         var windowResult = await worldRuntime.ValidateMonsterAttackWindowAsync(
             new WorldMonsterAttackWindowQuery(life, target.CharacterId, target.PresenceId), cancellationToken);
+        var validateEndedAt = System.Diagnostics.Stopwatch.GetTimestamp();
         if (windowResult.Status != WorldMonsterAttackWindowStatus.Valid)
         {
             MapLogger.Info($"[iRO MAP DEBUG] Mob attack rejected mobActorId={monster.ActorId} targetCharacterId={target.CharacterId} reason={windowResult.Status}");
@@ -114,6 +119,7 @@ internal sealed class MonsterAttackCadenceExecutor(
         // that is genuinely MapServer-local (the attacking player's own live session/gameplay
         // state), preserved unchanged around HP mutation.
         var freshSnapshot = await TrySnapshotAsync(targetSession, cancellationToken);
+        var snapshotEndedAt = System.Diagnostics.Stopwatch.GetTimestamp();
         if (freshSnapshot is not { IsAlive: true } combatSnapshot) return null;
 
         var staticMob = Athena.Net.MapServer.Generated.GameData.Mobs.GeneratedMobRegistry.Get(monster.MobId);
@@ -128,7 +134,15 @@ internal sealed class MonsterAttackCadenceExecutor(
         {
             applied = null; // Client disconnected mid-attack application; the orchestrator's own session cleanup removes it.
         }
+        var applyEndedAt = System.Diagnostics.Stopwatch.GetTimestamp();
         if (applied is not { } hpOutcome) return null; // MutateAsync rejected a stale row - do not emit a successful attack result, and do not consume a cadence slot for an attack that never actually landed.
+
+        MapLogger.Info(
+            $"[iRO MAP DEBUG] Mob attack timing mobActorId={monster.ActorId} " +
+            $"validateWindowMs={System.Diagnostics.Stopwatch.GetElapsedTime(validateStartedAt, validateEndedAt).TotalMilliseconds.ToString("F1", System.Globalization.CultureInfo.InvariantCulture)} " +
+            $"snapshotMs={System.Diagnostics.Stopwatch.GetElapsedTime(validateEndedAt, snapshotEndedAt).TotalMilliseconds.ToString("F1", System.Globalization.CultureInfo.InvariantCulture)} " +
+            $"applyHpMutationMs={System.Diagnostics.Stopwatch.GetElapsedTime(snapshotEndedAt, applyEndedAt).TotalMilliseconds.ToString("F1", System.Globalization.CultureInfo.InvariantCulture)} " +
+            $"damage={result.Damage} hpChanged={hpOutcome.HpChanged}");
 
         // Item 6 of the Step 6 correctness-hardening pass: NextAttackAt is advanced ONLY after the
         // local player HP mutation actually succeeded above - a persistence rejection/disconnect
