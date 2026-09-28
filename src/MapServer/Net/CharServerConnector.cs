@@ -60,6 +60,15 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
 
     public bool IsConnected => _connection != null;
 
+    // Set once by MapTcpServer (the only production caller) right after construction - lets this
+    // connector recompute and re-announce the CURRENT authenticated-player count the instant a
+    // (re)connection to CharServer succeeds, exactly like TrySendMapListAsync already re-announces
+    // this process's served maps on every (re)connect. Without this, a MapServer that reconnects
+    // after a transient CharServer outage would leave CharServer's own aggregate permanently missing
+    // this process's contribution until the next unrelated auth/disconnect event happened to trigger
+    // a fresh report.
+    public Func<uint>? CurrentUserCountProvider { get; set; }
+
     public Task WaitUntilReadyAsync(CancellationToken cancellationToken)
         => _initialReady.Task.WaitAsync(cancellationToken);
 
@@ -335,6 +344,7 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
             _connection = connection;
             _initialReady.TrySetResult(true);
             _ = TrySendMapListAsync();
+            if (CurrentUserCountProvider is { } currentUserCountProvider) _ = TrySendUserCountAsync(currentUserCountProvider());
 
             await ListenAsync(stream, cancellationToken);
             _connection = null;
@@ -926,6 +936,26 @@ public sealed class CharServerConnector : ICharacterPositionPersistence, ICharac
         var buffer = new byte[4];
         BinaryPrimitives.WriteInt16LittleEndian(buffer.AsSpan(0, 2), PacketConstants.MapSendMaps);
         BinaryPrimitives.WriteUInt16LittleEndian(buffer.AsSpan(2, 2), 4);
+        return connection.WriteAsync(buffer, CancellationToken.None);
+    }
+
+    // Reports THIS MapServer process's own current authenticated-player count to CharServer as an
+    // absolute snapshot (never a delta - see MapServerRegistry.UpdateUserCount's own doc comment on
+    // the CharServer side). Public: MapTcpServer calls this the instant a session authenticates or
+    // an authenticated session disconnects, so CharServer's own aggregate stays correct without any
+    // polling lag. A no-op (Task.CompletedTask) while not currently connected - CurrentUserCountProvider
+    // above covers the reconnect case instead.
+    public Task TrySendUserCountAsync(uint count)
+    {
+        var connection = _connection;
+        if (connection == null)
+        {
+            return Task.CompletedTask;
+        }
+
+        var buffer = new byte[6];
+        BinaryPrimitives.WriteInt16LittleEndian(buffer.AsSpan(0, 2), PacketConstants.MapSendUserCount);
+        BinaryPrimitives.WriteUInt32LittleEndian(buffer.AsSpan(2, 4), count);
         return connection.WriteAsync(buffer, CancellationToken.None);
     }
 

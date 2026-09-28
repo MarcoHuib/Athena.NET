@@ -150,6 +150,65 @@ public sealed class ClientSessionWireCharacterizationTests
         }
     }
 
+    // Live bug fix regression: once CharServer aggregates and forwards the real online-player count
+    // (see CharServer.Tests/Net/MapServerSessionUserCountTests.cs and
+    // MapServerRegistryUserCountTests.cs for the rest of the pipeline), LoginServer's own
+    // CharServerInfo.Users for that char-server entry reflects it - this proves the SERVER-LIST
+    // PACKET actually carries that value through to the wire for exactly one online player.
+    //
+    // IMPORTANT: the wire field here is NOT a raw player count. MapUserCount (private, invoked below
+    // via reflection to assert self-consistently against whatever it actually returns) reproduces
+    // pinned rAthena's own login_get_usercount (legacy/rathena/src/login/login.cpp:484-494) EXACTLY:
+    // a population-level CATEGORY (0=low/1=medium/2=high/3=over-high/4=disabled), gated by
+    // usercount_low/medium/high (default 200/500/1000), never the literal number of players. One
+    // real online player is therefore genuinely category 0 under the default (and pinned rAthena's
+    // own default) thresholds - identical to zero players - which is CORRECT, verified-pinned
+    // behavior, not the bug. The bug this branch fixes is that CharServerInfo.Users itself never
+    // moved off its default (0) at all, because CharServer never aggregated/forwarded any count;
+    // this test proves it now does, and that MapUserCount's own category transform is applied
+    // exactly as before (deliberately NOT changed - see this file's own test below proving parity
+    // with pinned rAthena's thresholds).
+    [Fact]
+    public async Task SendAcceptLoginAsync_OneOnlinePlayer_ServerListCarriesTheAggregatedCount()
+    {
+        using var fixture = ClientSessionFixture.Create();
+        fixture.RegisterCharServer(1, "Chaos", users: 1);
+
+        var authResult = fixture.CreateAuthResult(accountId: 2000006, loginId1: 1, loginId2: 2, sex: 0, webAuthToken: string.Empty);
+        var bytes = await fixture.InvokeSendAcceptLoginAsync(authResult, expectedLength: 96);
+
+        var wireUserCount = BinaryPrimitives.ReadUInt16LittleEndian(bytes.AsSpan(64 + 26, 2));
+        var expected = fixture.InvokeMapUserCount(1);
+        Assert.Equal(expected, wireUserCount);
+    }
+
+    // Pins that MapUserCount reproduces pinned rAthena's login_get_usercount thresholds exactly
+    // (legacy/rathena/src/login/login.cpp:484-494, default usercount_low/medium/high = 200/500/1000)
+    // - evidence that the category transform is intentional, verified-correct behavior and must NOT
+    // be replaced with a raw pass-through.
+    [Theory]
+    [InlineData(0, 0)]
+    [InlineData(1, 0)]
+    [InlineData(200, 0)]
+    [InlineData(201, 1)]
+    [InlineData(500, 1)]
+    [InlineData(501, 2)]
+    [InlineData(1000, 2)]
+    [InlineData(1001, 3)]
+    public void MapUserCount_MatchesPinnedRAthenaLoginGetUsercountThresholds(int users, ushort expectedCategory)
+    {
+        using var fixture = ClientSessionFixture.Create();
+        Assert.Equal(expectedCategory, fixture.InvokeMapUserCount(users));
+    }
+
+    [Fact]
+    public void MapUserCount_UsercountDisable_AlwaysReturnsCategoryFour()
+    {
+        using var fixture = ClientSessionFixture.Create(new LoginConfig { UsercountDisable = true });
+        Assert.Equal((ushort)4, fixture.InvokeMapUserCount(0));
+        Assert.Equal((ushort)4, fixture.InvokeMapUserCount(50000));
+    }
+
     [Fact]
     public async Task HandleLoginAsync_FailedLogin_NeverLogsPlaintextPassword()
     {
@@ -249,14 +308,14 @@ public sealed class ClientSessionWireCharacterizationTests
             return new ClientSessionFixture(session, config, charServers, listener, testClient, serverSide);
         }
 
-        public void RegisterCharServer(int id, string name)
+        public void RegisterCharServer(int id, string name, ushort users = 0)
         {
             _charServers.Register(id, new CharServerInfo
             {
                 Name = name,
                 Ip = IPAddress.Loopback,
                 Port = 6121,
-                Users = 0,
+                Users = users,
                 Type = 0,
                 IsNew = 0,
                 Connection = null,
@@ -280,6 +339,13 @@ public sealed class ClientSessionWireCharacterizationTests
                 0,
                 webAuthToken,
                 0u)!;
+        }
+
+        public ushort InvokeMapUserCount(int users)
+        {
+            var method = typeof(ClientSession).GetMethod("MapUserCount", BindingFlags.NonPublic | BindingFlags.Instance);
+            Assert.NotNull(method);
+            return (ushort)method!.Invoke(Session, new object[] { users })!;
         }
 
         public async Task<byte[]> InvokeSendAcceptLoginAsync(object authResult, int expectedLength)

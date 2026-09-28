@@ -358,11 +358,13 @@ public sealed class MapServerSessionServiceAuthTests : IDisposable
             var tokenProvider = new MapServerServiceTokenProvider(secrets);
             var serviceAuth = new MapServiceAuthenticationService(tokenProvider);
 
+            var loginConnector = new LoginServerConnector(configStore, new CharServerServiceTokenProvider(new SecretConfig()));
             var session = new MapServerSession(
                 sessionId: 1,
                 client: serverSide,
                 configStore: configStore,
                 registry: registry,
+                loginConnector: loginConnector,
                 authManager: authManager,
                 dbFactory: () => null,
                 serviceAuth: serviceAuth,

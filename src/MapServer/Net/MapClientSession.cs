@@ -272,6 +272,11 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     // every existing test fixture) means no cross-session ordering is needed/available; this session's
     // own per-session LethalDeathProjectionArbiter still protects its OWN Died-vs-action race either way.
     private readonly LethalAttackProjectionGate? _lethalAttackGate;
+    // Invoked exactly once, synchronously, the instant CompleteIroAuthenticationAsync's own success
+    // tail sets _authenticated - lets MapTcpServer (the only production caller) recompute and report
+    // its own authenticated-player count to CharServer immediately, rather than on a polling cadence.
+    // Null (every existing test fixture / standalone tool) is a safe no-op.
+    private readonly Action? _onAuthenticated;
     // Item 3 of the Step 6 correctness-hardening pass: the single, internally-synchronized owner of
     // "which monster ActorIds this session currently believes are visible, at which IncarnationId"
     // plus "the last SimulationEpoch this session fully reconciled against" - see
@@ -419,11 +424,12 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     // caller, including every existing test fixture) falls back to notifying only this session -
     // see NotifyPlayerAttackActionAsync's own call sites for exactly where that fallback applies.
     public MapClientSession(int sessionId, TcpClient client, CharServerConnector charConnector, MapServerWorld world, IWorldRuntime worldRuntime,
-        Func<PlayerAttackActionOutcome, CancellationToken, Task>? playerAttackFanout = null, LethalAttackProjectionGate? lethalAttackGate = null)
+        Func<PlayerAttackActionOutcome, CancellationToken, Task>? playerAttackFanout = null, LethalAttackProjectionGate? lethalAttackGate = null,
+        Action? onAuthenticated = null)
         : this(sessionId, client, charConnector, world.Maps, monsterProjections: world.MonsterProjections, combat: world.Combat,
                movementPathProvider: world.MovementPathProvider, collisionProvider: world.Collision, rates: world.Rates,
                players: world.Players, playerVisibility: world.PlayerVisibility, visibilityOptions: world.Visibility, distributedWorld: worldRuntime,
-               combatState: world.CombatState, playerAttackFanout: playerAttackFanout, lethalAttackGate: lethalAttackGate)
+               combatState: world.CombatState, playerAttackFanout: playerAttackFanout, lethalAttackGate: lethalAttackGate, onAuthenticated: onAuthenticated)
     {
     }
 
@@ -450,7 +456,8 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         IWorldRuntime? distributedWorld = null,
         MonsterAttackCadenceStore? combatState = null,
         Func<PlayerAttackActionOutcome, CancellationToken, Task>? playerAttackFanout = null,
-        LethalAttackProjectionGate? lethalAttackGate = null)
+        LethalAttackProjectionGate? lethalAttackGate = null,
+        Action? onAuthenticated = null)
     {
         SessionId = sessionId;
         _client = client;
@@ -477,6 +484,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         _distributedWorld = distributedWorld;
         _playerAttackFanout = playerAttackFanout;
         _lethalAttackGate = lethalAttackGate;
+        _onAuthenticated = onAuthenticated;
         _statusEffects = new CharacterStatusEffectState(_timeProvider);
     }
 
@@ -513,7 +521,8 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         IWorldRuntime? distributedWorld = null,
         MonsterAttackCadenceStore? combatState = null,
         Func<PlayerAttackActionOutcome, CancellationToken, Task>? playerAttackFanout = null,
-        LethalAttackProjectionGate? lethalAttackGate = null)
+        LethalAttackProjectionGate? lethalAttackGate = null,
+        Action? onAuthenticated = null)
         : this(
             sessionId,
             client,
@@ -545,7 +554,8 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
             distributedWorld,
             combatState,
             playerAttackFanout,
-            lethalAttackGate)
+            lethalAttackGate,
+            onAuthenticated)
     {
         _iroAuthRequested = iroAuthenticated;
         _authRequested = iroAuthenticated;
@@ -599,6 +609,11 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     // ProcessOneMonsterTickAsync's own doc comment for why grouping/polling by map id must first
     // filter to sessions where this is true.
     internal bool IsWorldMapEligible { get { lock (_playerPresenceGate) return _playerLifecycle == PlayerSessionLifecycle.WorldVisible && _presenceId is not null; } }
+    // Online-user-count reporting seam (MapTcpServer.ReportAuthenticatedUserCount): true once this
+    // session's map authentication has succeeded - the same condition CompleteIroAuthenticationAsync's
+    // own success tail sets _authenticated for. Never true for an accepted-but-not-yet-authenticated
+    // TCP connection or a failed authentication attempt.
+    internal bool IsAuthenticated => _authenticated;
     // Syncs against real elapsed walking time on every read (no background timer - mirrors
     // CharacterStatusEffectState's lazy-on-read expiration model), so any caller (tests, a future
     // melee-range check, actor visibility) always observes the character's ACTUAL current cell
@@ -777,6 +792,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         _authenticated = true; _positionDirty = false;
         lock (_playerPresenceGate) _playerLifecycle = PlayerSessionLifecycle.AuthenticatedButNotWorldVisible;
         MapLogger.Info($"[iRO MAP DEBUG] 0x0C1F MapAuthNode authentication succeeded accountId={authOk.AccountId} charId={authOk.CharId} sessionMatch=true gameplayStateVersion={state.Version}");
+        _onAuthenticated?.Invoke();
         EnsureRuntimeLoopsStarted();
         await SendIroInitialBootstrapAsync(authOk, _sessionCancellation.Token);
     }

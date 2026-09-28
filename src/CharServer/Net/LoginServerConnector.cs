@@ -48,6 +48,30 @@ public sealed class LoginServerConnector
         }
     }
 
+    // Reuses the existing stock LoginServer packet LcUserCount (0x2714, "2-byte id + 4-byte uint32
+    // count") - see src/LoginServer/Net/ClientSession.cs's own HandleUserCount. `totalUsers` is the
+    // ALREADY-AGGREGATED sum across every currently-registered MapServer connection
+    // (MapServerRegistry.TotalUsers) - this method sends exactly one absolute total, never a
+    // per-MapServer delta, so LoginServer's own CharServerInfo.Users always reflects the current
+    // aggregate regardless of which MapServer's report triggered this call. False (no-op) when not
+    // currently connected to LoginServer - the very next successful (re)connect has no way to know
+    // the count changed while disconnected, but the next real count-changing event on THIS process
+    // will send the correct current total anyway.
+    public bool TrySendUserCount(uint totalUsers)
+    {
+        var connection = _connection;
+        if (connection == null)
+        {
+            return false;
+        }
+
+        var buffer = new byte[6];
+        BinaryPrimitives.WriteInt16LittleEndian(buffer.AsSpan(0, 2), PacketConstants.LcUserCount);
+        BinaryPrimitives.WriteUInt32LittleEndian(buffer.AsSpan(2, 4), totalUsers);
+        _ = connection.WriteAsync(buffer, CancellationToken.None);
+        return true;
+    }
+
     public bool TrySendAuthRequest(ClientSession session, uint accountId, uint loginId1, uint loginId2, byte sex, IPAddress clientIp)
     {
         var connection = _connection;

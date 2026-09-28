@@ -146,6 +146,40 @@ CharServer -> LoginServer handshake. In particular:
   inventory persistence, etc.) is accepted from a `MapServerSession` before
   `_authenticated` is set to `true` by a successful handshake.
 
+### Online player count (LoginServer server-selection screen)
+
+Live bug: the server-selection screen showed 0 online players even with one already in the world.
+Root cause: CharServer never sent LoginServer's stock `LcUserCount` (0x2714) packet at all, so
+`CharServerInfo.Users` never left its default 0.
+
+MapServer reports its OWN currently-authenticated player count (`MapClientSession.IsAuthenticated` -
+successful map authentication only, never a raw TCP connection or the MapServer service connection
+itself) to CharServer via a new Athena.NET-internal packet, `MapSendUserCount` (0x2b3d, 2-byte id + 4-
+byte uint32 count - must match exactly in both `src/CharServer/Net/PacketConstants.cs` and
+`src/MapServer/Net/PacketConstants.cs`). `MapTcpServer.ReportAuthenticatedUserCount` sends this the
+instant a session authenticates and the instant an authenticated session is removed from `_sessions`
+(every disconnect reason converges on the same `HandleClientAsync` cleanup), and
+`CharServerConnector.CurrentUserCountProvider` re-sends the current count automatically on every
+(re)connect to CharServer, so a MapServer that reconnects after an outage reconstructs its own
+contribution rather than leaving it stale.
+
+`MapServerRegistry` stores each MapServer connection's own last-reported count as an ABSOLUTE
+snapshot (`UpdateUserCount`, never a delta) and removes the row entirely on disconnect (`Remove`) -
+`TotalUsers` sums across every currently-registered connection, so multiple MapServer gateway
+replicas aggregate correctly (3 + 2 = 5) without one overwriting another, and a disconnected
+MapServer's last count stops contributing immediately with no stale row for a reconnect to
+accumulate onto. `MapServerSession.HandleUserCount` (only accepted once `_authenticated`, matching
+every other gameplay/persistence packet's own gate) updates the registry and forwards the resulting
+total to LoginServer via `LoginServerConnector.TrySendUserCount` (the existing stock `LcUserCount`
+packet, unchanged shape).
+
+LoginServer's own `MapUserCount` (`src/LoginServer/Net/ClientSession.cs`) is intentionally left
+unchanged: it reproduces pinned rAthena's `login_get_usercount`
+(`legacy/rathena/src/login/login.cpp:484-494`) exactly - a population-level CATEGORY (0=low/1=medium/
+2=high/3=over-high/4=disabled) gated by `usercount_low`/`medium`/`high` (default 200/500/1000), never
+a literal player count. One real online player is genuinely category 0 under the default thresholds,
+identical to zero players - correct, verified-pinned behavior, not a bug.
+
 ### Config resolution
 
 `MapServerServiceTokenProvider` (CharServer side, in

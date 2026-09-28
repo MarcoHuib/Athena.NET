@@ -29,12 +29,14 @@ public sealed class MapServerSession : IDisposable, ISession
         [PacketConstants.MapInventoryConsumeRequest] = MapInventoryConsumeProtocol.RequestLength,
         [PacketConstants.MapSkillListGetRequest] = MapSkillListProtocol.GetRequestLength,
         [PacketConstants.MapSkillLearnRequest] = MapSkillLearnProtocol.RequestLength,
+        [PacketConstants.MapSendUserCount] = 6,
     };
 
     private readonly TcpClient _client;
     private readonly NetworkStream _stream;
     private readonly CharConfigStore _configStore;
     private readonly MapServerRegistry _registry;
+    private readonly LoginServerConnector _loginConnector;
     private readonly MapAuthManager _authManager;
     private readonly Func<CharDbContext?> _dbFactory;
     private readonly IMapServiceAuthenticationService _serviceAuth;
@@ -50,10 +52,11 @@ public sealed class MapServerSession : IDisposable, ISession
         TcpClient client,
         CharConfigStore configStore,
         MapServerRegistry registry,
+        LoginServerConnector loginConnector,
         MapAuthManager authManager,
         Func<CharDbContext?> dbFactory,
         byte[]? prefetchedHeader = null)
-        : this(sessionId, client, configStore, registry, authManager, dbFactory,
+        : this(sessionId, client, configStore, registry, loginConnector, authManager, dbFactory,
               new MapServiceAuthenticationService(new MapServerServiceTokenProvider(new Athena.Net.CharServer.Config.SecretConfig())),
               prefetchedHeader)
     {
@@ -64,6 +67,7 @@ public sealed class MapServerSession : IDisposable, ISession
         TcpClient client,
         CharConfigStore configStore,
         MapServerRegistry registry,
+        LoginServerConnector loginConnector,
         MapAuthManager authManager,
         Func<CharDbContext?> dbFactory,
         IMapServiceAuthenticationService serviceAuth,
@@ -74,6 +78,7 @@ public sealed class MapServerSession : IDisposable, ISession
         _stream = client.GetStream();
         _configStore = configStore;
         _registry = registry;
+        _loginConnector = loginConnector;
         _authManager = authManager;
         _dbFactory = dbFactory;
         _serviceAuth = serviceAuth;
@@ -109,6 +114,10 @@ public sealed class MapServerSession : IDisposable, ISession
         _stream.Dispose();
         _writeLock.Dispose();
         _registry.Remove(SessionId);
+        // A disconnected MapServer's last-reported count must stop contributing to the aggregate
+        // immediately - Remove above already dropped its row, so TotalUsers here already reflects
+        // every OTHER still-registered MapServer only.
+        _loginConnector.TrySendUserCount((uint)_registry.TotalUsers);
     }
 
     private async Task HandlePacketAsync(short packetType, byte[] packet, CancellationToken cancellationToken)
@@ -126,6 +135,9 @@ public sealed class MapServerSession : IDisposable, ISession
                 break;
             case PacketConstants.MapAuthRequest:
                 await HandleAuthRequestAsync(packet, cancellationToken);
+                break;
+            case PacketConstants.MapSendUserCount:
+                HandleUserCount(packet);
                 break;
             case PacketConstants.MapSavePosition:
                 await HandleSavePositionAsync(packet, cancellationToken);
@@ -285,6 +297,19 @@ public sealed class MapServerSession : IDisposable, ISession
 
         _registry.UpdateMaps(SessionId, maps);
         return Task.CompletedTask;
+    }
+
+    // MapServer reports its OWN authenticated-player count as an absolute snapshot (never a delta -
+    // see MapServerRegistry.UpdateUserCount's own doc comment); this session forwards the resulting
+    // TOTAL across every registered MapServer to LoginServer via the existing stock LcUserCount
+    // packet, so the server-selection screen's user count always reflects real authenticated
+    // in-game sessions, never raw socket counts.
+    private void HandleUserCount(byte[] packet)
+    {
+        if (!_authenticated) return;
+        var users = BinaryPrimitives.ReadUInt32LittleEndian(packet.AsSpan(2, 4));
+        _registry.UpdateUserCount(SessionId, (int)Math.Min(int.MaxValue, users));
+        _loginConnector.TrySendUserCount((uint)_registry.TotalUsers);
     }
 
     private async Task HandleAuthRequestAsync(byte[] packet, CancellationToken cancellationToken)

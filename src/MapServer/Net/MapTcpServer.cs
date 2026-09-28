@@ -59,7 +59,26 @@ public sealed class MapTcpServer
         var config = _configStore.Current;
         _listener = new TcpListener(config.BindIp, config.MapPort);
         _cadenceExecutor = new MonsterAttackCadenceExecutor(_world.MonsterProjections, _world.CombatState, _worldRuntime, timeProvider ?? TimeProvider.System);
+        // Reconstructs this process's contribution to CharServer's own aggregate the instant a
+        // (re)connection to CharServer succeeds - see CharServerConnector.CurrentUserCountProvider's
+        // own doc comment for why this is necessary on top of the per-event reports below.
+        _charConnector.CurrentUserCountProvider = () => (uint)_sessions.Values.Count(session => session.IsAuthenticated);
     }
+
+    // Recomputes this process's own currently-authenticated player count and reports it to
+    // CharServer (which aggregates across every registered MapServer and forwards the total to
+    // LoginServer via LcUserCount - see MapServerRegistry.TotalUsers/LoginServerConnector.
+    // TrySendUserCount on the CharServer side). Called exactly twice per session lifecycle: once when
+    // MapClientSession's own authentication succeeds (_onAuthenticated, wired at construction below),
+    // and once - unconditionally, whether or not the session ever authenticated - right after it is
+    // removed from _sessions on disconnect, so the count can only ever go down for a session that
+    // never actually incremented it, never negative.
+    private void ReportAuthenticatedUserCount() => _ = _charConnector.TrySendUserCountAsync((uint)_sessions.Values.Count(session => session.IsAuthenticated));
+
+    // Test-only read of the exact count ReportAuthenticatedUserCount would report - lets a test
+    // assert the counting logic itself (authenticated-only, disconnect-decrements, never negative)
+    // without needing a live CharServerConnector connection. Never called from any production path.
+    internal int AuthenticatedSessionCountForTest => _sessions.Values.Count(session => session.IsAuthenticated);
 
     // Focused tests which exercise the existing process-local simulation do not start an Orleans
     // cluster. Production startup always uses the overload above and requires IWorldRuntime.
@@ -843,7 +862,7 @@ public sealed class MapTcpServer
         MapLogger.Info($"[iRO MAP DEBUG] Client connected: {endpoint}");
 
         using (client)
-        await using (var session = new MapClientSession(sessionId, client, _charConnector, _world, _worldRuntime, FanOutPlayerAttackActionAsync, _lethalAttackGate))
+        await using (var session = new MapClientSession(sessionId, client, _charConnector, _world, _worldRuntime, FanOutPlayerAttackActionAsync, _lethalAttackGate, ReportAuthenticatedUserCount))
         {
             _sessions[sessionId] = session;
             try
@@ -865,6 +884,11 @@ public sealed class MapTcpServer
             finally
             {
                 _sessions.TryRemove(sessionId, out _);
+                // Covers every disconnect path (normal close, IOException, OperationCanceledException,
+                // an unexpected exception) uniformly - a session that never authenticated simply does
+                // not change the count (it was never included in it), and this can never go negative
+                // since the count is always recomputed fresh from the current _sessions contents.
+                ReportAuthenticatedUserCount();
             }
         }
 
