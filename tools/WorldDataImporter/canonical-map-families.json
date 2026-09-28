@@ -1,0 +1,35 @@
+{
+  "_comment": "Explicit, auditable channel-copy families. Each alias is a pinned rAthena parallel 'channel' copy of its canonical map (same geometry, verified at generation time). NO pattern, wildcard or suffix rule exists: a map is only folded onto another if it is listed here. Consumed by 'generate-canonical-maps'.",
+  "families": [
+    {
+      "canonical": "int_land",
+      "aliases": ["int_land01", "int_land02", "int_land03", "int_land04"],
+      "evidence": "npc/re/mobs/int_land.txt + npc/re/jobs/novice/academy.txt (Academy ship-arrival channel copies)"
+    },
+    {
+      "canonical": "iz_ac01",
+      "aliases": ["iz_ac01_a", "iz_ac01_b", "iz_ac01_c", "iz_ac01_d"],
+      "evidence": "npc/re/warps/cities/izlude.txt (Izlude Academy floor 1 channel copies)"
+    },
+    {
+      "canonical": "iz_ac02",
+      "aliases": ["iz_ac02_a", "iz_ac02_b", "iz_ac02_c", "iz_ac02_d"],
+      "evidence": "npc/re/warps/cities/izlude.txt (Izlude Academy floor 2 channel copies)"
+    },
+    {
+      "canonical": "iz_int",
+      "aliases": ["iz_int01", "iz_int02", "iz_int03", "iz_int04"],
+      "evidence": "conf/char_athena.conf start_point (parallel intro instances) + npc/re/jobs/novice/academy.txt"
+    },
+    {
+      "canonical": "izlude",
+      "aliases": ["izlude_a", "izlude_b", "izlude_c", "izlude_d"],
+      "evidence": "npc/re/cities/izlude.txt F_IzludeChannel (Channel Warp Official)"
+    },
+    {
+      "canonical": "prt_fild08",
+      "aliases": ["prt_fild08a", "prt_fild08b", "prt_fild08c", "prt_fild08d"],
+      "evidence": "npc/re/warps/fields/prontera_fild.txt + npc/re/mobs/academy.txt (channel copies of the Izlude-Prontera field)"
+    }
+  ]
+}

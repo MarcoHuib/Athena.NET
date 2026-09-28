@@ -50,6 +50,23 @@ internal static partial class WorldDataImporterCli
         return 0;
     }
 
+    private static async Task<int> GenerateCanonicalMapsAsync(string[] args)
+    {
+        var options = CliOptions.Parse(args);
+        var root = Path.GetFullPath(options.Required("rathena-root"));
+        var families = Path.GetFullPath(options.Required("families"));
+        var output = Path.GetFullPath(options.Required("output"));
+        var commit = options.Optional("rathena-commit") ?? ReadPinnedCommit(root);
+        var parsed = CanonicalMapFamilies.Parse(await File.ReadAllTextAsync(families));
+        var maps = (await LoadEffectiveMaps(root)).ToDictionary(item => item.Entry.Name, item => new CanonicalMapFamilies.MapGeometry(item.Entry.Width, item.Entry.Height, item.Entry.RawCells), StringComparer.Ordinal);
+        CanonicalMapFamilies.Validate(parsed, maps);
+        Directory.CreateDirectory(output);
+        await File.WriteAllTextAsync(Path.Combine(output, "GeneratedCanonicalMapAliases.cs"), CanonicalMapFamilies.Emit(parsed, commit), new UTF8Encoding(false));
+        Console.WriteLine($"Canonical map families: {parsed.Count}");
+        Console.WriteLine($"Alias -> canonical entries: {parsed.Sum(family => family.Aliases.Count)}");
+        return 0;
+    }
+
     private static async Task<int> GenerateWarpsAsync(string[] args)
     {
         var options = CliOptions.Parse(args);

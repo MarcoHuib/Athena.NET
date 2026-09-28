@@ -19,5 +19,6 @@
 
   <ItemGroup>
     <Compile Include="../Shared/MapIdentity/CanonicalMapPolicy.cs" Link="Shared/MapIdentity/CanonicalMapPolicy.cs" />
+    <Compile Include="../Shared/MapIdentity/Generated/GeneratedCanonicalMapAliases.cs" Link="Shared/MapIdentity/Generated/GeneratedCanonicalMapAliases.cs" />
   </ItemGroup>
 </Project>

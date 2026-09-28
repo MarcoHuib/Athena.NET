@@ -13,7 +13,11 @@ namespace Athena.Net.MapServer.World;
 // instantiated).
 //
 // Current scope covers exactly what Athena.NET genuinely hosts today: the tutorial family (iz_int,
-// int_land), Izlude, the Izlude -> prt_fild08 -> Prontera corridor - ONE canonical copy of each.
+// int_land), Izlude, the Izlude Academy floors (iz_ac01, iz_ac02 - active Renewal warps lead from Izlude
+// into iz_ac01 and between the floors, so a served Izlude must not route players into an unhosted map), and
+// the Izlude -> prt_fild08 -> Prontera corridor - ONE canonical copy of each. MobSpawnMaps deliberately
+// does NOT include iz_ac01/iz_ac02: their only effective spawns (4 Academy training dummies in the
+// Renewal-active npc/re/jobs/novice/academy.txt) were never hosted before and are a separate content decision.
 // Pinned rAthena also ships parallel "channel" copies of these maps (iz_int01..04, int_land01..04,
 // izlude_a..d, prt_fild08a..d, iz_ac01_a..d, iz_ac02_a..d - the 24-entry alias table in
 // Shared/MapIdentity/CanonicalMapPolicy.cs). Athena.NET does not host channels: those maps are not
@@ -30,6 +34,8 @@ public static class MapServerHostingScope
     public static readonly IReadOnlySet<string> ServedMaps = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {
         "int_land",
+        "iz_ac01",
+        "iz_ac02",
         "iz_int",
         "izlude",
         "prt_fild08",

@@ -8,10 +8,16 @@ on:
     branches: [ main ]
     paths:
       - "src/CharServer/**"
+      - "src/Shared/**"
+      - "tests/CharServer.Tests/**"
+      - "Directory.Build.*"
       - ".github/workflows/char-server-ci.yml"
   pull_request:
     paths:
       - "src/CharServer/**"
+      - "src/Shared/**"
+      - "tests/CharServer.Tests/**"
+      - "Directory.Build.*"
       - ".github/workflows/char-server-ci.yml"
   workflow_dispatch:
 
@@ -25,3 +31,12 @@ jobs:
           dotnet-version: '10.0.x'
       - name: Build
         run: dotnet build src/CharServer/CharServer.csproj --configuration Release
+      - name: Test
+        run: dotnet test tests/CharServer.Tests/CharServer.Tests.csproj --configuration Release
+
+  docker-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build CharServer image
+        run: docker build -f src/CharServer/Dockerfile -t athena-char-server:ci .

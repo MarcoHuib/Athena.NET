@@ -1415,9 +1415,10 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     // helper fixes: MapClientSessionWarpTests.MovementIntoTutorialDoor_... teleports within
     // "iz_int03", so map-equality alone cannot detect that the previous walk state is stale.
     // `reason`/`source` are DIAGNOSTIC-ONLY provenance for the [MAP ROUTING] log (why/through what this
-    // session's canonical map id changed) and never influence the teleport. Parallel map variants
-    // (prt_fild08 vs prt_fild08c ...) are separate canonical maps with isolated visibility and World
-    // simulations; this line makes every transition between them attributable.
+    // session's canonical map id changed) and never influence the teleport. Legacy channel aliases
+    // (prt_fild08c ...) are canonicalized below BEFORE any world/visibility identity is used, so prt_fild08 and
+    // prt_fild08c denote the same runtime world after canonicalization; the log line makes every transition,
+    // including a folded alias, attributable.
     private void TeleportTo(string map, ushort x, ushort y, string reason = "teleport", string? source = null)
     {
         // Every warp / script warp / teleport funnels through here, so this is the one runtime boundary where

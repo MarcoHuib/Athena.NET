@@ -25,6 +25,16 @@ MobSpawns, and Scripts content is never owned by these commands.
 The obsolete `Generated/World/MapData/AthenaMaps.bin` is removed only when both its exact path and
 valid Athena Map Pack header prove generator ownership; the empty legacy directory is then removed.
 
+`generate-canonical-maps` reads the explicit channel-family data `tools/WorldDataImporter/canonical-map-families.json`
+(6 families / 24 aliases, each with evidence), validates it against the effective pinned map cache (names exist,
+no chains/duplicates/wildcards, alias geometry cell-for-cell identical to the canonical map) and emits
+`src/Shared/MapIdentity/Generated/GeneratedCanonicalMapAliases.cs`, compiled by both CharServer and MapServer next
+to the generic `CanonicalMapPolicy` resolver. No alias is ever inferred from a name suffix or from geometry alone:
+
+```sh
+dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- generate-canonical-maps --rathena-root legacy/rathena --rathena-commit e985006171d2eb320ee512a653f4c83aea3d81b6 --families tools/WorldDataImporter/canonical-map-families.json --output src/Shared/MapIdentity/Generated
+```
+
 `WorldDataImporter` is the compatibility CLI for the emerging Athena world
 compiler. Its pipeline is source loading -> hand-written lexer -> recursive-
 descent syntax tree -> semantic analysis -> lowering -> deterministic C#. The

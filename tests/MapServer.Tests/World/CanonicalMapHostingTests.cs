@@ -71,8 +71,12 @@ public sealed class CanonicalMapHostingTests
         Assert.DoesNotContain(MapServerHostingScope.ServedMaps, map => CanonicalMapPolicy.IsAlias(map));
         Assert.DoesNotContain(MapServerHostingScope.MobSpawnMaps, map => CanonicalMapPolicy.IsAlias(map));
         // The canonical corridor stays hosted.
-        Assert.Superset(new HashSet<string>(["int_land", "iz_int", "izlude", "prt_fild08", "prontera"]), MapServerHostingScope.ServedMaps.ToHashSet());
+        Assert.Superset(new HashSet<string>(["int_land", "iz_ac01", "iz_ac02", "iz_int", "izlude", "prt_fild08", "prontera"]), MapServerHostingScope.ServedMaps.ToHashSet());
         Assert.Superset(new HashSet<string>(["int_land", "prt_fild08", "prontera"]), MapServerHostingScope.MobSpawnMaps.ToHashSet());
+        // The Academy floors are hosted (warps/collision/actors) but spawn nothing at runtime: their only
+        // effective spawns (4 training dummies) are a separate content decision.
+        Assert.DoesNotContain("iz_ac01", MapServerHostingScope.MobSpawnMaps);
+        Assert.DoesNotContain("iz_ac02", MapServerHostingScope.MobSpawnMaps);
     }
 
     [Fact]
@@ -102,6 +106,82 @@ public sealed class CanonicalMapHostingTests
         }
         Assert.NotEmpty(GeneratedMobSpawnRegistry.GetForMap("prt_fild08c"));
         Assert.NotEmpty(GeneratedWarpRegistry.GetForMap("izlude_d"));
+    }
+
+    // ---- Canonical Academy route (Izlude <-> iz_ac01 <-> iz_ac02) ----------------------------------------
+
+    private static WarpDefinition Warp(string map, ushort x, ushort y)
+    {
+        Assert.True(WorldMapRegistry.Tutorial.TryFindWarp(map, x, y, out var warp), $"No active warp at {map} ({x},{y})");
+        Assert.Equal("legacy/rathena/npc/re/warps/cities/izlude.txt", warp.Source.File); // The Renewal row, never a pre-re one.
+        return warp;
+    }
+
+    [Fact]
+    public void AcademyRoute_IzludeEntersIzAc01_AndIzAc01LeavesBackToIzlude()
+    {
+        var enter = Warp("izlude", 125, 257);
+        Assert.Equal(("iz_ac01", (ushort)99, (ushort)29), (enter.DestinationMap, enter.DestinationX, enter.DestinationY));
+        var leave = Warp("iz_ac01", 100, 24);
+        Assert.Equal(("izlude", (ushort)127, (ushort)253), (leave.DestinationMap, leave.DestinationX, leave.DestinationY));
+    }
+
+    [Fact]
+    public void AcademyRoute_IzAc01ReachesIzAc02_AndIzAc02ReturnsToIzAc01()
+    {
+        var up = Warp("iz_ac01", 78, 25);
+        Assert.Equal(("iz_ac02", (ushort)207, (ushort)27), (up.DestinationMap, up.DestinationX, up.DestinationY));
+        var down = Warp("iz_ac02", 198, 27);
+        Assert.Equal(("iz_ac01", (ushort)78, (ushort)28), (down.DestinationMap, down.DestinationX, down.DestinationY));
+    }
+
+    [Fact]
+    public void NoAcademyAliasMapIsHosted_AndNoWarpOnAHostedMapLeadsIntoAnUnhostedCanonicalOrAliasMap()
+    {
+        foreach (var alias in Aliases.Where(alias => alias.StartsWith("iz_ac", StringComparison.Ordinal)))
+        {
+            Assert.DoesNotContain(alias, MapServerHostingScope.ServedMaps);
+            Assert.Empty(GeneratedWarpLoadProfiles.GetForMap(alias, WarpLoadProfile.AthenaIroEffective).Where(warp => MapServerHostingScope.ServedMaps.Contains(warp.SourceMap)));
+        }
+
+        // Any Renewal-effective warp (from a hosted map) whose destination is a channel copy or a canonical
+        // channel-family map must land on a HOSTED canonical map once the destination is canonicalized.
+        foreach (var map in MapServerHostingScope.ServedMaps)
+            foreach (var warp in GeneratedWarpLoadProfiles.GetForMap(map, WarpLoadProfile.AthenaIroEffective))
+            {
+                var destination = CanonicalMapPolicy.Canonicalize(warp.DestinationMap);
+                if (CanonicalMapPolicy.CanonicalMaps.Contains(destination))
+                    Assert.True(MapServerHostingScope.ServedMaps.Contains(destination), $"{warp.Name}: {warp.SourceMap} -> {warp.DestinationMap} leads into unhosted '{destination}'");
+            }
+
+        // Explicit: the canonical Academy floors are hosted and have their own active warp surface.
+        foreach (var canonical in new[] { "iz_ac01", "iz_ac02" })
+        {
+            Assert.Contains(canonical, MapServerHostingScope.ServedMaps);
+            Assert.NotEmpty(GeneratedWarpLoadProfiles.GetForMap(canonical, WarpLoadProfile.AthenaIroEffective));
+        }
+    }
+
+    [Fact]
+    public void ServedMapCollision_CoversTheAcademyFloors()
+    {
+        using var provider = GeneratedMapCollisionProvider.Open(Athena.Net.MapServer.Tests.Testing.TestGeneratedMapAssets.MapPackPath);
+        MapServerHostingScope.RequireCollisionForAllServedMaps(provider); // Startup validation covers iz_ac01/iz_ac02 via ServedMaps.
+        Assert.True(provider.TryGetMap("iz_ac01", out _));
+        Assert.True(provider.TryGetMap("iz_ac02", out _));
+    }
+
+    // ---- Generic resolver (no map knowledge) ----------------------------------------------------------
+
+    [Fact]
+    public void Resolver_RejectsChainsDuplicatesAndSelfAliases_AndKnowsOnlyTheTableItIsGiven()
+    {
+        Assert.Throws<InvalidOperationException>(() => CanonicalMapPolicy.BuildAliasTable([("a", "b"), ("b", "c")]));
+        Assert.Throws<InvalidOperationException>(() => CanonicalMapPolicy.BuildAliasTable([("a", "b"), ("a", "c")]));
+        Assert.Throws<InvalidOperationException>(() => CanonicalMapPolicy.BuildAliasTable([("a", "A")]));
+        var table = CanonicalMapPolicy.BuildAliasTable([("x_a", "x")]);
+        Assert.Equal("x", table["x_a"]);
+        Assert.False(table.ContainsKey("x_b")); // A same-shaped name that is not listed is not an alias.
     }
 
     // The premise of canonicalizing a persisted position onto the canonical map at the SAME coordinates:

@@ -1768,11 +1768,19 @@ does **not** keep channels: two characters that ended up on `prt_fild08` and `pr
 isolated maps, so they could not see each other or share monsters. All copies are folded onto ONE canonical
 map so every character shares one World simulation, one actor-id space and one visibility domain.
 
-- **Policy** (`src/Shared/MapIdentity/CanonicalMapPolicy.cs`, compiled into both CharServer and MapServer): an
-  explicit 24-entry alias table, no suffix stripping - `izlude_a..d -> izlude`, `prt_fild08a..d -> prt_fild08`,
-  `iz_int01..04 -> iz_int`, `int_land01..04 -> int_land`, `iz_ac01_a..d -> iz_ac01`, `iz_ac02_a..d -> iz_ac02`.
-  PvP maps, `1@...` instances, `new_1-1..5-1`, seasonal/event maps and any other identical-geometry map are
-  never touched. Every alias has cell-for-cell identical geometry, so coordinates carry over unchanged.
+- **Policy** = generic mechanism + explicit generated data. `src/Shared/MapIdentity/CanonicalMapPolicy.cs` is a
+  content-free resolver (exact case-insensitive table lookup, `.gat` tolerated, chain/duplicate/self-alias
+  rejected; no suffix or pattern inference). The 24 alias relationships live only in
+  `src/Shared/MapIdentity/Generated/GeneratedCanonicalMapAliases.cs`, which `WorldDataImporter
+  generate-canonical-maps` emits from the explicit importer-owned data file
+  `tools/WorldDataImporter/canonical-map-families.json` (6 families, each with pinned-source evidence). The
+  generator validates every name against the effective pinned map cache and requires each alias to be
+  cell-for-cell identical to its canonical map; geometry alone never creates an alias. Both CharServer and
+  MapServer compile those same two files via `<Compile Include="../Shared/...">` (no CharServer -> MapServer
+  dependency, no new project). Aliases: `izlude_a..d -> izlude`, `prt_fild08a..d -> prt_fild08`,
+  `iz_int01..04 -> iz_int`, `int_land01..04 -> int_land`, `iz_ac01_a..d -> iz_ac01`, `iz_ac02_a..d ->
+  iz_ac02`. PvP maps, `1@...` instances, `new_1-1..5-1`, seasonal/event maps and any other identical-geometry
+  map are never touched. Every alias has identical geometry, so coordinates carry over unchanged.
 - **Boundaries** that canonicalize: CharServer character creation (`SelectStartPoint`; Renewal `start_point`
   is now only `iz_int,18,26`, and an old conf that still lists `iz_int01..04` can never create a copy),
   character read (`ResolveCharacterLocation` for `last_map`, then `save_map`; `MapAuthNode`; the char-list
@@ -1781,7 +1789,9 @@ map so every character shares one World simulation, one actor-id space and one v
   manual DB edit is needed: a row persisted on `prt_fild08c` simply loads on `prt_fild08` at the same cell and
   is rewritten canonically at the next position/save-point save.
 - **Hosting**: the aliases are removed from `MapServerHostingScope.ServedMaps` / `MobSpawnMaps`, so they own no
-  monster simulation and no active warp. Their pinned/generated source (maps, warps, NPC/script entities,
+  monster simulation and no active warp. The canonical Academy floors `iz_ac01`/`iz_ac02` ARE served (active
+  Renewal warps lead Izlude -> iz_ac01 <-> iz_ac02) but are not in `MobSpawnMaps` (their only effective spawns,
+  4 training dummies, are a separate content decision). Their pinned/generated source (maps, warps, NPC/script entities,
   spawn declarations) stays in the repository as source coverage - source representation is not runtime
   activation. A warp/script destination naming an alias is resolved to the canonical map at `TeleportTo`
   without editing the generated source.
