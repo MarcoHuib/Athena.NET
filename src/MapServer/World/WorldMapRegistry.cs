@@ -158,7 +158,9 @@ public sealed class WorldMapRegistry
     // prt_fild08d->prontera doors (ai/world-data.md's travel-corridor content); each area's
     // GeneratedWarps class is compiled independently (see tools/WorldDataImporter), so the
     // composed set is a plain concatenation rather than one area owning every WarpDefinition.
-    private static IEnumerable<WarpDefinition> TutorialWarps => MapServerHostingScope.ServedMaps.Order(StringComparer.Ordinal).SelectMany(GeneratedWarpRegistry.GetForMap);
+    // Only the Renewal-effective warps (GeneratedWarpLoadProfiles.AthenaIroEffective): pre-Renewal rows for
+    // the same trigger cells are source coverage in GeneratedWarpRegistry, never runtime-active.
+    private static IEnumerable<WarpDefinition> TutorialWarps => MapServerHostingScope.ServedMaps.Order(StringComparer.Ordinal).SelectMany(map => GeneratedWarpLoadProfiles.GetForMap(map, WarpLoadProfile.AthenaIroEffective));
     private static WorldMapRegistry LoadGenerated() => new(TutorialWarps, GeneratedScriptRegistry.Entities, scripts: GeneratedScriptRegistry.Registry);
 
     // Same generated data as Tutorial/LoadGenerated(), but taking an externally supplied allocator

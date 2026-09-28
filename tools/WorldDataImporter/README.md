@@ -16,7 +16,10 @@ separate published `MapData/AthenaMaps.bin` runtime asset; normal startup needs 
 
 `generate-warps` uses the same parser/converter as analysis, fails on any unparsed declaration or
 unresolved source/destination map, emits all 4,468 ordinary warps under source-map modules with
-exact file/line provenance, and builds `GeneratedWarpRegistry` as an index. Cleanup requires both
+exact file/line provenance, and builds `GeneratedWarpRegistry` as an index (full source coverage,
+including pre-Renewal rows). It also emits `GeneratedWarpLoadProfiles`: index views selecting the
+rows whose source file is in the pinned Renewal script-config graph (`WarpLoadClassifier`), which is
+what the runtime consumes; regeneration is deterministic. Cleanup requires both
 the exact generated filename family and the standard auto-generated header; `*World.cs`, NPC,
 MobSpawns, and Scripts content is never owned by these commands.
 The obsolete `Generated/World/MapData/AthenaMaps.bin` is removed only when both its exact path and

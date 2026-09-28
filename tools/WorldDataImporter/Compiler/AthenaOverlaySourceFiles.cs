@@ -17,4 +17,10 @@ internal static class AthenaOverlaySourceFiles
         // than an unrecorded side effect of filesystem-wide scanning.
         "npc/re/mobs/academy.txt",
     };
+
+    // Athena.NET additions to the Renewal-active WARP set (AthenaIroEffective warp profile). Empty by
+    // design: every Academy/tutorial door lives in npc/re/warps/cities/izlude.txt, which the pinned
+    // Renewal graph already loads. A pinned-disabled warp file becomes runtime-active only by an
+    // explicit entry here, never because it happens to sit earlier in a folder scan.
+    internal static readonly IReadOnlySet<string> WarpFiles = new HashSet<string>(StringComparer.Ordinal);
 }

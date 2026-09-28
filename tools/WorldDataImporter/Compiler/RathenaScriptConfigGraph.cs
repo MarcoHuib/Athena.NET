@@ -48,6 +48,34 @@ internal static class MobSpawnLoadClassifier
     }
 }
 
+// Source-load classification for ONE pinned WARP declaration's source file - the warp analogue of
+// MobSpawnLoadClass (same four classes, same config-graph-first precedence, same "never a field on
+// the profile-neutral definition" rule). Pinned rAthena ships BOTH npc/pre-re/warps/** and
+// npc/re/warps/** rows for the same trigger cell (e.g. prt_fild08 371,212 -> izlude 35,78 in pre-re,
+// -> izlude 24,98 in Renewal); which one a server activates is decided ONLY by the script-config
+// graph (npc/re/scripts_main.conf vs npc/pre-re/scripts_main.conf), never by file order or a path
+// shape. RenewalDefault: reachable through the resolved Renewal graph. AthenaOverlay: explicitly
+// listed in AthenaOverlaySourceFiles.WarpFiles. PreRenewalSource: under npc/pre-re/ and neither of
+// the above. Disabled: everything else (pinned-disabled events, battlegrounds, test scripts...).
+internal enum WarpLoadClass { RenewalDefault, AthenaOverlay, PreRenewalSource, Disabled }
+
+internal static class WarpLoadClassifier
+{
+    private const string PreRenewalPrefix = "npc/pre-re/";
+    private const string RathenaRootPrefix = "legacy/rathena/";
+
+    internal static WarpLoadClass Classify(string sourceFile, IReadOnlySet<string> renewalActiveFiles)
+    {
+        var relativeSourceFile = sourceFile.StartsWith(RathenaRootPrefix, StringComparison.Ordinal)
+            ? sourceFile[RathenaRootPrefix.Length..]
+            : sourceFile;
+        if (renewalActiveFiles.Contains(relativeSourceFile)) return WarpLoadClass.RenewalDefault;
+        if (AthenaOverlaySourceFiles.WarpFiles.Contains(relativeSourceFile)) return WarpLoadClass.AthenaOverlay;
+        if (relativeSourceFile.StartsWith(PreRenewalPrefix, StringComparison.Ordinal)) return WarpLoadClass.PreRenewalSource;
+        return WarpLoadClass.Disabled;
+    }
+}
+
 // One directive line from a pinned rAthena *.conf script-config file. Active reflects whether the
 // line is a real directive (not commented-out/blank) - a commented directive is still represented
 // here (never silently dropped from ParseFile's own output) so callers/tests can assert both the

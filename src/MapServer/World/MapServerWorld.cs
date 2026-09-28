@@ -90,9 +90,12 @@ public sealed record MapServerWorld(
         GeneratedScriptRegistry.Register(builder);
         if (customsEnabled) CustomWorldRegistry.Register(builder);
         var world = builder.Build();
+        // Runtime warps come from the AthenaIroEffective source-load profile (Renewal-active source files
+        // only), never from GeneratedWarpRegistry.All: that registry also carries pre-Renewal/disabled
+        // rows for the same trigger cells purely as source coverage.
         var servedWarps = warpDefinitions ?? (servedMaps is null
-            ? GeneratedWarpRegistry.All
-            : servedMaps.Order(StringComparer.Ordinal).SelectMany(GeneratedWarpRegistry.GetForMap));
+            ? GeneratedWarpLoadProfiles.AthenaIroEffective
+            : servedMaps.Order(StringComparer.Ordinal).SelectMany(map => GeneratedWarpLoadProfiles.GetForMap(map, WarpLoadProfile.AthenaIroEffective)));
         var maps = new WorldMapRegistry(servedWarps, world.Entities, scripts: world.Scripts, allocator: allocator);
         var effectiveMobSpawnMaps = mobSpawnMaps ?? servedMaps;
         var servedMobSpawns = effectiveMobSpawnMaps is null ? world.MobSpawns : world.MobSpawns.Where(spawn => effectiveMobSpawnMaps.Contains(spawn.Map)).ToArray();

@@ -35,6 +35,22 @@ map/X/Y. No optional fields occur in the 4,468 pinned declarations. Each has one
 `WarpDefinition` with exact file/line provenance. `GeneratedWarpRegistry` indexes those canonical
 arrays. Runtime filters it through `MapServerHostingScope.ServedMaps`, so unserved maps stay inert.
 
+### Warp source-load profiles (Renewal vs Pre-Renewal)
+
+Pinned rAthena ships both `npc/pre-re/warps/**` and `npc/re/warps/**` rows for the same trigger
+cells (e.g. `prt_fild08` 371,212 → `izlude` 35,78 in pre-re, → 24,98 in Renewal). All 4,468 rows stay
+in `GeneratedWarpRegistry.All` as **source coverage**, but the registry is never the runtime source.
+`generate-warps` also emits `GeneratedWarpLoadProfiles` (`WarpLoadProfile.RathenaRenewalDefault` /
+`AthenaIroEffective`), the exact analogue of `GeneratedMobSpawnLoadProfiles`: each warp's source file is
+classified by `WarpLoadClassifier` — `RenewalDefault` (reachable through the active `npc:`/`import:`
+graph rooted at `npc/re/scripts_main.conf`, `RathenaScriptConfigGraph.ResolveActiveNpcFiles`),
+`AthenaOverlay` (`AthenaOverlaySourceFiles.WarpFiles`, currently empty), `PreRenewalSource`, or
+`Disabled` — and the profiles are index views over the registry (same CLR instances). Current counts:
+RenewalDefault 3,874, AthenaOverlay 0, PreRenewalSource 568, Disabled 26; AthenaIroEffective 3,874.
+Runtime (`MapServerWorld.Build`, `WorldMapRegistry.Tutorial`) consumes `AthenaIroEffective` only, so
+activation is decided by the script-config graph and never by file order, array order or a hard-coded
+map. Pre-Renewal/disabled rows therefore cannot win a trigger and cannot create phantom portal actors.
+
 ```sh
 dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- generate-maps --rathena-root legacy/rathena --rathena-commit e985006171d2eb320ee512a653f4c83aea3d81b6 --output src/MapServer/Generated/World
 dotnet run --project tools/WorldDataImporter/WorldDataImporter.csproj -- generate-warps --rathena-root legacy/rathena --rathena-commit e985006171d2eb320ee512a653f4c83aea3d81b6 --output src/MapServer/Generated/World

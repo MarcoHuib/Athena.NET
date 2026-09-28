@@ -57,7 +57,7 @@ public sealed class GeneratedWorldRegistryTests
     {
         var served = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "prontera" };
         var world = MapServerWorld.Build(new GameplayRuleServices(new RenewalBasicAttackRules()), servedMaps: served);
-        Assert.Equal(GeneratedWarpRegistry.GetForMap("prontera").Count, world.Maps.StaticWarpCount);
+        Assert.Equal(GeneratedWarpLoadProfiles.GetForMap("prontera", WarpLoadProfile.AthenaIroEffective).Count, world.Maps.StaticWarpCount);
         Assert.DoesNotContain(GeneratedWarpRegistry.All.Where(warp => !served.Contains(warp.SourceMap)), warp => world.Maps.TryFindWarp(warp.SourceMap, warp.SourceX, warp.SourceY, out _));
     }
 
