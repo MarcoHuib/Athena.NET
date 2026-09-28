@@ -138,7 +138,7 @@ public sealed class PendingMonsterDamageAttemptTests
         var stream = client.GetStream();
 
         var allocator = new WorldActorIdAllocator();
-        var spawnDefinition = new MobSpawnDefinition(GeneratedMobs.GPoring, "int_land03", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "test", 0));
+        var spawnDefinition = new MobSpawnDefinition(GeneratedMobs.GPoring, "int_land", 1, 5000, 0, new WorldSourceInfo("rAthena", "e985006171d2eb320ee512a653f4c83aea3d81b6", "test", 0));
         var registry = new MonsterRegistry([spawnDefinition], allocator.Allocate, new FixedCellSelector(monsterX, monsterY), timeProvider);
         var questDrops = new QuestDropResolver(GeneratedQuestDrops.All);
         var target = registry.AllInstances[0];
@@ -157,13 +157,13 @@ public sealed class PendingMonsterDamageAttemptTests
 
         var session = new MapClientSession(
             1, serverClient, new CharServerConnector(new MapConfigStore(new MapConfig(), "unused.conf")), true,
-            "int_land03", playerX, playerY, WorldMapRegistry.Tutorial,
+            "int_land", playerX, playerY, WorldMapRegistry.Tutorial,
             gameplayStatePersistence: gameplayPersistence,
             accountId: AccountId, charId: CharId, monsterProjections: monsterProjections, combat: combat,
             inventoryPersistence: inventoryPersistence, inventoryListPersistence: inventoryListPersistence,
             timeProvider: timeProvider, combatState: combatState, distributedWorld: fakeWorld);
         var run = session.RunAsync(CancellationToken.None);
-        await session.CompleteIroAuthenticationAsync(new(AccountId, CharId, 1, 2, 0, 0, false, "int_land03", playerX, playerY, 0, 0, 0, CharacterName: "TestNovice"));
+        await session.CompleteIroAuthenticationAsync(new(AccountId, CharId, 1, 2, 0, 0, false, "int_land", playerX, playerY, 0, 0, 0, CharacterName: "TestNovice"));
 
         await ReadExact(stream, 4 + 6 + 6 + 13);
         await ReadDynamic(stream);
@@ -468,7 +468,7 @@ public sealed class PendingMonsterDamageAttemptTests
         var (client, stream, session, run, target, _, _) = await SetupAsync(playerX: 75, playerY: 51, monsterX: 75, monsterY: 51, clock);
         using var _dispose = client;
 
-        var otherLife = new WorldMonsterLifeReference("int_land03", _lastEpoch, ActorId: 9999, WorldMonsterIncarnationId.First);
+        var otherLife = new WorldMonsterLifeReference("int_land", _lastEpoch, ActorId: 9999, WorldMonsterIncarnationId.First);
         var aDispatchCount = 0;
         session.DebugApplyMonsterDamageDispatcher = (_, _) =>
         {
@@ -553,7 +553,7 @@ public sealed class PendingMonsterDamageAttemptTests
         var (client, stream, session, run, target, combatState, projections) = await SetupAsync(playerX: 75, playerY: 51, monsterX: 75, monsterY: 51, clock);
         using var _dispose = client;
 
-        var otherLife = new WorldMonsterLifeReference("int_land03", _lastEpoch, ActorId: 9999, WorldMonsterIncarnationId.First);
+        var otherLife = new WorldMonsterLifeReference("int_land", _lastEpoch, ActorId: 9999, WorldMonsterIncarnationId.First);
         // Unlike Scenarios 9/10 (where A's own life is a genuinely unrelated placeholder never seeded
         // into the projection), THIS scenario's A and B end up sharing the SAME RepeatAttackState
         // object (AllocatePendingDamageAttemptForTestAsync's own `origin = _repeatAttack ?? new(...)`
@@ -657,7 +657,7 @@ public sealed class PendingMonsterDamageAttemptTests
         var (client, stream, session, run, target, _, _) = await SetupAsync(playerX: 75, playerY: 51, monsterX: 75, monsterY: 51, clock);
         using var _dispose = client;
 
-        var otherLife = new WorldMonsterLifeReference("int_land03", _lastEpoch, ActorId: 9999, WorldMonsterIncarnationId.First);
+        var otherLife = new WorldMonsterLifeReference("int_land", _lastEpoch, ActorId: 9999, WorldMonsterIncarnationId.First);
         var dispatchCount = 0;
         session.DebugApplyMonsterDamageDispatcher = (_, _) =>
         {
@@ -692,7 +692,7 @@ public sealed class PendingMonsterDamageAttemptTests
         var (client, stream, session, run, target, _, _) = await SetupAsync(playerX: 75, playerY: 51, monsterX: 75, monsterY: 51, clock);
         using var _dispose = client;
 
-        var otherLife = new WorldMonsterLifeReference("int_land03", _lastEpoch, ActorId: 9999, WorldMonsterIncarnationId.First);
+        var otherLife = new WorldMonsterLifeReference("int_land", _lastEpoch, ActorId: 9999, WorldMonsterIncarnationId.First);
         var aSuspend = new TaskCompletionSource();
         // A's own life is an unrelated scheduling/gating placeholder never seeded into the
         // projection - StaleLifeReference (rather than Applied) avoids HandleDamageResultAsync's
@@ -776,7 +776,7 @@ public sealed class PendingMonsterDamageAttemptTests
         var (client, stream, session, run, target, _, _) = await SetupAsync(playerX: 75, playerY: 51, monsterX: 75, monsterY: 51, clock);
         using var _dispose = client;
 
-        var otherLife = new WorldMonsterLifeReference("int_land03", _lastEpoch, ActorId: 9999, WorldMonsterIncarnationId.First);
+        var otherLife = new WorldMonsterLifeReference("int_land", _lastEpoch, ActorId: 9999, WorldMonsterIncarnationId.First);
         var holdSuspend = new TaskCompletionSource();
         // A's own life is an unrelated scheduling/gating placeholder never seeded into the
         // projection - StaleLifeReference (rather than Applied) avoids HandleDamageResultAsync's
@@ -1116,7 +1116,7 @@ public sealed class PendingMonsterDamageAttemptTests
         // life - simulating "the original attempt resolved/was replaced by something else while this
         // exact RPC call was still in flight".
         await session.RetirePendingDamageAttemptForTestAsync(CancellationToken.None);
-        var otherLife = new WorldMonsterLifeReference("int_land03", _lastEpoch, ActorId: 12345, WorldMonsterIncarnationId.First);
+        var otherLife = new WorldMonsterLifeReference("int_land", _lastEpoch, ActorId: 12345, WorldMonsterIncarnationId.First);
         var secondAttemptTask = session.AllocatePendingDamageAttemptForTestAsync(otherLife, damage: 99, acquireEngagement: false, CancellationToken.None);
         await secondAttemptTask; // The new attempt's own first dispatch (transient failure) completes independently of the stale first call.
 

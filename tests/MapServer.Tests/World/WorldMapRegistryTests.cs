@@ -1,3 +1,4 @@
+using Athena.Net.MapServer.Generated.World;
 using Athena.Net.MapServer.World;
 using Athena.Net.MapServer.World.GeneratedScripts;
 
@@ -11,7 +12,9 @@ public sealed class WorldMapRegistryTests
         var registry = WorldMapRegistry.Tutorial;
         // Every canonical ordinary warp whose trigger is on an explicitly served map
         // is live. Destination maps do not determine ownership or activation.
-        Assert.True(registry.StaticWarpCount >= 1);
+        // Exactly the Renewal-effective warps whose source map is hosted (channel copies and pre-re rows excluded).
+        Assert.Equal(MapServerHostingScope.ServedMaps.Sum(map => GeneratedWarpLoadProfiles.GetForMap(map, WarpLoadProfile.AthenaIroEffective).Count), registry.StaticWarpCount);
+        Assert.True(registry.StaticWarpCount > 0);
         // 35 = the full 5-map tutorial family (base iz_int/int_land + 01..04), not just the 01..04
         // instanced variants: 2 Wounded Swordsman states x 5 maps (iz_int/01/02/03/04) + Captain
         // Carocc x 5 (int_land/01/02/03/04) + Lumin x 5 + Sailor x 5 (int_land/01/02/03/04) +
