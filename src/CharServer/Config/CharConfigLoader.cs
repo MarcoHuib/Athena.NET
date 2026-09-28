@@ -9,8 +9,6 @@ public static class CharConfigLoader
 {
     public static CharConfig Load(string path)
     {
-        var userId = string.Empty;
-        var password = string.Empty;
         var serviceId = "CharServer";
         var serverName = "rAthena";
         var loginIp = IPAddress.Loopback;
@@ -66,8 +64,6 @@ public static class CharConfigLoader
             CharLogger.Info($"Config not found: {path}. Using defaults.");
             return new CharConfig
             {
-                UserId = userId,
-                Password = password,
                 ServiceId = serviceId,
                 ServerName = serverName,
                 LoginIp = loginIp,
@@ -135,15 +131,7 @@ public static class CharConfigLoader
             var key = line[..separator].Trim();
             var value = line[(separator + 1)..].Trim();
 
-            if (key.Equals("userid", StringComparison.OrdinalIgnoreCase))
-            {
-                userId = value;
-            }
-            else if (key.Equals("passwd", StringComparison.OrdinalIgnoreCase))
-            {
-                password = value;
-            }
-            else if (key.Equals("service_id", StringComparison.OrdinalIgnoreCase))
+            if (key.Equals("service_id", StringComparison.OrdinalIgnoreCase))
             {
                 serviceId = value;
             }
@@ -398,8 +386,6 @@ public static class CharConfigLoader
 
         return new CharConfig
         {
-            UserId = userId,
-            Password = password,
             ServiceId = serviceId,
             ServerName = serverName,
             LoginIp = loginIp,

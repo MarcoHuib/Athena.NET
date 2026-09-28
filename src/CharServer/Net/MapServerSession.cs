@@ -13,7 +13,8 @@ public sealed class MapServerSession : IDisposable, ISession
 {
     private static readonly Dictionary<short, int> PacketLengths = new()
     {
-        [PacketConstants.MapLogin] = 60,
+        [PacketConstants.MapServiceHello] = 2 + PacketConstants.NameLength + 4 + 2 + 2,
+        [PacketConstants.MapServiceAuthProof] = 2 + PacketConstants.ServiceProofLength,
         [PacketConstants.MapAuthRequest] = 20,
         [PacketConstants.MapSavePosition] = 30,
         [PacketConstants.MapQuestStateRequest] = MapQuestStateProtocol.RequestLength,
@@ -34,6 +35,7 @@ public sealed class MapServerSession : IDisposable, ISession
     private readonly MapServerRegistry _registry;
     private readonly MapAuthManager _authManager;
     private readonly Func<CharDbContext?> _dbFactory;
+    private readonly IMapServiceAuthenticationService _serviceAuth;
     private readonly HashSet<(uint AccountId, uint CharId)> _ownedCharacters = new();
     private readonly SemaphoreSlim _writeLock = new(1, 1);
     private bool _authenticated;
@@ -49,6 +51,21 @@ public sealed class MapServerSession : IDisposable, ISession
         MapAuthManager authManager,
         Func<CharDbContext?> dbFactory,
         byte[]? prefetchedHeader = null)
+        : this(sessionId, client, configStore, registry, authManager, dbFactory,
+              new MapServiceAuthenticationService(new MapServerServiceTokenProvider(new Athena.Net.CharServer.Config.SecretConfig())),
+              prefetchedHeader)
+    {
+    }
+
+    public MapServerSession(
+        int sessionId,
+        TcpClient client,
+        CharConfigStore configStore,
+        MapServerRegistry registry,
+        MapAuthManager authManager,
+        Func<CharDbContext?> dbFactory,
+        IMapServiceAuthenticationService serviceAuth,
+        byte[]? prefetchedHeader = null)
     {
         SessionId = sessionId;
         _client = client;
@@ -57,6 +74,7 @@ public sealed class MapServerSession : IDisposable, ISession
         _registry = registry;
         _authManager = authManager;
         _dbFactory = dbFactory;
+        _serviceAuth = serviceAuth;
         _prefetchedHeader = prefetchedHeader;
     }
 
@@ -95,8 +113,11 @@ public sealed class MapServerSession : IDisposable, ISession
     {
         switch (packetType)
         {
-            case PacketConstants.MapLogin:
-                await HandleLoginAsync(packet, cancellationToken);
+            case PacketConstants.MapServiceHello:
+                await HandleServiceHelloAsync(packet, cancellationToken);
+                break;
+            case PacketConstants.MapServiceAuthProof:
+                await HandleServiceAuthProofAsync(packet, cancellationToken);
                 break;
             case PacketConstants.MapSendMaps:
                 await HandleMapListAsync(packet, cancellationToken);
@@ -144,28 +165,94 @@ public sealed class MapServerSession : IDisposable, ISession
         }
     }
 
-    private async Task HandleLoginAsync(byte[] packet, CancellationToken cancellationToken)
+    /// <summary>
+    /// MapServiceHello wire layout (34 bytes total; must match
+    /// src/MapServer/Net/CharServerConnector.cs's SendServiceHelloAsync
+    /// exactly): 2 header + 24 ServiceId + 4 IP + 2 port + 2 reserved.
+    /// Starts the HMAC-SHA256 challenge/response handshake (see
+    /// ai/char-server.md, "Inter-server service authentication (MapServer)"):
+    /// MapServer announces itself here, CharServer replies with a
+    /// cryptographically random one-time nonce (MapServiceAuthChallenge);
+    /// only a correct HMAC-SHA256 proof over that nonce and this hello (see
+    /// <see cref="HandleServiceAuthProofAsync"/>) authenticates the session.
+    /// The advertised map IP/port are captured here (same fields legacy
+    /// MapLogin carried) but registration into <see cref="_registry"/> is
+    /// deferred until authentication actually succeeds.
+    /// </summary>
+    private async Task HandleServiceHelloAsync(byte[] packet, CancellationToken cancellationToken)
     {
-        var userId = ReadFixedString(packet.AsSpan(2, PacketConstants.NameLength));
-        var password = ReadFixedString(packet.AsSpan(26, PacketConstants.NameLength));
-        var ipBytes = packet.AsSpan(54, 4).ToArray();
-        _mapIp = new IPAddress(ipBytes);
-        _mapPort = BinaryPrimitives.ReadUInt16LittleEndian(packet.AsSpan(58, 2));
-
-        var config = _configStore.Current;
-        if (!string.Equals(userId, config.UserId, StringComparison.Ordinal) ||
-            !string.Equals(password, config.Password, StringComparison.Ordinal))
+        if (_authenticated)
         {
-            await SendLoginAckAsync(3, cancellationToken);
-            CharLogger.Warning($"Map server login rejected for session {SessionId}.");
+            CharLogger.Warning($"Rejected duplicate MapServiceHello for already-authenticated session {SessionId}.");
+            _client.Close();
+            return;
+        }
+
+        var serviceId = ReadFixedString(packet.AsSpan(2, PacketConstants.NameLength));
+        var ipBytes = packet.AsSpan(26, 4).ToArray();
+        var ip = new IPAddress(ipBytes);
+        var port = BinaryPrimitives.ReadUInt16LittleEndian(packet.AsSpan(30, 2));
+
+        var hello = new MapServiceHelloInfo(serviceId, ip, port);
+        var nonce = _serviceAuth.GenerateChallenge(hello);
+        if (nonce is null)
+        {
+            CharLogger.Warning($"Rejected MapServiceHello: connection is not in a state that accepts a new challenge (state={_serviceAuth.State}) for session {SessionId}.");
+            await SendServiceAuthResultAsync(1, cancellationToken);
+            _client.Close();
+            return;
+        }
+
+        _mapIp = ip;
+        _mapPort = port;
+        await SendServiceAuthChallengeAsync(nonce, cancellationToken);
+    }
+
+    /// <summary>
+    /// Verifies the HMAC-SHA256 proof against the single outstanding
+    /// challenge and, only on success, finalizes authentication and
+    /// registers the MapServer (see <see cref="IMapServiceAuthenticationService.MarkAuthenticated"/>).
+    /// No map registration or gameplay/persistence packet is accepted before
+    /// this succeeds - <see cref="_authenticated"/> remains false and every
+    /// other handler in this class checks it. Any failure closes the
+    /// connection; the ServiceToken itself is never logged.
+    /// </summary>
+    private async Task HandleServiceAuthProofAsync(byte[] packet, CancellationToken cancellationToken)
+    {
+        if (_authenticated)
+        {
+            CharLogger.Warning($"Rejected MapServiceAuthProof for already-authenticated session {SessionId}.");
+            await SendServiceAuthResultAsync(1, cancellationToken);
+            _client.Close();
+            return;
+        }
+
+        var proof = packet.AsSpan(2, PacketConstants.ServiceProofLength).ToArray();
+        var result = _serviceAuth.VerifyProof(proof);
+
+        if (!result.Success || result.Hello is null)
+        {
+            CharLogger.Warning($"Map server service authentication failed for session {SessionId} (reason={result.Outcome}).");
+            await SendServiceAuthResultAsync(1, cancellationToken);
+            _client.Close();
+            return;
+        }
+
+        if (!_serviceAuth.MarkAuthenticated())
+        {
+            // Defensive: VerifyProof succeeded but MarkAuthenticated refused
+            // (e.g. state was mutated unexpectedly between the two calls).
+            // Never register a MapServer without both steps having succeeded.
+            CharLogger.Warning($"Map server service authentication could not be finalized for session {SessionId}.");
+            await SendServiceAuthResultAsync(1, cancellationToken);
             _client.Close();
             return;
         }
 
         _authenticated = true;
         _registry.TryRegister(SessionId, _mapIp, _mapPort, this);
-        await SendLoginAckAsync(0, cancellationToken);
-        CharLogger.Status($"Map server registered from {_mapIp}:{_mapPort}.");
+        await SendServiceAuthResultAsync(0, cancellationToken);
+        CharLogger.Status($"Map server '{result.Hello.ServiceId}' registered from {_mapIp}:{_mapPort}.");
     }
 
     private Task HandleMapListAsync(byte[] packet, CancellationToken cancellationToken)
@@ -833,10 +920,18 @@ public sealed class MapServerSession : IDisposable, ISession
         return authenticated && questId > 0 && operation <= 2 && ownedCharacters.Contains((accountId, charId));
     }
 
-    private Task SendLoginAckAsync(byte result, CancellationToken cancellationToken)
+    private Task SendServiceAuthChallengeAsync(byte[] nonce, CancellationToken cancellationToken)
+    {
+        var buffer = new byte[2 + PacketConstants.ServiceNonceLength];
+        BinaryPrimitives.WriteInt16LittleEndian(buffer.AsSpan(0, 2), PacketConstants.MapServiceAuthChallenge);
+        nonce.CopyTo(buffer.AsSpan(2, PacketConstants.ServiceNonceLength));
+        return WriteAsync(buffer, cancellationToken);
+    }
+
+    private Task SendServiceAuthResultAsync(byte result, CancellationToken cancellationToken)
     {
         var buffer = new byte[3];
-        BinaryPrimitives.WriteInt16LittleEndian(buffer.AsSpan(0, 2), PacketConstants.MapLoginAck);
+        BinaryPrimitives.WriteInt16LittleEndian(buffer.AsSpan(0, 2), PacketConstants.MapServiceAuthResult);
         buffer[2] = result;
         return WriteAsync(buffer, cancellationToken);
     }

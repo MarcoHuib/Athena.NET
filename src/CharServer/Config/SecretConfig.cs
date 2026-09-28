@@ -5,8 +5,6 @@ namespace Athena.Net.CharServer.Config;
 
 public sealed class SecretConfig
 {
-    public string CharServerUserId { get; init; } = string.Empty;
-    public string CharServerPassword { get; init; } = string.Empty;
     public string CharDbProvider { get; init; } = string.Empty;
     public string CharDbConnectionString { get; init; } = string.Empty;
 
@@ -18,11 +16,25 @@ public sealed class SecretConfig
     /// in this file (the same path and file LoginServer reads), or the
     /// ATHENA_NET_CHAR_SERVER_SERVICE_TOKEN environment variable (checked by
     /// <see cref="Net.CharServerServiceTokenProvider"/>, which takes priority
-    /// when both are set). Unrelated to <see cref="CharServerUserId"/>/
-    /// <see cref="CharServerPassword"/>, which authenticate MapServer to this
-    /// CharServer, not CharServer to LoginServer.
+    /// when both are set). Independent of <see cref="MapServerServiceToken"/>,
+    /// which authenticates MapServer to this CharServer, not CharServer to
+    /// LoginServer.
     /// </summary>
     public string CharServerServiceToken { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Shared secret for MapServer &lt;-&gt; CharServer HMAC-SHA256 service
+    /// authentication (see <see cref="Net.MapServiceAuthProofCalculator"/>
+    /// and ai/char-server.md). Never transmitted over the network - only an
+    /// HMAC proof derived from it is. Read from ServiceAuthentication.MapServer.Token
+    /// in this file (the same path and file MapServer reads), or the
+    /// ATHENA_NET_MAP_SERVER_SERVICE_TOKEN environment variable (checked by
+    /// <see cref="Net.MapServerServiceTokenProvider"/>, which takes priority
+    /// when both are set). Completely independent of
+    /// <see cref="CharServerServiceToken"/> - the two tokens protect two
+    /// different trust boundaries and must never be equal in production.
+    /// </summary>
+    public string MapServerServiceToken { get; init; } = string.Empty;
 
     public static SecretConfig Load(string path)
     {
@@ -37,30 +49,24 @@ public sealed class SecretConfig
             using var document = JsonDocument.Parse(stream);
             var root = document.RootElement;
 
-            var userId = string.Empty;
-            var password = string.Empty;
             var provider = string.Empty;
             var connectionString = string.Empty;
             var serviceToken = string.Empty;
+            var mapServiceToken = string.Empty;
 
-            if (root.TryGetProperty("CharServer", out var charServer))
+            if (root.TryGetProperty("ServiceAuthentication", out var serviceAuth))
             {
-                if (charServer.TryGetProperty("UserId", out var userIdElement))
+                if (serviceAuth.TryGetProperty("CharServer", out var charServerAuth) &&
+                    charServerAuth.TryGetProperty("Token", out var tokenElement))
                 {
-                    userId = userIdElement.GetString() ?? string.Empty;
+                    serviceToken = tokenElement.GetString() ?? string.Empty;
                 }
 
-                if (charServer.TryGetProperty("Password", out var passwordElement))
+                if (serviceAuth.TryGetProperty("MapServer", out var mapServerAuth) &&
+                    mapServerAuth.TryGetProperty("Token", out var mapTokenElement))
                 {
-                    password = passwordElement.GetString() ?? string.Empty;
+                    mapServiceToken = mapTokenElement.GetString() ?? string.Empty;
                 }
-            }
-
-            if (root.TryGetProperty("ServiceAuthentication", out var serviceAuth) &&
-                serviceAuth.TryGetProperty("CharServer", out var charServerAuth) &&
-                charServerAuth.TryGetProperty("Token", out var tokenElement))
-            {
-                serviceToken = tokenElement.GetString() ?? string.Empty;
             }
 
             if (root.TryGetProperty("CharDb", out var charDb))
@@ -78,11 +84,10 @@ public sealed class SecretConfig
 
             return new SecretConfig
             {
-                CharServerUserId = userId,
-                CharServerPassword = password,
                 CharDbProvider = provider,
                 CharDbConnectionString = connectionString,
                 CharServerServiceToken = serviceToken,
+                MapServerServiceToken = mapServiceToken,
             };
         }
         catch (Exception ex)
@@ -99,8 +104,6 @@ public sealed class SecretConfig
             IroRenewalCompatibility = config.IroRenewalCompatibility,
             IroAdvertisedMapIp = config.IroAdvertisedMapIp,
             IroAdvertisedMapPort = config.IroAdvertisedMapPort,
-            UserId = string.IsNullOrWhiteSpace(CharServerUserId) ? config.UserId : CharServerUserId,
-            Password = string.IsNullOrWhiteSpace(CharServerPassword) ? config.Password : CharServerPassword,
             ServiceId = config.ServiceId,
             ServerName = config.ServerName,
             LoginIp = config.LoginIp,

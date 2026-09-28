@@ -11,8 +11,7 @@ public static class MapConfigLoader
 {
     public static MapConfig Load(string path)
     {
-        var userId = string.Empty;
-        var password = string.Empty;
+        var serviceId = "MapServer";
         var charIp = IPAddress.Loopback;
         var charPort = 6121;
         var bindIp = IPAddress.Any;
@@ -34,8 +33,7 @@ public static class MapConfigLoader
             MapLogger.Info($"Config not found: {path}. Using defaults.");
             return new MapConfig
             {
-                UserId = userId,
-                Password = password,
+                ServiceId = serviceId,
                 CharIp = charIp,
                 CharPort = charPort,
                 BindIp = bindIp,
@@ -69,13 +67,9 @@ public static class MapConfigLoader
             var key = line[..separator].Trim();
             var value = line[(separator + 1)..].Trim();
 
-            if (key.Equals("userid", StringComparison.OrdinalIgnoreCase))
+            if (key.Equals("service_id", StringComparison.OrdinalIgnoreCase))
             {
-                userId = value;
-            }
-            else if (key.Equals("passwd", StringComparison.OrdinalIgnoreCase))
-            {
-                password = value;
+                serviceId = value;
             }
             else if (key.Equals("char_ip", StringComparison.OrdinalIgnoreCase))
             {
@@ -199,8 +193,7 @@ public static class MapConfigLoader
 
         return new MapConfig
         {
-            UserId = userId,
-            Password = password,
+            ServiceId = serviceId,
             CharIp = charIp,
             CharPort = charPort,
             BindIp = bindIp,

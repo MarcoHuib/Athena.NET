@@ -43,7 +43,15 @@ public static class CharServerApp
 
         var serviceTokenProvider = new CharServerServiceTokenProvider(secrets);
         var loginConnector = new LoginServerConnector(configStore, serviceTokenProvider);
-        var charServer = new CharTcpServer(configStore, loginConnector, dbFactory, interConfig.StartStatusPoints);
+        var mapServerServiceTokenProvider = new MapServerServiceTokenProvider(secrets);
+        if (!mapServerServiceTokenProvider.IsConfigured)
+        {
+            CharLogger.Error(
+                "MapServer ServiceToken is not configured (ServiceAuthentication.MapServer.Token in " +
+                "solutionfiles/secrets/secret.json, or the ATHENA_NET_MAP_SERVER_SERVICE_TOKEN environment " +
+                "variable). MapServer connections will be unable to authenticate to this char server.");
+        }
+        var charServer = new CharTcpServer(configStore, loginConnector, dbFactory, interConfig.StartStatusPoints, mapServerServiceTokenProvider);
 
         var loginTask = loginConnector.RunAsync(cts.Token);
         await charServer.RunAsync(cts.Token);

@@ -71,6 +71,94 @@ After successful MapServer entry:
 - rename/delete/slot-move flows as exercised by iRO
 - party/guild/storage/mail and other inter-server systems required by actual iRO gameplay
 
+## Inter-server service authentication (MapServer)
+
+MapServer authenticates to CharServer with a non-secret `ServiceId` and a
+shared MapServer `ServiceToken`, never a username/password pair. The legacy
+`MapLogin`/`MapLoginAck` username/password handshake (backed by
+`MapConfig.UserId`/`Password` and `CharConfig.UserId`/`Password`) has been
+removed entirely and replaced by an HMAC-SHA256 challenge/response handshake,
+structurally identical to - but completely independent of - the
+CharServer -> LoginServer handshake documented in `ai/login-server.md`. The
+two tokens (`ServiceAuthentication.CharServer.Token` for
+CharServer -> LoginServer, `ServiceAuthentication.MapServer.Token` for
+MapServer -> CharServer) are unrelated secrets and must never be equal in
+production.
+
+The handshake, driven by `IMapServiceAuthenticationService`
+(`MapServiceAuthenticationService` in production, in `MapServerSession`) and
+mirrored byte-for-byte on the MapServer side by
+`Athena.Net.MapServer.Net.ServiceAuthProofCalculator`, is:
+
+1. MapServer opens a TCP connection to CharServer and sends `MapServiceHello`
+   (`0x2b40`) carrying its non-secret `ServiceId` and its advertised map
+   IP/port.
+2. CharServer generates a cryptographically random 32-byte one-time nonce and
+   replies with `MapServiceAuthChallenge` (`0x2b41`) carrying it. The nonce is
+   scoped to this connection only and can be consumed exactly once.
+3. MapServer computes an HMAC-SHA256 proof over the complete hello payload
+   (ServiceId, advertised IP, advertised port) plus the nonce, and sends only
+   the 32-byte proof back as `MapServiceAuthProof` (`0x2b42`). The MapServer
+   `ServiceToken` itself never travels over the network - only this one-time
+   derived proof does.
+4. CharServer independently recomputes the expected proof and compares it to
+   the submitted one with `CryptographicOperations.FixedTimeEquals` (a
+   fixed-time comparison). Only on an exact match does it finalize
+   authentication (`MarkAuthenticated`), register the MapServer into
+   `MapServerRegistry`, and begin accepting map-list/auth/gameplay-persistence
+   packets from that session. Any other outcome - wrong proof,
+   expired/already-consumed challenge, malformed hello/proof, packet
+   out-of-order, or no `ServiceToken` configured at all - sends
+   `MapServiceAuthResult` (`0x2b43`) with a failure byte and closes the
+   connection (fail closed) rather than allowing retries on the same socket.
+
+Wire format details (message layout, domain-separation context string,
+field-length prefixing) are documented directly on
+`MapServiceAuthProofCalculator`'s doc comment on both sides
+(`src/CharServer/Net/MapServiceAuthProofCalculator.cs` and
+`src/MapServer/Net/ServiceAuthProofCalculator.cs`); the two implementations
+must stay byte-for-byte identical.
+
+### Handshake connection state machine
+
+Each TCP connection's `IMapServiceAuthenticationService` (a fresh instance
+per connection) tracks an explicit `MapServiceAuthConnectionState`
+(`Unauthenticated -> ChallengeIssued -> ProofVerified -> Authenticated`, with
+any invalid transition moving to the terminal `Failed` state), structurally
+identical to LoginServer's `ServiceAuthConnectionState` for the
+CharServer -> LoginServer handshake. In particular:
+
+- A second `MapServiceHello` while a challenge is outstanding, or on an
+  already-authenticated connection, is rejected and the connection closed -
+  never silently reset.
+- `MarkAuthenticated` only succeeds immediately after this same instance's
+  own successful `VerifyProof` call (`ProofVerified` state) - it is
+  impossible to reach `Authenticated` any other way.
+- A challenge is consumed exactly once regardless of whether the proof that
+  consumes it is correct - a replayed or repeated proof against the same
+  challenge always fails.
+- A challenge/proof issued on one TCP connection can never authenticate a
+  different connection - each connection has its own
+  `IMapServiceAuthenticationService` instance and its own one-outstanding-
+  challenge state.
+- No map registration, character auth request, or gameplay/persistence
+  packet (`MapSendMaps`, `MapAuthRequest`, `MapSavePosition`, quest/skill/
+  inventory persistence, etc.) is accepted from a `MapServerSession` before
+  `_authenticated` is set to `true` by a successful handshake.
+
+### Config resolution
+
+`MapServerServiceTokenProvider` (CharServer side, in
+`src/CharServer/Net/MapServerServiceTokenProvider.cs`) resolves the token
+from the `ATHENA_NET_MAP_SERVER_SERVICE_TOKEN` environment variable first,
+falling back to `ServiceAuthentication.MapServer.Token` in
+`solutionfiles/secrets/secret.json`. It must be Base64-encoded and decode to
+at least 32 bytes (256 bits); a missing value, invalid Base64, or a too-short
+decoded value are all treated identically as "not configured" and fail
+closed - never a fallback to an empty/default credential. The MapServer-side
+resolution (`Athena.Net.MapServer.Net.MapServerServiceTokenProvider`) is
+symmetric, reading the same secret path/environment-variable name.
+
 ## Character gameplay-state contract
 
 An authenticated MapServer can read and transactionally replace the persistent

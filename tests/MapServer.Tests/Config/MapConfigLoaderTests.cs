@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Net;
 using Athena.Net.MapServer.Config;
 using Athena.Net.MapServer.Gameplay.Rules;
@@ -352,8 +353,10 @@ public sealed class MapConfigLoaderTests
         Assert.Same(rates, merged.GameplayRates);
     }
 
-    // Acceptance criterion for Correction 7: SecretConfig only knows about
-    // UserId/Password. MapConfig is a record, so ApplyTo clones every other
+    // Acceptance criterion: SecretConfig no longer carries any MapServer
+    // interserver credential at all - MapServer's ServiceToken is resolved
+    // separately by MapServerServiceTokenProvider, never merged into
+    // MapConfig. MapConfig is a record, so ApplyTo clones every other
     // property via `with` - adding a brand-new non-secret MapConfig property
     // (simulated here by round-tripping GameplayRates itself, which is exactly
     // the kind of gameplay-only property that must never require touching
@@ -362,22 +365,19 @@ public sealed class MapConfigLoaderTests
     public void SecretConfig_ApplyTo_RoundTripsGameplayRatesWithoutSecretConfigChanges()
     {
         var rates = new GameplayRateOptions { BaseExpRate = 500, JobExpRate = 500, ItemDropRate = 200 };
-        var config = new MapConfig { GameplayRates = rates, UserId = "u", Password = "p" };
+        var config = new MapConfig { GameplayRates = rates };
 
-        var merged = new SecretConfig { UserId = "override" }.ApplyTo(config);
+        var merged = new SecretConfig().ApplyTo(config);
 
         Assert.Same(rates, merged.GameplayRates);
-        Assert.Equal("override", merged.UserId);
-        Assert.Equal("p", merged.Password);
     }
 
-    // SecretConfig.ApplyTo must touch ONLY UserId/Password - every other property
-    // is passed through unchanged (asserted via reference/structural equality of
-    // the whole MapConfig record modulo the two secret fields).
+    // SecretConfig.ApplyTo is now a pure passthrough - MapConfig no longer has any
+    // legacy UserId/Password field for it to merge.
     [Fact]
-    public void SecretConfig_ApplyTo_OnlyChangesUserIdAndPassword()
+    public void SecretConfig_ApplyTo_IsPureIdentity()
     {
-        var config = new MapConfig { UserId = "original", Password = "secret" };
+        var config = new MapConfig { ServiceId = "MapServer" };
         var merged = new SecretConfig().ApplyTo(config);
         Assert.Equal(config with { }, merged);
     }
@@ -412,19 +412,31 @@ public sealed class MapConfigLoaderTests
         Assert.Same(artifact, Assert.Single(merged.CollisionArtifacts));
     }
 
+    // Legacy MapServer.UserId/Password blocks in secret.json are no longer read at
+    // all - SecretConfig only understands ServiceAuthentication.MapServer.Token now.
     [Fact]
-    public void SecretConfig_AppliesCredentials_WhenPresent()
+    public void SecretConfig_IgnoresLegacyUserIdPasswordBlock()
     {
         var tempDir = CreateTempDir();
         var secretsPath = Path.Combine(tempDir, "secret.json");
         File.WriteAllText(secretsPath, "{\"MapServer\":{\"UserId\":\"srv_user\",\"Password\":\"srv_pass\"}}");
 
         var secrets = SecretConfig.Load(secretsPath);
-        var config = new MapConfig { UserId = string.Empty, Password = string.Empty };
-        var merged = secrets.ApplyTo(config);
 
-        Assert.Equal("srv_user", merged.UserId);
-        Assert.Equal("srv_pass", merged.Password);
+        Assert.Equal(string.Empty, secrets.MapServerServiceToken);
+    }
+
+    [Fact]
+    public void SecretConfig_LoadsMapServerServiceToken_WhenPresent()
+    {
+        var tempDir = CreateTempDir();
+        var secretsPath = Path.Combine(tempDir, "secret.json");
+        var testToken = Convert.ToBase64String(Enumerable.Range(0, 32).Select(i => (byte)i).ToArray());
+        File.WriteAllText(secretsPath, $"{{\"ServiceAuthentication\":{{\"MapServer\":{{\"Token\":\"{testToken}\"}}}}}}");
+
+        var secrets = SecretConfig.Load(secretsPath);
+
+        Assert.Equal(testToken, secrets.MapServerServiceToken);
     }
 
     private static string CreateTempDir()

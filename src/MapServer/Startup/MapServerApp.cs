@@ -218,8 +218,18 @@ public static class MapServerApp
             mobSpawnMaps: MapServerHostingScope.MobSpawnMaps,
             actorIdAllocator: npcWarpActorIdAllocator);
 
+        var mapServerServiceTokenProvider =
+            new MapServerServiceTokenProvider(secrets);
+        if (!mapServerServiceTokenProvider.IsConfigured)
+        {
+            MapLogger.Error(
+                "MapServer ServiceToken is not configured (ServiceAuthentication.MapServer.Token in " +
+                "solutionfiles/secrets/secret.json, or the ATHENA_NET_MAP_SERVER_SERVICE_TOKEN environment " +
+                "variable). Cannot authenticate to the char server.");
+        }
+
         var connector =
-            new CharServerConnector(configStore);
+            new CharServerConnector(configStore, mapServerServiceTokenProvider);
 
         var mapServer =
             new MapTcpServer(

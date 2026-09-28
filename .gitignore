@@ -132,7 +132,7 @@ $RECYCLE.BIN/
 
 _NCrunch*
 
-/SolutionFiles/Secrets/*
+/solutionfiles/secrets/*
 /legacy/*
 !/legacy/rathena
 !/legacy/openkore

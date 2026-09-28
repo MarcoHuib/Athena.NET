@@ -4,8 +4,17 @@ namespace Athena.Net.MapServer.Config;
 
 public sealed class SecretConfig
 {
-    public string UserId { get; init; } = string.Empty;
-    public string Password { get; init; } = string.Empty;
+    /// <summary>
+    /// Shared secret for MapServer &lt;-&gt; CharServer HMAC-SHA256 service
+    /// authentication (see <see cref="Net.ServiceAuthProofCalculator"/> and
+    /// ai/map-server.md). Never transmitted over the network - only an HMAC
+    /// proof derived from it is. Read from ServiceAuthentication.MapServer.Token
+    /// in this file (the same path and file CharServer reads), or the
+    /// ATHENA_NET_MAP_SERVER_SERVICE_TOKEN environment variable (checked by
+    /// <see cref="Net.MapServerServiceTokenProvider"/>, which takes priority
+    /// when both are set).
+    /// </summary>
+    public string MapServerServiceToken { get; init; } = string.Empty;
 
     public static SecretConfig Load(string path)
     {
@@ -20,49 +29,28 @@ public sealed class SecretConfig
             using var document = JsonDocument.Parse(stream);
             var root = document.RootElement;
 
-            if (root.TryGetProperty("MapServer", out var mapServer))
+            var serviceToken = string.Empty;
+            if (root.TryGetProperty("ServiceAuthentication", out var serviceAuth) &&
+                serviceAuth.TryGetProperty("MapServer", out var mapServerAuth) &&
+                mapServerAuth.TryGetProperty("Token", out var tokenElement))
             {
-                return new SecretConfig
-                {
-                    UserId = GetString(mapServer, "UserId"),
-                    Password = GetString(mapServer, "Password"),
-                };
+                serviceToken = tokenElement.GetString() ?? string.Empty;
             }
 
-            if (root.TryGetProperty("CharServer", out var charServer))
+            return new SecretConfig
             {
-                return new SecretConfig
-                {
-                    UserId = GetString(charServer, "UserId"),
-                    Password = GetString(charServer, "Password"),
-                };
-            }
+                MapServerServiceToken = serviceToken,
+            };
         }
         catch
         {
             return new SecretConfig();
         }
-
-        return new SecretConfig();
     }
 
-    // SecretConfig owns exactly UserId/Password - nothing else. MapConfig is a
+    // SecretConfig owns exactly MapServerServiceToken - nothing else. MapConfig is a
     // record, so this clones every other property unchanged via `with` instead of
     // re-listing them; adding a new non-secret MapConfig property in the future
     // requires no change here.
-    public MapConfig ApplyTo(MapConfig config) => config with
-    {
-        UserId = string.IsNullOrWhiteSpace(UserId) ? config.UserId : UserId,
-        Password = string.IsNullOrWhiteSpace(Password) ? config.Password : Password,
-    };
-
-    private static string GetString(JsonElement element, string name)
-    {
-        if (!element.TryGetProperty(name, out var value))
-        {
-            return string.Empty;
-        }
-
-        return value.GetString() ?? string.Empty;
-    }
+    public MapConfig ApplyTo(MapConfig config) => config;
 }

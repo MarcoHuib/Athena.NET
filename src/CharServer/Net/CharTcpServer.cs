@@ -18,14 +18,21 @@ public sealed class CharTcpServer
     private readonly int _startStatusPoints;
     private readonly MapServerRegistry _mapRegistry = new();
     private readonly MapAuthManager _mapAuthManager = new();
+    private readonly MapServerServiceTokenProvider _mapServerServiceTokenProvider;
     private int _nextSessionId;
 
-    public CharTcpServer(CharConfigStore configStore, LoginServerConnector loginConnector, Func<CharDbContext?> dbFactory, int startStatusPoints)
+    public CharTcpServer(
+        CharConfigStore configStore,
+        LoginServerConnector loginConnector,
+        Func<CharDbContext?> dbFactory,
+        int startStatusPoints,
+        MapServerServiceTokenProvider mapServerServiceTokenProvider)
     {
         _configStore = configStore;
         _loginConnector = loginConnector;
         _dbFactory = dbFactory;
         _startStatusPoints = startStatusPoints;
+        _mapServerServiceTokenProvider = mapServerServiceTokenProvider;
         var config = _configStore.Current;
         _listener = new TcpListener(config.BindIp, config.CharPort);
     }
@@ -103,7 +110,7 @@ public sealed class CharTcpServer
         }
 
         var packetType = BinaryPrimitives.ReadInt16LittleEndian(header);
-        if (packetType == PacketConstants.MapLogin)
+        if (packetType == PacketConstants.MapServiceHello)
         {
             return new MapServerSession(
                 sessionId,
@@ -112,6 +119,7 @@ public sealed class CharTcpServer
                 _mapRegistry,
                 _mapAuthManager,
                 _dbFactory,
+                new MapServiceAuthenticationService(_mapServerServiceTokenProvider),
                 header);
         }
 

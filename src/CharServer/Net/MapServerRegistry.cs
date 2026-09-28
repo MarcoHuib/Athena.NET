@@ -36,6 +36,9 @@ public sealed class MapServerRegistry
         info = default!;
         return false;
     }
+
+    /// <summary>Diagnostic/test-only count of currently registered MapServer sessions.</summary>
+    public int Count => _servers.Count;
 }
 
 public sealed record MapServerInfo(int SessionId, IPAddress Ip, int Port, MapServerSession Session)

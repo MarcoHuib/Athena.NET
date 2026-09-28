@@ -6,8 +6,8 @@ namespace Athena.Net.MapServer.Config;
 
 public sealed record MapConfig
 {
-    public string UserId { get; init; } = string.Empty;
-    public string Password { get; init; } = string.Empty;
+    /// <summary>Non-secret identifier MapServer presents to CharServer's HMAC-SHA256 service authentication handshake (see Net.CharServerConnector). Never a credential by itself - proof of possessing the shared MapServer ServiceToken is.</summary>
+    public string ServiceId { get; init; } = "MapServer";
     public IPAddress CharIp { get; init; } = IPAddress.Loopback;
     public int CharPort { get; init; } = 6121;
     public IPAddress BindIp { get; init; } = IPAddress.Any;
