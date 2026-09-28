@@ -1756,7 +1756,17 @@ public sealed class ClientSession : IDisposable
             Buffer.BlockCopy(ipBytes, 0, buffer, offset, 4);
             BinaryPrimitives.WriteUInt16LittleEndian(buffer.AsSpan(offset + 4, 2), (ushort)Config.IroAdvertisedCharPort);
             WriteFixedString(buffer, offset + 6, 20, "Chaos");
-            BinaryPrimitives.WriteUInt16LittleEndian(buffer.AsSpan(offset + 26, 2), MapUserCount(server.Users));
+            // Athena.NET/current-iRO compatibility choice, deliberately NOT pinned rAthena behavior:
+            // the current iRO client's server-select screen is expected to show the LITERAL online
+            // player count (0/1/2/.../10/...), not a population-level category. server.Users is
+            // already the real aggregated count MapServer -> CharServer -> LoginServer reports (see
+            // ai/char-server.md's "Online player count" section) - it goes straight onto the wire
+            // here, unchanged, never through MapUserCount. MapUserCount itself is left in place,
+            // reproducing pinned rAthena's own login_get_usercount exactly (see its own doc comment
+            // and ClientSessionWireCharacterizationTests' parity tests) - retained as a characterized,
+            // tested helper for any future non-iRO/legacy-compatible path, just no longer wired into
+            // this one.
+            BinaryPrimitives.WriteUInt16LittleEndian(buffer.AsSpan(offset + 26, 2), server.Users);
             BinaryPrimitives.WriteUInt16LittleEndian(buffer.AsSpan(offset + 28, 2), server.Type);
             BinaryPrimitives.WriteUInt16LittleEndian(buffer.AsSpan(offset + 30, 2), server.IsNew);
             offset += serverEntrySize;
