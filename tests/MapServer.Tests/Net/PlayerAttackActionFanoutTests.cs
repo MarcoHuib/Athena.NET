@@ -173,6 +173,33 @@ public sealed class PlayerAttackActionFanoutTests
         Assert.Equal((short)PacketConstants.ZcPingLive, BinaryPrimitives.ReadInt16LittleEndian(reply));
     }
 
+    // Item 14: production now delivers every OTHER observer's copy of a player's attack action via
+    // the World feed (MapTcpServer.FanOutEntryAsync), not via FanOutPlayerAttackActionAsync's
+    // same-process broadcast (that method is now only the ATTACKER's own immediate fast-path echo -
+    // see its own doc comment). FakeCombatWorldRuntime deliberately never implements a real
+    // PollMonsterFeedAsync (see this file's own top-of-file doc comment and WorldMonsterProjectionTestHelper's),
+    // so these tests inject the equivalent feed entry directly into FanOutEntryAsync after the
+    // attack's own RPC has resolved - the same technique this file already uses for Died entries
+    // (see LethalHit_RacingDiedFeedEvent's own doc comment) - reproducing exactly what the real
+    // per-map tick loop would have delivered from a genuine PollMonsterFeedAsync page.
+    private static async Task FanOutSynthesizedPlayerAttackActionAsync(Fixture fixture, MapClientSession attackerSession, uint attackerActorId, CancellationToken cancellationToken = default)
+    {
+        var command = fixture.FakeWorld.LastApplyMonsterDamageCommand ?? throw new InvalidOperationException("Expected ApplyMonsterDamageAsync to have already been called.");
+        var hpAfter = fixture.FakeWorld.TryGetCurrentHp(command.Life) ?? throw new InvalidOperationException("Expected the fake World ledger to have HP for this life.");
+        var playerAttack = new WorldPlayerAttackAction(attackerActorId, command.AttackerCharacterId, command.AttackerPresenceId, command.Damage, 0, 0, Hit: command.Damage > 0, Lethal: hpAfter == 0);
+        var instance = fixture.Target.ToWorldMonsterInstance() with { CurrentHp = hpAfter };
+        // Sequence is -1 to match ProjectPlayerAttackActionAsync's own fallback for a fake World
+        // whose WorldMonsterDamageResult.AttackActionSequence is always null (FakeCombatWorldRuntime
+        // never populates it) - the fast-path echo's dedup key uses that SAME fallback value, so this
+        // synthesized entry must match it exactly for WasPlayerAttackActionLocallyEchoed to dedup
+        // correctly (see MapClientSession.ProjectPlayerAttackActionAsync's own doc comment).
+        var entry = new WorldMonsterFeedEntry(-1, WorldMonsterFeedEntryKind.PlayerAttackAction, fixture.Target.ActorId, instance.IncarnationId, instance, PlayerAttack: playerAttack);
+        var sessionsField = typeof(MapTcpServer).GetField("_sessions", BindingFlags.NonPublic | BindingFlags.Instance)
+            ?? throw new InvalidOperationException("MapTcpServer._sessions field not found - test seam broken by a rename.");
+        var sessions = (ConcurrentDictionary<int, MapClientSession>)sessionsField.GetValue(fixture.Server)!;
+        await fixture.Server.FanOutEntryAsync(entry, fixture.Epoch, sessions.Values.ToArray(), cancellationToken);
+    }
+
     // Connects the attacker first (so it discovers the monster alone), then the observer (which
     // discovers both the pre-existing attacker and the monster); drains every discovery packet so
     // both streams start clean for the attack itself.
@@ -209,6 +236,11 @@ public sealed class PlayerAttackActionFanoutTests
         var attackerHpInfo = await ReadExact(attacker.Stream, PacketConstants.ZcHpInfoLength); // Self-only, unchanged by this fix.
         Assert.Equal((short)PacketConstants.ZcHpInfo, BinaryPrimitives.ReadInt16LittleEndian(attackerHpInfo));
 
+        // Item 14: the observer's copy now arrives via the World feed - see
+        // FanOutSynthesizedPlayerAttackActionAsync's own doc comment for why this test injects it
+        // directly rather than driving a real PollMonsterFeedAsync loop.
+        await FanOutSynthesizedPlayerAttackActionAsync(fixture, attacker.Session, AttackerAccountId);
+
         // The live regression's fix: the observer receives the SAME action - same source, same
         // target, same authoritative damage - and nothing else (no HP info, no progression).
         var observerAction = await ReadExact(observer.Stream, PacketConstants.ZcNotifyAct3Length);
@@ -232,6 +264,13 @@ public sealed class PlayerAttackActionFanoutTests
         await ReadFixposAsync(attacker.Stream, AttackerAccountId);
         await ReadExact(attacker.Stream, PacketConstants.ZcNotifyAct3Length); // The one action.
         await ReadExact(attacker.Stream, PacketConstants.ZcHpInfoLength);     // The one self-HP-info.
+
+        // Item 14: the later feed-driven dispatch for this SAME action must be deduplicated against
+        // the attacker's own already-delivered fast-path echo (WasPlayerAttackActionLocallyEchoed) -
+        // this is exactly the dedup this test asserts. Drain the observer's own copy so the fan-out
+        // itself completes cleanly (not the focus of this test - see the Nonlethal test above).
+        await FanOutSynthesizedPlayerAttackActionAsync(fixture, attacker.Session, AttackerAccountId);
+        await ReadExact(observer.Stream, PacketConstants.ZcNotifyAct3Length);
 
         // Nothing more queued for the attacker's own stream - specifically NOT a second 0x08C8 from
         // the fan-out loop re-notifying the attacker's own session a second time.
@@ -257,6 +296,7 @@ public sealed class PlayerAttackActionFanoutTests
         await ReadFixposAsync(attacker.Stream, AttackerAccountId);
         await ReadExact(attacker.Stream, PacketConstants.ZcNotifyAct3Length);
         await ReadExact(attacker.Stream, PacketConstants.ZcHpInfoLength);
+        await FanOutSynthesizedPlayerAttackActionAsync(fixture, attacker.Session, AttackerAccountId);
         await ReadExact(observer.Stream, PacketConstants.ZcNotifyAct3Length); // The in-range observer still gets it.
 
         await AssertNothingMoreSentAsync(outOfRange.Stream);
@@ -278,6 +318,7 @@ public sealed class PlayerAttackActionFanoutTests
         await ReadFixposAsync(attacker.Stream, AttackerAccountId);
         await ReadExact(attacker.Stream, PacketConstants.ZcNotifyAct3Length);
         await ReadExact(attacker.Stream, PacketConstants.ZcHpInfoLength);
+        await FanOutSynthesizedPlayerAttackActionAsync(fixture, attacker.Session, AttackerAccountId);
         await ReadExact(observer.Stream, PacketConstants.ZcNotifyAct3Length);
 
         await AssertNothingMoreSentAsync(otherMap.Stream);
@@ -319,6 +360,12 @@ public sealed class PlayerAttackActionFanoutTests
         // (LethalAttackProjectionGate is already OPEN for this life - Enter ran before the RPC was even
         // dispatched) and is paused immediately before fanning its action out.
         await readyToRaceDied.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        // Item 14: production would have already dispatched this SAME poll's PlayerAttackAction
+        // entry to the observer before ever reaching the Died entry (same feed, same page, feed
+        // order preserved by FanOutEntryAsync's own per-entry loop) - inject it here, before the
+        // Died race below, to reproduce that exact ordering.
+        await FanOutSynthesizedPlayerAttackActionAsync(fixture, attacker.Session, AttackerAccountId);
 
         // Inject the matching authoritative Died feed event directly - this drives EXACTLY
         // MapTcpServer.FanOutEntryAsync's own Died branch, the real production code under test,

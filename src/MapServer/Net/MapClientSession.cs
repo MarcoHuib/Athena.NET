@@ -4534,22 +4534,39 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         // public projection is eligible to become world-visible.
         if (presence is null) return;
 
-        // Item 14 §4: World registration is now the SOLE registration call - there is no local-only
-        // "register first, then also tell World" step any more. Local AOI enter-fanout for this
-        // session's own player happens on the NEXT tick's player-feed poll, when this map's
-        // PlayerFeedProjection observes the Registered entry (or a bootstrap snapshot containing it)
-        // and drives PlayerVisibilityCoordinator itself - uniformly for every player, local or
-        // remote (see PlayerFeedProjection's own doc comment). MapClientSession no longer calls
-        // PlayerVisibilityCoordinator directly for its own player at all.
+        // Item 14 §4: World registration is now authoritative - the map's PlayerFeedProjection
+        // (populated by MapTcpServer's own per-map tick loop polling PollPlayerFeedAsync) is what
+        // drives PlayerVisibilityCoordinator for every player, local or remote, in normal production
+        // operation (see PlayerFeedProjection's own doc comment). The local RegisterAsync call below
+        // is retained as an immediate, same-process fallback for local AOI enter-fanout: it is
+        // idempotent against the projection's own later reconciliation (PlayerFeedProjection checks
+        // `registry.TryGetByActorId` before registering, so a player already locally registered here
+        // is left untouched, only its public state refreshed, when the feed later observes the same
+        // Registered entry) and keeps every existing single-process test/tool that never drives a
+        // real per-map tick loop (no PollPlayerFeedAsync support) working unchanged. A genuine
+        // two-replica deployment's remote-player discovery is unaffected either way, since a remote
+        // player has no local session to register here at all - it is discovered purely through the
+        // feed, by construction.
+        if (firstRegistration)
+            await _playerVisibility.RegisterAsync(presence, this, cancellationToken);
         if (_distributedWorld is not null)
         {
-            var registration = await _distributedWorld.RegisterPresenceAsync(
-                presence.MapName,
-                new WorldPlayerPresence(presenceId, presence.ActorId, presence.CharacterId, presence.MapName, presence.X, presence.Y),
-                ToPublicState(presence),
-                cancellationToken);
-            if (registration.Status == WorldPresenceRegistrationStatus.Conflict)
-                throw new InvalidOperationException($"Character {presence.CharacterId} is already present in map authority '{registration.MapId}'.");
+            try
+            {
+                var registration = await _distributedWorld.RegisterPresenceAsync(
+                    presence.MapName,
+                    new WorldPlayerPresence(presenceId, presence.ActorId, presence.CharacterId, presence.MapName, presence.X, presence.Y),
+                    ToPublicState(presence),
+                    cancellationToken);
+                if (registration.Status == WorldPresenceRegistrationStatus.Conflict)
+                    throw new InvalidOperationException($"Character {presence.CharacterId} is already present in map authority '{registration.MapId}'.");
+            }
+            catch
+            {
+                if (firstRegistration)
+                    await _playerVisibility.UnregisterAsync(presence.ActorId, CancellationToken.None);
+                throw;
+            }
         }
         if (!firstRegistration) return;
         lock (_playerPresenceGate)

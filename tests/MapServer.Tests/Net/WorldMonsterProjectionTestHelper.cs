@@ -276,7 +276,7 @@ internal sealed class FakeCombatWorldRuntime : IWorldRuntime
         return Task.FromResult(new WorldMonsterAttackedResult(NotifyMonsterAttackedStatusOverride));
     }
 
-    public Task<WorldPresenceRegistration> RegisterPresenceAsync(string mapId, WorldPlayerPresence presence, CancellationToken cancellationToken)
+    public Task<WorldPresenceRegistration> RegisterPresenceAsync(string mapId, WorldPlayerPresence presence, WorldPlayerPublicState publicState, CancellationToken cancellationToken)
     {
         lock (_gate)
         {
@@ -386,4 +386,22 @@ internal sealed class FakeCombatWorldRuntime : IWorldRuntime
             return Task.FromResult(new WorldPresenceLifeStateResult(UpdatePresenceLifeStateStatusOverride));
         }
     }
+
+    public Task<WorldPlayerFeedPage> PollPlayerFeedAsync(WorldPlayerFeedCursor? cursor, string mapId, CancellationToken cancellationToken) => throw new NotSupportedException();
+    public Task<WorldPlayerLookUpdateResult> UpdatePlayerLookAsync(string mapId, uint characterId, Guid presenceId, byte direction, byte headDirection, CancellationToken cancellationToken) => throw new NotSupportedException();
+    public Task<WorldPlayerPublicStateUpdateResult> UpdatePlayerPublicStateAsync(string mapId, uint characterId, Guid presenceId, WorldPlayerPublicState publicState, CancellationToken cancellationToken) => throw new NotSupportedException();
+    // Item 14 §3: real (not stubbed), matching MovePlayerAsync/AdvanceMovementAsync above -
+    // MapClientSession.ResolveWorldMovementTargetAsync calls this unconditionally on every accepted
+    // movement, and this fake IS used by tests that combine combat with ordinary movement (e.g.
+    // movement cancelling an active repeat-attack) - it must not throw for those to keep working.
+    public Task<WorldMovementProjectionResult> ConfirmMovementProjectionAsync(WorldMovementProjectionConfirmation confirmation, CancellationToken cancellationToken)
+    {
+        lock (_gate)
+        {
+            if (!_movements.TryGetValue(confirmation.CharacterId, out var movement) || movement.Id != confirmation.MovementId)
+                return Task.FromResult(new WorldMovementProjectionResult(WorldMovementProjectionStatus.SourceMismatch, null));
+            return Task.FromResult(new WorldMovementProjectionResult(WorldMovementProjectionStatus.Confirmed, null));
+        }
+    }
+    public Task<WorldMonsterAttackPublishResult> PublishMonsterAttackActionAsync(WorldMonsterAttackActionCommand command, CancellationToken cancellationToken) => throw new NotSupportedException();
 }

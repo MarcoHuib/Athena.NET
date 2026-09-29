@@ -67,7 +67,7 @@ public sealed class MapClientSessionMovementRetargetTests
         public Func<WorldMovementAdvance, WorldMovementAdvanceResult>? AdvanceOverride { get; set; }
         public Func<WorldMovementCancellation, WorldMovementCancellationResult>? CancelOverride { get; set; }
 
-        public Task<WorldPresenceRegistration> RegisterPresenceAsync(string mapId, WorldPlayerPresence presence, CancellationToken cancellationToken)
+        public Task<WorldPresenceRegistration> RegisterPresenceAsync(string mapId, WorldPlayerPresence presence, WorldPlayerPublicState publicState, CancellationToken cancellationToken)
         {
             lock (_gate) { _presence = presence with { MapId = mapId }; }
             return Task.FromResult(new WorldPresenceRegistration("test-partition", mapId, WorldPresenceRegistrationStatus.Registered, 1));
@@ -132,16 +132,39 @@ public sealed class MapClientSessionMovementRetargetTests
         public Task<WorldTransferResult> TransferPlayerAsync(WorldTransferCommand command, CancellationToken cancellationToken) =>
             Task.FromResult(new WorldTransferResult(WorldTransferStatus.Completed, WorldTransferType.SamePartition, _presence));
 
-        // This file exercises player-movement retarget behavior only - never monster authority - so
-        // the monster RPCs are unsupported here by design (see IWorldRuntime's own doc comment: a
-        // scripted fake like this one must never grow a second implementation of real World
-        // semantics; tests that need those use a genuine Orleans TestCluster + OrleansWorldRuntime).
+        // Item 14 §3: real (not stubbed) - MapClientSession.ResolveWorldMovementTargetAsync calls
+        // this unconditionally on every accepted movement, so a scripted fake exercising movement
+        // retarget behavior must actually implement it rather than throw, or every test in this file
+        // would fail. Confirms against the SAME _movement state TruncateMovementAsync/AdvanceMovementAsync
+        // already maintain - mirrors WorldPartitionGrain.ConfirmMovementProjectionAsync's own
+        // "derive the destination from current active-movement state" contract at fixture scale.
+        public List<WorldMovementProjectionConfirmation> ConfirmMovementProjectionCalls { get; } = [];
+        public Task<WorldMovementProjectionResult> ConfirmMovementProjectionAsync(WorldMovementProjectionConfirmation confirmation, CancellationToken cancellationToken)
+        {
+            lock (_gate)
+            {
+                ConfirmMovementProjectionCalls.Add(confirmation);
+                if (_movement is not { } movement || movement.Id != confirmation.MovementId)
+                    return Task.FromResult(new WorldMovementProjectionResult(WorldMovementProjectionStatus.SourceMismatch, null));
+                return Task.FromResult(new WorldMovementProjectionResult(WorldMovementProjectionStatus.Confirmed, null));
+            }
+        }
+
+        // This file exercises player-movement retarget behavior only - never monster authority, and
+        // never the player feed/cross-replica combat publish - so those RPCs are unsupported here by
+        // design (see IWorldRuntime's own doc comment: a scripted fake like this one must never grow
+        // a second implementation of real World semantics; tests that need those use a genuine
+        // Orleans TestCluster + OrleansWorldRuntime).
         public Task<WorldMonsterSpawnLoadResult> LoadMonsterSpawnsAsync(WorldMonsterSpawnBatch batch, CancellationToken cancellationToken) => throw new NotSupportedException();
         public Task<WorldMonsterFeedPage> PollMonsterFeedAsync(WorldMonsterFeedCursor? cursor, string mapId, CancellationToken cancellationToken) => throw new NotSupportedException();
         public Task<WorldMonsterDamageResult> ApplyMonsterDamageAsync(WorldMonsterDamageCommand command, CancellationToken cancellationToken) => throw new NotSupportedException();
         public Task<WorldMonsterAttackedResult> NotifyMonsterAttackedAsync(WorldMonsterAttackedCommand command, CancellationToken cancellationToken) => throw new NotSupportedException();
         public Task<WorldMonsterAttackWindowResult> ValidateMonsterAttackWindowAsync(WorldMonsterAttackWindowQuery query, CancellationToken cancellationToken) => throw new NotSupportedException();
         public Task<WorldPresenceLifeStateResult> UpdatePresenceLifeStateAsync(string mapId, WorldPresenceLifeStateUpdate update, CancellationToken cancellationToken) => throw new NotSupportedException();
+        public Task<WorldPlayerFeedPage> PollPlayerFeedAsync(WorldPlayerFeedCursor? cursor, string mapId, CancellationToken cancellationToken) => throw new NotSupportedException();
+        public Task<WorldPlayerLookUpdateResult> UpdatePlayerLookAsync(string mapId, uint characterId, Guid presenceId, byte direction, byte headDirection, CancellationToken cancellationToken) => throw new NotSupportedException();
+        public Task<WorldPlayerPublicStateUpdateResult> UpdatePlayerPublicStateAsync(string mapId, uint characterId, Guid presenceId, WorldPlayerPublicState publicState, CancellationToken cancellationToken) => throw new NotSupportedException();
+        public Task<WorldMonsterAttackPublishResult> PublishMonsterAttackActionAsync(WorldMonsterAttackActionCommand command, CancellationToken cancellationToken) => throw new NotSupportedException();
     }
 
     private sealed class FixedGameplayStatePersistence(CharacterGameplayState state) : ICharacterGameplayStatePersistence

@@ -62,7 +62,7 @@ public sealed class MapTcpServerMonsterAuthorityIntegrationTests : IAsyncLifetim
 
     private static async Task<(TcpClient Client, NetworkStream Stream, MapClientSession Session, Task RunTask, TcpListener Listener)> ConnectSessionAsync(
         MapTcpServer server, MapServerWorld world, IWorldRuntime worldRuntime, uint accountId, string mapId, ushort x, ushort y, CharacterGameplayState? gameplayState = null,
-        Func<PlayerAttackActionOutcome, CancellationToken, Task>? playerAttackFanout = null)
+        Func<PlayerAttackActionOutcome, long, CancellationToken, Task>? playerAttackFanout = null)
     {
         var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
@@ -375,7 +375,7 @@ public sealed class MapTcpServerMonsterAuthorityIntegrationTests : IAsyncLifetim
         // due respawn and append a genuine Respawned feed entry on its own.
         var grain = _cluster.GrainFactory.GetGrain<IWorldPartitionGrain>(Resolver().ResolvePartition(mapId));
         var killerPresenceId = Guid.NewGuid();
-        await grain.RegisterPresenceAsync(new WorldPlayerPresence(killerPresenceId, ActorId: 999, CharacterId: 999, mapId, X: original.X, Y: original.Y));
+        await grain.RegisterPresenceAsync(new WorldPlayerPresence(killerPresenceId, ActorId: 999, CharacterId: 999, mapId, X: original.X, Y: original.Y), new WorldPlayerPublicState("Test", 0, 0, 0, 0, 1, 150, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
         var lethalHit = await grain.ApplyMonsterDamageAsync(new WorldMonsterDamageCommand(oldLife, AttackerCharacterId: 999, killerPresenceId, AttackSequence: 1, Damage: 9999, AcquireEngagement: false));
         Assert.Equal(WorldMonsterDamageStatus.Applied, lethalHit.Status);
         Assert.True(lethalHit.KilledByThisHit);
@@ -638,7 +638,7 @@ public sealed class MapTcpServerMonsterAuthorityIntegrationTests : IAsyncLifetim
         var actorId = bootstrap.Snapshot!.Single().ActorId;
         var staleLife = new WorldMonsterLifeReference(mapId, load.SimulationEpoch, actorId, WorldMonsterIncarnationId.First);
         var killerPresenceId = Guid.NewGuid();
-        await grain.RegisterPresenceAsync(new WorldPlayerPresence(killerPresenceId, ActorId: 999, CharacterId: 999, mapId, X: MonsterX, Y: MonsterY));
+        await grain.RegisterPresenceAsync(new WorldPlayerPresence(killerPresenceId, ActorId: 999, CharacterId: 999, mapId, X: MonsterX, Y: MonsterY), new WorldPlayerPublicState("Test", 0, 0, 0, 0, 1, 150, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
 
         var firstHit = await grain.ApplyMonsterDamageAsync(new WorldMonsterDamageCommand(staleLife, AttackerCharacterId: 999, killerPresenceId, AttackSequence: 1, Damage: 9999, AcquireEngagement: false));
         Assert.Equal(WorldMonsterDamageStatus.Applied, firstHit.Status);
@@ -665,13 +665,13 @@ public sealed class MapTcpServerMonsterAuthorityIntegrationTests : IAsyncLifetim
 
         var characterId = 55u;
         var originalPresenceId = Guid.NewGuid();
-        await grain.RegisterPresenceAsync(new WorldPlayerPresence(originalPresenceId, characterId + 1_000_000, characterId, mapId, MonsterX, MonsterY));
+        await grain.RegisterPresenceAsync(new WorldPlayerPresence(originalPresenceId, characterId + 1_000_000, characterId, mapId, MonsterX, MonsterY), new WorldPlayerPublicState("Test", 0, 0, 0, 0, 1, 150, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
         Assert.Equal(WorldMonsterAttackedStatus.Acquired,
             (await grain.NotifyMonsterAttackedAsync(new WorldMonsterAttackedCommand(life, characterId, originalPresenceId))).Status);
 
         var replacementPresenceId = Guid.NewGuid();
         await grain.UnregisterPresenceAsync(mapId, characterId, originalPresenceId);
-        await grain.RegisterPresenceAsync(new WorldPlayerPresence(replacementPresenceId, characterId + 1_000_000, characterId, mapId, MonsterX, MonsterY));
+        await grain.RegisterPresenceAsync(new WorldPlayerPresence(replacementPresenceId, characterId + 1_000_000, characterId, mapId, MonsterX, MonsterY), new WorldPlayerPublicState("Test", 0, 0, 0, 0, 1, 150, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
 
         // The OLD presenceId must never be usable to validate/attack again.
         var staleAttack = await grain.NotifyMonsterAttackedAsync(new WorldMonsterAttackedCommand(life, characterId, originalPresenceId));
@@ -1438,7 +1438,7 @@ public sealed class MapTcpServerMonsterAuthorityIntegrationTests : IAsyncLifetim
         // StaleLifeReference_AfterRespawn_... pattern (proving World's own contract, not
         // re-exercising the session dispatch path).
         var killerPresenceId = Guid.NewGuid();
-        await grain.RegisterPresenceAsync(new WorldPlayerPresence(killerPresenceId, ActorId: 998, CharacterId: 998, mapId, X: original.X, Y: original.Y));
+        await grain.RegisterPresenceAsync(new WorldPlayerPresence(killerPresenceId, ActorId: 998, CharacterId: 998, mapId, X: original.X, Y: original.Y), new WorldPlayerPublicState("Test", 0, 0, 0, 0, 1, 150, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
         var staleAttempt = await grain.ApplyMonsterDamageAsync(new WorldMonsterDamageCommand(oldLife, AttackerCharacterId: 998, killerPresenceId, AttackSequence: 1, Damage: 9999, AcquireEngagement: false));
         Assert.Equal(WorldMonsterDamageStatus.StaleLifeReference, staleAttempt.Status);
 
