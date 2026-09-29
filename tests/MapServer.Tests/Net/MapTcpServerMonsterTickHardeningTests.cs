@@ -431,7 +431,12 @@ public sealed class MapTcpServerMonsterTickHardeningTests
             throw new NotSupportedException("ScriptedWorldRuntime does not script NotifyMonsterAttackedAsync for these tests.");
         public Task<WorldPresenceLifeStateResult> UpdatePresenceLifeStateAsync(string mapId, WorldPresenceLifeStateUpdate update, CancellationToken cancellationToken) =>
             throw new NotSupportedException("ScriptedWorldRuntime does not script UpdatePresenceLifeStateAsync for these tests.");
-        public Task<WorldPlayerFeedPage> PollPlayerFeedAsync(WorldPlayerFeedCursor? cursor, string mapId, CancellationToken cancellationToken) => throw new NotSupportedException();
+        // Item 14: a semantically-correct EMPTY feed - this fake registers no player-feed state of
+        // its own, so an always-empty Ready bootstrap is the correct (not merely convenient) answer:
+        // there really are zero players for MapTcpServer's per-map tick loop to discover through
+        // this fake, matching how a genuinely empty, loaded map's real feed page would look.
+        public Task<WorldPlayerFeedPage> PollPlayerFeedAsync(WorldPlayerFeedCursor? cursor, string mapId, CancellationToken cancellationToken) =>
+            Task.FromResult(new WorldPlayerFeedPage(mapId, WorldSimulationEpoch.NewEpoch(), WorldPlayerFeedStatus.Ready, [], Entries: null, AsOfSequence: 0));
         public Task<WorldPlayerLookUpdateResult> UpdatePlayerLookAsync(string mapId, uint characterId, Guid presenceId, byte direction, byte headDirection, CancellationToken cancellationToken) => throw new NotSupportedException();
         public Task<WorldPlayerPublicStateUpdateResult> UpdatePlayerPublicStateAsync(string mapId, uint characterId, Guid presenceId, WorldPlayerPublicState publicState, CancellationToken cancellationToken) => throw new NotSupportedException();
         public Task<WorldMovementProjectionResult> ConfirmMovementProjectionAsync(WorldMovementProjectionConfirmation confirmation, CancellationToken cancellationToken) => throw new NotSupportedException();
