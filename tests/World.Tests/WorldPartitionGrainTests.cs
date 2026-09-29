@@ -17,13 +17,13 @@ public sealed class WorldPartitionGrainTests : IAsyncLifetime
     {
         var grain = Partition("world-rest");
         var a = Presence(Guid.NewGuid(), "izlude");
-        Assert.Equal(WorldPresenceRegistrationStatus.Registered, (await grain.RegisterPresenceAsync(a)).Status);
-        Assert.Equal(WorldPresenceRegistrationStatus.AlreadyRegistered, (await grain.RegisterPresenceAsync(a)).Status);
-        Assert.Equal(WorldPresenceRegistrationStatus.Conflict, (await grain.RegisterPresenceAsync(a with { PresenceId = Guid.NewGuid() })).Status);
+        Assert.Equal(WorldPresenceRegistrationStatus.Registered, (await grain.RegisterPresenceAsync(a, new WorldPlayerPublicState("Test", 0, 0, 0, 0, 1, 150, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0))).Status);
+        Assert.Equal(WorldPresenceRegistrationStatus.AlreadyRegistered, (await grain.RegisterPresenceAsync(a, new WorldPlayerPublicState("Test", 0, 0, 0, 0, 1, 150, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0))).Status);
+        Assert.Equal(WorldPresenceRegistrationStatus.Conflict, (await grain.RegisterPresenceAsync(a with { PresenceId = Guid.NewGuid() }, new WorldPlayerPublicState("Test", 0, 0, 0, 0, 1, 150, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0))).Status);
         Assert.Equal(WorldPresenceUnregistrationStatus.Removed, (await grain.UnregisterPresenceAsync(a.MapId, a.CharacterId, a.PresenceId)).Status);
         Assert.Equal(WorldPresenceUnregistrationStatus.AlreadyAbsent, (await grain.UnregisterPresenceAsync(a.MapId, a.CharacterId, a.PresenceId)).Status);
         var b = a with { PresenceId = Guid.NewGuid() };
-        await grain.RegisterPresenceAsync(b);
+        await grain.RegisterPresenceAsync(b, new WorldPlayerPublicState("Test", 0, 0, 0, 0, 1, 150, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
         Assert.Equal(WorldPresenceUnregistrationStatus.PresenceMismatch, (await grain.UnregisterPresenceAsync(a.MapId, a.CharacterId, a.PresenceId)).Status);
         Assert.Equal([b], (await grain.GetMapSnapshotAsync("izlude")).Players);
     }
@@ -33,7 +33,7 @@ public sealed class WorldPartitionGrainTests : IAsyncLifetime
     {
         var grain = Partition("prontera-region");
         var presence = Presence(Guid.NewGuid(), "prontera");
-        await grain.RegisterPresenceAsync(presence);
+        await grain.RegisterPresenceAsync(presence, new WorldPlayerPublicState("Test", 0, 0, 0, 0, 1, 150, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
         var command = new WorldMovementCommand(presence.PresenceId, presence.CharacterId, "prontera", 150, 180, 152, 181);
 
         var result = await grain.MovePlayerAsync(command);
@@ -51,7 +51,7 @@ public sealed class WorldPartitionGrainTests : IAsyncLifetime
     {
         var grain = Partition("prontera-region");
         var presence = Presence(Guid.NewGuid(), "prontera");
-        await grain.RegisterPresenceAsync(presence);
+        await grain.RegisterPresenceAsync(presence, new WorldPlayerPublicState("Test", 0, 0, 0, 0, 1, 150, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
         var transfer = Transfer(presence, "prt_fild08d");
 
         var result = await grain.TransferPlayerAsync(transfer);
@@ -71,7 +71,7 @@ public sealed class WorldPartitionGrainTests : IAsyncLifetime
     public async Task CrossPartitionTransferPreservesExactlyOneActiveOwner()
     {
         var source = Partition("prontera-region"); var target = Partition("world-rest");
-        var presence = Presence(Guid.NewGuid(), "prontera"); await source.RegisterPresenceAsync(presence);
+        var presence = Presence(Guid.NewGuid(), "prontera"); await source.RegisterPresenceAsync(presence, new WorldPlayerPublicState("Test", 0, 0, 0, 0, 1, 150, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
 
         var result = await source.TransferPlayerAsync(Transfer(presence, "izlude"));
 
@@ -91,7 +91,7 @@ public sealed class WorldPartitionGrainTests : IAsyncLifetime
         var incoming = new IncomingWorldTransfer(transfer.TransferId, presence, "prontera-region", presence.MapId, "izlude", 10, 20);
         Assert.Equal(IncomingTransferStatus.Prepared, (await target.PrepareIncomingTransferAsync(incoming)).Status);
         Assert.Equal(IncomingTransferStatus.AlreadyPrepared, (await target.PrepareIncomingTransferAsync(incoming)).Status);
-        Assert.Equal(WorldPresenceRegistrationStatus.Conflict, (await target.RegisterPresenceAsync(presence with { PresenceId = Guid.NewGuid(), MapId = "izlude" })).Status);
+        Assert.Equal(WorldPresenceRegistrationStatus.Conflict, (await target.RegisterPresenceAsync(presence with { PresenceId = Guid.NewGuid(), MapId = "izlude" }, new WorldPlayerPublicState("Test", 0, 0, 0, 0, 1, 150, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0))).Status);
         Assert.Equal(IncomingTransferStatus.Committed, (await target.CommitIncomingTransferAsync(transfer.TransferId)).Status);
         Assert.Equal(IncomingTransferStatus.AlreadyCommitted, (await target.CommitIncomingTransferAsync(transfer.TransferId)).Status);
         Assert.Equal(WorldPresenceUnregistrationStatus.PresenceMismatch,
@@ -108,14 +108,14 @@ public sealed class WorldPartitionGrainTests : IAsyncLifetime
         var second = first with { TransferId = Guid.NewGuid() };
         Assert.Equal(IncomingTransferStatus.Prepared, (await target.PrepareIncomingTransferAsync(first)).Status);
         Assert.Equal(IncomingTransferStatus.Conflict, (await target.PrepareIncomingTransferAsync(second)).Status);
-        await Assert.ThrowsAnyAsync<Exception>(() => Partition("prontera-region").RegisterPresenceAsync(presence with { MapId = "izlude" }));
+        await Assert.ThrowsAnyAsync<Exception>(() => Partition("prontera-region").RegisterPresenceAsync(presence with { MapId = "izlude" }, new WorldPlayerPublicState("Test", 0, 0, 0, 0, 1, 150, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)));
     }
 
     [Fact]
     public async Task FullTransferAndFinalizeReplayCannotDisturbNewerTransfer()
     {
         var prontera = Partition("prontera-region"); var rest = Partition("world-rest");
-        var presence = Presence(Guid.NewGuid(), "prontera"); await prontera.RegisterPresenceAsync(presence);
+        var presence = Presence(Guid.NewGuid(), "prontera"); await prontera.RegisterPresenceAsync(presence, new WorldPlayerPublicState("Test", 0, 0, 0, 0, 1, 150, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
         var a = Transfer(presence, "izlude");
         Assert.Equal(WorldTransferStatus.Completed, (await prontera.TransferPlayerAsync(a)).Status);
         Assert.Equal(WorldTransferStatus.AlreadyCompleted, (await prontera.TransferPlayerAsync(a)).Status);
@@ -132,7 +132,7 @@ public sealed class WorldPartitionGrainTests : IAsyncLifetime
     {
         var grain = Partition("prontera-region");
         var presence = Presence(Guid.NewGuid(), "prontera");
-        await grain.RegisterPresenceAsync(presence);
+        await grain.RegisterPresenceAsync(presence, new WorldPlayerPublicState("Test", 0, 0, 0, 0, 1, 150, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
         var moveResult = await grain.MovePlayerAsync(new WorldMovementCommand(presence.PresenceId, presence.CharacterId, "prontera", 150, 180, 153, 180));
         Assert.True(moveResult.Path!.Count >= 3, "Test requires a path with an interior cell to truncate to.");
         var movementId = moveResult.MovementId!.Value;
@@ -151,7 +151,7 @@ public sealed class WorldPartitionGrainTests : IAsyncLifetime
     {
         var grain = Partition("prontera-region");
         var presence = Presence(Guid.NewGuid(), "prontera");
-        await grain.RegisterPresenceAsync(presence);
+        await grain.RegisterPresenceAsync(presence, new WorldPlayerPublicState("Test", 0, 0, 0, 0, 1, 150, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
         var moveResult = await grain.MovePlayerAsync(new WorldMovementCommand(presence.PresenceId, presence.CharacterId, "prontera", 150, 180, 153, 180));
         var movementId = moveResult.MovementId!.Value;
         var fullPath = moveResult.Path!;
@@ -172,7 +172,7 @@ public sealed class WorldPartitionGrainTests : IAsyncLifetime
     {
         var grain = Partition("prontera-region");
         var presence = Presence(Guid.NewGuid(), "prontera");
-        await grain.RegisterPresenceAsync(presence);
+        await grain.RegisterPresenceAsync(presence, new WorldPlayerPublicState("Test", 0, 0, 0, 0, 1, 150, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
         var moveResult = await grain.MovePlayerAsync(new WorldMovementCommand(presence.PresenceId, presence.CharacterId, "prontera", 150, 180, 153, 180));
 
         Assert.Equal(WorldMovementStatus.SourceMismatch, (await grain.TruncateMovementAsync(
@@ -186,7 +186,7 @@ public sealed class WorldPartitionGrainTests : IAsyncLifetime
     {
         var grain = Partition("prontera-region");
         var presence = Presence(Guid.NewGuid(), "prontera");
-        await grain.RegisterPresenceAsync(presence);
+        await grain.RegisterPresenceAsync(presence, new WorldPlayerPublicState("Test", 0, 0, 0, 0, 1, 150, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
         var moveResult = await grain.MovePlayerAsync(new WorldMovementCommand(presence.PresenceId, presence.CharacterId, "prontera", 150, 180, 153, 180));
         var movementId = moveResult.MovementId!.Value;
 
@@ -225,7 +225,7 @@ public sealed class WorldPartitionGrainTests : IAsyncLifetime
     {
         var prontera = Partition("prontera-region"); var rest = Partition("world-rest");
         var presence = Presence(Guid.NewGuid(), "prontera");
-        await prontera.RegisterPresenceAsync(presence);
+        await prontera.RegisterPresenceAsync(presence, new WorldPlayerPublicState("Test", 0, 0, 0, 0, 1, 150, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
         var moveResult = await prontera.MovePlayerAsync(new WorldMovementCommand(presence.PresenceId, presence.CharacterId, "prontera", 150, 180, 153, 180));
         var movementId = moveResult.MovementId!.Value;
 
