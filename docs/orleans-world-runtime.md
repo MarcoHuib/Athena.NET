@@ -73,6 +73,39 @@ projection responsibilities during this migration slice. Accepting an intent doe
 into an instant client-visible teleport: cells are still emitted according to the existing movement
 clock, and movement response ordering remains before a resulting map-change packet.
 
+## Cross-replica player visibility and combat (item 14)
+
+`WorldPartitionGrain` owns a second per-map feed, `WorldPlayerMapSimulation`, mirroring the monster
+feed's own shape exactly: a per-map epoch, monotonic sequence, bounded retained entries (4096),
+atomic snapshot bootstrap, and resync on stale cursor/epoch. `PollPlayerFeedAsync` is the sole
+distribution path for player presence - registration, unregistration, same/cross-partition transfer,
+movement, and look/public-state changes each append a `WorldPlayerFeedEntry`. Two independent
+MapServer gateway processes each maintain their own cursor against the same map's feed.
+
+`PlayerPresenceRegistry`/`PlayerVisibilityCoordinator` on the MapServer side are now purely
+feed-derived projections, populated by `PlayerFeedProjection` (mirroring `MonsterFeedProjection`)
+from the per-map tick loop's own player-feed poll - `MapClientSession` no longer mutates them
+directly for registration, movement, look-change, or public-state refresh. A remote-replica player
+and a local session are treated identically: both are discovered, moved, and vanished exclusively
+through this feed.
+
+Movement-start ordering is structural: `ConfirmMovementProjectionAsync` is the *only* RPC that ever
+appends a `MovementStarted` entry, and MapServer calls it only after examining World's authoritative
+path for a warp/script trigger and truncating it if needed (`MapClientSession.ResolveWorldMovementTargetAsync`)
+- so a pre-truncation destination can never leak into the feed. World derives the confirmed
+destination from its own active-movement state, never from a MapServer-supplied value.
+
+Player -> monster combat actions ride the *existing* monster feed as a new `PlayerAttackAction` entry
+kind, appended by `WorldMonsterMapSimulation.ApplyDamage` immediately before `HealthChanged`/`Died` in
+the same atomic mutation - this makes "the attacker's action is sequenced before the resulting
+death" a structural feed-ordering guarantee across replicas, not a same-process timing trick. The
+existing `AttackSequence` idempotency ledger already prevents a replay from appending a duplicate
+action. A same-process fast path still delivers the attacker's own action immediately for
+responsiveness, deduplicated against the later feed delivery via a per-session marker set
+synchronously before any RPC yields control. Monster -> player combat keeps its existing MapServer-local
+HP mutation/cadence; `PublishMonsterAttackActionAsync` is a narrow, idempotent (ActionId-keyed)
+publish-only RPC that lets other replicas project an already-resolved local attack.
+
 ## Deferred work
 
 Global actor-ID allocation for Phase 2B's monster/NPC runtime is a lease-based block allocator
