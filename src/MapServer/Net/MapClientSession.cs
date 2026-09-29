@@ -1658,6 +1658,17 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
             }
         }
         _worldMovementId = movementId;
+        // Item 14 §3: the ordering-critical confirmation - called ONLY here, strictly after any
+        // truncation above has already resolved, never before. This is the sole place a
+        // MovementStarted feed entry is ever produced; World itself derives the confirmed
+        // destination from its own (already-possibly-truncated) active-movement Path, never from a
+        // value this call supplies (see WorldMovementProjectionConfirmation's own doc comment).
+        // Environment.TickCount is stamped here, LOCALLY, and carried through only as opaque
+        // pass-through payload - World's own logic never reads or interprets it.
+        if (_distributedWorld is not null)
+            await _distributedWorld.ConfirmMovementProjectionAsync(
+                new WorldMovementProjectionConfirmation(movementId, presenceId, _charId, _mapName, Environment.TickCount),
+                cancellationToken);
         return new MovementAccepted(resolved);
     }
 
@@ -4504,25 +4515,22 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         // public projection is eligible to become world-visible.
         if (presence is null) return;
 
-        if (firstRegistration)
-            await _playerVisibility.RegisterAsync(presence, this, cancellationToken);
+        // Item 14 §4: World registration is now the SOLE registration call - there is no local-only
+        // "register first, then also tell World" step any more. Local AOI enter-fanout for this
+        // session's own player happens on the NEXT tick's player-feed poll, when this map's
+        // PlayerFeedProjection observes the Registered entry (or a bootstrap snapshot containing it)
+        // and drives PlayerVisibilityCoordinator itself - uniformly for every player, local or
+        // remote (see PlayerFeedProjection's own doc comment). MapClientSession no longer calls
+        // PlayerVisibilityCoordinator directly for its own player at all.
         if (_distributedWorld is not null)
         {
-            try
-            {
-                var registration = await _distributedWorld.RegisterPresenceAsync(
-                    presence.MapName,
-                    new WorldPlayerPresence(presenceId, presence.ActorId, presence.CharacterId, presence.MapName, presence.X, presence.Y),
-                    cancellationToken);
-                if (registration.Status == WorldPresenceRegistrationStatus.Conflict)
-                    throw new InvalidOperationException($"Character {presence.CharacterId} is already present in map authority '{registration.MapId}'.");
-            }
-            catch
-            {
-                if (firstRegistration)
-                    await _playerVisibility.UnregisterAsync(presence.ActorId, CancellationToken.None);
-                throw;
-            }
+            var registration = await _distributedWorld.RegisterPresenceAsync(
+                presence.MapName,
+                new WorldPlayerPresence(presenceId, presence.ActorId, presence.CharacterId, presence.MapName, presence.X, presence.Y),
+                ToPublicState(presence),
+                cancellationToken);
+            if (registration.Status == WorldPresenceRegistrationStatus.Conflict)
+                throw new InvalidOperationException($"Character {presence.CharacterId} is already present in map authority '{registration.MapId}'.");
         }
         if (!firstRegistration) return;
         lock (_playerPresenceGate)
@@ -4555,6 +4563,16 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
             _authAppearance.Robe, _authAppearance.Manner, _authAppearance.Karma,
             _authAppearance.Option, _authAppearance.Font);
     }
+
+    // Item 14 §1: the protocol-neutral projection of PlayerPresence's own cosmetic/public fields -
+    // the exact subset a remote MapServer replica needs to construct 0x09FE/0x09FF/0x09FD/0x0A30
+    // for this player, with no packet IDs/byte layouts (those stay in IroPlayerActorPackets).
+    private static WorldPlayerPublicState ToPublicState(PlayerPresence presence) => new(
+        presence.CharacterName, presence.Direction, presence.HeadDirection, presence.JobClass, presence.Sex,
+        presence.BaseLevel, presence.WalkSpeed, presence.HairStyle, presence.HairColor, presence.ClothesColor,
+        presence.BodyStyle, presence.WeaponAppearance, presence.ShieldAppearance, presence.HeadBottomAppearance,
+        presence.HeadTopAppearance, presence.HeadMidAppearance, presence.RobeAppearance, presence.Manner,
+        presence.Karma, presence.Option, presence.Font);
 
     private uint ResolveEquippedView(uint equipMask, uint fallback)
     {

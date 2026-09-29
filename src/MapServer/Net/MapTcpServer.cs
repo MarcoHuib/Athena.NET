@@ -94,7 +94,7 @@ public sealed class MapTcpServer
         private readonly Dictionary<uint, TestMovement> _movements = [];
         private readonly Lock _gate = new();
 
-        public Task<WorldPresenceRegistration> RegisterPresenceAsync(string mapId, WorldPlayerPresence presence, CancellationToken cancellationToken) =>
+        public Task<WorldPresenceRegistration> RegisterPresenceAsync(string mapId, WorldPlayerPresence presence, WorldPlayerPublicState publicState, CancellationToken cancellationToken) =>
             Task.FromResult(Register(mapId, presence));
 
         public Task<WorldPresenceUnregistration> UnregisterPresenceAsync(string mapId, uint characterId, Guid presenceId, CancellationToken cancellationToken) =>
@@ -237,6 +237,29 @@ public sealed class MapTcpServer
         public Task<WorldMonsterAttackWindowResult> ValidateMonsterAttackWindowAsync(WorldMonsterAttackWindowQuery query, CancellationToken cancellationToken) =>
             throw new NotSupportedException("InMemoryTestWorldRuntime does not implement monster-authority RPCs - use a real Orleans TestCluster with OrleansWorldRuntime for tests that need monster behavior.");
         public Task<WorldPresenceLifeStateResult> UpdatePresenceLifeStateAsync(string mapId, WorldPresenceLifeStateUpdate update, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("InMemoryTestWorldRuntime does not implement monster-authority RPCs - use a real Orleans TestCluster with OrleansWorldRuntime for tests that need monster behavior.");
+
+        // Item 14: the player feed and movement-projection-confirmation RPCs need real World
+        // sequence/epoch/snapshot semantics this in-memory stand-in deliberately never reimplements
+        // (see this class's own doc comment above) - any test that needs real cross-replica player
+        // feed behavior uses a genuine Orleans TestCluster with OrleansWorldRuntime instead.
+        public Task<WorldPlayerFeedPage> PollPlayerFeedAsync(WorldPlayerFeedCursor? cursor, string mapId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("InMemoryTestWorldRuntime does not implement the player feed - use a real Orleans TestCluster with OrleansWorldRuntime for tests that need cross-replica player behavior.");
+        public Task<WorldPlayerLookUpdateResult> UpdatePlayerLookAsync(string mapId, uint characterId, Guid presenceId, byte direction, byte headDirection, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("InMemoryTestWorldRuntime does not implement the player feed - use a real Orleans TestCluster with OrleansWorldRuntime for tests that need cross-replica player behavior.");
+        public Task<WorldPlayerPublicStateUpdateResult> UpdatePlayerPublicStateAsync(string mapId, uint characterId, Guid presenceId, WorldPlayerPublicState publicState, CancellationToken cancellationToken) =>
+            throw new NotSupportedException("InMemoryTestWorldRuntime does not implement the player feed - use a real Orleans TestCluster with OrleansWorldRuntime for tests that need cross-replica player behavior.");
+        public Task<WorldMovementProjectionResult> ConfirmMovementProjectionAsync(WorldMovementProjectionConfirmation confirmation, CancellationToken cancellationToken)
+        {
+            lock (_gate)
+            {
+                if (!_presences.TryGetValue(confirmation.CharacterId, out var current)) return Task.FromResult(new WorldMovementProjectionResult(WorldMovementProjectionStatus.NotFound, null));
+                if (current.PresenceId != confirmation.PresenceId) return Task.FromResult(new WorldMovementProjectionResult(WorldMovementProjectionStatus.PresenceMismatch, null));
+                if (!_movements.ContainsKey(confirmation.CharacterId)) return Task.FromResult(new WorldMovementProjectionResult(WorldMovementProjectionStatus.SourceMismatch, null));
+                return Task.FromResult(new WorldMovementProjectionResult(WorldMovementProjectionStatus.Confirmed, null));
+            }
+        }
+        public Task<WorldMonsterAttackPublishResult> PublishMonsterAttackActionAsync(WorldMonsterAttackActionCommand command, CancellationToken cancellationToken) =>
             throw new NotSupportedException("InMemoryTestWorldRuntime does not implement monster-authority RPCs - use a real Orleans TestCluster with OrleansWorldRuntime for tests that need monster behavior.");
     }
 
