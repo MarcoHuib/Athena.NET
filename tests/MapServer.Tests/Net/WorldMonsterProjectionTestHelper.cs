@@ -111,8 +111,18 @@ internal static class WorldMonsterProjectionTestHelper
 internal sealed class FakeCombatWorldRuntime : IWorldRuntime
 {
     private readonly Dictionary<uint, WorldPlayerPresence> _presences = [];
+    private readonly Dictionary<uint, WorldPlayerPublicState> _publicStateByCharacterId = [];
     private readonly Dictionary<uint, (Guid Id, WorldPosition[] Path)> _movements = [];
     private readonly Lock _gate = new();
+    // Item 14: a fixed epoch for this fake's ENTIRE lifetime - real World semantics (epoch
+    // rotation, bounded retention, incremental entries) are deliberately NOT reproduced here (see
+    // this class's own top-of-file doc comment: it only drives the attack/death/movement path
+    // deterministically for a single local test session). PollPlayerFeedAsync below always returns
+    // a fresh full Snapshot bootstrap - correct for any cursor (null OR non-null, since a
+    // never-changing epoch means a non-null cursor's own Sequence can never legitimately fall
+    // outside this always-current snapshot) - so MapTcpServer's own per-map tick loop can discover
+    // every registered player without needing real incremental-entry semantics.
+    private static readonly WorldSimulationEpoch PlayerFeedEpoch = WorldSimulationEpoch.NewEpoch();
 
     // Substep 9 (§7): two separate ledgers, matching the real World's own ownership split - HP/
     // Alive-Dead state keyed by WorldMonsterLifeReference alone (shared across attackers, exactly
@@ -281,6 +291,7 @@ internal sealed class FakeCombatWorldRuntime : IWorldRuntime
         lock (_gate)
         {
             _presences[presence.CharacterId] = presence with { MapId = mapId };
+            _publicStateByCharacterId[presence.CharacterId] = publicState;
             return Task.FromResult(new WorldPresenceRegistration("test-partition", mapId, WorldPresenceRegistrationStatus.Registered, _presences.Count));
         }
     }
@@ -290,6 +301,7 @@ internal sealed class FakeCombatWorldRuntime : IWorldRuntime
         lock (_gate)
         {
             var status = _presences.Remove(characterId) ? WorldPresenceUnregistrationStatus.Removed : WorldPresenceUnregistrationStatus.AlreadyAbsent;
+            _publicStateByCharacterId.Remove(characterId);
             return Task.FromResult(new WorldPresenceUnregistration("test-partition", mapId, status, _presences.Count));
         }
     }
@@ -387,9 +399,43 @@ internal sealed class FakeCombatWorldRuntime : IWorldRuntime
         }
     }
 
-    public Task<WorldPlayerFeedPage> PollPlayerFeedAsync(WorldPlayerFeedCursor? cursor, string mapId, CancellationToken cancellationToken) => throw new NotSupportedException();
-    public Task<WorldPlayerLookUpdateResult> UpdatePlayerLookAsync(string mapId, uint characterId, Guid presenceId, byte direction, byte headDirection, CancellationToken cancellationToken) => throw new NotSupportedException();
-    public Task<WorldPlayerPublicStateUpdateResult> UpdatePlayerPublicStateAsync(string mapId, uint characterId, Guid presenceId, WorldPlayerPublicState publicState, CancellationToken cancellationToken) => throw new NotSupportedException();
+    public Task<WorldPlayerFeedPage> PollPlayerFeedAsync(WorldPlayerFeedCursor? cursor, string mapId, CancellationToken cancellationToken)
+    {
+        lock (_gate)
+        {
+            var snapshot = _presences.Values
+                .Where(presence => string.Equals(presence.MapId, mapId, StringComparison.OrdinalIgnoreCase))
+                .Select(presence =>
+                {
+                    var publicState = _publicStateByCharacterId.TryGetValue(presence.CharacterId, out var ps) ? ps : EmptyPublicState;
+                    return new WorldPlayerPresenceEntry(presence, publicState);
+                })
+                .ToArray();
+            return Task.FromResult(new WorldPlayerFeedPage(mapId, PlayerFeedEpoch, WorldPlayerFeedStatus.Ready, snapshot, Entries: null, AsOfSequence: 0));
+        }
+    }
+
+    private static readonly WorldPlayerPublicState EmptyPublicState = new("", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+
+    public Task<WorldPlayerLookUpdateResult> UpdatePlayerLookAsync(string mapId, uint characterId, Guid presenceId, byte direction, byte headDirection, CancellationToken cancellationToken)
+    {
+        lock (_gate)
+        {
+            if (!_publicStateByCharacterId.TryGetValue(characterId, out var current)) return Task.FromResult(new WorldPlayerLookUpdateResult(WorldPlayerLookUpdateStatus.NotFound));
+            _publicStateByCharacterId[characterId] = current with { Direction = direction, HeadDirection = headDirection };
+            return Task.FromResult(new WorldPlayerLookUpdateResult(WorldPlayerLookUpdateStatus.Updated));
+        }
+    }
+
+    public Task<WorldPlayerPublicStateUpdateResult> UpdatePlayerPublicStateAsync(string mapId, uint characterId, Guid presenceId, WorldPlayerPublicState publicState, CancellationToken cancellationToken)
+    {
+        lock (_gate)
+        {
+            if (!_presences.ContainsKey(characterId)) return Task.FromResult(new WorldPlayerPublicStateUpdateResult(WorldPlayerPublicStateUpdateStatus.NotFound));
+            _publicStateByCharacterId[characterId] = publicState;
+            return Task.FromResult(new WorldPlayerPublicStateUpdateResult(WorldPlayerPublicStateUpdateStatus.Updated));
+        }
+    }
     // Item 14 §3: real (not stubbed), matching MovePlayerAsync/AdvanceMovementAsync above -
     // MapClientSession.ResolveWorldMovementTargetAsync calls this unconditionally on every accepted
     // movement, and this fake IS used by tests that combine combat with ordinary movement (e.g.

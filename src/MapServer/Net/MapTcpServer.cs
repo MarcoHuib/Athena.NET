@@ -593,6 +593,19 @@ public sealed class MapTcpServer
         LogTickTimingSummary(timing, Stopwatch.GetTimestamp() - tickStartedAt);
     }
 
+    // Item 14: isolates ONLY the player-feed poll/reconcile portion of a production tick - for a
+    // test fixture whose IWorldRuntime fake does not (and, per its own design, deliberately never
+    // will) implement real monster-feed semantics (PollMonsterFeedAsync), calling the full
+    // ProcessOneMonsterTickAsync would throw for the monster half even though only player-feed
+    // behavior is under test. Uses the exact same map-grouping/eligibility filter as
+    // ProcessOneMonsterTickAsync so a test observes identical session-selection behavior.
+    internal async Task ProcessOnePlayerTickAsync(IReadOnlyCollection<MapClientSession> sessions, CancellationToken cancellationToken)
+    {
+        var eligibleSessions = sessions.Where(session => session.IsWorldMapEligible).ToArray();
+        foreach (var mapGroup in eligibleSessions.GroupBy(session => session.CurrentMapName, StringComparer.OrdinalIgnoreCase))
+            await PollAndReconcilePlayersAsync(mapGroup.Key, mapGroup.ToArray(), cancellationToken);
+    }
+
     // DEBUG-LOG-ONLY per-tick timing (no behavior, not guarded by the verbose toggle): raw
     // Stopwatch ticks accumulated by ProcessOneMonsterTickAsync/PollAndReconcileMapAsync and turned
     // into ONE summary line only for a tick that is slow (>= TickSummaryThresholdMs) or that carried a
@@ -831,13 +844,14 @@ public sealed class MapTcpServer
     // responsiveness - it must never be a second logical authority for every OTHER observer (that is
     // the feed's job, via FanOutEntryAsync's own PlayerAttackAction case below, which is the
     // CANONICAL cross-replica projection path). Targets exclusively the attacker's own local
-    // session, and marks it locally-echoed so FanOutEntryAsync's later feed-driven pass for the SAME
-    // action skips re-dispatching to this same session (see MapClientSession.MarkPlayerAttackActionLocallyEchoed).
+    // session. The dedup mark itself (MarkPlayerAttackActionLocallyEchoed) happens earlier, inside
+    // MapClientSession.ProjectPlayerAttackActionAsync, BEFORE this method is even called - see that
+    // method's own doc comment for the race that ordering closes (a concurrent feed dispatch must
+    // never be able to observe the dedup key as unset merely because this method hasn't run yet).
     internal async Task FanOutPlayerAttackActionAsync(PlayerAttackActionOutcome action, long attackSequence, CancellationToken cancellationToken)
     {
         var attackerSession = _sessions.Values.FirstOrDefault(session => session.AccountId == action.AttackerActorId);
         if (attackerSession is null) return;
-        attackerSession.MarkPlayerAttackActionLocallyEchoed(action.AttackerActorId, attackSequence);
         try
         {
             await attackerSession.NotifyPlayerAttackActionAsync(action, cancellationToken);

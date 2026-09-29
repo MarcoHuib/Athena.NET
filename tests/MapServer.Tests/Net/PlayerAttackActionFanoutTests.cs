@@ -122,6 +122,22 @@ public sealed class PlayerAttackActionFanoutTests
         return new Player(session, client, stream, run);
     }
 
+    // Item 14 §4: local AOI enter-fanout is now feed-driven ONLY - a session's own World
+    // registration (already completed inside ConnectAsync above) becomes locally client-visible
+    // only once MapTcpServer's own per-map tick loop polls the player feed and reconciles
+    // PlayerVisibilityCoordinator (see PlayerFeedProjection's own doc comment). This fixture never
+    // runs a real background tick loop (server.RunAsync is never called - only each session's own
+    // RunAsync), so tests must explicitly drive one production tick via
+    // ProcessOneMonsterTickAsync (the exact same method the real 100ms loop calls) after every
+    // connection and after every attack whose cross-observer visibility the test asserts on.
+    private static async Task DrivePlayerTickAsync(Fixture fixture)
+    {
+        var sessionsField = typeof(MapTcpServer).GetField("_sessions", BindingFlags.NonPublic | BindingFlags.Instance)
+            ?? throw new InvalidOperationException("MapTcpServer._sessions field not found - test seam broken by a rename.");
+        var sessions = (ConcurrentDictionary<int, MapClientSession>)sessionsField.GetValue(fixture.Server)!;
+        await fixture.Server.ProcessOnePlayerTickAsync(sessions.Values.ToArray(), CancellationToken.None);
+    }
+
     private static async Task<byte[]> ReadExact(Stream stream, int length)
     {
         var buffer = new byte[length];
@@ -197,7 +213,18 @@ public sealed class PlayerAttackActionFanoutTests
         var sessionsField = typeof(MapTcpServer).GetField("_sessions", BindingFlags.NonPublic | BindingFlags.Instance)
             ?? throw new InvalidOperationException("MapTcpServer._sessions field not found - test seam broken by a rename.");
         var sessions = (ConcurrentDictionary<int, MapClientSession>)sessionsField.GetValue(fixture.Server)!;
-        await fixture.Server.FanOutEntryAsync(entry, fixture.Epoch, sessions.Values.ToArray(), cancellationToken);
+        // Excludes the attacker's OWN session: in real production the dedup mark
+        // (MarkPlayerAttackActionLocallyEchoed) is set synchronously the instant
+        // ProjectPlayerAttackActionAsync is entered, well before World's RPC result could ever reach
+        // a concurrently-running feed poll (the RPC has to complete first, and the feed can only
+        // observe an entry AFTER that same commit) - so a real feed dispatch reaching the attacker's
+        // own session always finds the mark already set and skips it. This synthesized/out-of-band
+        // injection has no such ordering guarantee against this SPECIFIC test's own
+        // DebugBeforeLethalActionFanoutAsync barrier (a test-only seam that pauses the attacker
+        // BEFORE its own mark is set, specifically to test Died gating) - excluding the attacker
+        // here reproduces the real dedup OUTCOME without depending on timing this test deliberately
+        // does not control.
+        await fixture.Server.FanOutEntryAsync(entry, fixture.Epoch, sessions.Values.Where(session => session.AccountId != attackerSession.AccountId).ToArray(), cancellationToken);
     }
 
     // Connects the attacker first (so it discovers the monster alone), then the observer (which
@@ -210,6 +237,11 @@ public sealed class PlayerAttackActionFanoutTests
         Assert.True(IsMonsterIntro(monsterFromAttacker, fixture.Target.ActorId));
 
         var observer = await ConnectAsync(fixture, 2, ObserverAccountId, ObserverCharId, MapId, 101, 100);
+        // Item 14 §4: player-to-player AOI enter-fanout is feed-driven - drive one production tick
+        // (the same ProcessOneMonsterTickAsync the real 100ms loop calls) so each session's World
+        // registration is reconciled into PlayerVisibilityCoordinator and the mutual 0x09FE/0x09FF
+        // discovery packets are actually sent.
+        await DrivePlayerTickAsync(fixture);
         await ReadDynamic(attacker.Stream); // Attacker sees the newly-entered observer (0x09FE) - drained, not the focus of this file.
         var observerBurst = new[] { await ReadDynamic(observer.Stream), await ReadDynamic(observer.Stream) };
         Assert.Contains(observerBurst, p => IsMonsterIntro(p, fixture.Target.ActorId));
@@ -364,8 +396,17 @@ public sealed class PlayerAttackActionFanoutTests
         // Item 14: production would have already dispatched this SAME poll's PlayerAttackAction
         // entry to the observer before ever reaching the Died entry (same feed, same page, feed
         // order preserved by FanOutEntryAsync's own per-entry loop) - inject it here, before the
-        // Died race below, to reproduce that exact ordering.
+        // Died race below, to reproduce that exact ordering. Unlike the pre-item-14 world, this
+        // delivery does NOT wait on LethalAttackProjectionGate at all - the gate only orders the
+        // ATTACKER's own same-process fast-path echo against Died (see LethalAttackProjectionGate's
+        // own doc comment); the feed's delivery to the OBSERVER is structurally already ordered
+        // ahead of Died by feed sequence alone, independent of the gate/attacker's own paused tail.
+        // The observer therefore receives its action packet HERE, deterministically, before the
+        // still-gated Died dispatch below - reading it now (rather than asserting nothing arrived)
+        // is what actually proves the item 14 invariant this test exists for.
         await FanOutSynthesizedPlayerAttackActionAsync(fixture, attacker.Session, AttackerAccountId);
+        var observerAction = await ReadExact(observer.Stream, PacketConstants.ZcNotifyAct3Length);
+        AssertAction(observerAction, AttackerAccountId, monsterActorId);
 
         // Inject the matching authoritative Died feed event directly - this drives EXACTLY
         // MapTcpServer.FanOutEntryAsync's own Died branch, the real production code under test,
@@ -380,15 +421,13 @@ public sealed class PlayerAttackActionFanoutTests
         // dispatch to completion, then assert it genuinely has NOT - it is blocked on the open gate.
         await Task.Delay(50);
         Assert.False(diedDispatchTask.IsCompleted, "Expected FanOutEntryAsync's Died dispatch to still be waiting on the open LethalAttackProjectionGate.");
-        await AssertNothingMoreSentAsync(observer.Stream); // Nothing has reached the observer yet either.
+        await AssertNothingMoreSentAsync(observer.Stream); // The action already arrived above; nothing further (specifically not yet the vanish) has reached the observer.
 
         releaseAttackerFanout.TrySetResult();
         await diedDispatchTask.WaitAsync(TimeSpan.FromSeconds(10));
 
-        // Observer: the killing action, THEN the vanish - never the reverse, never missing, never
-        // duplicated.
-        var observerAction = await ReadExact(observer.Stream, PacketConstants.ZcNotifyAct3Length);
-        AssertAction(observerAction, AttackerAccountId, monsterActorId);
+        // Observer: the vanish arrives only now, strictly after the action already read above -
+        // never the reverse, never missing, never duplicated.
         Assert.True(BinaryPrimitives.ReadUInt32LittleEndian(observerAction.AsSpan(22)) > 0);
         var observerVanish = await ReadExact(observer.Stream, PacketConstants.ZcNotifyVanishLength);
         Assert.Equal((short)PacketConstants.ZcNotifyVanish, BinaryPrimitives.ReadInt16LittleEndian(observerVanish));

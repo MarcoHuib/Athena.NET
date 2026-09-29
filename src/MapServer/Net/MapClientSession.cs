@@ -1042,7 +1042,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         }
         finally { _movementGate.Release(); }
 
-        await UpdatePresenceForCrossedCellsAsync(crossed, movementDestinationAfterAdvance, cancellationToken);
+        UpdatePresenceForCrossedCells(crossed, movementDestinationAfterAdvance);
 
         if (appliedRetarget is { } applied)
         {
@@ -1054,7 +1054,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
             MapLogger.Info(
                 $"[iRO MAP DEBUG] Sending 0x0087 len=12 from=({applied.FromX},{applied.FromY}) to=({applied.Resolved.TargetX},{applied.Resolved.TargetY}) (mid-walk retarget)");
             await WriteAsync(retargetResponse, cancellationToken);
-            await StartPresenceMovementAsync(applied.FromX, applied.FromY, applied.Resolved.TargetX, applied.Resolved.TargetY, retargetTick, cancellationToken);
+            StartPresenceMovement(applied.FromX, applied.FromY, applied.Resolved.TargetX, applied.Resolved.TargetY, retargetTick);
         }
 
         // Unconditional, once per successful movement-processing pass (never once per crossed
@@ -1383,7 +1383,13 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
                     {
                         var changed = current with { HeadDirection = _headDirection, Direction = _direction };
                         SetCurrentPresence(changed);
-                        await _playerVisibility.UpdateLookAsync(changed, cancellationToken);
+                        // Item 14 §2/§4: World is the sole authority for look-change state - no
+                        // direct local PlayerVisibilityCoordinator mutation. A remote replica's own
+                        // observer learns of this look change only through the player feed
+                        // (WorldPlayerFeedEntryKind.LookChanged), exactly like a local observer does
+                        // on the same map.
+                        if (_distributedWorld is not null && _presenceId is { } presenceId)
+                            await _distributedWorld.UpdatePlayerLookAsync(_mapName, _charId, presenceId, _direction, _headDirection, cancellationToken);
                     }
                 }
                 break;
@@ -1838,7 +1844,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         MapLogger.Info(
             $"[iRO MAP DEBUG] Sending 0x0087 len=12 from=({fromX},{fromY}) to=({resolved.TargetX},{resolved.TargetY}) t={CombatTiming.ClockMs()}ms");
         await WriteAsync(response, cancellationToken);
-        await StartPresenceMovementAsync(fromX, fromY, resolved.TargetX, resolved.TargetY, movementTick, cancellationToken);
+        StartPresenceMovement(fromX, fromY, resolved.TargetX, resolved.TargetY, movementTick);
 
         if (resolved.IntersectsWarp)
         {
@@ -4534,39 +4540,23 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         // public projection is eligible to become world-visible.
         if (presence is null) return;
 
-        // Item 14 §4: World registration is now authoritative - the map's PlayerFeedProjection
-        // (populated by MapTcpServer's own per-map tick loop polling PollPlayerFeedAsync) is what
-        // drives PlayerVisibilityCoordinator for every player, local or remote, in normal production
-        // operation (see PlayerFeedProjection's own doc comment). The local RegisterAsync call below
-        // is retained as an immediate, same-process fallback for local AOI enter-fanout: it is
-        // idempotent against the projection's own later reconciliation (PlayerFeedProjection checks
-        // `registry.TryGetByActorId` before registering, so a player already locally registered here
-        // is left untouched, only its public state refreshed, when the feed later observes the same
-        // Registered entry) and keeps every existing single-process test/tool that never drives a
-        // real per-map tick loop (no PollPlayerFeedAsync support) working unchanged. A genuine
-        // two-replica deployment's remote-player discovery is unaffected either way, since a remote
-        // player has no local session to register here at all - it is discovered purely through the
-        // feed, by construction.
-        if (firstRegistration)
-            await _playerVisibility.RegisterAsync(presence, this, cancellationToken);
+        // Item 14 §4: World registration is the SOLE registration call - there is no direct local
+        // PlayerVisibilityCoordinator mutation here at all. Local AOI enter-fanout for this session's
+        // own player happens on the NEXT per-map tick's player-feed poll, when this map's
+        // PlayerFeedProjection observes the Registered entry (or a bootstrap snapshot containing it)
+        // and drives PlayerVisibilityCoordinator itself - uniformly for every player, local or
+        // remote (see PlayerFeedProjection's own doc comment). This mirrors exactly how a monster
+        // spawn becomes client-visible only once the monster feed's own tick delivers it - a player
+        // registration is not a special case that gets an instant local shortcut.
         if (_distributedWorld is not null)
         {
-            try
-            {
-                var registration = await _distributedWorld.RegisterPresenceAsync(
-                    presence.MapName,
-                    new WorldPlayerPresence(presenceId, presence.ActorId, presence.CharacterId, presence.MapName, presence.X, presence.Y),
-                    ToPublicState(presence),
-                    cancellationToken);
-                if (registration.Status == WorldPresenceRegistrationStatus.Conflict)
-                    throw new InvalidOperationException($"Character {presence.CharacterId} is already present in map authority '{registration.MapId}'.");
-            }
-            catch
-            {
-                if (firstRegistration)
-                    await _playerVisibility.UnregisterAsync(presence.ActorId, CancellationToken.None);
-                throw;
-            }
+            var registration = await _distributedWorld.RegisterPresenceAsync(
+                presence.MapName,
+                new WorldPlayerPresence(presenceId, presence.ActorId, presence.CharacterId, presence.MapName, presence.X, presence.Y),
+                ToPublicState(presence),
+                cancellationToken);
+            if (registration.Status == WorldPresenceRegistrationStatus.Conflict)
+                throw new InvalidOperationException($"Character {presence.CharacterId} is already present in map authority '{registration.MapId}'.");
         }
         if (!firstRegistration) return;
         lock (_playerPresenceGate)
@@ -4620,17 +4610,14 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
 
     private static ushort ToUShortAppearance(uint value, ushort fallback) => value <= ushort.MaxValue ? (ushort)value : fallback;
 
-    // Deliberately ignores the caller's cancellationToken for the actual unregister: this method's
-    // whole contract is "never leave a ghost presence registered under a wedged
-    // ChangingMapOrUnregistering lifecycle" (see the type's remarks on ghost-presence prevention).
-    // A warp/script-warp/disconnect can race a session-cancellation exactly here (SendSameServerWarpAsync,
-    // ExecuteScriptWarpAsync, and INpcScriptHost.WarpAsync all forward the live session token), and
-    // PlayerVisibilityCoordinator.UnregisterAsync's very first await is a cancellable gate wait - an
-    // OperationCanceledException thrown there before TryUnregister runs would otherwise strand the
-    // presence in the registry/old map's spatial index forever with no lifecycle path back out.
+    // Item 14 §4: no direct local PlayerVisibilityCoordinator mutation here - a departure (same-map
+    // transfer's TransferredOut, or a genuine disconnect's Unregistered) reaches the local registry
+    // exclusively through the World feed on the NEXT per-map tick, exactly like registration above.
+    // World itself is still told synchronously and immediately below (UnregisterPresenceAsync for a
+    // genuine close; TransferPlayerAsync, called separately by TransferDistributedPresenceAsync, for
+    // a same-map transfer) - only the LOCAL projection catch-up is deferred to the feed's own cadence.
     private async Task LeavePlayerWorldAsync(PlayerSessionLifecycle after, CancellationToken cancellationToken)
     {
-        uint actorId = 0;
         Guid? presenceId;
         string? presenceMapId;
         bool wasWorldVisible;
@@ -4642,15 +4629,12 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
                 return;
             }
             _playerLifecycle = PlayerSessionLifecycle.ChangingMapOrUnregistering;
-            actorId = _accountId;
             presenceId = _presenceId;
             presenceMapId = _presenceMapId;
         }
 
         try
         {
-            if (wasWorldVisible)
-                await _playerVisibility.UnregisterAsync(actorId, CancellationToken.None);
             // Map changes preserve the logical presence and transfer it separately. Only the end
             // of the connected world session unregisters distributed ownership.
             if (after == PlayerSessionLifecycle.Closed && _distributedWorld is not null && presenceId is { } id && presenceMapId is not null)
@@ -4718,6 +4702,10 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         }
     }
 
+    // Item 14 §2/§4: refreshes World's own read-model public state - the sole path a remote
+    // replica's observer can ever learn of this session's cosmetic/appearance change through
+    // (WorldPlayerFeedEntryKind.LookChanged, reused here for any public-state refresh - see that
+    // entry kind's own doc comment). No direct local PlayerVisibilityCoordinator mutation.
     private async Task RefreshPresencePublicAppearanceAsync(CancellationToken cancellationToken)
     {
         var current = CurrentPresence();
@@ -4725,10 +4713,17 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         var refreshed = BuildCurrentPresence(current.Movement);
         if (refreshed is null) return;
         SetCurrentPresence(refreshed);
-        await _playerVisibility.ReplacePublicStateAsync(refreshed, cancellationToken);
+        if (_distributedWorld is not null && _presenceId is { } presenceId)
+            await _distributedWorld.UpdatePlayerPublicStateAsync(_mapName, _charId, presenceId, ToPublicState(refreshed), cancellationToken);
     }
 
-    private async Task StartPresenceMovementAsync(ushort fromX, ushort fromY, ushort destinationX, ushort destinationY, uint startTick, CancellationToken cancellationToken)
+    // Item 14 §4: updates ONLY this session's own local presence state for packet-building purposes
+    // (SetCurrentPresence) - no direct local PlayerVisibilityCoordinator mutation. World already
+    // learns of this movement start through ConfirmMovementProjectionAsync (called from
+    // ResolveWorldMovementTargetAsync, which produced fromX/fromY/destinationX/destinationY here in
+    // the first place); the local registry/AOI catches up via the player feed on the next tick,
+    // exactly like a remote replica's own observer does.
+    private void StartPresenceMovement(ushort fromX, ushort fromY, ushort destinationX, ushort destinationY, uint startTick)
     {
         var current = CurrentPresence();
         if (current is null) return;
@@ -4740,13 +4735,16 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
             Movement = new PlayerMovementPresence(fromX, fromY, destinationX, destinationY, startTick),
         };
         SetCurrentPresence(changed);
-        await _playerVisibility.UpdateMovementAsync(changed, broadcastMovement: true, cancellationToken);
     }
 
-    private async Task UpdatePresenceForCrossedCellsAsync(
+    // Item 14 §4: same as StartPresenceMovement above - local packet-building state only. World
+    // already learns of each crossed cell through AdvanceDistributedMovementResolvedAsync's own
+    // AdvanceMovementAsync call (which runs BEFORE this, per cell - see HandleMovementTickAsync's
+    // own call ordering), appending a Moved feed entry per cell; no direct local
+    // PlayerVisibilityCoordinator mutation is needed or performed here.
+    private void UpdatePresenceForCrossedCells(
         IReadOnlyList<(ushort X, ushort Y)> crossed,
-        (ushort X, ushort Y)? destination,
-        CancellationToken cancellationToken)
+        (ushort X, ushort Y)? destination)
     {
         foreach (var cell in crossed)
         {
@@ -4757,7 +4755,6 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
                 movement = active with { DestinationX = destination.Value.X, DestinationY = destination.Value.Y };
             var changed = current with { X = cell.X, Y = cell.Y, Movement = movement };
             SetCurrentPresence(changed);
-            await _playerVisibility.UpdateMovementAsync(changed, broadcastMovement: false, cancellationToken);
         }
     }
 
@@ -5326,8 +5323,21 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     // used ONLY for the local-echo dedup key (see MarkPlayerAttackActionLocallyEchoed), never trusted
     // for anything else. A null value (should not occur for a genuinely Applied/ReplayedSequence
     // result, but defensively tolerated) falls back to -1, a sequence no real feed entry ever uses.
-    private Task ProjectPlayerAttackActionAsync(PlayerAttackActionOutcome action, long? attackActionSequence, CancellationToken cancellationToken) =>
-        _playerAttackFanout is { } fanout ? fanout(action, attackActionSequence ?? -1, cancellationToken) : NotifyPlayerAttackActionAsync(action, cancellationToken);
+    // The dedup key is marked HERE, synchronously, before the (possibly awaiting/yielding) fanout
+    // delegate is even called - not inside the fanout delegate itself. This closes a real race: the
+    // per-map tick loop's own feed poll can observe this exact PlayerAttackAction entry (World has
+    // already committed it - the RPC that produced `attackActionSequence` already returned) and
+    // dispatch it to THIS session concurrently with this method's own call, at any point between
+    // World's commit and whatever the fanout delegate eventually does (which may itself await, e.g.
+    // MapTcpServer.FanOutPlayerAttackActionAsync's own IO). Marking synchronously and immediately -
+    // before any await in this call chain - means WasPlayerAttackActionLocallyEchoed is already true
+    // by the time a concurrently-running feed dispatch could ever check it, regardless of which one
+    // actually reaches the client's socket first.
+    private Task ProjectPlayerAttackActionAsync(PlayerAttackActionOutcome action, long? attackActionSequence, CancellationToken cancellationToken)
+    {
+        MarkPlayerAttackActionLocallyEchoed(action.AttackerActorId, attackActionSequence ?? -1);
+        return _playerAttackFanout is { } fanout ? fanout(action, attackActionSequence ?? -1, cancellationToken) : NotifyPlayerAttackActionAsync(action, cancellationToken);
+    }
 
     // AREA-visible player-attack action projection (mirrors NotifyMonsterAttackOutcomeAsync's own
     // map/visibility rules for a monster's own attack - see PlayerAttackActionOutcome's own doc
