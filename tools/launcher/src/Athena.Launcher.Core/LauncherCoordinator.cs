@@ -119,12 +119,18 @@ public sealed class LauncherCoordinator : IAsyncDisposable
         finally { _lifecycle.Release(); }
     }
 
-    private IReadOnlyList<ProxyEndpoint> BuildProxyEndpoints(ValidatedLauncherOptions options, IPAddress officialAddress, int loginPort) =>
-    [
-        new("Login", officialAddress, loginPort, _options.AthenaHost, _options.LoginTargetPort),
-        new("Character", options.CharacterListenAddress, _options.CharacterListenPort, _options.AthenaHost, _options.CharacterTargetPort),
-        new("Map", options.MapListenAddress, _options.MapListenPort, _options.AthenaHost, _options.MapTargetPort),
-    ];
+    private IReadOnlyList<ProxyEndpoint> BuildProxyEndpoints(ValidatedLauncherOptions options, IPAddress officialAddress, int loginPort)
+    {
+        // Item 14: MapTargetPorts, when configured, is the round-robin backend list; otherwise
+        // fall back to the single MapTargetPort exactly as before - TargetPorts is never empty.
+        var mapTargetPorts = options.Source.MapTargetPorts is { Count: > 0 } configured ? configured : [_options.MapTargetPort];
+        return
+        [
+            new("Login", officialAddress, loginPort, _options.AthenaHost, _options.LoginTargetPort, [_options.LoginTargetPort]),
+            new("Character", options.CharacterListenAddress, _options.CharacterListenPort, _options.AthenaHost, _options.CharacterTargetPort, [_options.CharacterTargetPort]),
+            new("Map", options.MapListenAddress, _options.MapListenPort, _options.AthenaHost, _options.MapTargetPort, mapTargetPorts),
+        ];
+    }
 
     public static void ValidateUniqueEndpoints(IReadOnlyList<ProxyEndpoint> endpoints)
     {

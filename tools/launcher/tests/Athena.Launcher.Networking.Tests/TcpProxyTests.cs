@@ -14,7 +14,7 @@ public sealed class TcpProxyTests
         backend.Start();
         var backendPort = ((IPEndPoint)backend.LocalEndpoint).Port;
         var listenPort = FreePort();
-        await using var proxy = new TcpProxy(new ProxyEndpoint("test", IPAddress.Loopback, listenPort, "127.0.0.1", backendPort), new NullLog());
+        await using var proxy = new TcpProxy(new ProxyEndpoint("test", IPAddress.Loopback, listenPort, "127.0.0.1", backendPort, [backendPort]), new NullLog());
         await proxy.StartAsync(CancellationToken.None);
 
         using var client = new TcpClient();
@@ -45,8 +45,8 @@ public sealed class TcpProxyTests
         });
         var endpoints = new[]
         {
-            new ProxyEndpoint("first", IPAddress.Loopback, FreePort(), "localhost", 1),
-            new ProxyEndpoint("second", IPAddress.Loopback, FreePort(), "localhost", 2),
+            new ProxyEndpoint("first", IPAddress.Loopback, FreePort(), "localhost", 1, [1]),
+            new ProxyEndpoint("second", IPAddress.Loopback, FreePort(), "localhost", 2, [2]),
         };
         await Assert.ThrowsAsync<InvalidOperationException>(() => manager.StartAsync(endpoints, CancellationToken.None));
         Assert.All(created, proxy => Assert.True(proxy.Stopped));
