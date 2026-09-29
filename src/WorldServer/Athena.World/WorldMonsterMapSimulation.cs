@@ -114,6 +114,8 @@ internal sealed class WorldMonsterMapSimulation
         _nextSequence = 1;
         _attackSequences.Clear();
         _attackSequencesByPresence.Clear();
+        _publishedMonsterAttackActionIds.Clear();
+        _publishedMonsterAttackActionIdsByPresence.Clear();
     }
 
     // A monster's engagement target needs BOTH CharacterId and PresenceId (see
@@ -250,6 +252,8 @@ internal sealed class WorldMonsterMapSimulation
         _nextSequence = 1;
         _attackSequences.Clear();
         _attackSequencesByPresence.Clear();
+        _publishedMonsterAttackActionIds.Clear();
+        _publishedMonsterAttackActionIdsByPresence.Clear();
     }
 
     // One WorldMonsterSpawnDefinition -> one MobSpawnDefinition PER instance is NOT how
@@ -333,10 +337,25 @@ internal sealed class WorldMonsterMapSimulation
     // await here to yield control mid-mutation). Returns the (HpBefore, HpAfter, KilledByThisHit)
     // triple the caller (WorldPartitionGrain.ApplyMonsterDamageAsync) folds into the final
     // WorldMonsterDamageResult, alongside MaxHp read from the same instance.
-    public (uint HpBefore, uint HpAfter, bool KilledByThisHit, uint MaxHp) ApplyDamage(MobInstance instance, uint damage)
+    // Item 14 §6: `attackAction` is ALWAYS appended, even for a zero-damage (miss) applied attack -
+    // "a zero-damage applied attack still has a combat action even if there is no health-change
+    // entry" is an explicit item 14 requirement. It is appended BEFORE the HealthChanged/Died
+    // append below, in this SAME non-async zero-await call, which is what makes "player attack
+    // action sequenced before HealthChanged/Died" structural (feed order) rather than timing-based
+    // (see this method's own doc comment above and IWorldPartitionGrain.cs's WorldPlayerAttackAction
+    // doc comment). The existing AttackSequence ledger (TryAcceptAttackSequence/
+    // RecordAttackSequenceResult) already gates the ENTIRE call to this method - a ReplayedSequence
+    // result never reaches ApplyDamage at all - so no second PlayerAttackAction entry can ever be
+    // appended on retry; no separate dedup mechanism is needed here.
+    public (uint HpBefore, uint HpAfter, bool KilledByThisHit, uint MaxHp) ApplyDamage(MobInstance instance, uint damage, WorldPlayerAttackAction attackAction)
     {
         var maxHp = instance.Spawn.Mob.MaxHp;
         var (hpBefore, hpAfter, killed) = instance.ApplyDamage(damage);
+        // The caller does not yet know `killed` when it builds `attackAction`, so this is the sole
+        // place its Lethal flag is finalized before the entry is appended - never trust a
+        // caller-supplied Lethal value here.
+        attackAction = attackAction with { Lethal = killed };
+        Append(WorldMonsterFeedEntryKind.PlayerAttackAction, instance, playerAttack: attackAction);
         if (killed)
         {
             AppendDeathTail(instance);
@@ -349,6 +368,33 @@ internal sealed class WorldMonsterMapSimulation
             Append(WorldMonsterFeedEntryKind.HealthChanged, instance);
         }
         return (hpBefore, hpAfter, killed, maxHp);
+    }
+
+    // Item 14 §6 "Monster -> player": AlreadyPublished ledger. Bounded exactly like the
+    // AttackSequence ledger it sits beside (retention discipline mirrors that ledger's own
+    // structurally-unreachable-key cleanup, not a size cap - see RemoveAttackActionsForPresence
+    // below) - a HashSet<Guid> of every ActionId this map's simulation has already appended a
+    // MonsterAttackAction entry for, so a bounded local retry of PublishMonsterAttackActionAsync
+    // after a transient RPC failure returns AlreadyPublished rather than appending twice.
+    private readonly HashSet<Guid> _publishedMonsterAttackActionIds = [];
+    // Secondary index for O(1) presence-departure cleanup, mirroring _attackSequencesByPresence.
+    private readonly Dictionary<Guid, HashSet<Guid>> _publishedMonsterAttackActionIdsByPresence = [];
+
+    public bool TryPublishMonsterAttackAction(MobInstance instance, Guid actionId, WorldMonsterAttackAction action, Guid targetPresenceId)
+    {
+        if (!_publishedMonsterAttackActionIds.Add(actionId)) return false;
+        var set = _publishedMonsterAttackActionIdsByPresence.TryGetValue(targetPresenceId, out var existing)
+            ? existing
+            : _publishedMonsterAttackActionIdsByPresence[targetPresenceId] = [];
+        set.Add(actionId);
+        Append(WorldMonsterFeedEntryKind.MonsterAttackAction, instance, monsterAttack: action);
+        return true;
+    }
+
+    public void RemoveAttackActionsForPresence(Guid presenceId)
+    {
+        if (!_publishedMonsterAttackActionIdsByPresence.Remove(presenceId, out var ids)) return;
+        foreach (var id in ids) _publishedMonsterAttackActionIds.Remove(id);
     }
 
     // Called once per tick after MonsterRegistry.ProcessDueRespawns reports a respawned instance -
@@ -729,9 +775,9 @@ internal sealed class WorldMonsterMapSimulation
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, null),
     };
 
-    private void Append(WorldMonsterFeedEntryKind kind, MobInstance instance, WorldMonsterMovementKind? movementKind = null)
+    private void Append(WorldMonsterFeedEntryKind kind, MobInstance instance, WorldMonsterMovementKind? movementKind = null, WorldPlayerAttackAction? playerAttack = null, WorldMonsterAttackAction? monsterAttack = null)
     {
-        var entry = new WorldMonsterFeedEntry(_nextSequence++, kind, instance.ActorId, new WorldMonsterIncarnationId(instance.IncarnationId.Value), ToWireInstance(instance), movementKind);
+        var entry = new WorldMonsterFeedEntry(_nextSequence++, kind, instance.ActorId, new WorldMonsterIncarnationId(instance.IncarnationId.Value), ToWireInstance(instance), movementKind, playerAttack, monsterAttack);
         _entries.Add(entry);
         // Bounded: this is a development-slice retention window, not an unbounded log - a consumer
         // that falls further behind than this receives ResyncRequired (see BuildPage), never a

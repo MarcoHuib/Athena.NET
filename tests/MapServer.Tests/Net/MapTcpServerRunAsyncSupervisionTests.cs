@@ -54,7 +54,7 @@ public sealed class MapTcpServerRunAsyncSupervisionTests
         public Task<WorldMonsterAttackWindowResult> ValidateMonsterAttackWindowAsync(WorldMonsterAttackWindowQuery query, CancellationToken cancellationToken) =>
             throw new KeyNotFoundException("Simulated unknown generated MobId - deterministic invariant failure.");
 
-        public Task<WorldPresenceRegistration> RegisterPresenceAsync(string mapId, WorldPlayerPresence presence, CancellationToken cancellationToken) =>
+        public Task<WorldPresenceRegistration> RegisterPresenceAsync(string mapId, WorldPlayerPresence presence, WorldPlayerPublicState publicState, CancellationToken cancellationToken) =>
             Task.FromResult(new WorldPresenceRegistration("test-partition", mapId, WorldPresenceRegistrationStatus.Registered, 1));
         public Task<WorldPresenceUnregistration> UnregisterPresenceAsync(string mapId, uint characterId, Guid presenceId, CancellationToken cancellationToken) =>
             Task.FromResult(new WorldPresenceUnregistration("test-partition", mapId, WorldPresenceUnregistrationStatus.Removed, 0));
@@ -66,6 +66,16 @@ public sealed class MapTcpServerRunAsyncSupervisionTests
             throw new NotSupportedException();
         public Task<WorldPresenceLifeStateResult> UpdatePresenceLifeStateAsync(string mapId, WorldPresenceLifeStateUpdate update, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
+        // Item 14: a semantically-correct EMPTY feed - this fake registers no player-feed state of
+        // its own, so an always-empty Ready bootstrap is the correct (not merely convenient) answer:
+        // there really are zero players for MapTcpServer's per-map tick loop to discover through
+        // this fake, matching how a genuinely empty, loaded map's real feed page would look.
+        public Task<WorldPlayerFeedPage> PollPlayerFeedAsync(WorldPlayerFeedCursor? cursor, string mapId, CancellationToken cancellationToken) =>
+            Task.FromResult(new WorldPlayerFeedPage(mapId, WorldSimulationEpoch.NewEpoch(), WorldPlayerFeedStatus.Ready, [], Entries: null, AsOfSequence: 0));
+        public Task<WorldPlayerLookUpdateResult> UpdatePlayerLookAsync(string mapId, uint characterId, Guid presenceId, byte direction, byte headDirection, CancellationToken cancellationToken) => throw new NotSupportedException();
+        public Task<WorldPlayerPublicStateUpdateResult> UpdatePlayerPublicStateAsync(string mapId, uint characterId, Guid presenceId, WorldPlayerPublicState publicState, CancellationToken cancellationToken) => throw new NotSupportedException();
+        public Task<WorldMovementProjectionResult> ConfirmMovementProjectionAsync(WorldMovementProjectionConfirmation confirmation, CancellationToken cancellationToken) => throw new NotSupportedException();
+        public Task<WorldMonsterAttackPublishResult> PublishMonsterAttackActionAsync(WorldMonsterAttackActionCommand command, CancellationToken cancellationToken) => throw new NotSupportedException();
         public Task<WorldMovementResult> MovePlayerAsync(WorldMovementCommand command, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
         public Task<WorldMovementResult> TruncateMovementAsync(WorldMovementTruncation command, CancellationToken cancellationToken) =>

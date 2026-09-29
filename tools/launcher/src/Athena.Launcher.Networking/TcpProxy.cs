@@ -13,6 +13,10 @@ public sealed class TcpProxy : ITcpProxy
     private CancellationTokenSource? _lifetime;
     private Task? _acceptLoop;
     private long _connectionId;
+    // Item 14: round-robin cursor over _endpoint.TargetPorts - a plain Interlocked counter, never
+    // health-checked/weighted (see ProxyEndpoint.TargetPorts' own doc comment for why this stays
+    // deliberately minimal). Wraps via modulo, so overflow of the counter itself is harmless.
+    private long _targetPortCursor = -1;
 
     public TcpProxy(ProxyEndpoint endpoint, ILauncherLog log) { _endpoint = endpoint; _log = log; }
     public ProxyState State { get; private set; }
@@ -60,8 +64,13 @@ public sealed class TcpProxy : ITcpProxy
             _log.Information("proxy.connection.accepted", $"{_endpoint.Name} accepted connection {id}.");
             try
             {
-                await outbound.ConnectAsync(_endpoint.TargetHost, _endpoint.TargetPort, cancellationToken);
-                _log.Information("proxy.connection.target", $"{_endpoint.Name} connected target for connection {id}.");
+                // Item 14: round-robin across _endpoint.TargetPorts - a single-entry list (today's
+                // default, unconfigured MapTargetPorts case) always selects the same one port,
+                // byte-for-byte identical to dialing _endpoint.TargetPort directly.
+                var cursor = Interlocked.Increment(ref _targetPortCursor);
+                var targetPort = _endpoint.TargetPorts[(int)(cursor % _endpoint.TargetPorts.Count)];
+                await outbound.ConnectAsync(_endpoint.TargetHost, targetPort, cancellationToken);
+                _log.Information("proxy.connection.target", $"{_endpoint.Name} connected target for connection {id}.", new Dictionary<string, object?> { ["targetPort"] = targetPort });
                 await using var input = inbound.GetStream();
                 await using var output = outbound.GetStream();
                 var upstream = PumpAsync(input, output, tunnelCts.Token);

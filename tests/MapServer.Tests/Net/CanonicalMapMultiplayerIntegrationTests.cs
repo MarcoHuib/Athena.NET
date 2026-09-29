@@ -158,6 +158,9 @@ public sealed class CanonicalMapMultiplayerIntegrationTests : IAsyncLifetime
         Assert.Equal(CanonicalMap, a.Session.CurrentMapName);
         Assert.Equal(CanonicalMap, b.Session.CurrentMapName);
         Assert.Single(new[] { a.Session, b.Session }.Select(session => session.CurrentMapName).Distinct(StringComparer.OrdinalIgnoreCase));
+        // Item 14 §4: local PlayerPresenceRegistry membership is feed-driven only, never a direct
+        // side effect of World registration - drive a real player-feed tick before asserting it.
+        await server.ProcessOnePlayerTickAsync([a.Session, b.Session], CancellationToken.None);
         Assert.True(world.Players.TryGetByActorId(AccountA, out var presenceA));
         Assert.True(world.Players.TryGetByActorId(AccountB, out var presenceB));
         Assert.Equal(CanonicalMap, presenceA.MapName, StringComparer.OrdinalIgnoreCase);
@@ -179,13 +182,19 @@ public sealed class CanonicalMapMultiplayerIntegrationTests : IAsyncLifetime
         Assert.Equal(monster.ActorId, BinaryPrimitives.ReadUInt32LittleEndian(introA.AsSpan(5)));
         Assert.Equal(monster.ActorId, BinaryPrimitives.ReadUInt32LittleEndian(introB.AsSpan(5)));
 
-        // Movement is observable both ways (A -> B, then B -> A).
+        // Movement is observable both ways (A -> B, then B -> A). Item 14 §3/§4: the observer's own
+        // movement broadcast (0x09FD) is feed-driven, via ConfirmMovementProjectionAsync's own
+        // MovementStarted entry - a player-feed tick (folded into ProcessOneMonsterTickAsync, which
+        // also polls the player feed per map group) is required after each movement before the
+        // OTHER session's stream carries it.
         await a.Stream.WriteAsync(BuildMovementRequest(99, 101));
         await ReadUntilAsync(a.Stream, packet => BinaryPrimitives.ReadInt16LittleEndian(packet) == 0x0087);
+        await server.ProcessOneMonsterTickAsync([a.Session, b.Session], CancellationToken.None);
         var aWalk = await ReadUntilAsync(b.Stream, packet => BinaryPrimitives.ReadInt16LittleEndian(packet) == 0x09fd && BinaryPrimitives.ReadUInt32LittleEndian(packet.AsSpan(5)) == AccountA);
         Assert.Equal(AccountA, BinaryPrimitives.ReadUInt32LittleEndian(aWalk.AsSpan(5)));
         await b.Stream.WriteAsync(BuildMovementRequest(101, 101));
         await ReadUntilAsync(b.Stream, packet => BinaryPrimitives.ReadInt16LittleEndian(packet) == 0x0087);
+        await server.ProcessOneMonsterTickAsync([a.Session, b.Session], CancellationToken.None);
         var bWalk = await ReadUntilAsync(a.Stream, packet => BinaryPrimitives.ReadInt16LittleEndian(packet) == 0x09fd && BinaryPrimitives.ReadUInt32LittleEndian(packet.AsSpan(5)) == AccountB);
         Assert.Equal(AccountB, BinaryPrimitives.ReadUInt32LittleEndian(bWalk.AsSpan(5)));
 

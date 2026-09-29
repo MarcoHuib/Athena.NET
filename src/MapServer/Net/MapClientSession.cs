@@ -264,9 +264,28 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     private volatile string _lastPacketWrittenDescription = "<none>";
     private readonly CancellationTokenSource _sessionCancellation = new();
     private readonly VisibleActorTracker _visibleActorIds = new();
+    // Item 14 §8: bounded set of (AttackerCharacterId, AttackSequence) pairs this session's OWN
+    // socket has already received a same-process immediate echo for (via FanOutPlayerAttackActionAsync's
+    // fast path) - FanOutEntryAsync's later feed-driven PlayerAttackAction dispatch for the SAME
+    // action checks this before re-writing to avoid a duplicate 0x08C8 to this exact session. Never
+    // grows unbounded: only ever holds entries for THIS session's own attacks, cleared implicitly by
+    // GC once the session itself is disposed - no separate eviction policy is needed since a single
+    // player's own outstanding in-flight attack count is inherently small.
+    private readonly HashSet<(uint AttackerActorId, long AttackSequence)> _locallyEchoedPlayerAttackActions = [];
+    private readonly Lock _locallyEchoedGate = new();
+
+    internal void MarkPlayerAttackActionLocallyEchoed(uint attackerActorId, long attackSequence)
+    {
+        lock (_locallyEchoedGate) _locallyEchoedPlayerAttackActions.Add((attackerActorId, attackSequence));
+    }
+
+    internal bool WasPlayerAttackActionLocallyEchoed(uint attackerActorId, long attackSequence)
+    {
+        lock (_locallyEchoedGate) return _locallyEchoedPlayerAttackActions.Remove((attackerActorId, attackSequence));
+    }
     // See the production constructor overload's own doc comment for what this is and why it is
     // never resolved by iterating sibling sessions directly.
-    private readonly Func<PlayerAttackActionOutcome, CancellationToken, Task>? _playerAttackFanout;
+    private readonly Func<PlayerAttackActionOutcome, long, CancellationToken, Task>? _playerAttackFanout;
     // Cross-session (this gateway process only) per-life ordering primitive for a lethal player hit -
     // see LethalAttackProjectionGate's own doc comment. Null (every non-MapTcpServer caller, including
     // every existing test fixture) means no cross-session ordering is needed/available; this session's
@@ -424,7 +443,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     // caller, including every existing test fixture) falls back to notifying only this session -
     // see NotifyPlayerAttackActionAsync's own call sites for exactly where that fallback applies.
     public MapClientSession(int sessionId, TcpClient client, CharServerConnector charConnector, MapServerWorld world, IWorldRuntime worldRuntime,
-        Func<PlayerAttackActionOutcome, CancellationToken, Task>? playerAttackFanout = null, LethalAttackProjectionGate? lethalAttackGate = null,
+        Func<PlayerAttackActionOutcome, long, CancellationToken, Task>? playerAttackFanout = null, LethalAttackProjectionGate? lethalAttackGate = null,
         Action? onAuthenticated = null)
         : this(sessionId, client, charConnector, world.Maps, monsterProjections: world.MonsterProjections, combat: world.Combat,
                movementPathProvider: world.MovementPathProvider, collisionProvider: world.Collision, rates: world.Rates,
@@ -455,7 +474,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         WorldVisibilityOptions? visibilityOptions = null,
         IWorldRuntime? distributedWorld = null,
         MonsterAttackCadenceStore? combatState = null,
-        Func<PlayerAttackActionOutcome, CancellationToken, Task>? playerAttackFanout = null,
+        Func<PlayerAttackActionOutcome, long, CancellationToken, Task>? playerAttackFanout = null,
         LethalAttackProjectionGate? lethalAttackGate = null,
         Action? onAuthenticated = null)
     {
@@ -520,7 +539,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         WorldVisibilityOptions? visibilityOptions = null,
         IWorldRuntime? distributedWorld = null,
         MonsterAttackCadenceStore? combatState = null,
-        Func<PlayerAttackActionOutcome, CancellationToken, Task>? playerAttackFanout = null,
+        Func<PlayerAttackActionOutcome, long, CancellationToken, Task>? playerAttackFanout = null,
         LethalAttackProjectionGate? lethalAttackGate = null,
         Action? onAuthenticated = null)
         : this(
@@ -1023,7 +1042,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         }
         finally { _movementGate.Release(); }
 
-        await UpdatePresenceForCrossedCellsAsync(crossed, movementDestinationAfterAdvance, cancellationToken);
+        UpdatePresenceForCrossedCells(crossed, movementDestinationAfterAdvance);
 
         if (appliedRetarget is { } applied)
         {
@@ -1035,7 +1054,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
             MapLogger.Info(
                 $"[iRO MAP DEBUG] Sending 0x0087 len=12 from=({applied.FromX},{applied.FromY}) to=({applied.Resolved.TargetX},{applied.Resolved.TargetY}) (mid-walk retarget)");
             await WriteAsync(retargetResponse, cancellationToken);
-            await StartPresenceMovementAsync(applied.FromX, applied.FromY, applied.Resolved.TargetX, applied.Resolved.TargetY, retargetTick, cancellationToken);
+            StartPresenceMovement(applied.FromX, applied.FromY, applied.Resolved.TargetX, applied.Resolved.TargetY, retargetTick);
         }
 
         // Unconditional, once per successful movement-processing pass (never once per crossed
@@ -1364,7 +1383,13 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
                     {
                         var changed = current with { HeadDirection = _headDirection, Direction = _direction };
                         SetCurrentPresence(changed);
-                        await _playerVisibility.UpdateLookAsync(changed, cancellationToken);
+                        // Item 14 §2/§4: World is the sole authority for look-change state - no
+                        // direct local PlayerVisibilityCoordinator mutation. A remote replica's own
+                        // observer learns of this look change only through the player feed
+                        // (WorldPlayerFeedEntryKind.LookChanged), exactly like a local observer does
+                        // on the same map.
+                        if (_distributedWorld is not null && _presenceId is { } presenceId)
+                            await _distributedWorld.UpdatePlayerLookAsync(_mapName, _charId, presenceId, _direction, _headDirection, cancellationToken);
                     }
                 }
                 break;
@@ -1658,6 +1683,17 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
             }
         }
         _worldMovementId = movementId;
+        // Item 14 §3: the ordering-critical confirmation - called ONLY here, strictly after any
+        // truncation above has already resolved, never before. This is the sole place a
+        // MovementStarted feed entry is ever produced; World itself derives the confirmed
+        // destination from its own (already-possibly-truncated) active-movement Path, never from a
+        // value this call supplies (see WorldMovementProjectionConfirmation's own doc comment).
+        // Environment.TickCount is stamped here, LOCALLY, and carried through only as opaque
+        // pass-through payload - World's own logic never reads or interprets it.
+        if (_distributedWorld is not null)
+            await _distributedWorld.ConfirmMovementProjectionAsync(
+                new WorldMovementProjectionConfirmation(movementId, presenceId, _charId, _mapName, Environment.TickCount),
+                cancellationToken);
         return new MovementAccepted(resolved);
     }
 
@@ -1808,7 +1844,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         MapLogger.Info(
             $"[iRO MAP DEBUG] Sending 0x0087 len=12 from=({fromX},{fromY}) to=({resolved.TargetX},{resolved.TargetY}) t={CombatTiming.ClockMs()}ms");
         await WriteAsync(response, cancellationToken);
-        await StartPresenceMovementAsync(fromX, fromY, resolved.TargetX, resolved.TargetY, movementTick, cancellationToken);
+        StartPresenceMovement(fromX, fromY, resolved.TargetX, resolved.TargetY, movementTick);
 
         if (resolved.IntersectsWarp)
         {
@@ -2541,7 +2577,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
                 var damageDealt = result.HpBefore - result.HpAfter;
                 var attackAction = new PlayerAttackActionOutcome(_accountId, life.ActorId, _mapName, damageDealt, SrcSpeed: 460, DstSpeed: (uint)targetSnapshot.StaticMob.DamageMotion, Lethal: false);
                 var nonLethalWritesStartedAt = CombatTiming.Now();
-                await ProjectPlayerAttackActionAsync(attackAction, cancellationToken);
+                await ProjectPlayerAttackActionAsync(attackAction, result.AttackActionSequence, cancellationToken);
                 var nonLethalDamageWrittenAt = CombatTiming.Now();
 
                 var nonLethalHpWritten = false;
@@ -2642,7 +2678,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
             var attackAction = new PlayerAttackActionOutcome(_accountId, life.ActorId, _mapName, damageDealt, SrcSpeed: 460, DstSpeed: (uint)targetSnapshot.StaticMob.DamageMotion, Lethal: true);
             var lethalDamageWriteStartedAt = CombatTiming.Now();
             if (DebugBeforeLethalActionFanoutAsync is { } beforeActionFanoutHook) await beforeActionFanoutHook(); // Test-only seam - see that field's own doc comment. Always null in production.
-            await ProjectPlayerAttackActionAsync(attackAction, cancellationToken);
+            await ProjectPlayerAttackActionAsync(attackAction, result.AttackActionSequence, cancellationToken);
             // Release the shared cross-session gate the INSTANT this session's own action has been fanned
             // out to every other local session - not later, when the rest of this tail (EXP/progression/
             // the vanish itself) finishes. Nothing past this point needs to hold up a bystander's own Died
@@ -4504,25 +4540,23 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         // public projection is eligible to become world-visible.
         if (presence is null) return;
 
-        if (firstRegistration)
-            await _playerVisibility.RegisterAsync(presence, this, cancellationToken);
+        // Item 14 §4: World registration is the SOLE registration call - there is no direct local
+        // PlayerVisibilityCoordinator mutation here at all. Local AOI enter-fanout for this session's
+        // own player happens on the NEXT per-map tick's player-feed poll, when this map's
+        // PlayerFeedProjection observes the Registered entry (or a bootstrap snapshot containing it)
+        // and drives PlayerVisibilityCoordinator itself - uniformly for every player, local or
+        // remote (see PlayerFeedProjection's own doc comment). This mirrors exactly how a monster
+        // spawn becomes client-visible only once the monster feed's own tick delivers it - a player
+        // registration is not a special case that gets an instant local shortcut.
         if (_distributedWorld is not null)
         {
-            try
-            {
-                var registration = await _distributedWorld.RegisterPresenceAsync(
-                    presence.MapName,
-                    new WorldPlayerPresence(presenceId, presence.ActorId, presence.CharacterId, presence.MapName, presence.X, presence.Y),
-                    cancellationToken);
-                if (registration.Status == WorldPresenceRegistrationStatus.Conflict)
-                    throw new InvalidOperationException($"Character {presence.CharacterId} is already present in map authority '{registration.MapId}'.");
-            }
-            catch
-            {
-                if (firstRegistration)
-                    await _playerVisibility.UnregisterAsync(presence.ActorId, CancellationToken.None);
-                throw;
-            }
+            var registration = await _distributedWorld.RegisterPresenceAsync(
+                presence.MapName,
+                new WorldPlayerPresence(presenceId, presence.ActorId, presence.CharacterId, presence.MapName, presence.X, presence.Y),
+                ToPublicState(presence),
+                cancellationToken);
+            if (registration.Status == WorldPresenceRegistrationStatus.Conflict)
+                throw new InvalidOperationException($"Character {presence.CharacterId} is already present in map authority '{registration.MapId}'.");
         }
         if (!firstRegistration) return;
         lock (_playerPresenceGate)
@@ -4556,6 +4590,16 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
             _authAppearance.Option, _authAppearance.Font);
     }
 
+    // Item 14 §1: the protocol-neutral projection of PlayerPresence's own cosmetic/public fields -
+    // the exact subset a remote MapServer replica needs to construct 0x09FE/0x09FF/0x09FD/0x0A30
+    // for this player, with no packet IDs/byte layouts (those stay in IroPlayerActorPackets).
+    private static WorldPlayerPublicState ToPublicState(PlayerPresence presence) => new(
+        presence.CharacterName, presence.Direction, presence.HeadDirection, presence.JobClass, presence.Sex,
+        presence.BaseLevel, presence.WalkSpeed, presence.HairStyle, presence.HairColor, presence.ClothesColor,
+        presence.BodyStyle, presence.WeaponAppearance, presence.ShieldAppearance, presence.HeadBottomAppearance,
+        presence.HeadTopAppearance, presence.HeadMidAppearance, presence.RobeAppearance, presence.Manner,
+        presence.Karma, presence.Option, presence.Font);
+
     private uint ResolveEquippedView(uint equipMask, uint fallback)
     {
         var item = _inventory?.Items.FirstOrDefault(row => (row.Equip & equipMask) != 0);
@@ -4566,17 +4610,14 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
 
     private static ushort ToUShortAppearance(uint value, ushort fallback) => value <= ushort.MaxValue ? (ushort)value : fallback;
 
-    // Deliberately ignores the caller's cancellationToken for the actual unregister: this method's
-    // whole contract is "never leave a ghost presence registered under a wedged
-    // ChangingMapOrUnregistering lifecycle" (see the type's remarks on ghost-presence prevention).
-    // A warp/script-warp/disconnect can race a session-cancellation exactly here (SendSameServerWarpAsync,
-    // ExecuteScriptWarpAsync, and INpcScriptHost.WarpAsync all forward the live session token), and
-    // PlayerVisibilityCoordinator.UnregisterAsync's very first await is a cancellable gate wait - an
-    // OperationCanceledException thrown there before TryUnregister runs would otherwise strand the
-    // presence in the registry/old map's spatial index forever with no lifecycle path back out.
+    // Item 14 §4: no direct local PlayerVisibilityCoordinator mutation here - a departure (same-map
+    // transfer's TransferredOut, or a genuine disconnect's Unregistered) reaches the local registry
+    // exclusively through the World feed on the NEXT per-map tick, exactly like registration above.
+    // World itself is still told synchronously and immediately below (UnregisterPresenceAsync for a
+    // genuine close; TransferPlayerAsync, called separately by TransferDistributedPresenceAsync, for
+    // a same-map transfer) - only the LOCAL projection catch-up is deferred to the feed's own cadence.
     private async Task LeavePlayerWorldAsync(PlayerSessionLifecycle after, CancellationToken cancellationToken)
     {
-        uint actorId = 0;
         Guid? presenceId;
         string? presenceMapId;
         bool wasWorldVisible;
@@ -4588,15 +4629,12 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
                 return;
             }
             _playerLifecycle = PlayerSessionLifecycle.ChangingMapOrUnregistering;
-            actorId = _accountId;
             presenceId = _presenceId;
             presenceMapId = _presenceMapId;
         }
 
         try
         {
-            if (wasWorldVisible)
-                await _playerVisibility.UnregisterAsync(actorId, CancellationToken.None);
             // Map changes preserve the logical presence and transfer it separately. Only the end
             // of the connected world session unregisters distributed ownership.
             if (after == PlayerSessionLifecycle.Closed && _distributedWorld is not null && presenceId is { } id && presenceMapId is not null)
@@ -4664,6 +4702,10 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         }
     }
 
+    // Item 14 §2/§4: refreshes World's own read-model public state - the sole path a remote
+    // replica's observer can ever learn of this session's cosmetic/appearance change through
+    // (WorldPlayerFeedEntryKind.LookChanged, reused here for any public-state refresh - see that
+    // entry kind's own doc comment). No direct local PlayerVisibilityCoordinator mutation.
     private async Task RefreshPresencePublicAppearanceAsync(CancellationToken cancellationToken)
     {
         var current = CurrentPresence();
@@ -4671,10 +4713,17 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         var refreshed = BuildCurrentPresence(current.Movement);
         if (refreshed is null) return;
         SetCurrentPresence(refreshed);
-        await _playerVisibility.ReplacePublicStateAsync(refreshed, cancellationToken);
+        if (_distributedWorld is not null && _presenceId is { } presenceId)
+            await _distributedWorld.UpdatePlayerPublicStateAsync(_mapName, _charId, presenceId, ToPublicState(refreshed), cancellationToken);
     }
 
-    private async Task StartPresenceMovementAsync(ushort fromX, ushort fromY, ushort destinationX, ushort destinationY, uint startTick, CancellationToken cancellationToken)
+    // Item 14 §4: updates ONLY this session's own local presence state for packet-building purposes
+    // (SetCurrentPresence) - no direct local PlayerVisibilityCoordinator mutation. World already
+    // learns of this movement start through ConfirmMovementProjectionAsync (called from
+    // ResolveWorldMovementTargetAsync, which produced fromX/fromY/destinationX/destinationY here in
+    // the first place); the local registry/AOI catches up via the player feed on the next tick,
+    // exactly like a remote replica's own observer does.
+    private void StartPresenceMovement(ushort fromX, ushort fromY, ushort destinationX, ushort destinationY, uint startTick)
     {
         var current = CurrentPresence();
         if (current is null) return;
@@ -4686,13 +4735,16 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
             Movement = new PlayerMovementPresence(fromX, fromY, destinationX, destinationY, startTick),
         };
         SetCurrentPresence(changed);
-        await _playerVisibility.UpdateMovementAsync(changed, broadcastMovement: true, cancellationToken);
     }
 
-    private async Task UpdatePresenceForCrossedCellsAsync(
+    // Item 14 §4: same as StartPresenceMovement above - local packet-building state only. World
+    // already learns of each crossed cell through AdvanceDistributedMovementResolvedAsync's own
+    // AdvanceMovementAsync call (which runs BEFORE this, per cell - see HandleMovementTickAsync's
+    // own call ordering), appending a Moved feed entry per cell; no direct local
+    // PlayerVisibilityCoordinator mutation is needed or performed here.
+    private void UpdatePresenceForCrossedCells(
         IReadOnlyList<(ushort X, ushort Y)> crossed,
-        (ushort X, ushort Y)? destination,
-        CancellationToken cancellationToken)
+        (ushort X, ushort Y)? destination)
     {
         foreach (var cell in crossed)
         {
@@ -4703,7 +4755,6 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
                 movement = active with { DestinationX = destination.Value.X, DestinationY = destination.Value.Y };
             var changed = current with { X = cell.X, Y = cell.Y, Movement = movement };
             SetCurrentPresence(changed);
-            await _playerVisibility.UpdateMovementAsync(changed, broadcastMovement: false, cancellationToken);
         }
     }
 
@@ -5267,8 +5318,26 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     // identical wire effect to before this fan-out existed). Either branch calls
     // NotifyPlayerAttackActionAsync exactly once for this session, so the attacker can never receive
     // a duplicate 0x08C8.
-    private Task ProjectPlayerAttackActionAsync(PlayerAttackActionOutcome action, CancellationToken cancellationToken) =>
-        _playerAttackFanout is { } fanout ? fanout(action, cancellationToken) : NotifyPlayerAttackActionAsync(action, cancellationToken);
+    // `attackActionSequence` is the World-authoritative feed Sequence of the PlayerAttackAction
+    // entry this attack's own commit just appended (WorldMonsterDamageResult.AttackActionSequence) -
+    // used ONLY for the local-echo dedup key (see MarkPlayerAttackActionLocallyEchoed), never trusted
+    // for anything else. A null value (should not occur for a genuinely Applied/ReplayedSequence
+    // result, but defensively tolerated) falls back to -1, a sequence no real feed entry ever uses.
+    // The dedup key is marked HERE, synchronously, before the (possibly awaiting/yielding) fanout
+    // delegate is even called - not inside the fanout delegate itself. This closes a real race: the
+    // per-map tick loop's own feed poll can observe this exact PlayerAttackAction entry (World has
+    // already committed it - the RPC that produced `attackActionSequence` already returned) and
+    // dispatch it to THIS session concurrently with this method's own call, at any point between
+    // World's commit and whatever the fanout delegate eventually does (which may itself await, e.g.
+    // MapTcpServer.FanOutPlayerAttackActionAsync's own IO). Marking synchronously and immediately -
+    // before any await in this call chain - means WasPlayerAttackActionLocallyEchoed is already true
+    // by the time a concurrently-running feed dispatch could ever check it, regardless of which one
+    // actually reaches the client's socket first.
+    private Task ProjectPlayerAttackActionAsync(PlayerAttackActionOutcome action, long? attackActionSequence, CancellationToken cancellationToken)
+    {
+        MarkPlayerAttackActionLocallyEchoed(action.AttackerActorId, attackActionSequence ?? -1);
+        return _playerAttackFanout is { } fanout ? fanout(action, attackActionSequence ?? -1, cancellationToken) : NotifyPlayerAttackActionAsync(action, cancellationToken);
+    }
 
     // AREA-visible player-attack action projection (mirrors NotifyMonsterAttackOutcomeAsync's own
     // map/visibility rules for a monster's own attack - see PlayerAttackActionOutcome's own doc
@@ -5292,6 +5361,22 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         var damagePacket = IroMonsterCombatPackets.BuildNotifyAct3(action.AttackerActorId, action.MobActorId, tick, action.SrcSpeed, action.DstSpeed, action.Damage, div: 1, actionType: 0);
         await WriteAsync(damagePacket, cancellationToken);
         MapLogger.Info($"[iRO MAP DEBUG] PLAYER ATTACK FANOUT attackerActorId={action.AttackerActorId} targetActorId={action.MobActorId} observerAccountId={_accountId} damage={action.Damage} map={action.Map} lethal={action.Lethal.ToString().ToLowerInvariant()}");
+    }
+
+    // Item 14 §6: the cross-replica-only projection of an already-resolved monster -> player attack -
+    // deliberately narrower than NotifyMonsterAttackOutcomeAsync (no self-only HP sync: that already
+    // happened on the victim's own local gateway before this was ever published to World - see
+    // WorldMonsterAttackActionCommand's own doc comment). The victim's own local gateway never
+    // reaches this method for the SAME action at all (it only ever calls
+    // NotifyMonsterAttackOutcomeAsync locally), so there is no dedup concern symmetric to the
+    // player-attack fast path.
+    internal Task NotifyMonsterAttackActionCrossReplicaAsync(uint mobActorId, string map, WorldMonsterAttackAction action, CancellationToken cancellationToken)
+    {
+        if (!string.Equals(map, _mapName, StringComparison.OrdinalIgnoreCase)) return Task.CompletedTask;
+        if (!_visibleActorIds.IsActorVisible(mobActorId)) return Task.CompletedTask;
+        var tick = unchecked((uint)Environment.TickCount);
+        var damagePacket = IroMonsterCombatPackets.BuildNotifyAct3(mobActorId, action.TargetActorId, tick, action.SourceAttackMotion, action.TargetDamageMotion, action.Damage, div: 1, actionType: 0);
+        return WriteAsync(damagePacket, cancellationToken);
     }
 
     public async Task NotifyMonsterAttackOutcomeAsync(MonsterAttackActionOutcome action, CancellationToken cancellationToken)

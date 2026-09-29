@@ -28,6 +28,11 @@ public static class MapServerApp
         var config = MapConfigLoader.Load(options.ConfigPath);
         var secrets = SecretConfig.Load(options.SecretsPath);
         var mergedConfig = secrets.ApplyTo(config);
+        // Item 14: --map-port wins over the configured map_port, same override-precedence pattern as
+        // --map-cache-path below - lets multiple MapServer processes share one map_athena.conf while
+        // each binds a distinct port (the local two-replica Aspire topology). Config-file map_port
+        // remains the sole source when this flag is absent - single-MapServer defaults unchanged.
+        if (options.MapPortOverride is { } mapPortOverride) mergedConfig = mergedConfig with { MapPort = mapPortOverride };
 
         MapLogger.Configure(mergedConfig);
 

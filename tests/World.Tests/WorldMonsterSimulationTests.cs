@@ -125,7 +125,7 @@ public sealed class WorldMonsterSimulationTests : IAsyncLifetime
 
         var attackerPresenceId = Guid.NewGuid();
         var attackerCharacterId = 42u;
-        await grain.RegisterPresenceAsync(Presence(attackerPresenceId, attackerCharacterId, mapId));
+        await grain.RegisterPresenceAsync(Presence(attackerPresenceId, attackerCharacterId, mapId), new WorldPlayerPublicState("Test", 0, 0, 0, 0, 1, 150, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
         var life = new WorldMonsterLifeReference(mapId, load.SimulationEpoch, actorId, WorldMonsterIncarnationId.First);
         await grain.NotifyMonsterAttackedAsync(new WorldMonsterAttackedCommand(life, attackerCharacterId, attackerPresenceId));
 
@@ -186,7 +186,7 @@ public sealed class WorldMonsterSimulationTests : IAsyncLifetime
 
         var characterId = 77u;
         var presenceId = Guid.NewGuid();
-        await grain.RegisterPresenceAsync(Presence(presenceId, characterId, mapId));
+        await grain.RegisterPresenceAsync(Presence(presenceId, characterId, mapId), new WorldPlayerPublicState("Test", 0, 0, 0, 0, 1, 150, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
         var life = new WorldMonsterLifeReference(mapId, load.SimulationEpoch, actorId, WorldMonsterIncarnationId.First);
         var acquired = await grain.NotifyMonsterAttackedAsync(new WorldMonsterAttackedCommand(life, characterId, presenceId));
         Assert.Equal(WorldMonsterAttackedStatus.Acquired, acquired.Status);
@@ -212,7 +212,7 @@ public sealed class WorldMonsterSimulationTests : IAsyncLifetime
 
         var characterId = 99u;
         var originalPresenceId = Guid.NewGuid();
-        await grain.RegisterPresenceAsync(Presence(originalPresenceId, characterId, mapId));
+        await grain.RegisterPresenceAsync(Presence(originalPresenceId, characterId, mapId), new WorldPlayerPublicState("Test", 0, 0, 0, 0, 1, 150, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
         Assert.Equal(WorldMonsterAttackedStatus.Acquired,
             (await grain.NotifyMonsterAttackedAsync(new WorldMonsterAttackedCommand(life, characterId, originalPresenceId))).Status);
 
@@ -222,7 +222,7 @@ public sealed class WorldMonsterSimulationTests : IAsyncLifetime
         // rejected, never silently treated as still valid merely because CharacterId matches.
         var replacementPresenceId = Guid.NewGuid();
         await grain.UnregisterPresenceAsync(mapId, characterId, originalPresenceId);
-        await grain.RegisterPresenceAsync(Presence(replacementPresenceId, characterId, mapId));
+        await grain.RegisterPresenceAsync(Presence(replacementPresenceId, characterId, mapId), new WorldPlayerPublicState("Test", 0, 0, 0, 0, 1, 150, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
 
         var staleQuery = new WorldMonsterAttackWindowQuery(life, characterId, originalPresenceId);
         var result = await grain.ValidateMonsterAttackWindowAsync(staleQuery);
@@ -241,10 +241,10 @@ public sealed class WorldMonsterSimulationTests : IAsyncLifetime
 
         var characterId = 101u;
         var originalPresenceId = Guid.NewGuid();
-        await grain.RegisterPresenceAsync(Presence(originalPresenceId, characterId, mapId));
+        await grain.RegisterPresenceAsync(Presence(originalPresenceId, characterId, mapId), new WorldPlayerPublicState("Test", 0, 0, 0, 0, 1, 150, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
         var replacementPresenceId = Guid.NewGuid();
         await grain.UnregisterPresenceAsync(mapId, characterId, originalPresenceId);
-        await grain.RegisterPresenceAsync(Presence(replacementPresenceId, characterId, mapId));
+        await grain.RegisterPresenceAsync(Presence(replacementPresenceId, characterId, mapId), new WorldPlayerPublicState("Test", 0, 0, 0, 0, 1, 150, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
 
         // An attacker command still carrying the OLD PresenceId must never acquire a target, even
         // though CharacterId matches the grain's current registration.
@@ -277,7 +277,7 @@ public sealed class WorldMonsterSimulationTests : IAsyncLifetime
         var actorId = bootstrap.Snapshot!.Single().ActorId;
         var life = new WorldMonsterLifeReference(mapId, load.SimulationEpoch, actorId, WorldMonsterIncarnationId.First);
         var presenceId = Guid.NewGuid();
-        await grain.RegisterPresenceAsync(Presence(presenceId, AttackerCharacterId, mapId, x: MonsterX, y: MonsterY));
+        await grain.RegisterPresenceAsync(Presence(presenceId, AttackerCharacterId, mapId, x: MonsterX, y: MonsterY), new WorldPlayerPublicState("Test", 0, 0, 0, 0, 1, 150, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
         return (grain, mapId, life, presenceId);
     }
 
@@ -320,7 +320,7 @@ public sealed class WorldMonsterSimulationTests : IAsyncLifetime
         var (grain, _, life, presenceIdA) = await SetupAttackerAsync("izlude");
         var presenceIdB = Guid.NewGuid();
         const uint attackerB = 901;
-        await grain.RegisterPresenceAsync(Presence(presenceIdB, attackerB, "izlude", x: MonsterX, y: MonsterY));
+        await grain.RegisterPresenceAsync(Presence(presenceIdB, attackerB, "izlude", x: MonsterX, y: MonsterY), new WorldPlayerPublicState("Test", 0, 0, 0, 0, 1, 150, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
 
         // Two independent logical attackers, each dealing enough damage ALONE (Spawn's own MaxHp
         // is 55) to be lethal against the same still-alive monster - simulates two MapServer
@@ -422,7 +422,7 @@ public sealed class WorldMonsterSimulationTests : IAsyncLifetime
 
         var otherPresenceId = Guid.NewGuid();
         const uint otherAttacker = 902;
-        await grain.RegisterPresenceAsync(Presence(otherPresenceId, otherAttacker, mapId, x: MonsterX, y: MonsterY));
+        await grain.RegisterPresenceAsync(Presence(otherPresenceId, otherAttacker, mapId, x: MonsterX, y: MonsterY), new WorldPlayerPublicState("Test", 0, 0, 0, 0, 1, 150, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
         var brandNewCommand = new WorldMonsterDamageCommand(life, otherAttacker, otherPresenceId, AttackSequence: 1, Damage: 5, AcquireEngagement: false);
 
         var first = await grain.ApplyMonsterDamageAsync(brandNewCommand);
@@ -734,7 +734,7 @@ public sealed class WorldMonsterSimulationTests : IAsyncLifetime
         var life = new WorldMonsterLifeReference("izlude", load.SimulationEpoch, actorId, WorldMonsterIncarnationId.First);
         var presenceId = Guid.NewGuid();
         // Registered on a DIFFERENT map than the monster's own map.
-        await grain.RegisterPresenceAsync(Presence(presenceId, AttackerCharacterId, "geffen"));
+        await grain.RegisterPresenceAsync(Presence(presenceId, AttackerCharacterId, "geffen"), new WorldPlayerPublicState("Test", 0, 0, 0, 0, 1, 150, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
 
         var result = await grain.ApplyMonsterDamageAsync(DamageCommand(life, presenceId, sequence: 1, damage: 20));
 
@@ -785,7 +785,7 @@ public sealed class WorldMonsterSimulationTests : IAsyncLifetime
         var bootstrap = await grain.PollMonsterFeedAsync(cursor: null, mapId);
         var actorId = bootstrap.Snapshot!.Single().ActorId;
         var presenceId = Guid.NewGuid();
-        await grain.RegisterPresenceAsync(Presence(presenceId, AttackerCharacterId, mapId, x: MonsterX, y: MonsterY));
+        await grain.RegisterPresenceAsync(Presence(presenceId, AttackerCharacterId, mapId, x: MonsterX, y: MonsterY), new WorldPlayerPublicState("Test", 0, 0, 0, 0, 1, 150, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
         var originalLife = new WorldMonsterLifeReference(mapId, load.SimulationEpoch, actorId, WorldMonsterIncarnationId.First);
 
         var lethal = await grain.ApplyMonsterDamageAsync(DamageCommand(originalLife, presenceId, sequence: 7, damage: 100));
@@ -827,7 +827,7 @@ public sealed class WorldMonsterSimulationTests : IAsyncLifetime
         var (grain, mapId, life, presenceIdA) = await SetupAttackerAsync("izlude");
         var presenceIdB = Guid.NewGuid();
         const uint attackerB = 901;
-        await grain.RegisterPresenceAsync(Presence(presenceIdB, attackerB, mapId, x: MonsterX, y: MonsterY));
+        await grain.RegisterPresenceAsync(Presence(presenceIdB, attackerB, mapId, x: MonsterX, y: MonsterY), new WorldPlayerPublicState("Test", 0, 0, 0, 0, 1, 150, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
 
         var commandA = new WorldMonsterDamageCommand(life, AttackerCharacterId, presenceIdA, AttackSequence: 3, Damage: 5, AcquireEngagement: false);
         var commandB = new WorldMonsterDamageCommand(life, attackerB, presenceIdB, AttackSequence: 4, Damage: 5, AcquireEngagement: false);
@@ -845,7 +845,7 @@ public sealed class WorldMonsterSimulationTests : IAsyncLifetime
         // ledger entry is gone: the same command, resent verbatim, is treated as brand-new (Applied
         // again, mutating HP a SECOND time) rather than replayed - proving no stale ledger entry
         // survived to intercept it as ReplayedSequence.
-        await grain.RegisterPresenceAsync(Presence(presenceIdA, AttackerCharacterId, mapId, x: MonsterX, y: MonsterY));
+        await grain.RegisterPresenceAsync(Presence(presenceIdA, AttackerCharacterId, mapId, x: MonsterX, y: MonsterY), new WorldPlayerPublicState("Test", 0, 0, 0, 0, 1, 150, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
         var afterRemovalA = await grain.ApplyMonsterDamageAsync(commandA);
         Assert.Equal(WorldMonsterDamageStatus.Applied, afterRemovalA.Status);
         // HP by this point reflects BOTH A's and B's earlier hits (55 - 5 - 5 = 45) - this second
@@ -894,7 +894,7 @@ public sealed class WorldMonsterSimulationTests : IAsyncLifetime
         // first, matching how a real client-driven "go back" would also require a genuine
         // unregister/re-register cycle, not an in-place move.)
         await grain.UnregisterPresenceAsync(destinationMapId, AttackerCharacterId, presenceId);
-        await grain.RegisterPresenceAsync(Presence(presenceId, AttackerCharacterId, sourceMapId, x: MonsterX, y: MonsterY));
+        await grain.RegisterPresenceAsync(Presence(presenceId, AttackerCharacterId, sourceMapId, x: MonsterX, y: MonsterY), new WorldPlayerPublicState("Test", 0, 0, 0, 0, 1, 150, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
         var afterTransfer = await grain.ApplyMonsterDamageAsync(command);
         Assert.Equal(WorldMonsterDamageStatus.Applied, afterTransfer.Status);
         Assert.Equal(original.HpAfter, afterTransfer.HpBefore);
@@ -911,7 +911,7 @@ public sealed class WorldMonsterSimulationTests : IAsyncLifetime
         var actorId = bootstrap.Snapshot!.Single().ActorId;
         var life = new WorldMonsterLifeReference(mapId, load.SimulationEpoch, actorId, WorldMonsterIncarnationId.First);
         var presenceId = Guid.NewGuid();
-        await prontera.RegisterPresenceAsync(Presence(presenceId, AttackerCharacterId, mapId, x: MonsterX, y: MonsterY));
+        await prontera.RegisterPresenceAsync(Presence(presenceId, AttackerCharacterId, mapId, x: MonsterX, y: MonsterY), new WorldPlayerPublicState("Test", 0, 0, 0, 0, 1, 150, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
 
         var command = DamageCommand(life, presenceId, sequence: 1, damage: 5);
         var original = await prontera.ApplyMonsterDamageAsync(command);
@@ -935,7 +935,7 @@ public sealed class WorldMonsterSimulationTests : IAsyncLifetime
         // a different map/partition - unregister from the destination first, matching a genuine
         // reconnect cycle) and resend the exact same command: it must be treated as brand-new.
         await rest.UnregisterPresenceAsync("izlude", AttackerCharacterId, presenceId);
-        await prontera.RegisterPresenceAsync(Presence(presenceId, AttackerCharacterId, mapId, x: MonsterX, y: MonsterY));
+        await prontera.RegisterPresenceAsync(Presence(presenceId, AttackerCharacterId, mapId, x: MonsterX, y: MonsterY), new WorldPlayerPublicState("Test", 0, 0, 0, 0, 1, 150, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
         var afterTransfer = await prontera.ApplyMonsterDamageAsync(command);
         Assert.Equal(WorldMonsterDamageStatus.Applied, afterTransfer.Status);
         Assert.Equal(original.HpAfter, afterTransfer.HpBefore);
@@ -961,7 +961,7 @@ public sealed class WorldMonsterSimulationTests : IAsyncLifetime
         var oldBootstrap = await rest.PollMonsterFeedAsync(cursor: null, oldMapId);
         var oldActorId = oldBootstrap.Snapshot!.Single().ActorId;
         var oldLife = new WorldMonsterLifeReference(oldMapId, oldLoad.SimulationEpoch, oldActorId, WorldMonsterIncarnationId.First);
-        await rest.RegisterPresenceAsync(Presence(presenceId, AttackerCharacterId, oldMapId, x: MonsterX, y: MonsterY));
+        await rest.RegisterPresenceAsync(Presence(presenceId, AttackerCharacterId, oldMapId, x: MonsterX, y: MonsterY), new WorldPlayerPublicState("Test", 0, 0, 0, 0, 1, 150, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
         var oldCommand = DamageCommand(oldLife, presenceId, sequence: 1, damage: 5);
         var original = await rest.ApplyMonsterDamageAsync(oldCommand);
         Assert.Equal(WorldMonsterDamageStatus.Applied, original.Status);
@@ -991,7 +991,7 @@ public sealed class WorldMonsterSimulationTests : IAsyncLifetime
         // an already-registered PresenceId to a different map) and resend the exact same
         // command: it must be treated as brand-new, never replayed.
         await rest.UnregisterPresenceAsync("geffen", AttackerCharacterId, presenceId);
-        await rest.RegisterPresenceAsync(Presence(presenceId, AttackerCharacterId, oldMapId, x: MonsterX, y: MonsterY));
+        await rest.RegisterPresenceAsync(Presence(presenceId, AttackerCharacterId, oldMapId, x: MonsterX, y: MonsterY), new WorldPlayerPublicState("Test", 0, 0, 0, 0, 1, 150, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
         var afterCommit = await rest.ApplyMonsterDamageAsync(oldCommand);
         Assert.Equal(WorldMonsterDamageStatus.Applied, afterCommit.Status);
         Assert.Equal(original.HpAfter, afterCommit.HpBefore);
@@ -1003,7 +1003,7 @@ public sealed class WorldMonsterSimulationTests : IAsyncLifetime
         var grain = Partition("world-rest");
         var mapId = "geffen"; // Deliberately NEVER LoadMonsterSpawnsAsync'd in this test.
         var presenceId = Guid.NewGuid();
-        await grain.RegisterPresenceAsync(Presence(presenceId, AttackerCharacterId, mapId));
+        await grain.RegisterPresenceAsync(Presence(presenceId, AttackerCharacterId, mapId), new WorldPlayerPublicState("Test", 0, 0, 0, 0, 1, 150, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
 
         var result = await grain.UnregisterPresenceAsync(mapId, AttackerCharacterId, presenceId);
 
@@ -1030,7 +1030,7 @@ public sealed class WorldMonsterSimulationTests : IAsyncLifetime
 
         // Re-registering and resending the exact same command proves the ledger entry is gone -
         // it is treated as brand-new, not replayed.
-        await grain.RegisterPresenceAsync(Presence(presenceId, AttackerCharacterId, mapId, x: MonsterX, y: MonsterY));
+        await grain.RegisterPresenceAsync(Presence(presenceId, AttackerCharacterId, mapId, x: MonsterX, y: MonsterY), new WorldPlayerPublicState("Test", 0, 0, 0, 0, 1, 150, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
         var afterRemoval = await grain.ApplyMonsterDamageAsync(command);
         Assert.Equal(WorldMonsterDamageStatus.Applied, afterRemoval.Status);
         Assert.Equal(committed.HpAfter, afterRemoval.HpBefore);
@@ -1081,8 +1081,8 @@ public sealed class WorldMonsterSimulationTests : IAsyncLifetime
         // if B only registered AFTER A had already unregistered, A's and B's AttackSequence entries
         // would never coexist in the SAME _attackSequencesByPresence[sharedPresenceId] bucket, and
         // the whole scenario this test exists to catch could never occur.
-        await grain.RegisterPresenceAsync(Presence(sharedPresenceId, characterA, mapId, x: MonsterX, y: MonsterY));
-        await grain.RegisterPresenceAsync(Presence(sharedPresenceId, characterB, mapId, x: MonsterX, y: MonsterY));
+        await grain.RegisterPresenceAsync(Presence(sharedPresenceId, characterA, mapId, x: MonsterX, y: MonsterY), new WorldPlayerPublicState("Test", 0, 0, 0, 0, 1, 150, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
+        await grain.RegisterPresenceAsync(Presence(sharedPresenceId, characterB, mapId, x: MonsterX, y: MonsterY), new WorldPlayerPublicState("Test", 0, 0, 0, 0, 1, 150, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
 
         var commandA = new WorldMonsterDamageCommand(life, characterA, sharedPresenceId, AttackSequence: 1, Damage: 0, AcquireEngagement: false);
         var commandB = new WorldMonsterDamageCommand(life, characterB, sharedPresenceId, AttackSequence: 1, Damage: 0, AcquireEngagement: false);
@@ -1117,7 +1117,7 @@ public sealed class WorldMonsterSimulationTests : IAsyncLifetime
         // brand-new attempt: Applied. Under the old broken helper, B's stale primary entry would
         // still be present (never reachable for cleanup because its secondary-index bucket was
         // gone), and this would incorrectly return ReplayedSequence again.
-        await grain.RegisterPresenceAsync(Presence(sharedPresenceId, characterB, mapId, x: MonsterX, y: MonsterY));
+        await grain.RegisterPresenceAsync(Presence(sharedPresenceId, characterB, mapId, x: MonsterX, y: MonsterY), new WorldPlayerPublicState("Test", 0, 0, 0, 0, 1, 150, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
         var afterBsOwnCleanup = await grain.ApplyMonsterDamageAsync(commandB);
         Assert.Equal(WorldMonsterDamageStatus.Applied, afterBsOwnCleanup.Status);
 
@@ -1161,7 +1161,7 @@ public sealed class WorldMonsterSimulationTests : IAsyncLifetime
             var presenceId = Guid.NewGuid();
             historicalIdentities.Add((characterId, presenceId));
 
-            await grain.RegisterPresenceAsync(Presence(presenceId, characterId, mapId, x: MonsterX, y: MonsterY));
+            await grain.RegisterPresenceAsync(Presence(presenceId, characterId, mapId, x: MonsterX, y: MonsterY), new WorldPlayerPublicState("Test", 0, 0, 0, 0, 1, 150, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
             var result = await grain.ApplyMonsterDamageAsync(new WorldMonsterDamageCommand(life, characterId, presenceId, AttackSequence: 1, Damage: 0, AcquireEngagement: false));
             Assert.Equal(WorldMonsterDamageStatus.Applied, result.Status);
             Assert.False(result.KilledByThisHit);
@@ -1182,7 +1182,7 @@ public sealed class WorldMonsterSimulationTests : IAsyncLifetime
         // unregister, i.e. cleanup failed to remove it).
         foreach (var (characterId, presenceId) in historicalIdentities)
         {
-            await grain.RegisterPresenceAsync(Presence(presenceId, characterId, mapId, x: MonsterX, y: MonsterY));
+            await grain.RegisterPresenceAsync(Presence(presenceId, characterId, mapId, x: MonsterX, y: MonsterY), new WorldPlayerPublicState("Test", 0, 0, 0, 0, 1, 150, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
             var replayAttempt = await grain.ApplyMonsterDamageAsync(new WorldMonsterDamageCommand(life, characterId, presenceId, AttackSequence: 1, Damage: 0, AcquireEngagement: false));
             Assert.Equal(WorldMonsterDamageStatus.Applied, replayAttempt.Status);
             await grain.UnregisterPresenceAsync(mapId, characterId, presenceId);
@@ -1208,7 +1208,7 @@ public sealed class WorldMonsterSimulationTests : IAsyncLifetime
 
         var characterId = 55u;
         var presenceId = Guid.NewGuid();
-        await grain.RegisterPresenceAsync(Presence(presenceId, characterId, mapId, x: 200, y: 200));
+        await grain.RegisterPresenceAsync(Presence(presenceId, characterId, mapId, x: 200, y: 200), new WorldPlayerPublicState("Test", 0, 0, 0, 0, 1, 150, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
         var life = new WorldMonsterLifeReference(mapId, load.SimulationEpoch, actorId, WorldMonsterIncarnationId.First);
 
         var acquired = await grain.NotifyMonsterAttackedAsync(new WorldMonsterAttackedCommand(life, characterId, presenceId));
@@ -1242,7 +1242,7 @@ public sealed class WorldMonsterSimulationTests : IAsyncLifetime
         var characterId = 61u;
         var presenceId = Guid.NewGuid();
         // Distance 2 on X alone (Chebyshev) = AttackRange(1) + 1 - exactly one past plain range.
-        await grain.RegisterPresenceAsync(Presence(presenceId, characterId, mapId, x: (ushort)(MonsterX + 2), y: MonsterY));
+        await grain.RegisterPresenceAsync(Presence(presenceId, characterId, mapId, x: (ushort)(MonsterX + 2), y: MonsterY), new WorldPlayerPublicState("Test", 0, 0, 0, 0, 1, 150, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
         await grain.NotifyMonsterAttackedAsync(new WorldMonsterAttackedCommand(life, characterId, presenceId));
 
         var result = await grain.ValidateMonsterAttackWindowAsync(new WorldMonsterAttackWindowQuery(life, characterId, presenceId));
@@ -1262,7 +1262,7 @@ public sealed class WorldMonsterSimulationTests : IAsyncLifetime
         var characterId = 62u;
         var presenceId = Guid.NewGuid();
         var targetX = (ushort)(MonsterX + 2);
-        await grain.RegisterPresenceAsync(Presence(presenceId, characterId, mapId, x: targetX, y: MonsterY));
+        await grain.RegisterPresenceAsync(Presence(presenceId, characterId, mapId, x: targetX, y: MonsterY), new WorldPlayerPublicState("Test", 0, 0, 0, 0, 1, 150, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
         await grain.NotifyMonsterAttackedAsync(new WorldMonsterAttackedCommand(life, characterId, presenceId));
 
         // Make the grain's own authoritative movement state report this character as walking -
@@ -1363,7 +1363,7 @@ public sealed class WorldMonsterSimulationTests : IAsyncLifetime
 
         var characterId = 71u;
         var presenceId = Guid.NewGuid();
-        await grain.RegisterPresenceAsync(Presence(presenceId, characterId, mapId, x: MonsterX, y: MonsterY));
+        await grain.RegisterPresenceAsync(Presence(presenceId, characterId, mapId, x: MonsterX, y: MonsterY), new WorldPlayerPublicState("Test", 0, 0, 0, 0, 1, 150, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
 
         var first = await grain.NotifyMonsterAttackedAsync(new WorldMonsterAttackedCommand(life, characterId, presenceId));
         Assert.Equal(WorldMonsterAttackedStatus.Acquired, first.Status);
@@ -1413,7 +1413,7 @@ public sealed class WorldMonsterSimulationTests : IAsyncLifetime
         // Acquire a target far enough away that the mob starts a fresh chase walk (not already in range).
         var characterId = 201u;
         var presenceId = Guid.NewGuid();
-        await grain.RegisterPresenceAsync(Presence(presenceId, characterId, mapId, x: (ushort)(MonsterX + 10), y: MonsterY));
+        await grain.RegisterPresenceAsync(Presence(presenceId, characterId, mapId, x: (ushort)(MonsterX + 10), y: MonsterY), new WorldPlayerPublicState("Test", 0, 0, 0, 0, 1, 150, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
         Assert.Equal(WorldMonsterAttackedStatus.Acquired,
             (await grain.NotifyMonsterAttackedAsync(new WorldMonsterAttackedCommand(life, characterId, presenceId))).Status);
 
@@ -1438,7 +1438,7 @@ public sealed class WorldMonsterSimulationTests : IAsyncLifetime
         // the new destination - the retarget stays pending until the real cell boundary
         // AdvanceMovementForCombat consumes it at.
         var newTargetX = (ushort)(MonsterX + 20);
-        await grain.RegisterPresenceAsync(Presence(presenceId, characterId, mapId, x: newTargetX, y: MonsterY));
+        await grain.RegisterPresenceAsync(Presence(presenceId, characterId, mapId, x: newTargetX, y: MonsterY), new WorldPlayerPublicState("Test", 0, 0, 0, 0, 1, 150, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
         await Task.Delay(300);
         var midCell = (await grain.PollMonsterFeedAsync(cursor: null, mapId)).Snapshot!.Single();
         Assert.True(midCell.IsWalking);
@@ -1458,7 +1458,7 @@ public sealed class WorldMonsterSimulationTests : IAsyncLifetime
 
         var characterId = 202u;
         var presenceId = Guid.NewGuid();
-        await grain.RegisterPresenceAsync(Presence(presenceId, characterId, mapId, x: (ushort)(MonsterX + 10), y: MonsterY));
+        await grain.RegisterPresenceAsync(Presence(presenceId, characterId, mapId, x: (ushort)(MonsterX + 10), y: MonsterY), new WorldPlayerPublicState("Test", 0, 0, 0, 0, 1, 150, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
         await grain.NotifyMonsterAttackedAsync(new WorldMonsterAttackedCommand(life, characterId, presenceId));
 
         var startDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
@@ -1474,7 +1474,7 @@ public sealed class WorldMonsterSimulationTests : IAsyncLifetime
         // path must actually be applied by then (destination changed away from the original),
         // proving the mob does not walk the entire stale old path to completion first.
         var newTargetX = (ushort)(MonsterX + 20);
-        await grain.RegisterPresenceAsync(Presence(presenceId, characterId, mapId, x: newTargetX, y: MonsterY));
+        await grain.RegisterPresenceAsync(Presence(presenceId, characterId, mapId, x: newTargetX, y: MonsterY), new WorldPlayerPublicState("Test", 0, 0, 0, 0, 1, 150, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
 
         var appliedDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(6);
         WorldMonsterInstance? afterBoundary = null;
@@ -1521,7 +1521,7 @@ public sealed class WorldMonsterSimulationTests : IAsyncLifetime
         var characterId = 301u;
         var presenceId = Guid.NewGuid();
         // Starts far enough away (well outside AttackRange=1) that the mob begins a genuine chase walk.
-        await grain.RegisterPresenceAsync(Presence(presenceId, characterId, mapId, x: (ushort)(MonsterX + 10), y: MonsterY));
+        await grain.RegisterPresenceAsync(Presence(presenceId, characterId, mapId, x: (ushort)(MonsterX + 10), y: MonsterY), new WorldPlayerPublicState("Test", 0, 0, 0, 0, 1, 150, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
         Assert.Equal(WorldMonsterAttackedStatus.Acquired,
             (await grain.NotifyMonsterAttackedAsync(new WorldMonsterAttackedCommand(life, characterId, presenceId))).Status);
 
@@ -1551,7 +1551,7 @@ public sealed class WorldMonsterSimulationTests : IAsyncLifetime
         // range the instant BEFORE crossing, and in range the instant AFTER - all within ONE
         // AdvanceMovementForCombat call, never observable as two separate Step-4-only evaluations.
         var closeTargetX = (ushort)(crossed.X + 2);
-        await grain.RegisterPresenceAsync(Presence(presenceId, characterId, mapId, x: closeTargetX, y: crossed.Y));
+        await grain.RegisterPresenceAsync(Presence(presenceId, characterId, mapId, x: closeTargetX, y: crossed.Y), new WorldPlayerPublicState("Test", 0, 0, 0, 0, 1, 150, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
 
         // Wait past the full 2-second cell boundary so the pending retarget is genuinely consumed.
         var resolvedDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(6);
@@ -1600,7 +1600,7 @@ public sealed class WorldMonsterSimulationTests : IAsyncLifetime
 
         var characterId = 302u;
         var presenceId = Guid.NewGuid();
-        await grain.RegisterPresenceAsync(Presence(presenceId, characterId, mapId, x: (ushort)(MonsterX + 10), y: MonsterY));
+        await grain.RegisterPresenceAsync(Presence(presenceId, characterId, mapId, x: (ushort)(MonsterX + 10), y: MonsterY), new WorldPlayerPublicState("Test", 0, 0, 0, 0, 1, 150, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
         Assert.Equal(WorldMonsterAttackedStatus.Acquired,
             (await grain.NotifyMonsterAttackedAsync(new WorldMonsterAttackedCommand(life, characterId, presenceId))).Status);
 
@@ -1614,7 +1614,7 @@ public sealed class WorldMonsterSimulationTests : IAsyncLifetime
         // forcing an ordinary retarget that must still be reported as a fresh WalkStarted, never
         // suppressed.
         var stillFarTargetX = (ushort)(MonsterX + 20);
-        await grain.RegisterPresenceAsync(Presence(presenceId, characterId, mapId, x: stillFarTargetX, y: MonsterY));
+        await grain.RegisterPresenceAsync(Presence(presenceId, characterId, mapId, x: stillFarTargetX, y: MonsterY), new WorldPlayerPublicState("Test", 0, 0, 0, 0, 1, 150, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
 
         var appliedDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(6);
         var sawWalkStarted = false;
@@ -1645,7 +1645,7 @@ public sealed class WorldMonsterSimulationTests : IAsyncLifetime
 
         var characterId = 203u;
         var presenceId = Guid.NewGuid();
-        await grain.RegisterPresenceAsync(Presence(presenceId, characterId, mapId, x: (ushort)(MonsterX + 15), y: MonsterY));
+        await grain.RegisterPresenceAsync(Presence(presenceId, characterId, mapId, x: (ushort)(MonsterX + 15), y: MonsterY), new WorldPlayerPublicState("Test", 0, 0, 0, 0, 1, 150, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
         await grain.NotifyMonsterAttackedAsync(new WorldMonsterAttackedCommand(life, characterId, presenceId));
 
         var (startX, startY) = (MonsterX, MonsterY);
@@ -1756,7 +1756,7 @@ public sealed class WorldMonsterSimulationTests : IAsyncLifetime
         // Attacker far enough away that acquisition results in a genuine Chase (not InAttackRange).
         var characterId = 220u;
         var presenceId = Guid.NewGuid();
-        await grain.RegisterPresenceAsync(Presence(presenceId, characterId, mapId, x: (ushort)(MonsterX + 10), y: MonsterY));
+        await grain.RegisterPresenceAsync(Presence(presenceId, characterId, mapId, x: (ushort)(MonsterX + 10), y: MonsterY), new WorldPlayerPublicState("Test", 0, 0, 0, 0, 1, 150, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
         var acquired = await grain.NotifyMonsterAttackedAsync(new WorldMonsterAttackedCommand(life, characterId, presenceId));
         Assert.Equal(WorldMonsterAttackedStatus.Acquired, acquired.Status);
 
@@ -1794,7 +1794,7 @@ public sealed class WorldMonsterSimulationTests : IAsyncLifetime
 
         var characterId = 221u;
         var presenceId = Guid.NewGuid();
-        await grain.RegisterPresenceAsync(Presence(presenceId, characterId, mapId, x: (ushort)(MonsterX + 10), y: MonsterY));
+        await grain.RegisterPresenceAsync(Presence(presenceId, characterId, mapId, x: (ushort)(MonsterX + 10), y: MonsterY), new WorldPlayerPublicState("Test", 0, 0, 0, 0, 1, 150, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
         await grain.NotifyMonsterAttackedAsync(new WorldMonsterAttackedCommand(life, characterId, presenceId));
 
         var startDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
@@ -1805,7 +1805,7 @@ public sealed class WorldMonsterSimulationTests : IAsyncLifetime
         // Retarget mid-cell by repositioning the target (see the sibling correction-#1 tests' own
         // doc comments for why this is the correct way to force a fresh chase retarget).
         var newTargetX = (ushort)(MonsterX + 20);
-        await grain.RegisterPresenceAsync(Presence(presenceId, characterId, mapId, x: newTargetX, y: MonsterY));
+        await grain.RegisterPresenceAsync(Presence(presenceId, characterId, mapId, x: newTargetX, y: MonsterY), new WorldPlayerPublicState("Test", 0, 0, 0, 0, 1, 150, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
 
         var appliedDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(6);
         WorldMonsterFeedEntry? retargetApplied = null;
@@ -1838,7 +1838,7 @@ public sealed class WorldMonsterSimulationTests : IAsyncLifetime
         var characterId = 222u;
         var presenceId = Guid.NewGuid();
         // Start the attacker out of range so a real chase begins.
-        await grain.RegisterPresenceAsync(Presence(presenceId, characterId, mapId, x: (ushort)(MonsterX + 10), y: MonsterY));
+        await grain.RegisterPresenceAsync(Presence(presenceId, characterId, mapId, x: (ushort)(MonsterX + 10), y: MonsterY), new WorldPlayerPublicState("Test", 0, 0, 0, 0, 1, 150, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
         await grain.NotifyMonsterAttackedAsync(new WorldMonsterAttackedCommand(life, characterId, presenceId));
 
         var startDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
@@ -1848,7 +1848,7 @@ public sealed class WorldMonsterSimulationTests : IAsyncLifetime
         var cursorAfterAcquire = new WorldMonsterFeedCursor(load.SimulationEpoch, (await grain.PollMonsterFeedAsync(cursor: null, mapId)).AsOfSequence);
         // Move the target INTO attack range (AttackRange=1, adjacent cell) while the mob is still
         // walking - the next tick's engagement re-evaluation must interrupt the chase.
-        await grain.RegisterPresenceAsync(Presence(presenceId, characterId, mapId, x: (ushort)(MonsterX + 1), y: MonsterY));
+        await grain.RegisterPresenceAsync(Presence(presenceId, characterId, mapId, x: (ushort)(MonsterX + 1), y: MonsterY), new WorldPlayerPublicState("Test", 0, 0, 0, 0, 1, 150, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
 
         var interruptedDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(6);
         WorldMonsterFeedEntry? chaseInterrupted = null;
@@ -1881,7 +1881,7 @@ public sealed class WorldMonsterSimulationTests : IAsyncLifetime
 
         var characterId = 210u;
         var presenceId = Guid.NewGuid();
-        await grain.RegisterPresenceAsync(Presence(presenceId, characterId, mapId, x: MonsterX, y: MonsterY));
+        await grain.RegisterPresenceAsync(Presence(presenceId, characterId, mapId, x: MonsterX, y: MonsterY), new WorldPlayerPublicState("Test", 0, 0, 0, 0, 1, 150, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
         Assert.Equal(WorldPresenceLifeStateStatus.Updated,
             (await grain.UpdatePresenceLifeStateAsync(new WorldPresenceLifeStateUpdate(characterId, presenceId, IsAlive: false))).Status);
 
@@ -1905,7 +1905,7 @@ public sealed class WorldMonsterSimulationTests : IAsyncLifetime
         var mapId = "izlude";
         var characterId = 211u;
         var presenceId = Guid.NewGuid();
-        await grain.RegisterPresenceAsync(Presence(presenceId, characterId, mapId));
+        await grain.RegisterPresenceAsync(Presence(presenceId, characterId, mapId), new WorldPlayerPublicState("Test", 0, 0, 0, 0, 1, 150, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
         Assert.Equal(WorldPresenceLifeStateStatus.Updated,
             (await grain.UpdatePresenceLifeStateAsync(new WorldPresenceLifeStateUpdate(characterId, presenceId, IsAlive: false))).Status);
 
@@ -1921,14 +1921,14 @@ public sealed class WorldMonsterSimulationTests : IAsyncLifetime
         var mapId = "izlude";
         var characterId = 212u;
         var originalPresenceId = Guid.NewGuid();
-        await grain.RegisterPresenceAsync(Presence(originalPresenceId, characterId, mapId));
+        await grain.RegisterPresenceAsync(Presence(originalPresenceId, characterId, mapId), new WorldPlayerPublicState("Test", 0, 0, 0, 0, 1, 150, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
 
         // The character disconnects and reconnects with the SAME CharacterId but a genuinely
         // different PresenceId - the grain's own current registration for that CharacterId is now
         // the NEW presence.
         var replacementPresenceId = Guid.NewGuid();
         await grain.UnregisterPresenceAsync(mapId, characterId, originalPresenceId);
-        await grain.RegisterPresenceAsync(Presence(replacementPresenceId, characterId, mapId));
+        await grain.RegisterPresenceAsync(Presence(replacementPresenceId, characterId, mapId), new WorldPlayerPublicState("Test", 0, 0, 0, 0, 1, 150, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
 
         // A life-state update still carrying the OLD (now-stale) PresenceId must be rejected, never
         // silently applied to the replacement presence merely because CharacterId matches.
@@ -1964,7 +1964,7 @@ public sealed class WorldMonsterSimulationTests : IAsyncLifetime
         var characterId = 211u;
         var presenceId = Guid.NewGuid();
         // Registered on a DIFFERENT map than the monster's own map ("geffen" vs "izlude").
-        await grain.RegisterPresenceAsync(Presence(presenceId, characterId, "geffen", x: MonsterX, y: MonsterY));
+        await grain.RegisterPresenceAsync(Presence(presenceId, characterId, "geffen", x: MonsterX, y: MonsterY), new WorldPlayerPublicState("Test", 0, 0, 0, 0, 1, 150, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
 
         var result = await grain.NotifyMonsterAttackedAsync(new WorldMonsterAttackedCommand(life, characterId, presenceId));
         Assert.Equal(WorldMonsterAttackedStatus.AttackerNotEngageable, result.Status);
@@ -1992,7 +1992,7 @@ public sealed class WorldMonsterSimulationTests : IAsyncLifetime
 
         var originalLife = new WorldMonsterLifeReference(mapId, load.SimulationEpoch, actorId, WorldMonsterIncarnationId.First);
         var killerPresenceId = Guid.NewGuid();
-        await grain.RegisterPresenceAsync(Presence(killerPresenceId, AttackerCharacterId, mapId, x: MonsterX, y: MonsterY));
+        await grain.RegisterPresenceAsync(Presence(killerPresenceId, AttackerCharacterId, mapId, x: MonsterX, y: MonsterY), new WorldPlayerPublicState("Test", 0, 0, 0, 0, 1, 150, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
         var lethalHit = await grain.ApplyMonsterDamageAsync(new WorldMonsterDamageCommand(originalLife, AttackerCharacterId, killerPresenceId, AttackSequence: 1, Damage: 9999, AcquireEngagement: false));
         Assert.Equal(WorldMonsterDamageStatus.Applied, lethalHit.Status);
         Assert.True(lethalHit.KilledByThisHit);
@@ -2128,7 +2128,7 @@ public sealed class WorldMonsterSimulationTouchedWindowTests : IAsyncLifetime
         var life = new WorldMonsterLifeReference(mapId, load.SimulationEpoch, actorId, WorldMonsterIncarnationId.First);
         const uint attackerCharacterId = 900;
         var presenceId = Guid.NewGuid();
-        await grain.RegisterPresenceAsync(new WorldPlayerPresence(presenceId, attackerCharacterId + 1_000_000, attackerCharacterId, mapId, 100, 100));
+        await grain.RegisterPresenceAsync(new WorldPlayerPresence(presenceId, attackerCharacterId + 1_000_000, attackerCharacterId, mapId, 100, 100), new WorldPlayerPublicState("Test", 0, 0, 0, 0, 1, 150, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
 
         var original = await grain.ApplyMonsterDamageAsync(new WorldMonsterDamageCommand(life, attackerCharacterId, presenceId, AttackSequence: 5, Damage: 10, AcquireEngagement: false));
         Assert.Equal(WorldMonsterDamageStatus.Applied, original.Status);
@@ -2141,7 +2141,7 @@ public sealed class WorldMonsterSimulationTouchedWindowTests : IAsyncLifetime
         var reboot = await grain.PollMonsterFeedAsync(cursor: null, mapId);
         var newActorId = reboot.Snapshot!.Single().ActorId;
         var newLife = new WorldMonsterLifeReference(mapId, reload.SimulationEpoch, newActorId, WorldMonsterIncarnationId.First);
-        await grain.RegisterPresenceAsync(new WorldPlayerPresence(presenceId, attackerCharacterId + 1_000_000, attackerCharacterId, mapId, 100, 100));
+        await grain.RegisterPresenceAsync(new WorldPlayerPresence(presenceId, attackerCharacterId + 1_000_000, attackerCharacterId, mapId, 100, 100), new WorldPlayerPublicState("Test", 0, 0, 0, 0, 1, 150, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
 
         var result = await grain.ApplyMonsterDamageAsync(new WorldMonsterDamageCommand(newLife, attackerCharacterId, presenceId, AttackSequence: 5, Damage: 10, AcquireEngagement: false));
         Assert.Equal(WorldMonsterDamageStatus.Applied, result.Status);

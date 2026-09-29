@@ -306,6 +306,59 @@ builder
         "--map-cache-path", mapCachePath,
         "--secrets", secretsPath);
 
+// Item 14: a second MapServer gateway replica against the SAME Orleans World cluster, CharServer,
+// and SQL data - the local two-replica topology cross-replica player visibility/combat fanout is
+// meant to be exercised against. Shares map_athena.conf with map-server (same map_port default,
+// 5121) but overrides its OWN bound port via --map-port - the smallest change proving two Ragexe
+// clients can land on genuinely independent MapServer processes (see docs/aspire.md's own manual
+// acceptance procedure). Existing single-map-server resource above is completely unchanged; both
+// resources start by default, matching item 14's framing that cross-replica support should be
+// exercised by default rather than gated behind a flag.
+builder
+    .AddProject<Projects.MapServer>("map-server-b")
+    .WithEndpoint("tcp", endpoint =>
+    {
+        endpoint.Port = 5122;
+        endpoint.IsProxied = false;
+    })
+    .WithEnvironment(
+        "OTEL_EXPORTER_OTLP_ENDPOINT",
+        "http://localhost:4317")
+    .WithEnvironment(
+        "OTEL_EXPORTER_OTLP_PROTOCOL",
+        "grpc")
+    .WithEnvironment(
+        "OTEL_SERVICE_NAME",
+        "map-server-b")
+    .WithEnvironment(
+        "DOTNET_DASHBOARD_OTLP_ENDPOINT_URL",
+        "http://localhost:4317")
+    .WithEnvironment(
+        "DOTNET_DASHBOARD_OTLP_HTTP_ENDPOINT_URL",
+        "http://localhost:4318")
+    .WithEnvironment(
+        "OTEL_LOGS_EXPORTER",
+        "otlp")
+    .WithEnvironment(
+        "OTEL_METRICS_EXPORTER",
+        "otlp")
+    .WithEnvironment(
+        "OTEL_TRACES_EXPORTER",
+        "otlp")
+    .WithEnvironment(
+        "ATHENA_WORLD_PARTITIONS_PATH",
+        worldPartitionsPath)
+    .WithReference(worldCluster.AsClient())
+    .WithEnvironment(
+        "Orleans__Clustering__Gateways__0",
+        worldGatewayAddress)
+    .WaitFor(world)
+    .WithArgs(
+        "--map-config", mapConfigPath,
+        "--map-cache-path", mapCachePath,
+        "--secrets", secretsPath,
+        "--map-port", "5122");
+
 builder.Build().Run();
 
 static void EnsureSqlServerPassword()

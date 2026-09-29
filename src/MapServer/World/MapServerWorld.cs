@@ -33,8 +33,15 @@ public sealed record MapServerWorld(
     PlayerPresenceRegistry Players,
     PlayerVisibilityCoordinator PlayerVisibility,
     WorldVisibilityOptions Visibility,
+    // Item 14 §4: the per-map player-feed cursor/reconciliation state - see PlayerFeedProjection's
+    // own doc comment. Defaults to a fresh empty registry for every existing positional-constructor
+    // call site (focused tests that never touch player-feed behavior at all).
+    PlayerFeedProjectionRegistry? PlayerProjections = null,
     GameplayRateOptions? Rates = null)
 {
+    public PlayerFeedProjectionRegistry PlayerProjectionsOrDefault => PlayerProjections ?? _defaultPlayerProjections;
+    private readonly PlayerFeedProjectionRegistry _defaultPlayerProjections = new();
+
     // Compatibility constructor for focused monster/world tests that compose the record directly
     // without going through Build(). It still creates one coherent player-world bundle; it never
     // leaves the new live components null.
@@ -52,11 +59,11 @@ public sealed record MapServerWorld(
         (PlayerPresenceRegistry Players, PlayerVisibilityCoordinator Coordinator, WorldVisibilityOptions Options) playerWorld,
         GameplayRateOptions? rates)
         : this(maps, monsterSpawns, combat, collision, movementPathProvider, monsterProjections, combatState,
-            playerWorld.Players, playerWorld.Coordinator, playerWorld.Options, rates)
+            playerWorld.Players, playerWorld.Coordinator, playerWorld.Options, new PlayerFeedProjectionRegistry(), rates)
     {
         // Positional order matches the primary record constructor exactly: Maps, MonsterSpawns,
         // Combat, Collision, MovementPathProvider, MonsterProjections, CombatState, Players,
-        // PlayerVisibility, Visibility, Rates.
+        // PlayerVisibility, Visibility, PlayerProjections, Rates.
     }
 
     private static (PlayerPresenceRegistry Players, PlayerVisibilityCoordinator Coordinator, WorldVisibilityOptions Options) CreatePlayerWorld()
@@ -114,7 +121,8 @@ public sealed record MapServerWorld(
         var players = new PlayerPresenceRegistry(visibility);
         var playerVisibility = new PlayerVisibilityCoordinator(players, visibility);
         var monsterProjections = new MonsterFeedProjectionRegistry();
-        return new MapServerWorld(maps, servedMobSpawns, combat, resolvedCollisionProvider, movementPathProvider, monsterProjections, combatState, players, playerVisibility, visibility, rates ?? new GameplayRateOptions());
+        var playerProjections = new PlayerFeedProjectionRegistry();
+        return new MapServerWorld(maps, servedMobSpawns, combat, resolvedCollisionProvider, movementPathProvider, monsterProjections, combatState, players, playerVisibility, visibility, playerProjections, rates ?? new GameplayRateOptions());
     }
 
     // Production fail-closed guard: called explicitly by MapServerApp.RunAsync BEFORE calling

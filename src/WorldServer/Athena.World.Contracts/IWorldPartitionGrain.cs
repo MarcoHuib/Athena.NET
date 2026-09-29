@@ -5,7 +5,7 @@ namespace Athena.Net.World.Contracts;
 /// <summary>Coarse authority for multiple map runtimes. A map is not an Orleans grain.</summary>
 public interface IWorldPartitionGrain : IGrainWithStringKey
 {
-    Task<WorldPresenceRegistration> RegisterPresenceAsync(WorldPlayerPresence presence);
+    Task<WorldPresenceRegistration> RegisterPresenceAsync(WorldPlayerPresence presence, WorldPlayerPublicState publicState);
     Task<WorldPresenceUnregistration> UnregisterPresenceAsync(string mapId, uint characterId, Guid presenceId);
     Task<WorldMovementResult> MovePlayerAsync(WorldMovementCommand command);
     Task<WorldMovementResult> TruncateMovementAsync(WorldMovementTruncation command);
@@ -16,6 +16,22 @@ public interface IWorldPartitionGrain : IGrainWithStringKey
     Task<IncomingTransferResult> CommitIncomingTransferAsync(Guid transferId);
     Task<OutgoingTransferResult> FinalizeOutgoingTransferAsync(Guid transferId);
     Task<WorldMapSnapshot> GetMapSnapshotAsync(string mapId);
+
+    // Item 14: the World-owned player presence/event feed - same proven per-map epoch/sequence/
+    // bounded-retention/snapshot-resync shape as PollMonsterFeedAsync below, applied to players so
+    // two independent MapServer gateway replicas can each maintain their own cursor against the
+    // same World-authoritative player presence state. See WorldPlayerFeedEntryKind's own doc
+    // comment for exactly which existing presence mutations emit which entry kind.
+    Task<WorldPlayerFeedPage> PollPlayerFeedAsync(WorldPlayerFeedCursor? cursor, string mapId);
+    Task<WorldPlayerLookUpdateResult> UpdatePlayerLookAsync(uint characterId, Guid presenceId, byte direction, byte headDirection);
+    Task<WorldPlayerPublicStateUpdateResult> UpdatePlayerPublicStateAsync(uint characterId, Guid presenceId, WorldPlayerPublicState publicState);
+    // The ordering-critical seam for item 14 - see WorldMovementProjectionConfirmation's own doc
+    // comment for why a MovementStarted feed entry may ONLY ever be produced from here, never from
+    // MovePlayerAsync/TruncateMovementAsync themselves.
+    Task<WorldMovementProjectionResult> ConfirmMovementProjectionAsync(WorldMovementProjectionConfirmation confirmation);
+    // Cross-replica projection of an already-resolved monster -> player attack (HP mutation/cadence
+    // itself stays MapServer-local - see WorldMonsterAttackActionCommand's own doc comment).
+    Task<WorldMonsterAttackPublishResult> PublishMonsterAttackActionAsync(WorldMonsterAttackActionCommand command);
 
     // Final scope boundary (Step 7): World owns the monster's exact life identity (epoch/actor/
     // incarnation), position/movement, engagement, CurrentHp/MaxHp, the Alive->Dead transition,
@@ -375,7 +391,41 @@ public readonly record struct WorldMonsterFeedCursor(
 // dedicated dispatch: it falls through to the same generic projection-update tail every other
 // non-Died kind already uses, updating local projection state only - never forcing an unsolicited
 // HP-info packet to bystander sessions.
-public enum WorldMonsterFeedEntryKind { Moved, EngagementAcquired, ChaseStarted, ChaseInterrupted, TargetUnlocked, InAttackRange, HealthChanged, Died, Respawned }
+// Item 14: PlayerAttackAction and MonsterAttackAction are combat-action entries, not state
+// transitions - added to this SAME feed (rather than a separate one) so a player's killing hit is
+// structurally guaranteed to be sequenced before the Died entry it produces (see
+// WorldMonsterMapSimulation.ApplyDamage's own doc comment). PlayerAttackAction/MonsterAttackAction
+// payloads ride on WorldMonsterFeedEntry.PlayerAttack/MonsterAttack respectively - both null for
+// every other kind, exactly like the existing MovementKind optional field.
+public enum WorldMonsterFeedEntryKind { Moved, EngagementAcquired, ChaseStarted, ChaseInterrupted, TargetUnlocked, InAttackRange, HealthChanged, Died, Respawned, PlayerAttackAction, MonsterAttackAction }
+
+// Semantic player -> monster combat action, no packet IDs (item 14 §7). AttackerActorId is always
+// resolved by World from its own current registered presence for AttackerCharacterId/
+// AttackerPresenceId - never trusted from a caller-supplied value (item 14 §7's explicit
+// requirement) - see WorldPartitionGrain.ApplyMonsterDamageAsync's own attacker-presence lookup.
+[GenerateSerializer]
+public sealed record WorldPlayerAttackAction(
+    [property: Id(0)] uint AttackerActorId,
+    [property: Id(1)] uint AttackerCharacterId,
+    [property: Id(2)] Guid AttackerPresenceId,
+    [property: Id(3)] uint Damage,
+    [property: Id(4)] uint SourceAttackMotion,
+    [property: Id(5)] uint TargetDamageMotion,
+    [property: Id(6)] bool Hit,
+    [property: Id(7)] bool Lethal);
+
+// Semantic monster -> player combat action (item 14 §6's "Monster -> player" secondary path). HP
+// mutation/cadence stay MapServer-local; this is purely the cross-replica projection payload for an
+// already-resolved local attack - see PublishMonsterAttackActionAsync's own doc comment.
+[GenerateSerializer]
+public sealed record WorldMonsterAttackAction(
+    [property: Id(0)] uint TargetActorId,
+    [property: Id(1)] uint TargetCharacterId,
+    [property: Id(2)] Guid TargetPresenceId,
+    [property: Id(3)] uint Damage,
+    [property: Id(4)] uint SourceAttackMotion,
+    [property: Id(5)] uint TargetDamageMotion,
+    [property: Id(6)] bool Lethal);
 
 // The Ragexe wire-projection-relevant distinction WorldMonsterFeedEntryKind alone cannot express:
 // whether a movement transition is a FRESH walk beginning (a real 0x09FD walk-entry packet is
@@ -415,7 +465,9 @@ public sealed record WorldMonsterFeedEntry(
     [property: Id(2)] uint ActorId,
     [property: Id(3)] WorldMonsterIncarnationId IncarnationId,
     [property: Id(4)] WorldMonsterInstance Instance,
-    [property: Id(5)] WorldMonsterMovementKind? MovementKind = null);
+    [property: Id(5)] WorldMonsterMovementKind? MovementKind = null,
+    [property: Id(6)] WorldPlayerAttackAction? PlayerAttack = null,
+    [property: Id(7)] WorldMonsterAttackAction? MonsterAttack = null);
 
 // Explicit initialization/continuity status - a bare bool (ResyncRequired) cannot express "this
 // map has never been loaded, or was unloaded, and a consumer must call LoadMonsterSpawnsAsync
@@ -481,7 +533,12 @@ public sealed record WorldMonsterDamageResult(
     [property: Id(2)] uint HpAfter,
     [property: Id(3)] uint MaxHp,
     [property: Id(4)] bool KilledByThisHit,
-    [property: Id(5)] WorldMonsterAttackedStatus? Engagement);
+    [property: Id(5)] WorldMonsterAttackedStatus? Engagement,
+    // Diagnostic/test-assertion convenience only (item 14): the feed Sequence of the
+    // PlayerAttackAction entry this command's own commit appended (or, on ReplayedSequence, the one
+    // the ORIGINAL commit appended) - correctness of the attack-action-before-Died guarantee never
+    // depends on this field, only on actual feed order (see WorldMonsterMapSimulation.ApplyDamage).
+    [property: Id(6)] long? AttackActionSequence = null);
 
 // Deliberately absent: MonsterNotAttackable (a passive/no-CanAttack mob is still fully damageable -
 // only engagement acquisition cares about CanAttack) and NotFound (folded into StaleLifeReference,
@@ -543,3 +600,164 @@ public enum WorldPresenceLifeStateStatus { Updated, StalePresence, NotFound }
 
 [GenerateSerializer]
 public sealed record WorldPresenceLifeStateResult([property: Id(0)] WorldPresenceLifeStateStatus Status);
+
+// Item 14 §6 "Monster -> player": ActionId is a client(MapServer)-minted Guid, stable across a
+// bounded local retry, so a transient RPC failure followed by a retry of the SAME already-resolved
+// local attack is recognized as AlreadyPublished rather than appended a second time - the "short
+// bounded in-process pending publish/retry mechanism" item 14 explicitly allows, reused here for
+// dedup identity rather than an actual retry loop. Damage/motion/Lethal are the ALREADY-RESOLVED
+// outcome of MonsterAttackCadenceExecutor's existing local HP mutation - this RPC never mutates HP
+// itself, purely publishes for cross-replica projection (item 14's explicit "do not move the whole
+// monster attack cadence/player HP model into World" boundary).
+[GenerateSerializer]
+public sealed record WorldMonsterAttackActionCommand(
+    [property: Id(0)] WorldMonsterLifeReference Life,
+    [property: Id(1)] uint TargetCharacterId,
+    [property: Id(2)] Guid TargetPresenceId,
+    [property: Id(3)] Guid ActionId,
+    [property: Id(4)] uint Damage,
+    [property: Id(5)] uint SourceAttackMotion,
+    [property: Id(6)] uint TargetDamageMotion,
+    [property: Id(7)] bool Lethal);
+
+public enum WorldMonsterAttackPublishStatus { Published, AlreadyPublished, StaleLifeReference, StaleTargetPresence }
+
+[GenerateSerializer]
+public sealed record WorldMonsterAttackPublishResult([property: Id(0)] WorldMonsterAttackPublishStatus Status);
+
+// ---------------------------------------------------------------------------------------------
+// Item 14: the World-owned player presence/event feed. Mirrors the monster feed's proven shape
+// (WorldMonsterFeedCursor/WorldMonsterFeedPage/WorldMonsterFeedEntryKind above) exactly - per-map
+// epoch/generation, monotonic sequence, bounded retained entries, atomic snapshot bootstrap, resync
+// on stale cursor/epoch. See WorldPlayerMapSimulation (Athena.World project) for the implementation
+// this contract serializes across the wire.
+// ---------------------------------------------------------------------------------------------
+
+// Protocol-neutral public/cosmetic player state (item 14 §1) - deliberately NOT a duplicate
+// gameplay-authoritative store: WorldPlayerPresence (position/identity/life-state) remains the sole
+// gameplay authority; this is purely the display-facing state another MapServer replica needs to
+// construct the existing 0x09FE/0x09FF/0x09FD/0x0A30 packets for a remote player, with no gameplay
+// effect of its own. No packet IDs or byte layouts here - see IroPlayerActorPackets (MapServer
+// project) for where this becomes wire bytes.
+[GenerateSerializer]
+public sealed record WorldPlayerPublicState(
+    [property: Id(0)] string CharacterName,
+    [property: Id(1)] byte Direction,
+    [property: Id(2)] byte HeadDirection,
+    [property: Id(3)] ushort JobClass,
+    [property: Id(4)] byte Sex,
+    [property: Id(5)] ushort BaseLevel,
+    [property: Id(6)] ushort WalkSpeed,
+    [property: Id(7)] ushort HairStyle,
+    [property: Id(8)] ushort HairColor,
+    [property: Id(9)] ushort ClothesColor,
+    [property: Id(10)] ushort BodyStyle,
+    [property: Id(11)] uint WeaponAppearance,
+    [property: Id(12)] uint ShieldAppearance,
+    [property: Id(13)] ushort HeadBottomAppearance,
+    [property: Id(14)] ushort HeadTopAppearance,
+    [property: Id(15)] ushort HeadMidAppearance,
+    [property: Id(16)] ushort RobeAppearance,
+    [property: Id(17)] short Manner,
+    [property: Id(18)] byte Karma,
+    [property: Id(19)] uint Option,
+    [property: Id(20)] ushort Font);
+
+// Movement-projection state needed for a resync/bootstrap snapshot taken while a player is already
+// walking (item 14 §3's snapshot requirement), separate from WorldPlayerFeedEntryKind.MovementStarted
+// itself - this record is what a consumer reconstructs a client-facing walk entry from regardless of
+// whether it arrived via a live MovementStarted entry or a fresh snapshot. StartedAtLocalTickStamp is
+// an OPAQUE long a MapServer gateway stamped from its OWN Environment.TickCount at the moment it
+// called ConfirmMovementProjectionAsync - World never reads or interprets it, only carries it through
+// (item 14's explicit "do not leak Environment.TickCount into World" constraint: World's own logic
+// never branches on this value, it is pure pass-through payload for the projecting replica's own
+// packet builder to reuse, exactly as PlayerMovementPresence.StartTick already does locally today).
+[GenerateSerializer]
+public sealed record WorldPlayerMovementProjection(
+    [property: Id(0)] ushort StartX,
+    [property: Id(1)] ushort StartY,
+    [property: Id(2)] ushort DestinationX,
+    [property: Id(3)] ushort DestinationY,
+    [property: Id(4)] long StartedAtLocalTickStamp);
+
+// One player's full feed-projectable state: authoritative presence + public/cosmetic state + an
+// optional in-flight movement projection (null when stationary). This is what both a bootstrap/
+// resync Snapshot entry AND every incremental WorldPlayerFeedEntry.Entry carry - always the FULL
+// current state, never a delta, matching WorldMonsterFeedEntry.Instance's own "always full state"
+// convention (a consumer never needs to merge partial updates).
+[GenerateSerializer]
+public sealed record WorldPlayerPresenceEntry(
+    [property: Id(0)] WorldPlayerPresence Presence,
+    [property: Id(1)] WorldPlayerPublicState PublicState,
+    [property: Id(2)] WorldPlayerMovementProjection? Movement = null);
+
+// Registered/Unregistered/TransferredIn/TransferredOut/MovementStarted/MovementFinished/LookChanged
+// are lifecycle/state transitions; Moved is the same high-frequency per-cell position update the
+// monster feed's own Moved kind represents (see WorldPartitionGrain.AdvanceMovementAsync's own feed
+// append). MovementStarted is ONLY ever appended from ConfirmMovementProjectionAsync - see that
+// method's own doc comment for why MovePlayerAsync/TruncateMovementAsync themselves must never
+// append it directly (item 14 §3's critical pre-truncation-leak prevention requirement).
+public enum WorldPlayerFeedEntryKind { Registered, Unregistered, Moved, MovementStarted, MovementFinished, LookChanged, TransferredIn, TransferredOut }
+
+[GenerateSerializer]
+public sealed record WorldPlayerFeedEntry(
+    [property: Id(0)] long Sequence,
+    [property: Id(1)] WorldPlayerFeedEntryKind Kind,
+    [property: Id(2)] uint ActorId,
+    [property: Id(3)] uint CharacterId,
+    [property: Id(4)] WorldPlayerPresenceEntry Entry);
+
+// Cursor identity is (Epoch, Sequence) together - same rationale as WorldMonsterFeedCursor (see its
+// own doc comment): a bare Sequence alone cannot distinguish "still within this map's current
+// generation" from "this sequence number happened to repeat after an unrelated epoch rotation".
+[GenerateSerializer]
+public readonly record struct WorldPlayerFeedCursor(
+    [property: Id(0)] WorldSimulationEpoch Epoch,
+    [property: Id(1)] long Sequence);
+
+public enum WorldPlayerFeedStatus { Ready, ResyncRequired }
+
+[GenerateSerializer]
+public sealed record WorldPlayerFeedPage(
+    [property: Id(0)] string MapId,
+    [property: Id(1)] WorldSimulationEpoch Epoch,
+    [property: Id(2)] WorldPlayerFeedStatus Status,
+    [property: Id(3)] IReadOnlyList<WorldPlayerPresenceEntry>? Snapshot,
+    [property: Id(4)] IReadOnlyList<WorldPlayerFeedEntry>? Entries,
+    [property: Id(5)] long AsOfSequence)
+{
+    public bool ResyncRequired => Status != WorldPlayerFeedStatus.Ready;
+}
+
+public enum WorldPlayerLookUpdateStatus { Updated, StalePresence, NotFound }
+
+[GenerateSerializer]
+public sealed record WorldPlayerLookUpdateResult([property: Id(0)] WorldPlayerLookUpdateStatus Status);
+
+public enum WorldPlayerPublicStateUpdateStatus { Updated, StalePresence, NotFound }
+
+[GenerateSerializer]
+public sealed record WorldPlayerPublicStateUpdateResult([property: Id(0)] WorldPlayerPublicStateUpdateStatus Status);
+
+// Item 14 §3: the ordering-critical movement-projection confirmation. MapClientSession calls this
+// EXACTLY ONCE per accepted movement, AFTER it has already examined World's authoritative path
+// (MovePlayerAsync's result) for a warp/script trigger and, if one was found, already called
+// TruncateMovementAsync to shorten World's own route to match - never before. World itself derives
+// the confirmed destination from its OWN current _movements[characterId] entry's (already-possibly-
+// truncated) Path - never from a MapServer-supplied destination (item 14's explicit "do not trust a
+// MapServer-supplied arbitrary destination" requirement) - so even a buggy/malicious caller cannot
+// cause a pre-truncation destination to leak into the feed: there is no field on this record for one.
+[GenerateSerializer]
+public sealed record WorldMovementProjectionConfirmation(
+    [property: Id(0)] Guid MovementId,
+    [property: Id(1)] Guid PresenceId,
+    [property: Id(2)] uint CharacterId,
+    [property: Id(3)] string MapId,
+    [property: Id(4)] long LocalTickStamp);
+
+public enum WorldMovementProjectionStatus { Confirmed, AlreadyConfirmed, NotFound, PresenceMismatch, SourceMismatch }
+
+[GenerateSerializer]
+public sealed record WorldMovementProjectionResult(
+    [property: Id(0)] WorldMovementProjectionStatus Status,
+    [property: Id(1)] WorldPlayerPresenceEntry? Entry);

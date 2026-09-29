@@ -77,7 +77,8 @@ public sealed class WorldMonsterMapSimulationMemoryBoundTests
             var command = new WorldMonsterDamageCommand(life, attackerCharacterId, attackerPresenceId, attackSequence, Damage: 55, AcquireEngagement: false);
             var replay = simulation.TryAcceptAttackSequence(command);
             Assert.Null(replay); // A genuinely new sequence for this (CharacterId, PresenceId, Life) key.
-            var (hpBefore, hpAfter, killedByThisHit, maxHp) = simulation.ApplyDamage(instance, command.Damage);
+            var attackAction = new WorldPlayerAttackAction(attackerCharacterId, attackerCharacterId, attackerPresenceId, command.Damage, 0, 0, Hit: true, Lethal: false);
+            var (hpBefore, hpAfter, killedByThisHit, maxHp) = simulation.ApplyDamage(instance, command.Damage, attackAction);
             Assert.True(killedByThisHit, $"Cycle {cycle}: expected this exact hit to be lethal.");
             Assert.Equal(0u, hpAfter);
             var result = new WorldMonsterDamageResult(WorldMonsterDamageStatus.Applied, hpBefore, hpAfter, maxHp, killedByThisHit, null);

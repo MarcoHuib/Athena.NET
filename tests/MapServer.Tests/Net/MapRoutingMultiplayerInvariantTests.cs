@@ -55,10 +55,43 @@ public sealed class MapRoutingMultiplayerInvariantTests
         public Task<WorldMonsterDamageResult> ApplyMonsterDamageAsync(WorldMonsterDamageCommand command, CancellationToken cancellationToken) => throw new NotSupportedException();
         public Task<WorldMonsterAttackedResult> NotifyMonsterAttackedAsync(WorldMonsterAttackedCommand command, CancellationToken cancellationToken) => throw new NotSupportedException();
         public Task<WorldPresenceLifeStateResult> UpdatePresenceLifeStateAsync(string mapId, WorldPresenceLifeStateUpdate update, CancellationToken cancellationToken) => throw new NotSupportedException();
-        public Task<WorldPresenceRegistration> RegisterPresenceAsync(string mapId, WorldPlayerPresence presence, CancellationToken cancellationToken) =>
-            Task.FromResult(new WorldPresenceRegistration("test-partition", mapId, WorldPresenceRegistrationStatus.Registered, 1));
-        public Task<WorldPresenceUnregistration> UnregisterPresenceAsync(string mapId, uint characterId, Guid presenceId, CancellationToken cancellationToken) =>
-            Task.FromResult(new WorldPresenceUnregistration("test-partition", mapId, WorldPresenceUnregistrationStatus.Removed, 0));
+        // Item 14 §4: a real player-feed implementation, backed by RegisterPresenceAsync's own
+        // tracked presences - local AOI enter-fanout is now feed-driven ONLY, so these tests must be
+        // able to genuinely poll and discover what was registered (see ConnectAsync's own
+        // RegisterPresenceAsync call and EnterWorldAsync's now-tick-driven wait).
+        private readonly Dictionary<uint, WorldPlayerPresence> _presences = [];
+        private readonly Dictionary<uint, WorldPlayerPublicState> _publicStateByCharacterId = [];
+        private static readonly WorldSimulationEpoch PlayerFeedEpoch = WorldSimulationEpoch.NewEpoch();
+        private static readonly WorldPlayerPublicState EmptyPublicState = new("", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+
+        public Task<WorldPlayerFeedPage> PollPlayerFeedAsync(WorldPlayerFeedCursor? cursor, string mapId, CancellationToken cancellationToken)
+        {
+            var snapshot = _presences.Values
+                .Where(presence => string.Equals(presence.MapId, mapId, StringComparison.OrdinalIgnoreCase))
+                .Select(presence =>
+                {
+                    var publicState = _publicStateByCharacterId.TryGetValue(presence.CharacterId, out var ps) ? ps : EmptyPublicState;
+                    return new WorldPlayerPresenceEntry(presence, publicState);
+                })
+                .ToArray();
+            return Task.FromResult(new WorldPlayerFeedPage(mapId, PlayerFeedEpoch, WorldPlayerFeedStatus.Ready, snapshot, Entries: null, AsOfSequence: 0));
+        }
+        public Task<WorldPlayerLookUpdateResult> UpdatePlayerLookAsync(string mapId, uint characterId, Guid presenceId, byte direction, byte headDirection, CancellationToken cancellationToken) => throw new NotSupportedException();
+        public Task<WorldPlayerPublicStateUpdateResult> UpdatePlayerPublicStateAsync(string mapId, uint characterId, Guid presenceId, WorldPlayerPublicState publicState, CancellationToken cancellationToken) => throw new NotSupportedException();
+        public Task<WorldMovementProjectionResult> ConfirmMovementProjectionAsync(WorldMovementProjectionConfirmation confirmation, CancellationToken cancellationToken) => throw new NotSupportedException();
+        public Task<WorldMonsterAttackPublishResult> PublishMonsterAttackActionAsync(WorldMonsterAttackActionCommand command, CancellationToken cancellationToken) => throw new NotSupportedException();
+        public Task<WorldPresenceRegistration> RegisterPresenceAsync(string mapId, WorldPlayerPresence presence, WorldPlayerPublicState publicState, CancellationToken cancellationToken)
+        {
+            _presences[presence.CharacterId] = presence with { MapId = mapId };
+            _publicStateByCharacterId[presence.CharacterId] = publicState;
+            return Task.FromResult(new WorldPresenceRegistration("test-partition", mapId, WorldPresenceRegistrationStatus.Registered, 1));
+        }
+        public Task<WorldPresenceUnregistration> UnregisterPresenceAsync(string mapId, uint characterId, Guid presenceId, CancellationToken cancellationToken)
+        {
+            _presences.Remove(characterId);
+            _publicStateByCharacterId.Remove(characterId);
+            return Task.FromResult(new WorldPresenceUnregistration("test-partition", mapId, WorldPresenceUnregistrationStatus.Removed, 0));
+        }
         public Task<WorldMovementResult> MovePlayerAsync(WorldMovementCommand command, CancellationToken cancellationToken) => throw new NotSupportedException();
         public Task<WorldMovementAdvanceResult> AdvanceMovementAsync(WorldMovementAdvance command, CancellationToken cancellationToken) => throw new NotSupportedException();
         public Task<WorldMovementCancellationResult> CancelMovementAsync(WorldMovementCancellation command, CancellationToken cancellationToken) => throw new NotSupportedException();
@@ -119,21 +152,31 @@ public sealed class MapRoutingMultiplayerInvariantTests
         return new Player(session, client, stream);
     }
 
-    // Map-loaded (0x007D) -> the session becomes World-visible; waits for its presence registration so
-    // the ORDER of two players entering is deterministic (existing player-presence tests do the same).
-    private static async Task EnterWorldAsync(MapServerWorld world, Player player, uint accountId)
+    // Map-loaded (0x007D) -> the session becomes World-visible. Item 14 §4: local
+    // PlayerPresenceRegistry membership is now feed-driven, never a direct side effect of World
+    // registration - waits only for World registration itself (IsWorldMapEligible); the caller is
+    // responsible for driving a real player-feed tick (see DrivePlayerTickAsync) before asserting
+    // local AOI/registry state.
+    private static async Task EnterWorldAsync(Player player)
     {
         await player.Stream.WriteAsync(new byte[] { 0x7d, 0x00, 0xaa });
         await ReadExact(player.Stream, 15); // 0x01D7 self weapon
         await ReadExact(player.Stream, 6);  // inventory start
         await ReadExact(player.Stream, 4);  // inventory end
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        while (!(world.Players.TryGetByActorId(accountId, out _) && player.Session.IsWorldMapEligible))
+        while (!player.Session.IsWorldMapEligible)
         {
             timeout.Token.ThrowIfCancellationRequested();
             await Task.Delay(5, timeout.Token);
         }
     }
+
+    // Item 14 §4: drives ONLY the player-feed half of a production tick (mirrors
+    // MapTcpServer.ProcessOnePlayerTickAsync) - PerMapWorldRuntime.PollMonsterFeedAsync above is
+    // real and safe to call too, but tests that want ordinary monster-discovery timing call
+    // ProcessOneMonsterTickAsync separately/explicitly where that matters.
+    private static Task DrivePlayerTickAsync(MapTcpServer server, IReadOnlyCollection<MapClientSession> sessions) =>
+        server.ProcessOnePlayerTickAsync(sessions, CancellationToken.None);
 
     private static WorldMonsterInstance Monster(uint actorId, string mapId, ushort x, ushort y) => new(
         actorId, WorldMonsterIncarnationId.First, mapId, MobId: 1002, x, y, WorldMonsterLifecycleState.Alive,
@@ -167,11 +210,12 @@ public sealed class MapRoutingMultiplayerInvariantTests
         var runtime = new PerMapWorldRuntime();
         var monsters = new[] { Monster(111_000_001, mapId, 258, 200), Monster(111_000_002, mapId, 260, 202) };
         runtime.Snapshots[mapId] = monsters;
+        var server = new MapTcpServer(ConfigStore(), new CharServerConnector(ConfigStore()), world, runtime);
 
         var a = await ConnectAsync(world, runtime, AccountA, CharA, "Alice", mapId, 259, 197);
-        await EnterWorldAsync(world, a, AccountA);
+        await EnterWorldAsync(a);
         var b = await ConnectAsync(world, runtime, AccountB, CharB, "Bob", mapId, 257, 204);
-        await EnterWorldAsync(world, b, AccountB);
+        await EnterWorldAsync(b);
         using var _a = a.Client;
         using var _b = b.Client;
 
@@ -181,8 +225,11 @@ public sealed class MapRoutingMultiplayerInvariantTests
         Assert.Equal(mapId, a.Session.CurrentMapName, StringComparer.OrdinalIgnoreCase);
         Assert.Equal(mapId, b.Session.CurrentMapName, StringComparer.OrdinalIgnoreCase);
 
-        // PlayerVisibilityCoordinator introduces each player to the other (existing player -> 0x09FF,
-        // newly entering player -> 0x09FE at the first player, reciprocal).
+        // Item 14 §4: PlayerVisibilityCoordinator now introduces each player to the other only once
+        // a player-feed tick reconciles both World registrations (existing player -> 0x09FF, newly
+        // entering player -> 0x09FE at the first player, reciprocal) - never as a direct side effect
+        // of RegisterPresenceAsync succeeding.
+        await DrivePlayerTickAsync(server, [a.Session, b.Session]);
         var aSeesB = await ReadDynamic(a.Stream);
         Assert.Equal((short)0x09fe, BinaryPrimitives.ReadInt16LittleEndian(aSeesB));
         Assert.Equal(AccountB, BinaryPrimitives.ReadUInt32LittleEndian(aSeesB.AsSpan(5)));
@@ -191,7 +238,6 @@ public sealed class MapRoutingMultiplayerInvariantTests
         Assert.Equal(AccountA, BinaryPrimitives.ReadUInt32LittleEndian(bSeesA.AsSpan(5)));
 
         // One monster tick over BOTH sessions: one map, two sessions, ONE projection.
-        var server = new MapTcpServer(ConfigStore(), new CharServerConnector(ConfigStore()), world, runtime);
         await server.ProcessOneMonsterTickAsync([a.Session, b.Session], CancellationToken.None);
 
         var expected = monsters.Select(monster => monster.ActorId).ToHashSet();
@@ -219,14 +265,18 @@ public sealed class MapRoutingMultiplayerInvariantTests
         runtime.Snapshots[baseMap] = baseMonsters;
         runtime.Snapshots[variantMap] = variantMonsters;
 
+        var server = new MapTcpServer(ConfigStore(), new CharServerConnector(ConfigStore()), world, runtime);
         var a = await ConnectAsync(world, runtime, AccountA, CharA, "Alice", baseMap, 259, 197);
-        await EnterWorldAsync(world, a, AccountA);
+        await EnterWorldAsync(a);
         var b = await ConnectAsync(world, runtime, AccountB, CharB, "Bob", variantMap, 257, 204);
-        await EnterWorldAsync(world, b, AccountB);
+        await EnterWorldAsync(b);
         using var _a = a.Client;
         using var _b = b.Client;
 
-        // Both connected and registered in the SHARED player registry, yet neither is introduced to the other.
+        // Both connected and registered in the SHARED player registry (via a player-feed tick over
+        // BOTH maps' sessions - item 14 §4: local registry membership is feed-driven), yet neither
+        // is introduced to the other, since WorldVisibilityOptions.IsVisible requires the SAME map.
+        await DrivePlayerTickAsync(server, [a.Session, b.Session]);
         Assert.True(world.Players.TryGetByActorId(AccountA, out _));
         Assert.True(world.Players.TryGetByActorId(AccountB, out _));
         await AssertNothingMoreSentAsync(a.Stream);
@@ -234,7 +284,6 @@ public sealed class MapRoutingMultiplayerInvariantTests
 
         // One tick, TWO maps: each session receives only its own map's monsters and the two projections
         // are separate instances.
-        var server = new MapTcpServer(ConfigStore(), new CharServerConnector(ConfigStore()), world, runtime);
         await server.ProcessOneMonsterTickAsync([a.Session, b.Session], CancellationToken.None);
 
         var baseSeen = await ReadMonsterDiscoveriesAsync(a.Stream, baseMonsters.Length);
