@@ -264,9 +264,28 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     private volatile string _lastPacketWrittenDescription = "<none>";
     private readonly CancellationTokenSource _sessionCancellation = new();
     private readonly VisibleActorTracker _visibleActorIds = new();
+    // Item 14 §8: bounded set of (AttackerCharacterId, AttackSequence) pairs this session's OWN
+    // socket has already received a same-process immediate echo for (via FanOutPlayerAttackActionAsync's
+    // fast path) - FanOutEntryAsync's later feed-driven PlayerAttackAction dispatch for the SAME
+    // action checks this before re-writing to avoid a duplicate 0x08C8 to this exact session. Never
+    // grows unbounded: only ever holds entries for THIS session's own attacks, cleared implicitly by
+    // GC once the session itself is disposed - no separate eviction policy is needed since a single
+    // player's own outstanding in-flight attack count is inherently small.
+    private readonly HashSet<(uint AttackerActorId, long AttackSequence)> _locallyEchoedPlayerAttackActions = [];
+    private readonly Lock _locallyEchoedGate = new();
+
+    internal void MarkPlayerAttackActionLocallyEchoed(uint attackerActorId, long attackSequence)
+    {
+        lock (_locallyEchoedGate) _locallyEchoedPlayerAttackActions.Add((attackerActorId, attackSequence));
+    }
+
+    internal bool WasPlayerAttackActionLocallyEchoed(uint attackerActorId, long attackSequence)
+    {
+        lock (_locallyEchoedGate) return _locallyEchoedPlayerAttackActions.Remove((attackerActorId, attackSequence));
+    }
     // See the production constructor overload's own doc comment for what this is and why it is
     // never resolved by iterating sibling sessions directly.
-    private readonly Func<PlayerAttackActionOutcome, CancellationToken, Task>? _playerAttackFanout;
+    private readonly Func<PlayerAttackActionOutcome, long, CancellationToken, Task>? _playerAttackFanout;
     // Cross-session (this gateway process only) per-life ordering primitive for a lethal player hit -
     // see LethalAttackProjectionGate's own doc comment. Null (every non-MapTcpServer caller, including
     // every existing test fixture) means no cross-session ordering is needed/available; this session's
@@ -424,7 +443,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     // caller, including every existing test fixture) falls back to notifying only this session -
     // see NotifyPlayerAttackActionAsync's own call sites for exactly where that fallback applies.
     public MapClientSession(int sessionId, TcpClient client, CharServerConnector charConnector, MapServerWorld world, IWorldRuntime worldRuntime,
-        Func<PlayerAttackActionOutcome, CancellationToken, Task>? playerAttackFanout = null, LethalAttackProjectionGate? lethalAttackGate = null,
+        Func<PlayerAttackActionOutcome, long, CancellationToken, Task>? playerAttackFanout = null, LethalAttackProjectionGate? lethalAttackGate = null,
         Action? onAuthenticated = null)
         : this(sessionId, client, charConnector, world.Maps, monsterProjections: world.MonsterProjections, combat: world.Combat,
                movementPathProvider: world.MovementPathProvider, collisionProvider: world.Collision, rates: world.Rates,
@@ -455,7 +474,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         WorldVisibilityOptions? visibilityOptions = null,
         IWorldRuntime? distributedWorld = null,
         MonsterAttackCadenceStore? combatState = null,
-        Func<PlayerAttackActionOutcome, CancellationToken, Task>? playerAttackFanout = null,
+        Func<PlayerAttackActionOutcome, long, CancellationToken, Task>? playerAttackFanout = null,
         LethalAttackProjectionGate? lethalAttackGate = null,
         Action? onAuthenticated = null)
     {
@@ -520,7 +539,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         WorldVisibilityOptions? visibilityOptions = null,
         IWorldRuntime? distributedWorld = null,
         MonsterAttackCadenceStore? combatState = null,
-        Func<PlayerAttackActionOutcome, CancellationToken, Task>? playerAttackFanout = null,
+        Func<PlayerAttackActionOutcome, long, CancellationToken, Task>? playerAttackFanout = null,
         LethalAttackProjectionGate? lethalAttackGate = null,
         Action? onAuthenticated = null)
         : this(
@@ -2552,7 +2571,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
                 var damageDealt = result.HpBefore - result.HpAfter;
                 var attackAction = new PlayerAttackActionOutcome(_accountId, life.ActorId, _mapName, damageDealt, SrcSpeed: 460, DstSpeed: (uint)targetSnapshot.StaticMob.DamageMotion, Lethal: false);
                 var nonLethalWritesStartedAt = CombatTiming.Now();
-                await ProjectPlayerAttackActionAsync(attackAction, cancellationToken);
+                await ProjectPlayerAttackActionAsync(attackAction, result.AttackActionSequence, cancellationToken);
                 var nonLethalDamageWrittenAt = CombatTiming.Now();
 
                 var nonLethalHpWritten = false;
@@ -2653,7 +2672,7 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
             var attackAction = new PlayerAttackActionOutcome(_accountId, life.ActorId, _mapName, damageDealt, SrcSpeed: 460, DstSpeed: (uint)targetSnapshot.StaticMob.DamageMotion, Lethal: true);
             var lethalDamageWriteStartedAt = CombatTiming.Now();
             if (DebugBeforeLethalActionFanoutAsync is { } beforeActionFanoutHook) await beforeActionFanoutHook(); // Test-only seam - see that field's own doc comment. Always null in production.
-            await ProjectPlayerAttackActionAsync(attackAction, cancellationToken);
+            await ProjectPlayerAttackActionAsync(attackAction, result.AttackActionSequence, cancellationToken);
             // Release the shared cross-session gate the INSTANT this session's own action has been fanned
             // out to every other local session - not later, when the rest of this tail (EXP/progression/
             // the vanish itself) finishes. Nothing past this point needs to hold up a bystander's own Died
@@ -5285,8 +5304,13 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
     // identical wire effect to before this fan-out existed). Either branch calls
     // NotifyPlayerAttackActionAsync exactly once for this session, so the attacker can never receive
     // a duplicate 0x08C8.
-    private Task ProjectPlayerAttackActionAsync(PlayerAttackActionOutcome action, CancellationToken cancellationToken) =>
-        _playerAttackFanout is { } fanout ? fanout(action, cancellationToken) : NotifyPlayerAttackActionAsync(action, cancellationToken);
+    // `attackActionSequence` is the World-authoritative feed Sequence of the PlayerAttackAction
+    // entry this attack's own commit just appended (WorldMonsterDamageResult.AttackActionSequence) -
+    // used ONLY for the local-echo dedup key (see MarkPlayerAttackActionLocallyEchoed), never trusted
+    // for anything else. A null value (should not occur for a genuinely Applied/ReplayedSequence
+    // result, but defensively tolerated) falls back to -1, a sequence no real feed entry ever uses.
+    private Task ProjectPlayerAttackActionAsync(PlayerAttackActionOutcome action, long? attackActionSequence, CancellationToken cancellationToken) =>
+        _playerAttackFanout is { } fanout ? fanout(action, attackActionSequence ?? -1, cancellationToken) : NotifyPlayerAttackActionAsync(action, cancellationToken);
 
     // AREA-visible player-attack action projection (mirrors NotifyMonsterAttackOutcomeAsync's own
     // map/visibility rules for a monster's own attack - see PlayerAttackActionOutcome's own doc
@@ -5310,6 +5334,22 @@ public sealed class MapClientSession : IAsyncDisposable, INpcScriptHost, IPlayer
         var damagePacket = IroMonsterCombatPackets.BuildNotifyAct3(action.AttackerActorId, action.MobActorId, tick, action.SrcSpeed, action.DstSpeed, action.Damage, div: 1, actionType: 0);
         await WriteAsync(damagePacket, cancellationToken);
         MapLogger.Info($"[iRO MAP DEBUG] PLAYER ATTACK FANOUT attackerActorId={action.AttackerActorId} targetActorId={action.MobActorId} observerAccountId={_accountId} damage={action.Damage} map={action.Map} lethal={action.Lethal.ToString().ToLowerInvariant()}");
+    }
+
+    // Item 14 §6: the cross-replica-only projection of an already-resolved monster -> player attack -
+    // deliberately narrower than NotifyMonsterAttackOutcomeAsync (no self-only HP sync: that already
+    // happened on the victim's own local gateway before this was ever published to World - see
+    // WorldMonsterAttackActionCommand's own doc comment). The victim's own local gateway never
+    // reaches this method for the SAME action at all (it only ever calls
+    // NotifyMonsterAttackOutcomeAsync locally), so there is no dedup concern symmetric to the
+    // player-attack fast path.
+    internal Task NotifyMonsterAttackActionCrossReplicaAsync(uint mobActorId, string map, WorldMonsterAttackAction action, CancellationToken cancellationToken)
+    {
+        if (!string.Equals(map, _mapName, StringComparison.OrdinalIgnoreCase)) return Task.CompletedTask;
+        if (!_visibleActorIds.IsActorVisible(mobActorId)) return Task.CompletedTask;
+        var tick = unchecked((uint)Environment.TickCount);
+        var damagePacket = IroMonsterCombatPackets.BuildNotifyAct3(mobActorId, action.TargetActorId, tick, action.SourceAttackMotion, action.TargetDamageMotion, action.Damage, div: 1, actionType: 0);
+        return WriteAsync(damagePacket, cancellationToken);
     }
 
     public async Task NotifyMonsterAttackOutcomeAsync(MonsterAttackActionOutcome action, CancellationToken cancellationToken)
